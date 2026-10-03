@@ -48,8 +48,9 @@ import de.corespace.shroud.ui.theme.perform
  * to choose, none installed, the server refused the host, background connection on/off with the
  * battery state).
  *
- * Human: Shroud has no Google push. While it is closed, a UnifiedPush distributor the user installs
- * (ntfy, for one) wakes it, or a background connection keeps the server's socket open. Either, both
+ * Human: While Shroud is closed, Google Play is the default when it is installed. A UnifiedPush
+ * distributor the user installs (ntfy, for one) replaces it, or a background connection keeps the
+ * server's socket open. Either, both
  * or neither may be on; the screen shows each with what it is doing and, when it cannot deliver,
  * why. Android may pause the background connection to save battery, so its battery state shows
  * while it is on, with a way to Android Settings.

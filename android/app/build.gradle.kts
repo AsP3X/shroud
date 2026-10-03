@@ -195,6 +195,7 @@ dependencies {
     implementation(libs.webrtc)
     implementation(libs.androidx.core.telecom)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.unifiedpush.embedded.fcm)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
@@ -280,10 +281,11 @@ abstract class VerifyNoMaterialTask : RuntimeGraphTask() {
 }
 
 /**
- * Fails when Google services reach the app: a module from a banned group (or a banned module)
- * on the debug or release runtime classpath, or a GMS/Firebase/C2DM entry in the merged release
- * manifest (decision record 2026-10-01, 00-plan §5.2). [allowedModules] exceptions need the
- * product owner's sign-off in the PR; none are expected.
+ * Fails when a Firebase, Play services, ML Kit, Tink or Play library reaches the app.
+ * The UnifiedPush embedded FCM distributor is not one of those: it has no Google classes.
+ * Its manifest names Play Services only so it can see whether that package is installed, and
+ * it receives the public C2DM broadcast. Those two strings are not banned. `com.google.firebase`
+ * in the merged manifest still fails the build.
  */
 abstract class VerifyNoGoogleServicesTask : RuntimeGraphTask() {
     @get:Input
@@ -390,7 +392,7 @@ val verifyNoGoogleServices = tasks.register<VerifyNoGoogleServicesTask>("verifyN
     bannedGroups.set(bannedGoogleGroups)
     bannedModules.set(listOf("org.jetbrains.kotlinx:kotlinx-coroutines-play-services"))
     allowedModules.set(emptySet())
-    bannedManifestTexts.set(listOf("com.google.android.gms", "com.google.android.c2dm", "com.google.firebase"))
+    bannedManifestTexts.set(listOf("com.google.firebase"))
     report.set(layout.buildDirectory.file("reports/verifyNoGoogleServices.txt"))
 }
 

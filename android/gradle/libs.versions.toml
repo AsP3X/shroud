@@ -1,10 +1,11 @@
 # Every dependency of the Android port (00-plan §5.1), added up front by W0-A so feature packages
 # never edit Gradle files. Versions checked 2026-10-01 (latest stable on Maven Central / Google Maven).
 #
-# Google-free (decision record 2026-10-01): no Firebase, Google Play services, ML Kit, Tink, Play
-# Core, install referrer or analytics/crash SDKs, directly or transitively — `verifyNoGoogleServices`
-# fails the build otherwise. ZXing, AndroidX, CameraX, Media3 and the WebRTC AAR run locally and
-# are allowed. No `androidx.compose.material*` either (`verifyNoMaterial`).
+# No Firebase, Play services, ML Kit, Tink, Play Core, install referrer or analytics SDKs —
+# `verifyNoGoogleServices` fails the build otherwise. The UnifiedPush embedded FCM distributor
+# is allowed: it ships no Google code and only wakes the app through Play Services when that
+# package is installed. ZXing, AndroidX, CameraX, Media3 and the WebRTC AAR run locally.
+# No `androidx.compose.material*` either (`verifyNoMaterial`).
 
 [versions]
 agp = "9.4.1"
@@ -30,6 +31,7 @@ zxing = "3.5.4"
 webrtc = "150.7871.01"
 coreTelecom = "1.0.1"
 work = "2.12.0"
+unifiedpushEmbeddedFcm = "3.1.0"
 junit = "4.13.2"
 icu4j = "78.3"
 turbine = "1.2.1"
@@ -99,6 +101,9 @@ webrtc = { module = "io.github.webrtc-sdk:android", version.ref = "webrtc" }
 androidx-core-telecom = { module = "androidx.core:core-telecom", version.ref = "coreTelecom" }
 # W3-PUSH: expedited device-removal worker.
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+# Delivery: UnifiedPush's embedded FCM distributor. No Play Services SDK; degoogled phones
+# never register it because Play Services is absent.
+unifiedpush-embedded-fcm = { module = "org.unifiedpush.android:embedded-fcm-distributor", version.ref = "unifiedpushEmbeddedFcm" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 icu4j = { module = "com.ibm.icu:icu4j", version.ref = "icu4j" }

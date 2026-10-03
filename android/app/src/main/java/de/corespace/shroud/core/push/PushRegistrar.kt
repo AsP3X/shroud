@@ -91,10 +91,9 @@ class PushRegistrar(
     }
 
     override fun distributors(): List<Distributor> =
-        runCatching { directory.distributors() }.getOrDefault(emptyList()).filter { it.packageName != ourPackage }
+        runCatching { directory.distributors() }.getOrDefault(emptyList())
 
     override fun chooseDistributor(packageName: String?) {
-        if (packageName == ourPackage) return
         if (packageName != null && packageName == prefs.distributorChoice &&
             (internal is UnifiedPushState.Registered || internal is UnifiedPushState.Registering)
         ) {
@@ -195,13 +194,21 @@ class PushRegistrar(
         delivering = true
         val installed = distributors()
         val choice = prefs.distributorChoice
+        val embedded = installed.firstOrNull { it.embedded }
         val selected = when {
             installed.isEmpty() -> {
                 internal = UnifiedPushState.Unavailable(NoPushReason.NoDistributorInstalled)
                 publish()
                 return
             }
-            choice == PushSettings.NONE || (choice == null && installed.size > 1) -> {
+            choice == PushSettings.NONE -> {
+                internal = UnifiedPushState.Unavailable(NoPushReason.NoneChosen)
+                publish()
+                return
+            }
+            // Play Services: the embedded distributor, unless the user already picked another.
+            choice == null && embedded != null -> embedded.also { prefs.distributorChoice = it.packageName }
+            choice == null && installed.size > 1 -> {
                 internal = UnifiedPushState.Unavailable(NoPushReason.NoneChosen)
                 publish()
                 return
@@ -213,7 +220,6 @@ class PushRegistrar(
                 return
             }
         }
-        if (selected.packageName == ourPackage) return
         label = selected.label
         internal = UnifiedPushState.Registering(selected.packageName)
         publish()

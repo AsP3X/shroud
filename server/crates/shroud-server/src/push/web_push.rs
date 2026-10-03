@@ -4,11 +4,13 @@
 //! Human: The browser's push service (FCM, Mozilla, Apple, WNS) relays the push; it sees the
 //! endpoint and ciphertext only. The payload is encrypted to the browser's own key, so naming
 //! the sender in it tells the push service nothing. The Android app is reached the same way
-//! through UnifiedPush: a distributor app the user chose (ntfy, Sunup, …) hands it an endpoint
-//! on its push server, and that server relays the same ciphertext.
+//! through UnifiedPush: a distributor hands it an endpoint, and that server relays the same
+//! ciphertext. On a phone with Play Services the embedded FCM distributor's endpoint is
+//! `https://fcm.googleapis.com/fcm/send/…`; Google sees the delivery, not the plaintext.
+//! A distributor the user chose (ntfy, one they run) is a different host.
 //! Agent: ring for ECDH P-256 / HKDF / AES-128-GCM / ES256; endpoints outside the client's host
 //! policy are refused (the server would otherwise POST to any URL a client names): browsers
-//! the push-service allowlist, Android [`android_endpoint`]. Google's hosts are never an
+//! the push-service allowlist, Android [`android_endpoint`]. Other Google hosts are never an
 //! Android endpoint.
 
 use std::collections::HashMap;
@@ -54,10 +56,13 @@ pub const UNIFIEDPUSH_DEFAULT_HOSTS: &[&str] = &[
     "push.services.mozilla.com",
 ];
 
-/// Never an Android endpoint, whatever the configuration says: an "embedded FCM distributor"
-/// would hand the app a Google endpoint, and the Android app is Google-free by decision
-/// (docs/architecture.md, *Notifications*: Web Push endpoints).
+/// Google hosts other than the embedded distributor's Web Push endpoint. Listing them, or
+/// turning on public-host mode, does not make them Android endpoints.
 const REFUSED_ANDROID_HOST_SUFFIXES: &[&str] = &["googleapis.com"];
+
+/// `https://fcm.googleapis.com/fcm/send/<token>`, the endpoint UnifiedPush's embedded FCM
+/// distributor registers when the app sends a VAPID key. The body is still RFC 8291.
+const EMBEDDED_FCM_HOST: &str = "fcm.googleapis.com";
 
 /// Upper bound for the DNS lookup of a public-host-mode distributor.
 const DNS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -561,7 +566,9 @@ pub fn allowed_endpoint(endpoint: &str, extra_hosts: &[String]) -> Option<reqwes
 /// An Android (UnifiedPush) `endpoint` as the HTTP client will contact it, and how, when
 /// `policy` allows it: `https` on the default port, a domain name, no credentials, on
 /// [`UNIFIEDPUSH_DEFAULT_HOSTS`] or `policy.allowed_hosts` — or, in public-host mode, any
-/// public name (its addresses are checked whenever it is resolved). Google's hosts never.
+/// public name (its addresses are checked whenever it is resolved). The embedded FCM
+/// distributor's `fcm.googleapis.com/fcm/send/` endpoint is allowed on its own. Every other
+/// Google host is refused, whatever the settings say.
 ///
 /// Human: Checked on the URL the HTTP client parses, as for browsers (see
 /// [`allowed_endpoint`]). A trailing dot is refused outright: `fcm.googleapis.com.` is Google.
@@ -593,8 +600,14 @@ pub fn android_endpoint(
     }
     // `None` for IPv4 and IPv6 literals, however they were written.
     let host = url.domain()?;
+    if host.ends_with('.') {
+        return None;
+    }
+    if embedded_fcm_endpoint(&url) {
+        return Some((url, EndpointRoute::Listed));
+    }
     let under = |suffix: &str| host == suffix || host.ends_with(&format!(".{suffix}"));
-    if host.ends_with('.') || REFUSED_ANDROID_HOST_SUFFIXES.iter().any(|s| under(s)) {
+    if REFUSED_ANDROID_HOST_SUFFIXES.iter().any(|s| under(s)) {
         return None;
     }
     if UNIFIEDPUSH_DEFAULT_HOSTS.iter().any(|s| under(s))
@@ -606,6 +619,17 @@ pub fn android_endpoint(
         && crate::link_relay::normalized_host(host).is_ok_and(|name| name == host)
         && crate::link_relay::is_public_name(host);
     public.then_some((url, EndpointRoute::PublicHost))
+}
+
+/// The embedded distributor's Web Push URL: exact host, one path segment after `/fcm/send/`.
+fn embedded_fcm_endpoint(url: &reqwest::Url) -> bool {
+    if url.domain() != Some(EMBEDDED_FCM_HOST) {
+        return false;
+    }
+    let Some(token) = url.path().strip_prefix("/fcm/send/") else {
+        return false;
+    };
+    !token.is_empty() && !token.contains('/')
 }
 
 /// Resolves public-host-mode distributor names: every address must be globally routable, and
@@ -1076,21 +1100,44 @@ mod tests {
     }
 
     #[test]
-    fn google_is_never_an_android_endpoint() {
+    fn the_embedded_fcm_endpoint_is_an_android_endpoint() {
+        for policy in [UnifiedPushPolicy::default(), open_policy()] {
+            assert_eq!(
+                android_route("https://fcm.googleapis.com/fcm/send/abc", &policy),
+                Some(EndpointRoute::Listed)
+            );
+            assert_eq!(
+                android_route("https://FCM.GoogleAPIs.com/fcm/send/abc", &policy),
+                Some(EndpointRoute::Listed)
+            );
+        }
+        let (url, _) = android_endpoint(
+            "https://fcm.googleapis.com/fcm/send/abc?x=1",
+            &UnifiedPushPolicy::default(),
+        )
+        .expect("query is not the token");
+        assert_eq!(url.path(), "/fcm/send/abc");
+    }
+
+    #[test]
+    fn other_google_hosts_are_never_an_android_endpoint() {
         for google in [
-            "https://fcm.googleapis.com/fcm/send/abc",
+            "https://fcm.googleapis.com/fcm/send/",
+            "https://fcm.googleapis.com/fcm/send/abc/extra",
+            "https://fcm.googleapis.com/x",
             "https://android.googleapis.com/gcm/send/abc",
             "https://googleapis.com/x",
             "https://FCM.GoogleAPIs.com/x",
+            "https://evil.fcm.googleapis.com/fcm/send/abc",
             "https://fcm%2egoogleapis.com/x",
-            "https://fcm.googleapis.com./x",
+            "https://fcm.googleapis.com./fcm/send/abc",
+            "http://fcm.googleapis.com/fcm/send/abc",
         ] {
             assert_eq!(
                 android_route(google, &UnifiedPushPolicy::default()),
                 None,
                 "{google}"
             );
-            // Not even listed by the operator, nor in public-host mode.
             assert_eq!(android_route(google, &open_policy()), None, "{google}");
         }
         // Browsers keep Chrome's push service.
@@ -1277,7 +1324,8 @@ mod tests {
         assert!(accept("https://ntfy.sh/up1", Android).await);
         assert!(!accept("https://ntfy.sh/up1", Browser).await);
         assert!(accept("https://fcm.googleapis.com/fcm/send/1", Browser).await);
-        assert!(!accept("https://fcm.googleapis.com/fcm/send/1", Android).await);
+        assert!(accept("https://fcm.googleapis.com/fcm/send/1", Android).await);
+        assert!(!accept("https://android.googleapis.com/gcm/send/1", Android).await);
         assert!(accept("https://push.public.example/up1", Android).await);
         assert!(!accept("https://push.private.example/up1", Android).await);
         assert!(!accept("https://push.mixed.example/up1", Android).await);
@@ -1285,10 +1333,10 @@ mod tests {
         assert!(accept("http://localhost:2586/up1", Android).await);
         assert!(!accept("http://localhost:2586/up1", Browser).await);
 
-        // A send checks again: a stored Google endpoint is not contacted for an Android app.
+        // A send checks again: a stored non-Web-Push Google endpoint is not contacted.
         let key = EphemeralPrivateKey::generate(&ECDH_P256, &SystemRandom::new()).unwrap();
         let subscription = WebSubscription {
-            endpoint: "https://fcm.googleapis.com/fcm/send/1".into(),
+            endpoint: "https://android.googleapis.com/gcm/send/1".into(),
             p256dh: key.compute_public_key().unwrap().as_ref().to_vec(),
             auth: vec![1; 16],
             client: Android,

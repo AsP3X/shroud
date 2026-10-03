@@ -1689,11 +1689,13 @@ passes the distributor policy instead of the browser list:
 - `https` on port 443, a domain name, no credentials, on `ntfy.sh`, `up.conversations.im` or
   `push.services.mozilla.com` (Mozilla autopush, which Sunup uses), or a host suffix in
   `UNIFIEDPUSH_ALLOWED_HOSTS` (an operator's own ntfy);
+- `https://fcm.googleapis.com/fcm/send/<token>`, the embedded FCM distributor's Web Push
+  endpoint (the body is still RFC 8291; Google sees the delivery, not the message);
 - with `UNIFIEDPUSH_PUBLIC_HOSTS=true`, any public name whose **every** resolved address is
   globally routable — checked at subscription and again at every send, and the push connects
   only to the addresses checked (the check is that HTTP client's resolver; it uses no proxy);
-- **never Google** (`*.googleapis.com`, whatever the settings say): an "embedded FCM
-  distributor" would route the phone's pushes through Google;
+- **never any other Google host** (`android.googleapis.com`, `googleapis.com`, a subdomain of
+  `fcm.googleapis.com`), whatever the settings say;
 - `UNIFIEDPUSH_ALLOW_LOCAL_HTTP=true` (end-to-end tests only, logged as a warning at start,
   never in the compose files) also accepts `http://` to loopback (`localhost`, `127.0.0.1`,
   `[::1]`), e.g. a local ntfy reached through `adb reverse`.

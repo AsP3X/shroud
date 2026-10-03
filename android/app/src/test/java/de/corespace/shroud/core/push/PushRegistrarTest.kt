@@ -135,10 +135,49 @@ class PushRegistrarTest {
     }
 
     @Test
-    fun choosingOurOwnPackageDoesNothing() {
+    fun aPackageThatIsNotInstalledDoesNotRegister() {
         reg.chooseDistributor(OUR_PACKAGE)
+        assertEquals(UnifiedPushState.Unavailable(NoPushReason.DistributorFailed), reg.delivery.value.unifiedPush)
         assertTrue(broadcasts.registers.isEmpty())
-        assertNull(prefs.distributorChoice)
+    }
+
+    @Test
+    fun playServicesDefaultsToTheEmbeddedDistributorWhenAnotherIsInstalled() {
+        val embedded = Distributor(OUR_PACKAGE, "Google Play", embedded = true)
+        val ntfy = Distributor("io.heckel.ntfy", "ntfy")
+        installed.clear()
+        installed += embedded
+        installed += ntfy
+        reg.register()
+        await("embedded register") { broadcasts.registers.isNotEmpty() }
+        assertEquals(OUR_PACKAGE, broadcasts.registers.first().pkg)
+        assertEquals(OUR_PACKAGE, prefs.distributorChoice)
+    }
+
+    @Test
+    fun aChosenDistributorReplacesTheEmbeddedOne() {
+        val embedded = Distributor(OUR_PACKAGE, "Google Play", embedded = true)
+        val ntfy = Distributor("io.heckel.ntfy", "ntfy")
+        installed.clear()
+        installed += embedded
+        installed += ntfy
+        reg.chooseDistributor(ntfy.packageName)
+        await("ntfy register") { broadcasts.registers.isNotEmpty() }
+        assertEquals(ntfy.packageName, broadcasts.registers.first().pkg)
+    }
+
+    @Test
+    fun noneLeavesTheEmbeddedDistributorOff() {
+        installed += Distributor(OUR_PACKAGE, "Google Play", embedded = true)
+        reg.start()
+        await("default embedded") { broadcasts.registers.isNotEmpty() }
+        val sent = broadcasts.registers.size
+        reg.chooseDistributor(null)
+        await("none") {
+            reg.delivery.value.unifiedPush == UnifiedPushState.Unavailable(NoPushReason.NoneChosen)
+        }
+        assertEquals(sent, broadcasts.registers.size)
+        assertEquals(PushSettings.NONE, prefs.distributorChoice)
     }
 
     @Test

@@ -186,16 +186,26 @@ class PushDeliveryCopyTest {
     @Test
     fun theIntroAndBatteryWords() {
         assertEquals(
-            "While Shroud is closed, notifications reach this phone through a UnifiedPush distributor you install, such as ntfy, or through a background connection to your server.",
+            "While Shroud is closed, notifications reach this phone through Google Play when it is available, through a UnifiedPush distributor you install, such as ntfy, or through a background connection to your server.",
             DeliveryCopy.intro("phone"),
         )
         assertEquals("Battery use", DeliveryCopy.BATTERY)
         assertEquals("Unrestricted", DeliveryCopy.BATTERY_UNRESTRICTED)
         assertEquals("Optimized", DeliveryCopy.BATTERY_OPTIMIZED)
-        // No Google, FCM or Apple wording anywhere (decision record 2026-10-01).
-        val all = NoPushReason.entries.map { DeliveryCopy.reason(it, "phone") } + listOf(
-            DeliveryCopy.intro("phone"), DeliveryCopy.BACKGROUND_FOOTER, DeliveryCopy.BATTERY_WARNING, DeliveryCopy.connected("ntfy", "phone"),
+        val play = Distributor("de.corespace.shroud", "Google Play", embedded = true)
+        assertEquals(
+            DeliveryLine(
+                "Connected through Google Play. The notification is encrypted for this phone. Google can see that one was delivered, and its size, and cannot read it.",
+                problem = false,
+            ),
+            DeliveryState(delivery(UnifiedPushState.Registered(play.packageName, play.label)), listOf(play)).distributorFooter("phone"),
         )
-        for (text in all) for (word in listOf("Google", "FCM", "Firebase", "Apple")) assertFalse(text, text.contains(word))
+        // Firebase is not a name we show. The reason sentences stay free of Google: that path is the embedded distributor's own line.
+        val quiet = NoPushReason.entries.map { DeliveryCopy.reason(it, "phone") } + listOf(
+            DeliveryCopy.BACKGROUND_FOOTER, DeliveryCopy.BATTERY_WARNING, DeliveryCopy.connected("ntfy", "phone"),
+        )
+        for (text in quiet) for (word in listOf("Google", "FCM", "Firebase", "Apple")) assertFalse(text, text.contains(word))
+        assertFalse(DeliveryCopy.intro("phone").contains("Firebase"))
+        assertFalse(DeliveryCopy.connected("Google Play", "phone", embedded = true).contains("Firebase"))
     }
 }

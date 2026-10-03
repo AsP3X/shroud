@@ -13,8 +13,8 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * The words of the Delivery section and screen (plan §2.4 W3-PUSH "Delivery UI copy"; K6's copy
  * split: these are the UI's, mapped from [NoPushReason]; core keeps the notification texts and the
- * test row's `PushDeliveryHooks.noDeliveryReason` sentence). No Apple, Google or FCM wording
- * (decision record 2026-10-01). [noun] is "phone" or "tablet" (`DeviceNoun.current`).
+ * test row's `PushDeliveryHooks.noDeliveryReason` sentence). [noun] is "phone" or "tablet"
+ * (`DeviceNoun.current`). Google Play is the embedded distributor's name; the message stays encrypted.
  *
  * Every reason sentence is the one the notification test shows for the same state (core
  * `PushCopy`), so the Delivery section and the test row never disagree; "this phone" follows the
@@ -53,11 +53,15 @@ object DeliveryCopy {
 
     /** The line under the screen's title. */
     fun intro(noun: String): String =
-        "While Shroud is closed, notifications reach this $noun through a UnifiedPush distributor you install, such as ntfy, or through a background connection to your server."
+        "While Shroud is closed, notifications reach this $noun through Google Play when it is available, through a UnifiedPush distributor you install, such as ntfy, or through a background connection to your server."
 
-    /** Under the distributor while it delivers. */
-    fun connected(label: String, noun: String): String =
-        "Connected through $label. Each push is encrypted for this $noun, so $label can’t read it."
+    /** Under the distributor while it delivers. [embedded] is Google Play: it sees delivery, not the message. */
+    fun connected(label: String, noun: String, embedded: Boolean = false): String =
+        if (embedded) {
+            "Connected through Google Play. The notification is encrypted for this $noun. Google can see that one was delivered, and its size, and cannot read it."
+        } else {
+            "Connected through $label. Each push is encrypted for this $noun, so $label can’t read it."
+        }
 
     /** Under the distributor while it registers. */
     fun connecting(label: String): String = "Connecting to $label…"
@@ -169,6 +173,10 @@ data class DeliveryState(
     private fun summaryLabel(up: UnifiedPushState.Registered): String =
         distributors.firstOrNull { it.packageName == up.distributorPackage }?.label ?: up.distributorLabel
 
+    /** The embedded distributor, when the installed list says so. A same label from another app does not count. */
+    private fun embedded(packageName: String): Boolean =
+        distributors.firstOrNull { it.packageName == packageName }?.embedded == true
+
     /** What the picker offers: every installed distributor, then None. Empty: nothing to choose. */
     val options: List<DistributorChoice>
         get() = if (distributors.isEmpty()) {
@@ -182,7 +190,10 @@ data class DeliveryState(
 
     /** The line under the distributor card. */
     fun distributorFooter(noun: String): DeliveryLine? = when (val up = unifiedPush) {
-        is UnifiedPushState.Registered -> DeliveryLine(DeliveryCopy.connected(summaryLabel(up), noun), problem = false)
+        is UnifiedPushState.Registered -> DeliveryLine(
+            DeliveryCopy.connected(summaryLabel(up), noun, embedded = embedded(up.distributorPackage)),
+            problem = false,
+        )
         is UnifiedPushState.Registering -> DeliveryLine(DeliveryCopy.connecting(labelOf(up.distributorPackage)), problem = false)
         is UnifiedPushState.Unavailable -> DeliveryLine(DeliveryCopy.reason(up.reason, noun), DeliveryCopy.isProblem(up.reason))
         UnifiedPushState.Unknown -> null

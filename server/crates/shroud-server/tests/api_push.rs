@@ -413,23 +413,23 @@ async fn android_endpoints_are_held_to_the_distributor_policy() {
     let (token, device) = sign_up(&app).await;
     let id = Uuid::new_v4().simple().to_string();
 
-    // The built-in UnifiedPush servers: ntfy, Conversations, Mozilla autopush (Sunup).
+    // The built-in UnifiedPush servers, and the embedded FCM distributor's Web Push endpoint.
     for allowed in [
         format!("https://ntfy.sh/up{id}?up=1"),
         format!("https://up.conversations.im/push/{id}"),
         format!("https://updates.push.services.mozilla.com/wpush/v2/{id}"),
+        format!("https://fcm.googleapis.com/fcm/send/{id}"),
     ] {
         let (status, body) = subscribe(&app, &token, &allowed, Some("android")).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "{allowed}: {body}");
         assert_eq!(stored(&state, device).await.unwrap().0, allowed);
     }
 
-    // Google is never an Android endpoint (an "embedded FCM distributor"), nor are other
-    // browser push services, hosts nobody listed, addresses, ports, plain http, or the
-    // backslash trick (the host contacted would be attacker.example).
+    // Other Google hosts stay refused, as do other browser push services, hosts nobody
+    // listed, addresses, ports, plain http, and the backslash trick.
     for refused in [
-        format!("https://fcm.googleapis.com/fcm/send/{id}"),
         format!("https://android.googleapis.com/gcm/send/{id}"),
+        format!("https://fcm.googleapis.com/other/{id}"),
         format!("https://fcm.googleapis.com./fcm/send/{id}"),
         format!("https://web.push.apple.com/{id}"),
         format!("https://push.example.org/up{id}"),
@@ -446,7 +446,7 @@ async fn android_endpoints_are_held_to_the_distributor_policy() {
     // A refusal leaves the last accepted endpoint in place.
     assert_eq!(
         stored(&state, device).await.unwrap().0,
-        format!("https://updates.push.services.mozilla.com/wpush/v2/{id}")
+        format!("https://fcm.googleapis.com/fcm/send/{id}")
     );
 
     // Browsers keep their own list: Chrome's push service yes, a distributor no.
@@ -502,7 +502,8 @@ async fn an_operator_adds_its_own_distributor() {
         let outcome = subscribe(&app, &token, refused, Some("android")).await;
         assert_refused_distributor(refused, &outcome);
     }
-    // Listing a Google host does not make it one.
+    // Listing a Google host does not open the rest of Google. The embedded Web Push URL is
+    // allowed on its own; the legacy GCM host is not.
     let google = HashMap::from([("UNIFIEDPUSH_ALLOWED_HOSTS", "googleapis.com")]);
     let policy = shroud_server::config::unifiedpush_policy(&|name| {
         google.get(name).map(|value| (*value).to_string())
@@ -513,7 +514,7 @@ async fn an_operator_adds_its_own_distributor() {
     let outcome = subscribe(
         &app,
         &token,
-        "https://fcm.googleapis.com/fcm/send/x",
+        "https://android.googleapis.com/gcm/send/x",
         Some("android"),
     )
     .await;
@@ -589,8 +590,8 @@ async fn public_host_mode_takes_only_names_whose_every_address_is_public() {
         "http://push.selfhosted.example/up1",
         // The host checked is the host contacted: here attacker.example, a metadata address.
         "https://attacker.example\\.push.selfhosted.example/up1",
-        // Google stays out in this mode too.
-        "https://fcm.googleapis.com/fcm/send/x",
+        // Other Google hosts stay out in this mode too.
+        "https://android.googleapis.com/gcm/send/x",
     ] {
         let outcome = subscribe(&app, &token, refused, Some("android")).await;
         assert_refused_distributor(refused, &outcome);

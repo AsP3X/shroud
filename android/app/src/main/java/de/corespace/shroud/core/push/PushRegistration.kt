@@ -4,10 +4,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /*
- * How notifications reach this phone while Shroud is closed (decision record 2026-10-01: never
- * Google code; plan §1.7.10). Two independent paths — a UnifiedPush distributor the user installed
- * (RFC 8030 Web Push + RFC 8291, decrypted on the phone) and the opt-in background connection (a
- * foreground service keeping the socket) — either, both or neither may be active. No FCM state exists.
+ * How notifications reach this phone while Shroud is closed (plan §1.7.10). UnifiedPush carries
+ * RFC 8030 Web Push + RFC 8291 ciphertext, decrypted on the phone. On a phone with Play Services
+ * the embedded FCM distributor is the default handoff: Google sees that a push arrived and its
+ * size, not the message. A distributor the user installs (ntfy, one they run) replaces it,
+ * including on that phone. With neither, the opt-in background connection keeps the socket and
+ * shows its permanent notification. No Play Services SDK is linked.
  *
  * **Seam (W2-INT), owner W3-PUSH** (`PushRegistrar` + `BackgroundConnectionController` implement
  * [PushRegistration]; `PushModule.registration` exposes it).
@@ -40,8 +42,18 @@ enum class NoPushReason {
     NotificationsOff,
 }
 
-/** An installed app answering `org.unifiedpush.android.distributor.REGISTER`. */
-data class Distributor(val packageName: String, val label: String)
+/**
+ * The embedded FCM distributor (UnifiedPush's library, in this package). It is offered only
+ * when Play Services is installed. Its endpoint is `https://fcm.googleapis.com/fcm/send/…`.
+ */
+object EmbeddedFcm {
+    const val RECEIVER = "org.unifiedpush.android.embedded_fcm_distributor.impl.UnifiedPushReceiver"
+    const val LABEL = "Google Play"
+    const val PLAY_SERVICES = "com.google.android.gms"
+}
+
+/** An app answering `org.unifiedpush.android.distributor.REGISTER`. [embedded] is [EmbeddedFcm]. */
+data class Distributor(val packageName: String, val label: String, val embedded: Boolean = false)
 
 /**
  * Both delivery paths at once.

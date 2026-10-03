@@ -232,17 +232,22 @@ were byte-identical, including the signing block. No zip entry had to be exclude
 
 ## Choosing a distributor
 
-Nothing arrives while Shroud is closed unless one of these is on. There is no FCM path.
+Nothing arrives while Shroud is closed unless one of these is on.
 
-- **UnifiedPush.** The user installs a distributor. ntfy is one; it can point at a public server
-  or one they host. On sign-in, if exactly one distributor is installed and none was chosen, the
-  app registers that one (`PushRegistrar`). If several are installed, it does not guess
-  (`NoPushReason.NoneChosen`) until `chooseDistributor` is called. The server accepts the
-  subscription only for allowed distributor hosts, and never for Google's push hosts.
+- **Google Play, when it is installed.** UnifiedPush's embedded FCM distributor (no Play
+  Services SDK) is the default. The server POSTs RFC 8291 ciphertext to
+  `https://fcm.googleapis.com/fcm/send/…`. Google sees that this install got a push and how big
+  it was, not the message. There is no permanent notification.
+- **A distributor the user installs.** ntfy is one; it can point at a public server or one they
+  host. It is listed on the Delivery screen on every phone, including one with Play Services,
+  and choosing it replaces the embedded distributor. With no Play Services and exactly one
+  distributor, the app registers that one. With several and no embedded distributor, it waits
+  (`NoPushReason.NoneChosen`) until `chooseDistributor` is called. The server still refuses
+  Google hosts other than the embedded Web Push endpoint.
 - **Background connection.** Off unless turned on (`shroud.push`, default false). It starts a
   `specialUse` foreground service, keeps the WebSocket open with `background: true`, and shows
   "Connected to receive messages". Contacts are not shown this phone as online because of that
-  socket.
+  socket. This is the fallback when neither distributor is available.
 
 With neither, `PushCopy` says the phone has no way to receive notifications while Shroud is
 closed. The Settings › Delivery screen that would list distributors is still an empty composable,

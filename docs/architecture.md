@@ -254,20 +254,22 @@ content to send.
   the markers tell the server when a chat was read, never what it says.
 - **Web Push endpoints** must be https on a known push service (`WEB_PUSH_ALLOWED_HOSTS` adds
   more), so a subscription cannot aim the server's requests at an arbitrary address. The
-  Android app's endpoints (`client: "android"`, from the UnifiedPush distributor its user
-  installed) pass their own policy instead: https on port 443 on a built-in UnifiedPush server
-  (`ntfy.sh`, `up.conversations.im`, Mozilla's autopush) or one the operator lists
-  (`UNIFIEDPUSH_ALLOWED_HOSTS`); with `UNIFIEDPUSH_PUBLIC_HOSTS=true` any public name whose every
-  address is globally routable, the push connecting only to the addresses checked. Google's push
-  hosts are never accepted for Android, whatever is configured: the app is Google-free, and an
-  "embedded FCM distributor" would route its pushes through Google.
-- **Android** has no FCM client and no separate push-name key. A UnifiedPush distributor the user
-  installed receives RFC 8291 ciphertext (`PUT /push/web/subscription`, `client: "android"`); the
-  phone decrypts it. Separately, an opt-in background connection (default off) is a `specialUse`
-  foreground service that keeps the WebSocket open with `background: true`, so contacts do not see
-  the phone as online. Either path can deliver while the app is closed. With neither, nothing
-  arrives until the app is open. If exactly one distributor is installed, the app registers it; if
-  several are, it waits until one is chosen.
+  Android app's endpoints (`client: "android"`, from the UnifiedPush distributor) pass their own
+  policy instead: https on port 443 on a built-in UnifiedPush server (`ntfy.sh`,
+  `up.conversations.im`, Mozilla's autopush), the embedded FCM distributor's
+  `fcm.googleapis.com/fcm/send/` endpoint, or one the operator lists (`UNIFIEDPUSH_ALLOWED_HOSTS`);
+  with `UNIFIEDPUSH_PUBLIC_HOSTS=true` any public name whose every address is globally routable,
+  the push connecting only to the addresses checked. Other Google hosts are never accepted.
+- **Android** links no Play Services SDK. The payload is RFC 8291 ciphertext
+  (`PUT /push/web/subscription`, `client: "android"`); the phone decrypts it. On a phone with
+  Play Services the embedded FCM distributor is the default: Google sees that a push was
+  delivered and its size, not the message, and there is no permanent notification. A distributor
+  the user installs (ntfy, or one they run) replaces it, including on that phone. With neither,
+  an opt-in background connection (default off) is a `specialUse` foreground service that keeps
+  the WebSocket open with `background: true` and shows a permanent notification, so contacts do
+  not see the phone as online. With none of the three, nothing arrives until the app is open.
+  If Play Services is absent and exactly one distributor is installed, the app registers it; if
+  several are and none is the embedded distributor, it waits until one is chosen.
 - **Sounds** are generated (`scripts/gen_notification_sounds.py`) and shared by both apps.
 
 ## Security invariants
