@@ -66,6 +66,10 @@ pub fn router() -> Router<AppState> {
             .route("/keys/otpk", post(keys::post_otpk))
             .route("/users/by-code/{code}", get(users::get_user_by_share_code))
             .route("/users/me/share-code", post(users::rotate_share_code))
+            .route(
+                "/users/me/contact-names",
+                get(users::get_contact_names).put(users::put_contact_names),
+            )
             .route("/users/{user_id}", get(users::get_user))
             .route("/contacts/requests", post(contacts::create_request))
             .route("/contacts/requests", get(contacts::list_requests))

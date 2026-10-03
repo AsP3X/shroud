@@ -222,7 +222,9 @@ class SessionControllerTest {
         val c = controller()
         val s = c.register("  Noah ", "pw")
         val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
-        assertEquals("\"noah\"", body["username"].toString())
+        // Only the hash of the case-folded name leaves the phone.
+        assertEquals("\"${UsernameHash.digest("noah")}\"", body["username_hash"].toString())
+        assertEquals(null, body["username"])
         // Stored lower-case (the wire form), read back as UUIDs.
         assertEquals(USER_ID.lowercase(), s.userId)
         assertEquals(DEVICE_ID.lowercase(), s.deviceId)

@@ -110,6 +110,20 @@ class ShroudApi(internal val client: ApiClient) {
     suspend fun user(token: String, userId: UUID): UserCardDto =
         client.get("users/${Ids.wire(userId)}", token, UserCardDto.serializer())
 
+    /** `GET /users/me/contact-names`: the account's sealed name book (`ContactNameBookSeal`). */
+    suspend fun contactNames(token: String): ContactNamesDto =
+        client.get("users/me/contact-names", token, ContactNamesDto.serializer())
+
+    /** `PUT /users/me/contact-names`: 409 `VERSION_CONFLICT` when another device wrote since [version]. */
+    suspend fun putContactNames(token: String, sealed: String, version: Long): ContactNamesDto =
+        client.put(
+            "users/me/contact-names",
+            token,
+            PutContactNamesRequest(sealed, version),
+            PutContactNamesRequest.serializer(),
+            ContactNamesDto.serializer(),
+        )
+
     /** `PUT /contacts/{id}/sealed-name` → 204. The body is an opaque sealed box. */
     suspend fun putContactName(token: String, userId: UUID, sealed: String) =
         client.putUnit(

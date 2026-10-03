@@ -477,3 +477,93 @@ async fn block_removes_contact_and_blocks_request() {
         .expect("response");
     assert_eq!(request_after.status(), StatusCode::FORBIDDEN);
 }
+
+async fn contact_names_call(
+    app: &axum::Router,
+    method: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method(method)
+        .uri("/api/v1/users/me/contact-names")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let body = match body {
+        Some(body) => {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+            Body::from(body.to_string())
+        }
+        None => Body::empty(),
+    };
+    let response = app
+        .clone()
+        .oneshot(request.body(body).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    (status, json_body(response).await)
+}
+
+#[tokio::test]
+async fn the_contact_name_book_is_one_blob_per_account_and_never_overwritten_blindly() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping the_contact_name_book_is_one_blob_per_account: no DATABASE_URL");
+        return;
+    };
+    let (token_a, _) = register(&app).await;
+    let (token_b, _) = register(&app).await;
+
+    let (status, empty) = contact_names_call(&app, "GET", &token_a, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty["version"], 0);
+    assert!(empty.get("sealed").is_none());
+
+    let (status, first) = contact_names_call(
+        &app,
+        "PUT",
+        &token_a,
+        Some(json!({ "sealed": "box-1", "version": 0 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["version"], 1);
+
+    // A second device that read version 0 must not replace the first device's book.
+    let (status, stale) = contact_names_call(
+        &app,
+        "PUT",
+        &token_a,
+        Some(json!({ "sealed": "box-x", "version": 0 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(stale["error"]["code"], "VERSION_CONFLICT");
+
+    let (status, second) = contact_names_call(
+        &app,
+        "PUT",
+        &token_a,
+        Some(json!({ "sealed": "box-2", "version": 1 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["version"], 2);
+
+    let (_, read) = contact_names_call(&app, "GET", &token_a, None).await;
+    assert_eq!(read["sealed"], "box-2");
+    assert_eq!(read["version"], 2);
+
+    // Another account sees only its own (empty) book.
+    let (_, other) = contact_names_call(&app, "GET", &token_b, None).await;
+    assert_eq!(other["version"], 0);
+    assert!(other.get("sealed").is_none());
+
+    let (status, _) = contact_names_call(
+        &app,
+        "PUT",
+        &token_a,
+        Some(json!({ "sealed": " ", "version": 2 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

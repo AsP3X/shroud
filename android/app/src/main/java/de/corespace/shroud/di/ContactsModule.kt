@@ -54,6 +54,9 @@ class ContactsModule(container: AppContainer) : AppModule(container) {
                 keys = { container.keys.cryptoController.withMaterial { it.agreementKeys() } },
                 peerKey = { peerIdentityController.publicKeyForSending(it) },
                 publish = { token, peer, sealed -> container.net.api.putContactName(token, peer, sealed) },
+                historyKey = { container.keys.cryptoController.withMaterial { it.historyKey.copyOf() } },
+                fetchBook = { token -> container.net.api.contactNames(token) },
+                storeBook = { token, sealed, version -> container.net.api.putContactNames(token, sealed, version) },
             ),
         )
     }

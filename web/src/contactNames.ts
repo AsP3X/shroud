@@ -1,6 +1,7 @@
-import { api } from "./api/client";
+import { ApiError, api } from "./api/client";
 import type { Contact } from "./api/client";
 import { bytesToB64, utf8, utf8decode } from "./crypto/bytes";
+import { openContactBook, sealContactBook } from "./crypto/contactBook";
 import type { IdentityMaterial } from "./crypto/identity";
 import { peerIdentityForSending } from "./crypto/peerIdentity";
 import { openBox, sealBox, type SealedBox } from "./crypto/sealedBox";
@@ -123,9 +124,43 @@ export async function openContactName(
 }
 
 /**
- * Opens every contact's seal and publishes this account's name, sealed to each of them.
- * People who have not added each other never receive it. The server stores the box and
- * cannot read it.
+ * Merges the book the account's other devices share with this browser's names, and writes the
+ * union back when this browser knows names the book lacks. A write another device beat is read
+ * again and merged once more, so no device's names are lost.
+ */
+async function syncNameBook(
+  token: string,
+  ownerId: string,
+  historyKey: Uint8Array,
+  contactIds: Set<string>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const remote = await api.getContactNames(token);
+    const remoteNames = openContactBook(historyKey, ownerId, remote.sealed) ?? {};
+    for (const [id, name] of Object.entries(remoteNames)) {
+      if (contactIds.has(id) && !contactName(ownerId, id)) rememberContactName(ownerId, id, name);
+    }
+    const merged: Record<string, string> = {};
+    for (const [id, name] of Object.entries({ ...remoteNames, ...readMap(bookKey(ownerId)) })) {
+      if (contactIds.has(id)) merged[id] = name;
+    }
+    const same =
+      Object.keys(merged).length === Object.keys(remoteNames).length &&
+      Object.entries(merged).every(([id, name]) => remoteNames[id] === name);
+    if (same) return;
+    try {
+      await api.putContactNames(token, sealContactBook(historyKey, ownerId, merged), remote.version);
+      return;
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "VERSION_CONFLICT") throw err;
+    }
+  }
+}
+
+/**
+ * Opens every contact's seal, merges the account's shared name book, and publishes this
+ * account's name, sealed to each contact. People who have not added each other never receive
+ * it. The server stores the boxes and the book and cannot read either.
  */
 export async function syncContactNames(
   token: string,
@@ -135,7 +170,8 @@ export async function syncContactNames(
   material: IdentityMaterial | null,
 ): Promise<Contact[]> {
   retainContactNames(ownerId, contacts.map((contact) => contact.user_id));
-  if (material && NAME_RE.test(username)) {
+  if (material) {
+    const canPublish = NAME_RE.test(username);
     const published = readMap(publishedKey(ownerId));
     let publishedChanged = false;
     for (const contact of contacts) {
@@ -151,6 +187,7 @@ export async function syncContactNames(
           );
           if (opened) rememberContactName(ownerId, id, opened);
         }
+        if (!canPublish) continue;
         const fingerprint = usernameHashB64(username + "." + bytesToB64(theirPublic));
         if (published[id] === fingerprint) continue;
         const box = await sealBox(utf8(username), material.agreementPrivate, material.agreementPublic, theirPublic);
@@ -162,6 +199,16 @@ export async function syncContactNames(
       }
     }
     if (publishedChanged) writeMap(publishedKey(ownerId), published);
+    try {
+      await syncNameBook(
+        token,
+        ownerId,
+        material.historyKey,
+        new Set(contacts.map((contact) => contact.user_id.toLowerCase())),
+      );
+    } catch {
+      /* offline, or the server is older: the names this browser opened still show */
+    }
   }
   return contacts.map((contact) => ({
     ...contact,

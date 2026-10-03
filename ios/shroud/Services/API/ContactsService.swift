@@ -68,6 +68,27 @@ struct ContactsService: Sendable {
         )
     }
 
+    struct ContactNamesDTO: Decodable, Sendable {
+        let sealed: String?
+        let version: Int64
+    }
+
+    /// The account's sealed contact-name book (`ContactNameBook`); version 0 = none yet.
+    func getContactNames(token: String) async throws -> ContactNamesDTO {
+        try await client.get("users/me/contact-names", as: ContactNamesDTO.self, bearerToken: token)
+    }
+
+    /// Fails with 409 `VERSION_CONFLICT` when another device wrote since `version`.
+    func putContactNames(sealed: String, version: Int64, token: String) async throws -> ContactNamesDTO {
+        struct Body: Encodable { let sealed: String; let version: Int64 }
+        return try await client.put(
+            "users/me/contact-names",
+            body: Body(sealed: sealed, version: version),
+            as: ContactNamesDTO.self,
+            bearerToken: token
+        )
+    }
+
     /// This account's username, sealed to a mutual contact. The server cannot read it.
     func putSealedName(userID: UUID, sealed: String, token: String) async throws {
         struct Body: Encodable { let sealed: String }

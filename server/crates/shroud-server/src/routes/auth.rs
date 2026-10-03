@@ -551,6 +551,7 @@ pub async fn delete_account(
         ("conversation_reads", "user_id = $1"),
         ("chat_mutes", "user_id = $1 OR peer_user_id = $1"),
         ("contact_sealed_names", "owner_id = $1 OR peer_id = $1"),
+        ("contact_name_books", "user_id = $1"),
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE {filter}"))
             .bind(user_id)

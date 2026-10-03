@@ -420,6 +420,16 @@ export const api = {
     return request<UserCard>(`/users/by-code/${encodeURIComponent(invite.value)}`, { token });
   },
   /** This account's username, sealed to a mutual contact. The server cannot read it. */
+  /** The account's sealed contact-name book (`crypto/contactBook.ts`); version 0 = none yet. */
+  getContactNames: (token: string) =>
+    request<{ sealed?: string | null; version: number }>("/users/me/contact-names", { token }),
+  /** Fails with 409 `VERSION_CONFLICT` when another device wrote since `version`. */
+  putContactNames: (token: string, sealed: string, version: number) =>
+    request<{ version: number }>("/users/me/contact-names", {
+      method: "PUT",
+      token,
+      body: JSON.stringify({ sealed, version }),
+    }),
   putContactName: (token: string, userId: string, sealed: string) =>
     request<void>(`/contacts/${encodeURIComponent(userId.toLowerCase())}/sealed-name`, {
       method: "PUT",

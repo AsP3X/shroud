@@ -21,6 +21,11 @@ enum ContactNames {
         return known
     }
 
+    /// Every name this device has, by lowercase peer id (for the shared `ContactNameBook`).
+    static func all(owner: UUID) -> [String: String] {
+        map(key(owner)).filter { isUsername($0.value) }
+    }
+
     static func remember(_ name: String, peer: UUID, owner: UUID) {
         guard isUsername(name) else { return }
         var book = map(key(owner))

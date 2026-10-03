@@ -748,7 +748,8 @@ class DtoDecodingTest {
             // Users, contacts, blocks
             UserCardDto.serializer(), ContactRequestDto.serializer(), ContactRequestsResponse.serializer(),
             ContactItemDto.serializer(), ContactsResponse.serializer(), UserIdBody.serializer(),
-            PutContactNameRequest.serializer(), ShareCodeResponse.serializer(),
+            PutContactNameRequest.serializer(), ContactNamesDto.serializer(), PutContactNamesRequest.serializer(),
+            ShareCodeResponse.serializer(),
             BlockItemDto.serializer(), BlocksResponse.serializer(),
             // Messages, conversations, reactions
             SendMessageRequest.serializer(), MessageDto.serializer(), ListMessagesResponse.serializer(),

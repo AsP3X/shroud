@@ -68,6 +68,13 @@ data class ContactsResponse(val contacts: List<ContactItemDto>)
 @Serializable
 data class UserIdBody(@SerialName("user_id") val userId: UUID)
 
+/** `GET`/`PUT /users/me/contact-names`: the account's sealed name book; version 0 = none yet. */
+@Serializable
+data class ContactNamesDto(val sealed: String? = null, val version: Long = 0)
+
+@Serializable
+data class PutContactNamesRequest(val sealed: String, val version: Long)
+
 /** `PUT /contacts/{id}/sealed-name`. Opaque to the server. */
 @Serializable
 data class PutContactNameRequest(val sealed: String)

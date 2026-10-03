@@ -5887,6 +5887,33 @@ extension MessagingController {
         NotificationsController.shared.setBadge(unreadTotal(includeMuted: preferences.badgeIncludesMuted))
     }
 
+    /// Merges the book the account's devices share with this phone's names, and writes the union
+    /// back when this phone knows names the book lacks. A write another device beat is read again
+    /// and merged once more, so no device's names are lost. Offline, the names here still show.
+    private func syncContactNameBook(owner: UUID, historyKey: SymmetricKey, contactIDs: Set<String>, token: String) async {
+        for _ in 0 ..< 3 {
+            do {
+                let remote = try await contactsService.getContactNames(token: token)
+                let remoteNames = ContactNameBook.open(remote.sealed, owner: owner, historyKey: historyKey) ?? [:]
+                for (id, name) in remoteNames where contactIDs.contains(id) {
+                    if let peer = UUID(uuidString: id), ContactNames.name(peer: peer, owner: owner) == nil {
+                        ContactNames.remember(name, peer: peer, owner: owner)
+                    }
+                }
+                let merged = remoteNames.merging(ContactNames.all(owner: owner)) { _, local in local }
+                    .filter { contactIDs.contains($0.key) }
+                if merged == remoteNames { return }
+                let sealed = try ContactNameBook.seal(merged, owner: owner, historyKey: historyKey)
+                _ = try await contactsService.putContactNames(sealed: sealed, version: remote.version, token: token)
+                return
+            } catch let APIError.server(code, _, _) where code == "VERSION_CONFLICT" {
+                continue
+            } catch {
+                return
+            }
+        }
+    }
+
     /// Opens the seals contacts made for us and publishes our name, sealed to each of them.
     private func applyContactNames(_ contacts: [ContactItemDTO]) async -> [ContactItemDTO] {
         guard let owner = sessionController?.userID else { return contacts }
@@ -5896,8 +5923,8 @@ extension MessagingController {
         }
         ContactNames.retain(peers: contacts.map(\.userId), owner: owner)
         if let token = sessionController?.bearerToken,
-           let username = sessionController?.username,
            let material = cryptoController?.material {
+            let username = sessionController?.username
             for contact in contacts {
                 let peer = contact.userId
                 do {
@@ -5911,6 +5938,7 @@ extension MessagingController {
                        ) {
                         ContactNames.remember(opened, peer: peer, owner: owner)
                     }
+                    guard let username else { continue }
                     let fingerprint = UsernameHash.digest(username + "." + theirPublic.base64EncodedString())
                     if ContactNames.publishedFingerprint(peer: peer, owner: owner) == fingerprint { continue }
                     let sealed = try MessageCrypto.sealContactName(
@@ -5925,6 +5953,12 @@ extension MessagingController {
                     // No key yet, or a key change waiting to be trusted.
                 }
             }
+            await syncContactNameBook(
+                owner: owner,
+                historyKey: material.historyKey,
+                contactIDs: Set(contacts.map { $0.userId.uuidString.lowercased() }),
+                token: token
+            )
         }
         let named = contacts.map { contact in
             ContactItemDTO(

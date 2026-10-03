@@ -81,6 +81,11 @@ files still show that switch until a design pass.
     `ios/shroud/Services/Contacts/ContactNames.swift`, `android/.../core/contacts/ContactNames.kt`.
   - Done when: a browser signed in fresh shows every name the account's phone knows, including
     contacts on old builds; a DB dump shows only ciphertext.
+  - Built 2026-10-04, not yet verified end to end: migration 030 (`contact_name_books`, one blob
+    per account, compare-and-swap `version`), `GET/PUT /users/me/contact-names`; web
+    `crypto/contactBook.ts`, iOS `ContactNameBook`, Android `ContactNameBookSeal`, all pinned to
+    one digest. Opening contacts' seals no longer needs this device's own username. Needs the
+    server deployed and an updated phone app opened once.
 
 ---
 

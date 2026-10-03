@@ -1,9 +1,12 @@
 package de.corespace.shroud.core.contacts
 
 import android.content.SharedPreferences
+import de.corespace.shroud.core.crypto.ContactNameBookSeal
 import de.corespace.shroud.core.crypto.ContactNameSeal
 import de.corespace.shroud.core.crypto.IdentityKeyMaterial
+import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ContactItemDto
+import de.corespace.shroud.core.net.ContactNamesDto
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.Base64
@@ -27,6 +30,12 @@ class ContactNameBook(private val prefs: SharedPreferences) {
         val map = read(bookKey(owner))
         map.put(peer.toString(), name)
         write(bookKey(owner), map)
+    }
+
+    /** Every name this phone has, by lowercase peer id (for the shared [ContactNameBookSeal]). */
+    fun all(owner: UUID): Map<String, String> {
+        val map = read(bookKey(owner))
+        return map.keys().asSequence().associateWith { map.optString(it, "") }.filterValues { NAME.matches(it) }
     }
 
     fun retain(owner: UUID, peers: Collection<UUID>) {
@@ -103,6 +112,10 @@ class MutualContactNames(
     private val keys: () -> Pair<ByteArray, ByteArray>?,
     private val peerKey: suspend (UUID) -> ByteArray,
     private val publish: suspend (String, UUID, String) -> Unit,
+    /** A copy of the history key while chats are unlocked; the caller's copy is wiped here. */
+    private val historyKey: () -> ByteArray? = { null },
+    private val fetchBook: suspend (String) -> ContactNamesDto = { ContactNamesDto() },
+    private val storeBook: suspend (String, String, Long) -> Unit = { _, _, _ -> },
 ) : ContactNameExchange() {
     override suspend fun apply(
         token: String,
@@ -117,9 +130,9 @@ class MutualContactNames(
             }
         }
         book.retain(me, still)
-        val name = username()
-        val material = if (name != null && NAME.matches(name)) keys() else null
-        if (material != null && name != null) {
+        val name = username()?.takeIf { NAME.matches(it) }
+        val material = keys()
+        if (material != null) {
             val (privateKey, publicKey) = material
             try {
                 for (contact in contacts) {
@@ -130,6 +143,7 @@ class MutualContactNames(
                                 book.remember(me, contact.userId, it)
                             }
                         }
+                        if (name == null) continue
                         val fingerprint = fingerprint(name, theirPublic)
                         if (book.published(me, contact.userId) == fingerprint) continue
                         val sealed = ContactNameSeal.seal(name, privateKey, publicKey, theirPublic)
@@ -142,9 +156,46 @@ class MutualContactNames(
             } finally {
                 privateKey.fill(0)
             }
+            syncBook(token, me, contacts.map { it.userId.toString() }.toSet())
         }
         return contacts.map { row ->
             row.copy(username = book.name(me, row.userId) ?: CONTACT_PLACEHOLDER)
+        }
+    }
+
+    /**
+     * Merges the book the account's devices share with this phone's names, and writes the union
+     * back when this phone knows names the book lacks. A write another device beat is read again
+     * and merged once more, so no device's names are lost. Offline, the names here still show.
+     */
+    private suspend fun syncBook(token: String, me: UUID, contactIds: Set<String>) {
+        val key = historyKey() ?: return
+        try {
+            repeat(3) {
+                val remote = try {
+                    fetchBook(token)
+                } catch (_: Exception) {
+                    return
+                }
+                val remoteNames = ContactNameBookSeal.open(remote.sealed, me, key) ?: emptyMap()
+                for ((id, known) in remoteNames) {
+                    if (id !in contactIds) continue
+                    val peer = UUID.fromString(id)
+                    if (book.name(me, peer) == null) book.remember(me, peer, known)
+                }
+                val merged = (remoteNames + book.all(me)).filterKeys { it in contactIds }
+                if (merged == remoteNames) return
+                try {
+                    storeBook(token, ContactNameBookSeal.seal(merged, me, key), remote.version)
+                    return
+                } catch (error: ApiError.Server) {
+                    if (error.code != "VERSION_CONFLICT") return
+                } catch (_: Exception) {
+                    return
+                }
+            }
+        } finally {
+            key.fill(0)
         }
     }
 

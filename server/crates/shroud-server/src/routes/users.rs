@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     http::HeaderMap,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -129,4 +129,102 @@ pub async fn get_user_by_share_code(
             .ok_or_else(|| AppError::not_found("User not found."))?;
 
     Ok(Json(row))
+}
+
+/// The account's sealed contact-name book: AES-GCM under a key only its devices hold.
+#[derive(Debug, Serialize)]
+pub struct ContactNamesResponse {
+    /// Absent until a device first stores one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<String>,
+    /// 0 when there is none yet. A `PUT` must name the version it was built on.
+    pub version: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutContactNamesBody {
+    pub sealed: String,
+    pub version: i64,
+}
+
+/// Base64 of a padded book; far more than one account's contacts need.
+const CONTACT_NAMES_MAX: usize = 512 * 1024;
+
+/// `GET /users/me/contact-names` — the book the account's devices share. Opaque here.
+pub async fn get_contact_names(
+    State(state): State<AppState>,
+    auth: AuthContext,
+) -> Result<Json<ContactNamesResponse>, AppError> {
+    let row: Option<(String, i64)> =
+        sqlx::query_as(r#"SELECT sealed, version FROM contact_name_books WHERE user_id = $1"#)
+            .bind(auth.user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("load contact names failed: {err}")))?;
+    Ok(Json(match row {
+        Some((sealed, version)) => ContactNamesResponse {
+            sealed: Some(sealed),
+            version,
+        },
+        None => ContactNamesResponse {
+            sealed: None,
+            version: 0,
+        },
+    }))
+}
+
+/// `PUT /users/me/contact-names` — replaces the book if nobody wrote since `version`.
+///
+/// Another device's write in between answers 409 `VERSION_CONFLICT`: the device reads the
+/// newer book, merges, and tries again, so neither device's names are lost.
+pub async fn put_contact_names(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<PutContactNamesBody>,
+) -> Result<Json<ContactNamesResponse>, AppError> {
+    let sealed = body.sealed.trim();
+    if sealed.is_empty() || sealed.len() > CONTACT_NAMES_MAX {
+        return Err(AppError::validation(
+            "That contact name book is not usable.",
+        ));
+    }
+    let written: Option<i64> = if body.version == 0 {
+        sqlx::query_scalar(
+            r#"
+            INSERT INTO contact_name_books (user_id, sealed, version)
+            VALUES ($1, $2, 1)
+            ON CONFLICT (user_id) DO NOTHING
+            RETURNING version
+            "#,
+        )
+        .bind(auth.user_id)
+        .bind(sealed)
+        .fetch_optional(&state.pool)
+        .await
+    } else {
+        sqlx::query_scalar(
+            r#"
+            UPDATE contact_name_books
+            SET sealed = $2, version = version + 1, updated_at = now()
+            WHERE user_id = $1 AND version = $3
+            RETURNING version
+            "#,
+        )
+        .bind(auth.user_id)
+        .bind(sealed)
+        .bind(body.version)
+        .fetch_optional(&state.pool)
+        .await
+    }
+    .map_err(|err| AppError::Internal(format!("save contact names failed: {err}")))?;
+    match written {
+        Some(version) => Ok(Json(ContactNamesResponse {
+            sealed: None,
+            version,
+        })),
+        None => Err(AppError::conflict(
+            "VERSION_CONFLICT",
+            "Another device changed the contact names. Read them again.",
+        )),
+    }
 }
