@@ -36,7 +36,7 @@ class SystemNotifierTest {
         badge = badge,
     )
 
-    /** `testDressNamesTheSenderAndNeverShowsText`: the name as the title, the kind's line as the body. */
+    /** The name as the title. Without a remembered preview the body stays the kind's line. */
     @Test
     fun namesTheSenderAndNeverShowsText() {
         notifier.post(push(NotificationKind.Message), name = "alice")
@@ -55,6 +55,24 @@ class SystemNotifierTest {
         assertNull("no name, no avatar", reaction.name)
         assertEquals("Reacted to your message", reaction.body)
         assertEquals(NotificationCompat.CATEGORY_SOCIAL, reaction.category)
+    }
+
+    /** A decrypted preview survives a later text-less push for the same chat. The lock-screen line stays generic. */
+    @Test
+    fun aRememberedPreviewIsTheBodyAndAPushKeepsIt() {
+        notifier.rememberPreview(chat, "hello there")
+        notifier.post(push(NotificationKind.Message), name = "alice")
+        val shown = sink.showing(chat.toString(), SystemNotifier.ID_MESSAGE)!!
+        assertEquals("hello there", shown.body)
+        assertEquals("New message", shown.publicBody)
+        notifier.post(push(NotificationKind.Message), name = "alice")
+        val again = sink.showing(chat.toString(), SystemNotifier.ID_MESSAGE)!!
+        assertEquals("hello there", again.body)
+        assertEquals("2 new messages", again.publicBody)
+        notifier.forgetPreview(chat)
+        notifier.post(push(NotificationKind.Message), name = "alice")
+        assertEquals("3 new messages", sink.showing(chat.toString(), SystemNotifier.ID_MESSAGE)!!.body)
+        assertNull(sink.showing(chat.toString(), SystemNotifier.ID_MESSAGE)!!.publicBody)
     }
 
     /** N6: one notification per chat that counts; another chat has its own; reactions never count. */

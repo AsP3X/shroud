@@ -4,7 +4,6 @@ import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.net.ShroudApi
-import de.corespace.shroud.core.net.wire.WireText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -153,6 +152,11 @@ class NotificationsController(
                 if (!on) withContext(io) { nameCache?.deleteAll() }
             }
         }
+        scope.launch {
+            preferences.state.map { it.showPreview }.distinctUntilChanged().collect { on ->
+                if (!on) systemNotifier.clearPreviews()
+            }
+        }
     }
 
     // ---- Permission (`:63-78`; §5.11) ----
@@ -194,7 +198,14 @@ class NotificationsController(
         val name = if (prefs.showSender) username else null
         if (name != null && peerUserId != null) nameCache?.remember(peerUserId, name)
         if (!isResumed()) {
-            if (prefs.enabled && !pushCoversBackground) {
+            // Remember only while notifications are on, so a later push cannot show text the user turned off.
+            val preview = if (prefs.enabled) messagePreview(prefs, kind, text) else null
+            if (kind == NotificationKind.Message && conversationId != null) {
+                if (preview != null) systemNotifier.rememberPreview(conversationId, preview)
+                else systemNotifier.forgetPreview(conversationId)
+            }
+            // A push may already be showing the generic line. Replace it once this phone has the text.
+            if (prefs.enabled && (!pushCoversBackground || preview != null)) {
                 systemNotifier.postLocal(kind, name, peerUserId, conversationId, lastBadge)
             }
             return
@@ -209,8 +220,8 @@ class NotificationsController(
             if (prefs.inAppVibrate) mutableHaptics.tryEmit(Haptic.Medium)
         }
         if (!prefs.inAppBanners) return
-        val preview = if (prefs.showPreview) text?.let(WireText::trimWhitespacesAndNewlines) else null
-        val body = if (kind == NotificationKind.Message && !preview.isNullOrEmpty()) preview else kind.bodyLine
+        val preview = messagePreview(prefs, kind, text)
+        val body = preview ?: kind.bodyLine
         show(InAppNotification(kind = kind, peerUserId = peerUserId, username = username, title = name ?: SystemNotifier.APP_TITLE, body = body))
     }
 
@@ -228,6 +239,15 @@ class NotificationsController(
             delay(lifetime)
             dismissBanner(notification.id)
         }
+    }
+
+    /**
+     * The message text for a notification, or null. Only a message, and only while Message Preview
+     * is on. Trimmed on this phone from the decrypted body; nothing here is sent to the server.
+     */
+    private fun messagePreview(prefs: NotificationPrefsState, kind: NotificationKind, text: String?): String? {
+        if (!prefs.showPreview || kind != NotificationKind.Message) return null
+        return NotificationPreview.clip(text)
     }
 
     override fun setPushCoversBackground(covers: Boolean) {

@@ -30,6 +30,8 @@ data class PostSpec(
     val count: Int = 1,
     val number: Int = 0,
     val timeoutMs: Long? = null,
+    /** Shown on the lock screen when Android hides sensitive notifications. Null uses [body]. */
+    val publicBody: String? = null,
 )
 
 /** The platform's notification manager, behind a seam so the posting rules run on the JVM. */
@@ -56,10 +58,10 @@ interface NotificationSink {
  * `NotificationPayload.dress`, `ios/ShroudShared/NotificationPayload.swift:106-123`, and
  * `NotificationsController.postLocal`, `NotificationsController.swift:162-176`).
  *
- * Never message text: the body is the kind's line or the count line, the title the sender's name
- * (only when the device shows names) or "Shroud" (§2: iOS leaves the title empty and the system
- * shows the app name; Android and the web write "Shroud", `sw.js:82`). Text appears only in the
- * in-app banner (`NotificationsController.swift:26-29`).
+ * The title is the sender's name (only when the device shows names) or "Shroud". The body is the
+ * kind's line or the count line, unless [rememberPreview] stored this chat's decrypted text:
+ * Message Preview is on, and that text was decrypted on this phone. It is never given to the
+ * push service. The lock-screen public version keeps the generic line.
  *
  * One notification per chat that counts (N6, P11c; web `sw.js:71-98`): a chat's messages share
  * tag = conversation id and id [ID_MESSAGE]; a new one replaces it with "2 new messages", "3 new
@@ -77,6 +79,23 @@ class SystemNotifier(
     private val seal: StorageSeal,
     private val executor: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-notifications").apply { isDaemon = true } },
 ) {
+    /** Latest decrypted message text per chat, while Message Preview is on. Not persisted. */
+    private val previews = java.util.concurrent.ConcurrentHashMap<UUID, String>()
+
+    /** [text] is already trimmed. A later text-less post for this chat still shows it. */
+    fun rememberPreview(conversationId: UUID, text: String) {
+        previews[conversationId] = text
+    }
+
+    /** Message Preview is off, or this arrival has no text: the next post uses the generic line. */
+    fun forgetPreview(conversationId: UUID) {
+        previews.remove(conversationId)
+    }
+
+    /** Message Preview was turned off: a later push must not reuse a text this phone already showed. */
+    fun clearPreviews() {
+        previews.clear()
+    }
     /**
      * A push (UnifiedPush, or an event on the background connection) for the process to show
      * (notifications-push §5.7.2; W3-PUSH's dispatcher calls it after the call kinds went to Calls
@@ -101,9 +120,9 @@ class SystemNotifier(
 
     /**
      * A notification from the app itself: it was in the background with its socket still open
-     * (`postLocal`, `NotificationsController.swift:162-176`; §5.12.10). Worded like a push — [name]
-     * already filtered by Show Sender, never the message — counted the same way, with the local
-     * unread total as [badge].
+     * (`postLocal`, `NotificationsController.swift:162-176`; §5.12.10). [name] is already filtered
+     * by Show Sender. A remembered preview, when Message Preview is on, is the body; otherwise the
+     * wording matches a push. [badge] is the local unread total.
      */
     fun postLocal(kind: NotificationKind, name: String?, peerUserId: UUID?, conversationId: UUID?, badge: Int) {
         enqueuePost { spec(kind, name, peerUserId, conversationId, badge) }
@@ -114,6 +133,7 @@ class SystemNotifier(
      * and its reactions' (`clearDelivered`, `NotificationsController.swift:227-241`; §5.7.4).
      */
     fun cancelChat(conversationId: UUID) {
+        previews.remove(conversationId)
         val thread = Ids.wire(conversationId)
         cancel(thread, ID_MESSAGE)
         cancel(reactionTag(thread), ID_REACTION)
@@ -148,6 +168,7 @@ class SystemNotifier(
 
     /** Every notification of the app (Log Out / removal wipe; `DeviceDataWipe.swift:176-179`). */
     fun cancelAll() {
+        previews.clear()
         executor.execute { runCatching { sink.cancelAll() } }
     }
 
@@ -209,10 +230,13 @@ class SystemNotifier(
         return when (kind) {
             NotificationKind.Message -> {
                 val count = (sink.activeCount(thread, ID_MESSAGE) ?: 0) + 1
+                val generic = messageBody(count)
+                val preview = conversationId?.let { previews[it] }
                 PostSpec(
                     tag = thread, id = ID_MESSAGE, channelId = channels.messages(), kind = kind, peerUserId = peerUserId,
-                    title = name ?: APP_TITLE, name = name, body = messageBody(count),
+                    title = name ?: APP_TITLE, name = name, body = preview ?: generic,
                     category = NotificationCompat.CATEGORY_MESSAGE, count = count, number = number,
+                    publicBody = if (preview != null) generic else null,
                 )
             }
             NotificationKind.Reaction -> PostSpec(

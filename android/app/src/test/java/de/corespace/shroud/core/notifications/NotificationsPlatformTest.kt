@@ -128,15 +128,16 @@ class NotificationsPlatformTest {
         val notification = active.notification
         assertEquals("messages.default.b", notification.channelId)
         assertEquals("alice", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        assertEquals("New message", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals("the secret text", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
         assertEquals(1, notification.extras.getInt(SystemNotifier.EXTRA_COUNT))
         assertEquals(4, notification.number)
         assertEquals(NotificationCompat.CATEGORY_MESSAGE, notification.category)
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility)
         assertEquals("Shroud", notification.publicVersion.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("New message", notification.publicVersion.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertFalse(notification.publicVersion.extras.toString().contains("secret"))
         assertNotNull("the sender's avatar", notification.getLargeIcon())
         assertTrue(notification.flags and Notification.FLAG_AUTO_CANCEL != 0)
-        assertFalse("never the message text", notification.extras.toString().contains("secret"))
 
         controller.announce(NotificationKind.Message, peer, "alice", chat, null, muted = false)
         assertEquals("2 new messages", shown().single().extras.getCharSequence(Notification.EXTRA_TEXT).toString())

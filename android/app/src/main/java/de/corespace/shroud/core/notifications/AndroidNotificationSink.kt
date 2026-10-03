@@ -13,8 +13,9 @@ import java.util.UUID
  * [NotificationSink] on the platform (notifications-push §5.7.1).
  *
  * - Small icon: the monochrome veil (`ic_stat_shroud`), tinted with the accent.
- * - Visibility PRIVATE with a public version titled "Shroud" (same body, no avatar): the system's
- *   "hide sensitive content" lock-screen setting hides the name; Android's default shows it, as iOS.
+ * - Visibility PRIVATE with a public version titled "Shroud" and, when the body is a message
+ *   preview, the generic line instead of that text. Android's "hide sensitive content" lock-screen
+ *   setting then hides both the name and the message. The default shows the private notification.
  * - Large icon: the sender's gradient avatar, only when a name is shown ([largeIcon]).
  * - No conversation shortcuts and no `MessagingStyle` persons: Android persists those labels outside
  *   the vault (invariant 13, memory "No plaintext unless required").
@@ -35,6 +36,7 @@ class AndroidNotificationSink(
     override fun post(spec: PostSpec) {
         val publicVersion = base(spec)
             .setContentTitle(SystemNotifier.APP_TITLE)
+            .apply { spec.publicBody?.let { setContentText(it) } }
             .build()
         val builder = base(spec)
             .setContentTitle(spec.title)

@@ -38,7 +38,7 @@ data class NotificationPrefsState(
  * | --- | --- | --- |
  * | [enabled] | `notifications.enabled` | true |
  * | [showSender] | `notifications.showSender` | true |
- * | [showPreview] | `notifications.showPreview` | true (in-app banners only, never sent) |
+ * | [showPreview] | `notifications.showPreview` | true (banners and the system notification; the text stays on this phone) |
  * | [reactions] | `notifications.reactions` | true |
  * | [contactRequests] | `notifications.contactRequests` | true |
  * | [sound] | `notifications.sound` | `default` (an unknown value reads as `default`, `:63`) |
@@ -76,7 +76,7 @@ class NotificationPreferences(private val prefs: SharedPreferences, private val 
         get() = state.value.showSender
         set(value) = write(KEY_SHOW_SENDER, value) { copy(showSender = value) }
 
-    /** The message text in the in-app banner. Notifications from the server never carry text (`:21-23`). */
+    /** The decrypted message text in banners and system notifications. The server is not sent the text. */
     var showPreview: Boolean
         get() = state.value.showPreview
         set(value) = write(KEY_SHOW_PREVIEW, value) { copy(showPreview = value) }

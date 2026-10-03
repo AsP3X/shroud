@@ -54,10 +54,10 @@ class NotificationsControllerAnnounceTest {
         h.message(text = "secret text")
         val posted = h.sink.posted.single()
         assertEquals("alice", posted.title)
-        assertEquals("New message", posted.body)
+        assertEquals("secret text", posted.body)
+        assertEquals("New message", posted.publicBody)
         assertEquals(3, posted.number)
         assertEquals(chat.toString(), posted.tag)
-        assertTrue("never the message text", h.sink.posted.none { it.body.contains("secret") })
         assertNull("no banner in the background", h.controller.banner.value)
         assertTrue(h.sounds.played.isEmpty())
 
@@ -65,21 +65,36 @@ class NotificationsControllerAnnounceTest {
         h.message()
         assertEquals("Shroud", h.sink.posted.last().title)
         assertNull(h.sink.posted.last().name)
-        assertEquals("2 new messages", h.sink.posted.last().body)
+        assertEquals("hi", h.sink.posted.last().body)
+        assertEquals(2, h.sink.posted.last().count)
     }
 
-    /** The server pushes (or the background connection announces): no second notification (`:49-51, 102`). */
+    /** Message Preview off: the shade keeps the generic line, including when a push already covers the background. */
+    @Test
+    fun previewOffKeepsTheGenericLine() = runTest {
+        val h = ControllerHarness(this)
+        h.resumed = false
+        h.preferences.showPreview = false
+        h.controller.setPushCoversBackground(true)
+        h.message(text = "secret text")
+        assertTrue(h.sink.posted.isEmpty())
+        h.controller.setPushCoversBackground(false)
+        h.message(text = "secret text")
+        assertEquals("New message", h.sink.posted.single().body)
+        assertNull(h.sink.posted.single().publicBody)
+    }
+
+    /** A push already covers the background. With a preview, this phone replaces that generic line. */
     @Test
     fun inTheBackgroundAPushPathCoversIt() = runTest {
         val h = ControllerHarness(this)
         h.resumed = false
         h.controller.setPushCoversBackground(true)
-        h.message()
-        assertTrue(h.sink.posted.isEmpty())
-        h.controller.setPushCoversBackground(false)
+        h.message(text = "hello")
+        assertEquals("hello", h.sink.posted.single().body)
         h.preferences.enabled = false
-        h.message()
-        assertTrue("Show Notifications off: nothing", h.sink.posted.isEmpty())
+        h.message(text = "again")
+        assertEquals("Show Notifications off: nothing more", 1, h.sink.posted.size)
     }
 
     @Test

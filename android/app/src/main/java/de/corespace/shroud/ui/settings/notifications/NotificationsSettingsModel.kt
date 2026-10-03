@@ -127,7 +127,7 @@ object NotificationsCopy {
     const val IN_APP = "In-App Notifications"
     const val BANNERS = "Banners"
     const val MESSAGE_PREVIEW = "Message Preview"
-    const val MESSAGE_PREVIEW_DETAIL = "Show the text in banners."
+    const val MESSAGE_PREVIEW_DETAIL = "Show the message text in banners and notifications."
     const val SOUNDS = "Sounds"
     const val VIBRATE = "Vibrate"
     const val IN_APP_FOOTER =
@@ -159,7 +159,7 @@ object NotificationsCopy {
      * without any path no push arrives at all.
      */
     fun pushFooter(noun: String, unifiedPush: Boolean): String {
-        val first = "Notifications that arrive while Shroud is closed or locked never contain message text — the server can't read it."
+        val first = "With Message Preview on, the text is decrypted on this $noun and shown here. It is not sent to the server or the push service. Off, a notification only says that a message arrived."
         return if (unifiedPush) {
             "$first With Show Sender on, the sender's name travels encrypted to this $noun, so your UnifiedPush service can't read it either."
         } else {

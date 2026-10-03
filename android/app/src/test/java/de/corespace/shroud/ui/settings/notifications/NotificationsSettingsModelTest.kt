@@ -183,12 +183,12 @@ class NotificationsSettingsModelTest {
     @Test
     fun pushFooterByDeliveryPath() {
         assertEquals(
-            "Notifications that arrive while Shroud is closed or locked never contain message text — the server can't read it. " +
+            "With Message Preview on, the text is decrypted on this phone and shown here. It is not sent to the server or the push service. Off, a notification only says that a message arrived. " +
                 "With Show Sender on, the sender's name travels encrypted to this phone, so your UnifiedPush service can't read it either.",
             NotificationsCopy.pushFooter("phone", unifiedPush = true),
         )
         assertEquals(
-            "Notifications that arrive while Shroud is closed or locked never contain message text — the server can't read it.",
+            "With Message Preview on, the text is decrypted on this tablet and shown here. It is not sent to the server or the push service. Off, a notification only says that a message arrived.",
             NotificationsCopy.pushFooter("tablet", unifiedPush = false),
         )
         assertEquals("New messages on this tablet while Shroud is closed or locked.", NotificationsCopy.showNotificationsDetail("tablet"))
