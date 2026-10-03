@@ -44,10 +44,7 @@ struct VoiceRecordingBar: View {
                 .frame(width: 9, height: 9)
                 .modifier(RecordingBlink(active: !reduceMotion))
 
-            Text(VoiceTimeFormat.recording(elapsed))
-                .font(.system(size: 15, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textPrimary)
+            RecordingTimer(elapsed: elapsed)
                 // Fixed width so the centisecond digits don't shuffle the row.
                 .frame(width: 66, alignment: .leading)
 
@@ -134,10 +131,7 @@ struct VoiceLockedBar: View {
                     .frame(width: 9, height: 9)
                     .modifier(RecordingBlink(active: !reduceMotion))
 
-                Text(VoiceTimeFormat.recording(elapsed))
-                    .font(.system(size: 15, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.textPrimary)
+                RecordingTimer(elapsed: elapsed)
                     .frame(width: 62, alignment: .leading)
 
                 VoiceWaveformView(
@@ -212,16 +206,45 @@ struct VoiceLockIndicator: View {
     }
 }
 
+// MARK: - Timer
+
+/// The recorder's `0:07,32`: the whole seconds roll up as they change, as the recorder's
+/// seconds did before the rebuild; the centiseconds just run (a roll 30 times a second would
+/// only blur).
+private struct RecordingTimer: View {
+    let elapsed: TimeInterval
+
+    var body: some View {
+        let whole = VoiceTimeFormat.recordingWhole(elapsed)
+        HStack(spacing: 0) {
+            Text(whole)
+                .rollingDigits(value: whole)
+            Text(VoiceTimeFormat.recordingFraction(elapsed))
+        }
+        .font(.system(size: 15, weight: .medium))
+        .monospacedDigit()
+        .foregroundStyle(Theme.textPrimary)
+    }
+}
+
 // MARK: - Formatting
 
 enum VoiceTimeFormat {
     /// `0:07,32` — Telegram shows centiseconds while recording so the timer visibly runs.
     static func recording(_ interval: TimeInterval) -> String {
+        recordingWhole(interval) + recordingFraction(interval)
+    }
+
+    /// `0:07` — the whole-seconds part of `recording`.
+    static func recordingWhole(_ interval: TimeInterval) -> String {
+        let total = Int(max(0, interval))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    /// `,32` — the centiseconds part of `recording`.
+    static func recordingFraction(_ interval: TimeInterval) -> String {
         let total = max(0, interval)
-        let minutes = Int(total) / 60
-        let seconds = Int(total) % 60
-        let centis = Int((total - floor(total)) * 100)
-        return String(format: "%d:%02d,%02d", minutes, seconds, centis)
+        return String(format: ",%02d", Int((total - floor(total)) * 100))
     }
 
     /// `0:07` — playback and duration readouts.

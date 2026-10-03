@@ -172,6 +172,13 @@ object VoiceBubbleMath {
         }
     }
 
+    /**
+     * Whether the toggle's lap ring runs: only while this phone works on a transcript and there is none
+     * to read yet. A transcript can land before this phone's own pass ends (the sender's shared copy
+     * arrives while whisper is still decoding); the ring stops then rather than lapping a finished note.
+     */
+    fun showsLapRing(isWorking: Boolean, hasTranscript: Boolean): Boolean = isWorking && !hasTranscript
+
     /** "Hide transcript" / "Transcribe" / "Show transcript" (`:579-582`). */
     fun transcriptActionName(isOpen: Boolean, hasTranscript: Boolean, isWorking: Boolean): String = when {
         isOpen -> "Hide transcript"
@@ -532,7 +539,7 @@ internal fun VoiceMessageBubble(parts: BubbleParts, context: BubbleContext, serv
                             if (showsTranscriptButton) {
                                 VoiceTranscriptButton(
                                     isOpen = isTranscriptOpen,
-                                    isWorking = isWorking,
+                                    isWorking = VoiceBubbleMath.showsLapRing(isWorking, hasTranscript = transcript != null),
                                     ink = if (isMine) Color.White else colors.accentText,
                                     fill = if (isMine) Color.White.copy(alpha = 0.2f) else colors.accent.copy(alpha = 0.12f),
                                     isEnabled = transcriptEnabled,

@@ -91,6 +91,15 @@ class VoiceBubbleMathTest {
         assertEquals("Show transcript", VoiceBubbleMath.transcriptActionName(isOpen = false, hasTranscript = false, isWorking = true))
     }
 
+    /** The ring laps only while this phone works and nothing is readable yet; a landed transcript stops it. */
+    @Test
+    fun theLapRingStopsOnceATranscriptIsThere() {
+        assertTrue(VoiceBubbleMath.showsLapRing(isWorking = true, hasTranscript = false))
+        assertFalse(VoiceBubbleMath.showsLapRing(isWorking = true, hasTranscript = true))
+        assertFalse(VoiceBubbleMath.showsLapRing(isWorking = false, hasTranscript = false))
+        assertFalse(VoiceBubbleMath.showsLapRing(isWorking = false, hasTranscript = true))
+    }
+
     /** A note younger than 15 s when its bubble appears arrived in front of the reader (`:558-566`). */
     @Test
     fun freshMeansYoungerThanTheArrivalWindow() {

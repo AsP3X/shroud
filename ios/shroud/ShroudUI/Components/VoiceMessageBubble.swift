@@ -402,15 +402,15 @@ struct VoiceMessageBubble: View {
 
     private var footer: some View {
         HStack(spacing: 6) {
-            Text(
-                VoiceTimeFormat.duration(
-                    playback.displayTime(for: message.id, fallbackMs: durationMs)
-                )
+            let time = VoiceTimeFormat.duration(
+                playback.displayTime(for: message.id, fallbackMs: durationMs)
             )
-            .font(.system(size: 11, weight: .medium))
-            .monospacedDigit()
-            .foregroundStyle(metaColor)
-            .contentTransition(.numericText())
+            Text(time)
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(metaColor)
+                // Rolls each second while it plays; a scrub jumps straight to the new time.
+                .rollingDigits(value: time, animated: scrubProgress == nil)
 
             if showsUnplayedDot {
                 Circle()

@@ -829,9 +829,10 @@ struct InCallOverlay: View {
                 Text("Reconnecting…")
             } else if call.phase == .active, let start = call.startedAt {
                 TimelineView(.periodic(from: start, by: 1)) { context in
-                    Text(elapsed(from: start, now: context.date))
+                    let time = elapsed(from: start, now: context.date)
+                    Text(time)
                         .monospacedDigit()
-                        .contentTransition(.numericText(countsDown: false))
+                        .rollingDigits(value: time)
                 }
             } else {
                 Text(statusLine(for: call))

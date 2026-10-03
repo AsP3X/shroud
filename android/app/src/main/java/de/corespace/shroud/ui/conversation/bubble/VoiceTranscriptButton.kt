@@ -181,7 +181,7 @@ object TranscriptLap {
     }
 }
 
-/** A comet lapping the button's outline; a still third of it under reduce motion. */
+/** A comet lapping the button's outline clockwise; a still third of it under reduce motion. */
 @Composable
 private fun TranscriptLapRing(color: Color, animated: Boolean) {
     val seconds by produceState(0.0, animated) {
@@ -192,8 +192,12 @@ private fun TranscriptLapRing(color: Color, animated: Boolean) {
     Canvas(Modifier.fillMaxSize()) {
         val inset = 0.75.dp.toPx()
         val radius = 8.25.dp.toPx() - inset
+        // Clockwise, as on iOS: Compose's `addRoundRect` winds counter-clockwise unless told.
         val outline = Path().apply {
-            addRoundRect(RoundRect(inset, inset, size.width - inset, size.height - inset, CornerRadius(radius, radius)))
+            addRoundRect(
+                RoundRect(inset, inset, size.width - inset, size.height - inset, CornerRadius(radius, radius)),
+                Path.Direction.Clockwise,
+            )
         }
         measure.setPath(outline, forceClosed = true)
         val length = measure.length

@@ -274,3 +274,39 @@ extension View {
         modifier(Shimmer(active: active, adaptsToAppearance: adaptsToAppearance))
     }
 }
+
+// MARK: - Rolling digits
+
+/// Digits that roll as a readout changes — the call timer, a voice note's time, the recorder.
+///
+/// Human: `.numericText()` only morphs a change made inside an animation, and a ticking clock
+/// changes outside one, so on its own the digits just snapped. This keys a snappy spring on
+/// the shown text: each tick rolls the digits that changed (upward by default). Under Reduce
+/// Motion the digits cross-fade. The morph is drawn with a CPU blur for its ~0.3 s, so use it
+/// on readouts that change about once a second, not every frame.
+/// Agent: `value` should be the displayed string (or whatever changes exactly when it does).
+/// `animated: false` makes the change instant (e.g. while scrubbing).
+private struct RollingDigits<Value: Equatable>: ViewModifier {
+    let value: Value
+    let countsDown: Bool
+    let animated: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .contentTransition(.numericText(countsDown: countsDown))
+            .animation(animated ? Motion.respecting(reduceMotion, Motion.snappy) : nil, value: value)
+    }
+}
+
+extension View {
+    /// Rolls the digits of this text whenever `value` changes. See `RollingDigits`.
+    func rollingDigits<Value: Equatable>(
+        value: Value,
+        countsDown: Bool = false,
+        animated: Bool = true
+    ) -> some View {
+        modifier(RollingDigits(value: value, countsDown: countsDown, animated: animated))
+    }
+}
