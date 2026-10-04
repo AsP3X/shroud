@@ -52,6 +52,8 @@ export function connectRealtime(opts: {
   onFatalAuth?: (deviceRemoved: boolean) => void;
   /** Keep the socket while the tab is hidden (a call still needs its signaling). */
   keepWhenHidden?: () => boolean;
+  /** Signed in again after the socket dropped (not after a hidden tab parked it). */
+  onReconnect?: () => void;
 }): Realtime {
   let socket: WebSocket | null = null;
   /** The current socket has seen `auth.ok`; frames before that would be rejected. */
@@ -108,10 +110,13 @@ export function connectRealtime(opts: {
       }
       const type = typeof raw.type === "string" ? raw.type : "";
       if (type === "auth.ok") {
+        // Only a drop counts retries: a socket the tab parked reopens with none.
+        const reconnected = attempt > 0;
         attempt = 0;
         ready = true;
         sendFocus();
         opts.onEvent({ type, raw });
+        if (reconnected) opts.onReconnect?.();
         if (
           socketAttention(
             typeof document !== "undefined" && document.hidden,

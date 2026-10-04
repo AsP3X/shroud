@@ -85,6 +85,7 @@ import { VideoTooLongError } from "../media/videoPlan";
 import type { VoiceTake } from "../voice/recorder";
 import { stopVoice } from "../voice/playback";
 import { rekeyTranscriptView, setTranscribing } from "../voice/transcriptView";
+import { checkForUpdate } from "../appVersion";
 import { connectRealtime, type Realtime } from "../realtime";
 import {
   createRecordingSender,
@@ -1353,6 +1354,8 @@ export function AppShell({ session }: { session: Session }) {
         const view = getCallView();
         return view != null && view.phase !== "ended";
       },
+      // A deploy that changes the API restarts it: the socket coming back hints at a new build.
+      onReconnect: () => checkForUpdate("reconnect"),
       onEvent: (event) => {
         if (event.type === "auth.ok" || event.type.startsWith("call.")) {
           // A reconnect may have missed a call's events; the calls read them back.

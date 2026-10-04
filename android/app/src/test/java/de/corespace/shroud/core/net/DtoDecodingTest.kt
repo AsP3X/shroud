@@ -768,6 +768,8 @@ class DtoDecodingTest {
             MuteChatResponse.serializer(), TestPushOutcomeDto.serializer(),
             PrivacySettingsDto.serializer(), UpdatePrivacySettingsBody.serializer(),
             WebPushKeyResponse.serializer(), WebPushSubscriptionBody.serializer(),
+            // Client version
+            ClientVersionDto.serializer(),
         )
     }
 }

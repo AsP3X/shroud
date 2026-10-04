@@ -31,9 +31,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.zIndex
+import de.corespace.shroud.core.update.UpdateLinkOpener
+import de.corespace.shroud.core.update.UpdatePrompt
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.calls.InCallOverlay
 import de.corespace.shroud.ui.calls.callCoversApp
@@ -41,6 +44,7 @@ import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastHost
+import de.corespace.shroud.ui.components.focusBlocked
 import de.corespace.shroud.ui.components.rememberToastState
 import de.corespace.shroud.ui.lock.LockScreen
 import de.corespace.shroud.ui.onboarding.LogInScreen
@@ -52,6 +56,7 @@ import de.corespace.shroud.ui.permissions.rememberPermissionRequest
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.perform
+import de.corespace.shroud.ui.update.UpdatePromptLayer
 import de.corespace.shroud.ui.wipe.DeviceWipeOverlay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
@@ -61,6 +66,9 @@ object RootLayers {
     const val MAIN_SHELL = 0f
     const val ONBOARDING = 1f
     const val BANNER = 90f
+
+    /** The update prompts: the blocking "Update required" screen sits under calls, covers and wipes. */
+    const val UPDATE = 95f
     const val CALL = 100f
     const val PRIVACY_COVER = 150f
 
@@ -78,12 +86,15 @@ object RootLayers {
  * | 0 | [MainShell] | while [AppRouter.mountsMainShell]; touchable only while unlocked |
  * | 1 | onboarding (Welcome or the lock screen, Sign Up / Log In pushed above) | while locked |
  * | 90 | [InAppNotificationHost] | while unlocked |
+ * | 95 | [UpdatePromptLayer] ("Update required"; the "Update available" dialog is an overlay) | while the server asks for it |
  * | 100 / 160 | `InCallOverlay` (calls area; draws nothing without a call) | always |
  * | 150 | [PrivacyCover] | [AppShellController.showsPrivacyCover] |
  * | 200 | `DeviceWipeOverlay` | while a wipe runs |
  *
- * The shell is out of TalkBack's reach while locked, under the capture cover and under the full call
- * screen; the lock screen while the call screen is up (a call answered on a locked phone covers it).
+ * The shell is out of TalkBack's reach while locked, under the capture cover, under the full call
+ * screen and under "Update required"; the lock screen while the call screen or "Update required"
+ * is up (a call answered on a locked phone covers it). Under "Update required" focus cannot enter
+ * the shell, onboarding or the banner either ([focusBlocked]), and its overlays close or hide.
  * A call minimised to its pill covers nothing ([callCoversApp]). `InCallOverlay` is always composed:
  * it also hosts the call permission prompt, with or without a call. Unlocking fades the
  * shell in ([Motion.gentle]) while the onboarding layer fades out over it; the shell is not scaled
@@ -111,8 +122,13 @@ fun RootScreen(shell: AppShellController) {
     val callAboveCover by shell.callAboveCaptureCover.collectAsState()
     val wipePresented by shell.wipePresented.collectAsState()
     val banner by notifications.banner.collectAsState()
+    val updates = container.update.checker
+    val updatePrompt by updates.prompt.collectAsState()
+    val checkingUpdate by updates.isChecking.collectAsState()
+    val updateRequired = updatePrompt is UpdatePrompt.Required
     val reduce = ShroudTheme.reduceMotion
     val view = LocalView.current
+    val context = LocalContext.current
 
     // `deviceWipe.router = router` (`RootView.swift:143`): the end of a wipe resets the onboarding
     // stack under the overlay; "a router is attached" also tells the removal wake the UI is alive.
@@ -132,7 +148,8 @@ fun RootScreen(shell: AppShellController) {
                     MainShellLayer(
                         router = router,
                         unlocked = unlocked,
-                        hiddenFromAccessibility = !unlocked || coversCapture || callCovers,
+                        hiddenFromAccessibility = !unlocked || coversCapture || callCovers || updateRequired,
+                        focusBlocked = updateRequired,
                         reduceMotion = reduce,
                     )
                 }
@@ -140,7 +157,7 @@ fun RootScreen(shell: AppShellController) {
                     visible = !unlocked,
                     enter = fadeIn(Motion.respecting(reduce, Motion.gentle())),
                     exit = fadeOut(Motion.respecting(reduce, Motion.gentle())),
-                    modifier = Modifier.zIndex(RootLayers.ONBOARDING).hiddenFromAccessibility(callCovers),
+                    modifier = Modifier.zIndex(RootLayers.ONBOARDING).hiddenFromAccessibility(callCovers || updateRequired).focusBlocked(updateRequired),
                 ) {
                     OnboardingStack(shell)
                 }
@@ -149,9 +166,21 @@ fun RootScreen(shell: AppShellController) {
                         banner = banner,
                         onOpen = notifications::openBanner,
                         onDismiss = { notifications.dismissBanner(it.id) },
-                        modifier = Modifier.zIndex(RootLayers.BANNER).hiddenFromAccessibility(coversCapture || callCovers),
+                        modifier = Modifier.zIndex(RootLayers.BANNER).hiddenFromAccessibility(coversCapture || callCovers || updateRequired).focusBlocked(updateRequired),
                     )
                 }
+                UpdatePromptLayer(
+                    prompt = updatePrompt,
+                    checking = checkingUpdate,
+                    // The offer waits until no call screen, privacy cover or wipe is up.
+                    offersDialog = !callCovers && !showsCover && !wipePresented,
+                    onUpdate = { UpdateLinkOpener.open(context, it) },
+                    onLater = updates::dismissAvailable,
+                    onCheckAgain = updates::checkAgain,
+                    modifier = Modifier.zIndex(RootLayers.UPDATE).hiddenFromAccessibility(coversCapture || callCovers),
+                    // A call's screen above keeps its own menus.
+                    blocksOverlays = !callCovers,
+                )
                 InCallOverlay(Modifier.zIndex(if (callAboveCover) RootLayers.CALL_ABOVE_CAPTURE_COVER else RootLayers.CALL))
                 if (showsCover) {
                     // Under a call's screen TalkBack stays on the call (`:102`).
@@ -176,7 +205,7 @@ fun RootScreen(shell: AppShellController) {
  * Fades in when the chats unlock; while hidden it takes no touches and TalkBack cannot reach it.
  */
 @Composable
-private fun MainShellLayer(router: AppRouter, unlocked: Boolean, hiddenFromAccessibility: Boolean, reduceMotion: Boolean) {
+private fun MainShellLayer(router: AppRouter, unlocked: Boolean, hiddenFromAccessibility: Boolean, focusBlocked: Boolean, reduceMotion: Boolean) {
     val alpha = remember { Animatable(if (unlocked) 1f else 0f) }
     LaunchedEffect(unlocked) {
         if (unlocked) alpha.animateTo(1f, Motion.respecting(reduceMotion, Motion.gentle())) else alpha.snapTo(0f)
@@ -187,7 +216,8 @@ private fun MainShellLayer(router: AppRouter, unlocked: Boolean, hiddenFromAcces
             .zIndex(RootLayers.MAIN_SHELL)
             .graphicsLayer { this.alpha = alpha.value }
             .then(if (unlocked) Modifier else Modifier.consumeAllPointers())
-            .hiddenFromAccessibility(hiddenFromAccessibility),
+            .hiddenFromAccessibility(hiddenFromAccessibility)
+            .focusBlocked(focusBlocked),
     ) {
         MainShell(router = router, isRevealed = unlocked)
     }

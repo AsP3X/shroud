@@ -69,7 +69,7 @@ show_help() {
     KEYSTORE        PKCS12 file. The same file lets an update install
     KEY_ALIAS       alias inside the keystore
     CLEAN           0 | 1
-    VERSION_NAME    shown in Android settings
+    VERSION_NAME    shown in Android settings. Starts with a number (1.2.0, 1.2.0-beta)
     VERSION_CODE    positive integer. Goes up by one after a good build
     JAVA_HOME       a JDK 21 installation
 
@@ -240,6 +240,12 @@ validate_config() {
       return 1
       ;;
   esac
+  # The server's update check reads the release number at the start (0.2.0-beta is fine) and
+  # refuses a name without one, so the app could never be told to update.
+  case "$VERSION_NAME" in
+    [0-9]*) ;;
+    *) fail "VERSION_NAME must start with a number, like 1.2.0 or 1.2.0-beta"; return 1 ;;
+  esac
   if [[ -z "$OUTPUT_DIR" ]]; then
     fail "OUTPUT_DIR is empty"
     return 1
@@ -282,7 +288,7 @@ write_config() {
 # KEYSTORE        PKCS12 file. Keep the same file so updates install.
 # KEY_ALIAS       alias inside the keystore
 # CLEAN           0 | 1
-# VERSION_NAME    shown in Android settings
+# VERSION_NAME    shown in Android settings. Starts with a number (1.2.0, 1.2.0-beta)
 # VERSION_CODE    positive integer. Goes up by one after a good build.
 # JAVA_HOME       JDK 21
 VARIANT=$(env_quote "$VARIANT")

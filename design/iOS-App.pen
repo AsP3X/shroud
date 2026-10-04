@@ -96059,6 +96059,1265 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "D0Hra",
+      "x": 100,
+      "y": 14830,
+      "name": "Section · Updates",
+      "layout": "vertical",
+      "gap": 6,
+      "children": [
+        {
+          "type": "text",
+          "id": "n501Os",
+          "name": "Section Title",
+          "fill": "$text-primary",
+          "content": "Updates",
+          "fontFamily": "$font",
+          "fontSize": 44,
+          "fontWeight": "700"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "Xg2n0",
+      "x": 100,
+      "y": 14940,
+      "name": "Update Required",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "vNB20",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "k4GTiX",
+          "name": "Content",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 28,
+          "padding": 24,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "JsDXl",
+              "name": "Hero Stage",
+              "width": "fill_container",
+              "height": 160,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "wQFyw",
+                  "x": 99,
+                  "y": 8,
+                  "name": "Ring Inner",
+                  "fill": "$accent-soft",
+                  "width": 144,
+                  "height": 144
+                },
+                {
+                  "type": "frame",
+                  "id": "uU5wB",
+                  "x": 127,
+                  "y": 36,
+                  "name": "Logo Mark",
+                  "width": 88,
+                  "height": 88,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 28,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE64D",
+                    "offset": {
+                      "x": 0,
+                      "y": 16
+                    },
+                    "blur": 36
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "path",
+                      "id": "XEKzW",
+                      "name": "Veil",
+                      "geometry": "M512 204c174 0 276 126 280 296 3 112 14 190 26 252 8 40-12 66-42 66-34 0-56-66-92-66-38 0-56 72-94 72-38 0-58-66-96-66-48 0-94 32-154 60-40 18-90 32-134 34 30-32 36-76 30-132-6-70-6-140-4-220 4-170 106-296 280-296z",
+                      "viewBox": [
+                        172,
+                        188,
+                        680,
+                        680
+                      ],
+                      "fill": "#FFFFFF",
+                      "width": 52,
+                      "height": 52
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "M7tRxQ",
+                  "x": 192,
+                  "y": 102,
+                  "name": "Update Badge",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$bubble-in",
+                  "cornerRadius": 20,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B1229",
+                    "offset": {
+                      "x": 0,
+                      "y": 6
+                    },
+                    "blur": 16
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "NI8rS",
+                      "name": "Arrow Glyph",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "arrow-down",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "qV2dl",
+              "name": "Headline Block",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "E22An",
+                  "name": "Headline",
+                  "fill": "$text-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Update required",
+                  "lineHeight": 1.1,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 30,
+                  "fontWeight": "bold",
+                  "letterSpacing": -0.6
+                },
+                {
+                  "type": "text",
+                  "id": "peE0U",
+                  "name": "Tagline",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 300,
+                  "content": "This version of Shroud no longer works with this server. Update to 1.4 to keep using it.",
+                  "lineHeight": 1.45,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "oJ3wn",
+          "name": "Bottom",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            8,
+            24,
+            12,
+            24
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "FoToU",
+              "name": "Primary Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$accent",
+              "cornerRadius": 27,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE640",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 20
+              },
+              "gap": 10,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "wiTPw",
+                  "name": "Button Label",
+                  "fill": "#FFFFFF",
+                  "content": "Update",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hEcl8",
+              "name": "Secondary Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$bg-grouped",
+              "cornerRadius": 27,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "USiKL",
+                  "name": "Secondary Label",
+                  "fill": "$accent",
+                  "content": "Check again",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "jZDMS",
+              "name": "Trust Note",
+              "gap": 6,
+              "padding": [
+                4,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "t0QGk",
+                  "name": "Trust Icon",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "info",
+                  "library": "lucide",
+                  "fill": "#B0B0B6"
+                },
+                {
+                  "type": "text",
+                  "id": "N3issM",
+                  "name": "Trust Text",
+                  "fill": "#B0B0B6",
+                  "content": "You have Shroud 1.0",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "heRP0",
+          "name": "Home Indicator Wrap",
+          "width": "fill_container",
+          "padding": [
+            10,
+            0,
+            8,
+            0
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "t0hbc7",
+              "name": "Home Indicator",
+              "fill": "$text-primary",
+              "width": 134,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "cG47N",
+      "x": 570,
+      "y": 14940,
+      "name": "Update Required — No Link",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "OFA42",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "CxIpK",
+          "name": "Content",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 28,
+          "padding": 24,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "tCOOO",
+              "name": "Hero Stage",
+              "width": "fill_container",
+              "height": 160,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "a6ubyD",
+                  "x": 99,
+                  "y": 8,
+                  "name": "Ring Inner",
+                  "fill": "$accent-soft",
+                  "width": 144,
+                  "height": 144
+                },
+                {
+                  "type": "frame",
+                  "id": "CbJNe",
+                  "x": 127,
+                  "y": 36,
+                  "name": "Logo Mark",
+                  "width": 88,
+                  "height": 88,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 28,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE64D",
+                    "offset": {
+                      "x": 0,
+                      "y": 16
+                    },
+                    "blur": 36
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "path",
+                      "id": "ed96p",
+                      "name": "Veil",
+                      "geometry": "M512 204c174 0 276 126 280 296 3 112 14 190 26 252 8 40-12 66-42 66-34 0-56-66-92-66-38 0-56 72-94 72-38 0-58-66-96-66-48 0-94 32-154 60-40 18-90 32-134 34 30-32 36-76 30-132-6-70-6-140-4-220 4-170 106-296 280-296z",
+                      "viewBox": [
+                        172,
+                        188,
+                        680,
+                        680
+                      ],
+                      "fill": "#FFFFFF",
+                      "width": 52,
+                      "height": 52
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "g3qRZf",
+                  "x": 192,
+                  "y": 102,
+                  "name": "Update Badge",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$bubble-in",
+                  "cornerRadius": 20,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B1229",
+                    "offset": {
+                      "x": 0,
+                      "y": 6
+                    },
+                    "blur": 16
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "jlen7",
+                      "name": "Arrow Glyph",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "arrow-down",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Y3HeT7",
+              "name": "Headline Block",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "ZVea9",
+                  "name": "Headline",
+                  "fill": "$text-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Update required",
+                  "lineHeight": 1.1,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 30,
+                  "fontWeight": "bold",
+                  "letterSpacing": -0.6
+                },
+                {
+                  "type": "text",
+                  "id": "Wc13v",
+                  "name": "Tagline",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 300,
+                  "content": "This version of Shroud no longer works with this server. Update to keep using it. Get the new version where you installed Shroud.",
+                  "lineHeight": 1.45,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Oen2o",
+          "name": "Bottom",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            8,
+            24,
+            12,
+            24
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "tuVyo",
+              "name": "Primary Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$accent",
+              "cornerRadius": 27,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE640",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 20
+              },
+              "gap": 10,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mjzU4",
+                  "name": "Button Label",
+                  "fill": "#FFFFFF",
+                  "content": "Check again",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "iuCX4",
+              "name": "Trust Note",
+              "gap": 6,
+              "padding": [
+                4,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "gXjBP",
+                  "name": "Trust Icon",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "info",
+                  "library": "lucide",
+                  "fill": "#B0B0B6"
+                },
+                {
+                  "type": "text",
+                  "id": "ZRlBj",
+                  "name": "Trust Text",
+                  "fill": "#B0B0B6",
+                  "content": "You have Shroud 1.0",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "l9xDn",
+          "name": "Home Indicator Wrap",
+          "width": "fill_container",
+          "padding": [
+            10,
+            0,
+            8,
+            0
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "afzf7",
+              "name": "Home Indicator",
+              "fill": "$text-primary",
+              "width": 134,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "SGd2b",
+      "x": 1040,
+      "y": 14940,
+      "name": "Update Available — Alert",
+      "context": "Welcome (signed out). Brand mark, promise, three feature tiles, the server in use (Official Shroud server, or the self-hosted URL with a drive icon), Start Messaging (sign up) and Log In. The gear opens Server Settings.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "l1AJ2",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "type": "frame",
+          "id": "d4yuiQ",
+          "name": "Nav Row",
+          "width": "fill_container",
+          "padding": [
+            0,
+            16,
+            6,
+            16
+          ],
+          "justifyContent": "end",
+          "children": [
+            {
+              "id": "z52LU",
+              "type": "ref",
+              "ref": "n9Lx7",
+              "name": "Server Settings",
+              "descendants": {
+                "b3wNn": {
+                  "icon": "gear-six-fill",
+                  "library": "phosphor",
+                  "fill": "$accent"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "jS5qS",
+          "name": "Content",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 28,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "UglLz",
+              "name": "Hero",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "B8lZMv",
+                  "type": "ref",
+                  "ref": "DDyyw",
+                  "name": "Brand Mark",
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#5E5CE638",
+                    "offset": {
+                      "x": 0,
+                      "y": 10
+                    },
+                    "blur": 32
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "I0gIC",
+                  "name": "Copy",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "TS00Q",
+                      "name": "Title",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Private messaging,\nfully encrypted",
+                      "lineHeight": 1.15,
+                      "textAlign": "center",
+                      "fontFamily": "$font",
+                      "fontSize": 32,
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "H1kzJ",
+                      "name": "Subtitle",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "No phone number. No email. Just your username and a 12-word encryption phrase.",
+                      "lineHeight": 1.45,
+                      "textAlign": "center",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "UqikW",
+              "name": "Feature Tiles",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "PSrqy",
+                  "name": "Tile End-to-end encrypted",
+                  "width": "fill_container",
+                  "fill": "$bg",
+                  "cornerRadius": 14,
+                  "gap": 12,
+                  "padding": 14,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "uv4Vz",
+                      "name": "Icon",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$accent-soft",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "t77arx",
+                          "name": "Glyph",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "lock-fill",
+                          "library": "phosphor",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "OF4EO",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "IDDYs",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "End-to-end encrypted",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Qzj64",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Messages decrypt only on your devices",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "x4d2H",
+                  "name": "Tile Voice messages",
+                  "width": "fill_container",
+                  "fill": "$bg",
+                  "cornerRadius": 14,
+                  "gap": 12,
+                  "padding": 14,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "RMgED",
+                      "name": "Icon",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$accent-soft",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "s8y4n1",
+                          "name": "Glyph",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "audio-lines",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ktoz8",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Uv1Bz",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Voice messages",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "YZda0",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Encrypted audio with on-device transcription",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "vaOsc",
+                  "name": "Tile Secure calls",
+                  "width": "fill_container",
+                  "fill": "$bg",
+                  "cornerRadius": 14,
+                  "gap": 12,
+                  "padding": 14,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "s2nVi",
+                      "name": "Icon",
+                      "width": 40,
+                      "height": 40,
+                      "fill": "$accent-soft",
+                      "cornerRadius": 10,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "iJXbk",
+                          "name": "Glyph",
+                          "width": 19,
+                          "height": 19,
+                          "icon": "phone-fill",
+                          "library": "phosphor",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Uk8hC",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "QHt1S",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Secure calls",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "vRcH0",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Voice and video with WebRTC encryption",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "cAbds",
+              "name": "Connection Hint",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 12,
+              "gap": 8,
+              "padding": [
+                10,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "elNiz",
+                  "name": "Glyph",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "circle-wavy-check-fill",
+                  "library": "phosphor",
+                  "fill": "$accent"
+                },
+                {
+                  "type": "text",
+                  "id": "PqQLT",
+                  "name": "Server",
+                  "fill": "$text-secondary",
+                  "content": "Official Shroud server",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "rMdWT",
+          "name": "Actions",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [
+            12,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "z7EIe",
+              "name": "Start Messaging",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$accent",
+              "cornerRadius": 27,
+              "effect": {
+                "type": "shadow",
+                "shadowType": "outer",
+                "color": "#5E5CE640",
+                "offset": {
+                  "x": 0,
+                  "y": 8
+                },
+                "blur": 20
+              },
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "L8palO",
+                  "name": "Label",
+                  "fill": "#FFFFFF",
+                  "content": "Start Messaging",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "icon",
+                  "id": "L6HNU",
+                  "name": "Glyph",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "arrow-right-bold",
+                  "library": "phosphor",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "rJoqn",
+              "name": "Log In",
+              "width": "fill_container",
+              "height": 52,
+              "fill": "$accent-soft",
+              "cornerRadius": 26,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "PPwsK",
+                  "name": "Label",
+                  "fill": "$accent",
+                  "content": "Log In",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "r9fLaO",
+          "name": "Home Indicator Wrap",
+          "width": "fill_container",
+          "height": 21,
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 2.5,
+              "id": "T67P1L",
+              "name": "Home Indicator",
+              "fill": "$text-primary",
+              "width": 134,
+              "height": 5
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "NsLB1",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Scrim",
+          "width": 390,
+          "height": 844,
+          "fill": "#0B0B1229"
+        },
+        {
+          "type": "frame",
+          "id": "zDoAT",
+          "layoutPosition": "absolute",
+          "x": 41,
+          "y": 340,
+          "name": "Alert",
+          "width": 308,
+          "fill": "#F2F2F7F2",
+          "cornerRadius": 34,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#0B0B1233",
+            "offset": {
+              "x": 0,
+              "y": 16
+            },
+            "blur": 48
+          },
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [
+            22,
+            18,
+            18,
+            18
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "VjVFF",
+              "name": "Text",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "padding": [
+                0,
+                10
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Tzguj",
+                  "name": "Title",
+                  "fill": "$text-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Update available",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "W3jedB",
+                  "name": "Message",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Shroud 1.4 is available. You have 1.0.",
+                  "lineHeight": 1.3,
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "mnqRn",
+              "name": "Buttons",
+              "width": "fill_container",
+              "gap": 10,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "S41RT0",
+                  "name": "Later",
+                  "width": "fill_container",
+                  "height": 48,
+                  "fill": "#78788029",
+                  "cornerRadius": 24,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "dKNsu",
+                      "name": "Later Label",
+                      "fill": "$text-primary",
+                      "content": "Later",
+                      "fontFamily": "$font",
+                      "fontSize": 17
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "qT6lj",
+                  "name": "Update",
+                  "width": "fill_container",
+                  "height": 48,
+                  "fill": "#78788029",
+                  "cornerRadius": 24,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "AMLiK",
+                      "name": "Update Label",
+                      "fill": "$text-primary",
+                      "content": "Update",
+                      "fontFamily": "$font",
+                      "fontSize": 17
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {

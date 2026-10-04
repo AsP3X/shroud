@@ -176,8 +176,22 @@ services:
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
       REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
+      # Update prompts (GET /client-version). Below *_LATEST_VERSION an app offers an update the
+      # user may dismiss; below *_MIN_VERSION it blocks until updated. *_UPDATE_URL is where its
+      # Update button leads (TestFlight / App Store, an APK page). Unset = never prompt.
+      IOS_LATEST_VERSION: ${IOS_LATEST_VERSION:-}
+      IOS_MIN_VERSION: ${IOS_MIN_VERSION:-}
+      IOS_UPDATE_URL: ${IOS_UPDATE_URL:-}
+      ANDROID_LATEST_VERSION: ${ANDROID_LATEST_VERSION:-}
+      ANDROID_MIN_VERSION: ${ANDROID_MIN_VERSION:-}
+      ANDROID_UPDATE_URL: ${ANDROID_UPDATE_URL:-}
+      # The web bundle's build id, which ./deploy.sh (or deploy.ps1) writes after each deploy;
+      # tabs built from another one are offered a reload. A file, read on each question, so a
+      # web-only deploy doesn't restart the API.
+      WEB_BUILD_FILE: /run/shroud/web-build
     volumes:
       - shroud_media_data:/data/shroud-media
+      - ./.shroud-run:/run/shroud:ro
     networks:
       - shroud-internal
     healthcheck:
@@ -196,6 +210,9 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        # Baked into the bundle; ./deploy.sh (or deploy.ps1) then hands the API the same id.
+        WEB_BUILD: ${SHROUD_WEB_BUILD:-}
     container_name: shroud-web
     depends_on:
       api:

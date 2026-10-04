@@ -20,6 +20,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 COPY --from=link-tls /build/src/linkPreview/tls ./src/linkPreview/tls
+# The build id ./deploy.sh also hands the API; a tab built from another one is offered a reload.
+ARG WEB_BUILD=""
+ENV VITE_WEB_BUILD=$WEB_BUILD
 RUN npm run build
 
 FROM nginx:alpine

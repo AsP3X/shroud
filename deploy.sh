@@ -217,6 +217,8 @@ echo ""
 CURRENT_STAGE="stack build/start"
 if [[ "$CMD" == "rebuild" ]]; then
   step "Rebuilding images (--pull)…"
+  # The web image bakes in the build id; set it now so `up` doesn't build the bundle again.
+  shroud_export_web_build
   shroud_compose build --pull
 fi
 shroud_up

@@ -27,6 +27,7 @@ import de.corespace.shroud.di.PushModule
 import de.corespace.shroud.di.RealtimeModule
 import de.corespace.shroud.di.ShellModule
 import de.corespace.shroud.di.TranscriptionModule
+import de.corespace.shroud.di.UpdateModule
 import de.corespace.shroud.di.VideoModule
 import de.corespace.shroud.di.VoiceModule
 import de.corespace.shroud.di.WipeHooksImpl
@@ -118,6 +119,7 @@ class AppContainer(
     val transcription by lazy { TranscriptionModule(this) }               // W2-WHISPER → W3-TRANSCRIPTION
 
     val shell by lazy { ShellModule(this) }                               // W3-SHELL
+    val update by lazy { UpdateModule(this) }                             // client version check + update prompts
 
     /** The Log Out / removal wipe's view of every package (00-plan §1.7.6); `DeviceWipeController` (W2-AUTH-WIPE) calls it. */
     val wipeHooks: WipeHooks by lazy { WipeHooksImpl(this) }
@@ -141,6 +143,7 @@ class AppContainer(
         // the monitor starts: the flow has no replay. Main-confined, like the client.
         appScope.launch { net.connectivity.networkAvailable.collect { realtime.client.onNetworkAvailable() } }
         net.onProcessStart()             // ConnectivityMonitor.start() (W1-NET)
+        update.onProcessStart()          // client version check on each foreground and server switch
         shell.onProcessStart()           // this call stays; the shell starts from MainActivity via container.shell.startShell()
     }
 

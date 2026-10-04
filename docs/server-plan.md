@@ -1724,6 +1724,45 @@ tokens, subscription and settings. A device signed out by a password change keep
 opens again, but gets no pushes meanwhile (only devices with a live session are pushed to). Account deletion also drops the user's read markers and mutes,
 and other users' mutes of them.
 
+### Client versions
+
+#### `GET /client-version?platform=ios&version=1.2.0` → `200`
+
+```json
+{ "status": "update_available", "latest_version": "1.4.0", "update_url": "https://testflight.apple.com/join/…" }
+```
+
+No session needed, so the sign-in and lock screens can ask too; the route keeps nothing about the
+caller, and the answer is `Cache-Control: no-store`. `platform` is `ios`, `android` or `web`. Apps
+send their version (`CFBundleShortVersionString`, Android's `versionName`); a leading `v`, anything
+after the leading numbers (`1.2.0-beta`) and parts past the fourth are ignored, and `1.2` equals
+`1.2.0`. The iOS app compares only its marketing version, so a TestFlight build that should prompt
+needs a higher `MARKETING_VERSION`, not just a new build number. `status`:
+
+- `update_required` — older than `<PLATFORM>_MIN_VERSION`. The app blocks until it is updated.
+- `update_available` — older than `<PLATFORM>_LATEST_VERSION`. The app offers the update once per
+  version and launch; the user may dismiss it.
+- `current` — otherwise, and whenever nothing is configured.
+
+`latest_version` is the version to update to (the minimum when only that is set), or null.
+`update_url` is the operator's `<PLATFORM>_UPDATE_URL`, or null: the prompt then has no Update
+button.
+
+The web client sends its build id. `./deploy.sh` hashes what goes into the web image and bakes the
+hash into the bundle (`VITE_WEB_BUILD`, also a `shroud-build` meta in `index.html`). Once the stack
+is up it writes the hash to `.shroud-run/web-build`, which Compose mounts read-only into the API
+(`WEB_BUILD_FILE`); the API reads it on each question, so a web-only deploy doesn't restart the
+API. A tab whose id differs gets `update_available` with the deployed id and offers a reload once
+`/index.html` carries that id. A reload always fetches the deployed bundle, so the web never gets
+`update_required`. With no file yet, or a hand-run `docker compose`, tabs are always `current`.
+`WEB_BUILD` instead sets one fixed id (hand-run setups); setting both stops startup.
+
+Clients ask at start and when they come back to the foreground (at most every 10 minutes after an
+answer; a failed request doesn't hold the next one back), and the web also every 30 minutes and on
+each WebSocket reconnect. A failed request changes nothing. `400 VALIDATION_ERROR` for a missing or
+unknown platform, or a missing version, one over 64 characters, or one without a number to compare
+(a part over 4294967295 counts as none).
+
 ### Later routes (outline)
 
 | Area | Routes |
@@ -1741,6 +1780,11 @@ and other users' mutes of them.
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
 | `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
+| `IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` | Newest released app version (`1.2.3`); older apps offer an update (`GET /client-version`) |
+| `IOS_MIN_VERSION` / `ANDROID_MIN_VERSION` | Oldest app version still served; older apps block until updated. Must not be newer than the latest |
+| `IOS_UPDATE_URL` / `ANDROID_UPDATE_URL` | Link the update prompt opens (TestFlight / App Store, an APK page): https for iOS, http(s) for Android |
+| `WEB_BUILD_FILE` | File holding the deployed web bundle's build id, re-read on each question; Compose points it at `.shroud-run/web-build`, which `./deploy.sh` writes after each deploy. Tabs from another build are offered a reload |
+| `WEB_BUILD` | A fixed web build id instead of `WEB_BUILD_FILE` (not both) |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
 | `MEDIA_DATA_DIR` | Local ciphertext blob directory; with Nebular, the older volume moved into it on start |

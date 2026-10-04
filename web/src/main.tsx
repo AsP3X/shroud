@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import "@fontsource-variable/inter";
 import "./index.css";
 import { App } from "./App";
+import { installUpdateCheck } from "./appVersion";
 import { installRemovalMessages, removedWhileClosed, signalDeviceRemoved } from "./deviceRemoval";
 import { finishWipeOnLoad, followWipesInOtherTabs } from "./deviceWipe";
 import { installLogo } from "./logo";
@@ -20,6 +21,8 @@ installLogo();
 installNotificationClicks();
 // The worker relays "this browser was removed from the account" to every open tab.
 installRemovalMessages();
+// Asks whether a newer build is deployed: on load, and again while the tab stays open.
+installUpdateCheck();
 
 const root = createRoot(document.getElementById("root")!);
 // A removal that arrived while no tab was open left a marker (Cache Storage, which the worker

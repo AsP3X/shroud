@@ -4,6 +4,7 @@ import { hasIdentity } from "./crypto/store";
 import { isVaultOpen } from "./crypto/vault";
 import { hasPin, needsPhrase } from "./crypto/vaultAccess";
 import { DeviceWipeDialog } from "./components/DeviceWipeDialog";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { clearRemovalMarker, onDeviceRemoved, removalPending, watchForRemoval } from "./deviceRemoval";
 import { finishWipeOnLoad } from "./deviceWipe";
 import { AppShell } from "./screens/AppShell";
@@ -75,60 +76,64 @@ export function App() {
   if (removal) return <DeviceWipeDialog session={removal} reason="removed" />;
 
   return (
-    <Routes>
-      <Route
-        path="/"
-        element={
-          session ? (
-            <Navigate to={!keyed ? "/login" : locked || needsPinSetup ? "/unlock" : "/app"} replace />
-          ) : (
-            <Welcome />
-          )
-        }
-      />
-      <Route
-        path="/login"
-        element={
-          !session || !keyed ? (
-            <Auth />
-          ) : locked || needsPinSetup ? (
-            <Navigate to="/unlock" replace />
-          ) : (
-            <Navigate to="/app" replace />
-          )
-        }
-      />
-      <Route
-        path="/signup"
-        element={
-          keyed ? (
-            <Navigate to="/app" replace />
-          ) : session ? (
-            <Navigate to="/login" replace />
-          ) : (
-            <SignUp />
-          )
-        }
-      />
-      <Route
-        path="/unlock"
-        element={session && keyed ? <Unlock /> : <Navigate to={session ? "/login" : "/"} replace />}
-      />
-      <Route
-        path="/app"
-        element={
-          !session ? (
-            <Navigate to="/" replace />
-          ) : !keyed ? (
-            <Navigate to="/login" replace />
-          ) : locked || needsPinSetup ? (
-            <Navigate to="/unlock" replace />
-          ) : (
-            <AppShell session={session} />
-          )
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            session ? (
+              <Navigate to={!keyed ? "/login" : locked || needsPinSetup ? "/unlock" : "/app"} replace />
+            ) : (
+              <Welcome />
+            )
+          }
+        />
+        <Route
+          path="/login"
+          element={
+            !session || !keyed ? (
+              <Auth />
+            ) : locked || needsPinSetup ? (
+              <Navigate to="/unlock" replace />
+            ) : (
+              <Navigate to="/app" replace />
+            )
+          }
+        />
+        <Route
+          path="/signup"
+          element={
+            keyed ? (
+              <Navigate to="/app" replace />
+            ) : session ? (
+              <Navigate to="/login" replace />
+            ) : (
+              <SignUp />
+            )
+          }
+        />
+        <Route
+          path="/unlock"
+          element={session && keyed ? <Unlock /> : <Navigate to={session ? "/login" : "/"} replace />}
+        />
+        <Route
+          path="/app"
+          element={
+            !session ? (
+              <Navigate to="/" replace />
+            ) : !keyed ? (
+              <Navigate to="/login" replace />
+            ) : locked || needsPinSetup ? (
+              <Navigate to="/unlock" replace />
+            ) : (
+              <AppShell session={session} />
+            )
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {/* Over the sign-in and lock screens as well as the chats. */}
+      <UpdateBanner />
+    </>
   );
 }

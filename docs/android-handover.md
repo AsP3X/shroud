@@ -295,6 +295,18 @@ interface MediaEditRenderer : MediaEditBaker {          // MediaEditBaker = exis
 - **App Links** go to `contacts.controller.pendingInvite.value = url`.
 - **Manifest:** entries (activities, aliases, intent filters, themes, `windowSoftInputMode`, show-when-locked) are Grok's file. Claude sends exact requests through the stop-and-report rule.
 
+### K13 ClientUpdateChecker (added by Claude at the owner's request; Grok owns it from here)
+`core/update/ClientUpdateChecker.kt`, `ShroudApi.clientVersion(platform, version)` (`GET /client-version`, no token) and `di/UpdateModule.kt` (checks on each return to the foreground, at most every 10 minutes, and at once after a server switch; sends `versionName`).
+```kotlin
+// di: update.checker — main-confined (R1)
+val prompt: StateFlow<UpdatePrompt>                       // None | Available(current, latest?, url?) | Required(current, latest?, url?)
+val isChecking: StateFlow<Boolean>
+fun check(): Deferred<UpdateCheckOutcome>                 // joins a running check
+suspend fun checkAgain(): UpdateCheckOutcome              // Answered(status) | Failed | Skipped (dropped by a server switch)
+fun dismissAvailable(offer: UpdatePrompt.Available)       // "Later" on the offer shown; this process only
+```
+The UI (`ui/update/UpdatePrompts.kt`, layer 95 in `RootScreen`) opens links with `core/update/UpdateLinkOpener`.
+
 ### OPEN items (each with the one question that unblocks it)
 - **OPEN-1 (owner):** may each agent merge its own finished branch into `dev` and push once its gate is green, or does the owner merge every branch?
 - **OPEN-2 (owner):** may Grok download the ntfy Android APK from F-Droid for the e2e? If not, `up-stub` is the only distributor path.

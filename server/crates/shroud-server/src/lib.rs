@@ -4,6 +4,7 @@
 //! Agent: READS env config, DB migrate on startup, HTTP router; never handles message plaintext.
 
 pub mod auth;
+pub mod client_version;
 pub mod config;
 pub mod error;
 pub mod keys;
@@ -244,6 +245,7 @@ pub async fn run() -> Result<(), AppError> {
             crate::link_relay::RelayPolicy::production(),
         )),
         reactions_max_per_user: config.reactions_max_per_user,
+        client_versions: Arc::new(config.client_versions.clone()),
     };
 
     // Human: End calls nobody answered, and calls whose devices went quiet, so a crashed app

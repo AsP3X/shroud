@@ -32,6 +32,7 @@ private final class AwayTask: @unchecked Sendable {
 struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openURL) private var openURL
 
     @State private var sessionController = SessionController()
     @State private var cryptoController = CryptoController()
@@ -42,6 +43,19 @@ struct RootView: View {
     @State private var deviceWipe = DeviceWipeController()
     @State private var notifications = NotificationsController.shared
     @State private var colorTheme = ColorThemePreference.shared
+    @State private var clientVersion = ClientVersionController()
+    @State private var updateToast: Toast?
+    /// Reads what is presented over the root: the update alert waits for it, the required screen
+    /// clears it.
+    @State private var rootPresentation = RootPresentation()
+    /// The "Update available" alert may show. Set only while nothing is presented over the root
+    /// (presenting over a child's sheet or cover dismisses it); kept while the alert itself is up.
+    @State private var updateAlertArmed = false
+    /// "Check again" is running; keeps "Checking…" up for at least `minimumVersionCheck`.
+    @State private var isRecheckingVersion = false
+    /// The scene went to the background; the next `.active` is a return worth an update check.
+    /// Face ID's sheet only makes the scene inactive, so unlocking never counts as one.
+    @State private var returnsFromBackground = false
     /// Set when the scene leaves `.active` with the chats open. See `showsPrivacyCover`.
     @State private var privacyCoverArmed = false
     /// The screen is being recorded, mirrored or shared (`UITraitCollection.sceneCaptureState`).
@@ -103,6 +117,24 @@ struct RootView: View {
                     .zIndex(150)
             }
 
+            // The server no longer serves this build: over the lock screen and the chats, under
+            // a running wipe. A call is never covered; the screen waits until it ends.
+            if showsUpdateRequired, case let .required(latest, url) = clientVersion.prompt {
+                UpdateRequiredView(
+                    latestVersion: latest,
+                    updateURL: url,
+                    currentVersion: clientVersion.currentVersion,
+                    isChecking: clientVersion.isChecking || isRecheckingVersion,
+                    toast: $updateToast,
+                    onUpdate: { if let url { openURL(url) } },
+                    onCheckAgain: checkVersionAgain
+                )
+                // A toast left from this time must not greet the next one.
+                .onDisappear { updateToast = nil }
+                .transition(.opacity)
+                .zIndex(180)
+            }
+
             // Human: Above everything, calls included — the switch to Welcome happens under it.
             if deviceWipe.isPresented {
                 DeviceWipeOverlay()
@@ -110,6 +142,26 @@ struct RootView: View {
                     .zIndex(200)
             }
         }
+        .animation(Motion.respecting(reduceMotion, Motion.gentle), value: showsUpdateRequired)
+        .alert(
+            "Update available",
+            isPresented: Binding(get: { showsUpdateAlert }, set: { _ in }),
+            presenting: availableUpdate
+        ) { update in
+            // Every button dismisses for this process; a newer version or a cold launch asks again.
+            if let url = update.url {
+                Button("Update") {
+                    clientVersion.dismissAvailable()
+                    openURL(url)
+                }
+                Button("Later", role: .cancel) { clientVersion.dismissAvailable() }
+            } else {
+                Button("OK", role: .cancel) { clientVersion.dismissAvailable() }
+            }
+        } message: { update in
+            Text(ClientVersionPolicy.availableMessage(latest: update.latest, current: clientVersion.currentVersion))
+        }
+        .background { RootPresentationProbe(presentation: rootPresentation) }
         .background {
             SceneCaptureStateReader { captured in
                 if isScreenCaptured != captured { isScreenCaptured = captured }
@@ -125,6 +177,37 @@ struct RootView: View {
         .environment(serverConfig)
         .environment(deviceWipe)
         .environment(notifications)
+        // Its own task: the answer shouldn't wait for the session checks below.
+        .task {
+            await clientVersion.check(.launch, configuration: serverConfig.configuration)
+        }
+        .onChange(of: serverConfig.configuration) { _, configuration in
+            Task { await clientVersion.check(.serverChanged, configuration: configuration) }
+        }
+        // An offer waiting behind a sheet, a call or a wipe: look again until the screen is free.
+        // UIKit sends nothing when a child's sheet closes, so this polls, and only while waiting.
+        .task(id: updateAlertWaiting) {
+            while updateAlertWaiting, !Task.isCancelled {
+                armUpdateAlertIfClear()
+                guard !updateAlertArmed else { return }
+                do { try await Task.sleep(for: Self.updateAlertRecheck) } catch { return }
+            }
+        }
+        // Gone (dismissed, or no longer offered), or a call or wipe took the screen: ask the
+        // screen again before the next showing.
+        .onChange(of: updateAlertMayStayArmed) { _, mayStay in
+            if !mayStay { updateAlertArmed = false }
+        }
+        // While it blocks the app nothing may sit over it or type behind it: the keyboard goes,
+        // and sheets, covers and dialogs are dismissed, also any that open later.
+        .task(id: showsUpdateRequired) {
+            guard showsUpdateRequired else { return }
+            AccessibilityNotification.ScreenChanged(nil).post()
+            while !Task.isCancelled {
+                rootPresentation.clearForBlockingScreen()
+                do { try await Task.sleep(for: Self.updateRequiredSweep) } catch { return }
+            }
+        }
         .task {
             SensitiveTempFiles.prepareAtLaunch()
             SecurityPreferences.removeRetiredKeys()
@@ -257,6 +340,7 @@ struct RootView: View {
             privacyCoverArmed = phase != .active && router.isUnlocked
             switch phase {
             case .background:
+                returnsFromBackground = true
                 // Tell the server this iPhone is away, and close the socket, before iOS
                 // suspends the process. A call keeps the socket for signaling.
                 if router.isUnlocked {
@@ -277,6 +361,12 @@ struct RootView: View {
             case .active:
                 lockIfAutoLockDue()
                 Task { await notifications.refreshAuthorization() }
+                if returnsFromBackground {
+                    returnsFromBackground = false
+                    Task { await clientVersion.check(.foreground, configuration: serverConfig.configuration) }
+                }
+                // A waiting update offer needn't sit out the rest of its poll interval.
+                if updateAlertWaiting { armUpdateAlertIfClear() }
                 // A wipe (one a removal's push started in the background) owns the stores:
                 // nothing may reconnect or refill them under it.
                 guard sessionController.isSignedIn, !deviceWipe.isPresented else { return }
@@ -373,6 +463,80 @@ struct RootView: View {
     /// The app switcher's cover still goes over a call.
     private var callAboveCaptureCover: Bool {
         coversForScreenCapture && !(privacyCoverArmed && scenePhase != .active)
+    }
+
+    /// "Update available" from the server's last answer, unless dismissed for this version.
+    private var availableUpdate: AvailableUpdate? {
+        guard case let .available(latest, url) = clientVersion.prompt else { return nil }
+        return AvailableUpdate(latest: latest, url: url)
+    }
+
+    /// The required screen, unless a call is on: it waits for the call to end.
+    private var showsUpdateRequired: Bool {
+        clientVersion.isUpdateRequired && callController.active == nil
+    }
+
+    private var showsUpdateAlert: Bool {
+        updateAlertArmed && updateAlertMayStayArmed
+    }
+
+    /// An offer is there and nothing else owns the screen: no call, no wipe.
+    private var updateAlertMayStayArmed: Bool {
+        availableUpdate != nil
+            && callController.active == nil
+            && !deviceWipe.isPresented
+    }
+
+    /// An offer is waiting for the screen to be free.
+    private var updateAlertWaiting: Bool {
+        availableUpdate != nil && !updateAlertArmed
+    }
+
+    /// Arms the alert when the app is in front and nothing is presented over the root.
+    ///
+    /// Human: Never checked while the alert is up — it is itself presented over the root. Asks
+    /// the window scene, not `scenePhase`: this runs in a task, where the environment is stale.
+    private func armUpdateAlertIfClear() {
+        guard !updateAlertArmed,
+              updateAlertMayStayArmed,
+              rootPresentation.isInForeground,
+              !rootPresentation.isPresentingOverRoot
+        else { return }
+        updateAlertArmed = true
+    }
+
+    /// "Check again" on `UpdateRequiredView`. Says so when nothing changed, so the tap is seen.
+    private func checkVersionAgain() {
+        guard !isRecheckingVersion else { return }
+        isRecheckingVersion = true
+        Task {
+            defer { isRecheckingVersion = false }
+            let started = ContinuousClock.now
+            let outcome = await clientVersion.check(.manual, configuration: serverConfig.configuration)
+            // "Checking…" stays long enough to be read; a local server answers in milliseconds.
+            try? await Task.sleep(until: started + Self.minimumVersionCheck)
+            switch outcome {
+            case .answered(.updateRequired):
+                Haptics.notification(.warning)
+                updateToast = .info("This server still needs a newer version")
+            case .failed:
+                Haptics.notification(.error)
+                updateToast = .failure("Couldn’t reach the server")
+            case .answered, .skipped:
+                break
+            }
+        }
+    }
+
+    private static let minimumVersionCheck: Duration = .milliseconds(600)
+    /// How often a waiting update alert looks for a free screen.
+    private static let updateAlertRecheck: Duration = .milliseconds(1500)
+    /// How often the required screen clears what was presented over it since.
+    private static let updateRequiredSweep: Duration = .seconds(1)
+
+    private struct AvailableUpdate {
+        let latest: String?
+        let url: URL?
     }
 
     /// Temp files untouched this long are no playback or recording in progress: locking clears them.

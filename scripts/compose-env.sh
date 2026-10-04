@@ -163,15 +163,73 @@ shroud_diagnose_up() {
   fi
 }
 
+# The web bundle's build id: a hash of what goes into the web image, so a redeploy that
+# changes the web client offers open tabs a reload and one that doesn't stays quiet. Compose
+# bakes it into the bundle (VITE_WEB_BUILD); once the stack is up, shroud_up writes it to
+# .shroud-run/web-build, which the API reads on each question (GET /client-version) without
+# being restarted. Outside a git checkout, or when a file can't be read, every deploy gets a
+# new one.
+shroud_web_build_id() {
+  local files="" id=""
+  if command -v git >/dev/null 2>&1 && git -C "$SHROUD_REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    # The image's files: web/.dockerignore leaves out the top-level Markdown and .env files;
+    # .gitignore the rest. quotePath=false keeps non-ASCII names as they are on disk.
+    files="$(cd "$SHROUD_REPO_ROOT" && git -c core.quotePath=false ls-files -co --exclude-standard -- web |
+      while IFS= read -r f; do
+        [[ "$f" == web/*.md && "$f" != web/*/* ]] && continue
+        [[ -f "$f" ]] && printf '%s\n' "$f"
+      done || true)"
+  fi
+  if [[ -n "$files" ]]; then
+    id="$(cd "$SHROUD_REPO_ROOT" && { printf '%s\n' "$files"; printf '%s\n' "$files" | git hash-object --stdin-paths; } |
+      git hash-object --stdin 2>/dev/null | cut -c1-12)" || id=""
+  fi
+  if [[ "${#id}" -eq 12 ]]; then
+    printf '%s\n' "$id"
+  else
+    shroud_random_hex 6
+  fi
+}
+
+# Sets SHROUD_WEB_BUILD once per run, before anything builds the web image.
+shroud_export_web_build() {
+  if [[ -z "${SHROUD_WEB_BUILD:-}" ]]; then
+    SHROUD_WEB_BUILD="$(shroud_web_build_id)"
+  fi
+  export SHROUD_WEB_BUILD
+}
+
+# Tells the running API which bundle the web container now serves. Written only after `up`
+# succeeded, so tabs aren't offered a reload into a container that isn't there yet; the
+# directory is bind-mounted read-only into the API (docker-compose.yml).
+shroud_publish_web_build() {
+  local dir="${SHROUD_REPO_ROOT}/.shroud-run" tmp
+  if ! tmp="$(mktemp "${dir}/web-build.XXXXXX" 2>/dev/null)"; then
+    warn_web_build "cannot write ${dir} — open tabs won't be offered a reload"
+    return 0
+  fi
+  printf '%s\n' "$SHROUD_WEB_BUILD" >"$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "${dir}/web-build" || warn_web_build "cannot replace ${dir}/web-build"
+}
+
+warn_web_build() {
+  printf 'WARNING: %s\n' "$*" >&2
+}
+
 shroud_up() {
   shroud_ensure_nebular_secrets
   shroud_ensure_turn_secret
   shroud_assert_env
   shroud_ensure_proxy_network
+  shroud_export_web_build
+  # Created here, not by Docker: a missing bind-mount source would be made root-owned.
+  mkdir -p "${SHROUD_REPO_ROOT}/.shroud-run"
   if ! shroud_compose up -d --build --remove-orphans; then
     shroud_diagnose_up
     return 1
   fi
+  shroud_publish_web_build
 }
 
 shroud_down() {

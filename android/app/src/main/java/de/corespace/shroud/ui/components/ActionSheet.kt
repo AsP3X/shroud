@@ -91,7 +91,7 @@ fun ActionSheet(
     val shown = remember { ShownActionSheet() }
     if (visible) shown.content = ActionSheetContent(title, message, items, cancelTitle)
 
-    OverlayLayer(active = visibility.isOverlayUp) {
+    OverlayLayer(active = visibility.isOverlayUp, onDismissRequest = { if (visibility.targetState) currentOnDismiss() }) {
         val content = shown.content ?: return@OverlayLayer
         val palette = ShroudTheme.colors
         val reduceMotion = ShroudTheme.reduceMotion

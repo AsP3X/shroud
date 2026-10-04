@@ -162,6 +162,16 @@ export type IceServer = {
 
 export type CallSignalType = "sdp_offer" | "sdp_answer" | "ice_candidate" | "renegotiate" | "media_state";
 
+/** The server answers the web only `current` or `update_available`; `update_required` is for the apps. */
+export type ClientVersionStatus = "current" | "update_available" | "update_required";
+
+/** `GET /client-version`. For the web, `latest_version` is the deployed build id, `update_url` null. */
+export type ClientVersion = {
+  status: ClientVersionStatus;
+  latest_version: string | null;
+  update_url: string | null;
+};
+
 async function request<T>(
   path: string,
   init: RequestInit & { token?: string | null } = {},
@@ -343,6 +353,12 @@ function withLocalUsername(session: Session, username: string): Session {
 
 export const api = {
   health: () => request<{ status: string }>("/health/live"),
+  /** No session: the sign-in and lock screens ask too (`appVersion.ts`). Never from a cache. */
+  clientVersion: (platform: "web", version: string) =>
+    request<ClientVersion>(
+      `/client-version?platform=${platform}&version=${encodeURIComponent(version)}`,
+      { cache: "no-store" },
+    ),
   /** No device name here: it is sealed once the phrase is known (`deviceNaming.ts`). The username is hashed on this device. */
   register: async (username: string, password: string) => {
     const name = normalizeUsername(username);

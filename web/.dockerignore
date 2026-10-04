@@ -4,3 +4,4 @@ dist
 *.md
 tls/target
 src/linkPreview/tls
+.env*

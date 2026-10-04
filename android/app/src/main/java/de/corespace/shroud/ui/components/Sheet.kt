@@ -123,7 +123,7 @@ fun ShroudSheet(
 ) {
     val visibility = rememberOverlayTransition(visible)
     val currentOnDismiss by rememberUpdatedState(onDismiss)
-    OverlayLayer(active = visibility.isOverlayUp) {
+    OverlayLayer(active = visibility.isOverlayUp, onDismissRequest = { if (visibility.targetState) currentOnDismiss() }) {
         val colors = ShroudTheme.colors
         val palette = ShroudTheme.colors
         val reduceMotion = ShroudTheme.reduceMotion

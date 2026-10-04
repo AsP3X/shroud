@@ -626,6 +626,7 @@ internal fun ContextMenuOverlay(
         active = true,
         modal = true,
         backdropBlur = { if (blurs) MenuBackdropBlur * progress.value.coerceIn(0f, 1f) else 0.dp },
+        onDismissRequest = close,
     ) {
         val back by rememberOverlayBack(enabled = !closing) {
             if (submenuOf != null) submenuOf = null else close()

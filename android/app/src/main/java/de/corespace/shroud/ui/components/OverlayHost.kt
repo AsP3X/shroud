@@ -6,6 +6,7 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,11 +30,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.dismiss
@@ -63,6 +66,12 @@ import kotlinx.coroutines.launch
  * it ([OverlayLayer]'s `backdropBlur`, used by the light context menu's blur scrim, shell-chats
  * §8.7). Without a host above it (previews, tests, today's `ShroudApp` until W1-INT wraps it) an
  * [OverlayLayer] draws in place as a full-size box, which is what `ShroudSheet` always did.
+ *
+ * A full-screen block drawn in the app content (the "Update required" screen) declares
+ * [BlockOverlays]: every layer that can close is asked to ([OverlayLayer]'s `onDismissRequest`),
+ * and while the block is up no layer is placed — none draws, takes a touch, reaches TalkBack or
+ * takes focus — so the block is what the user meets. Layers that cannot close keep their state
+ * and come back when the block ends.
  */
 @Composable
 fun OverlayHost(content: @Composable () -> Unit) {
@@ -74,7 +83,8 @@ fun OverlayHost(content: @Composable () -> Unit) {
     val state = remember { OverlayHostState() }
     CompositionLocalProvider(LocalOverlayHost provides state) {
         Box(Modifier.fillMaxSize()) {
-            val topModal = state.topModalIndex()
+            val blocked = state.isBlocked
+            val topModal = if (blocked) -1 else state.topModalIndex()
             Box(
                 Modifier
                     .fillMaxSize()
@@ -84,7 +94,7 @@ fun OverlayHost(content: @Composable () -> Unit) {
                 content()
             }
             state.layers.forEachIndexed { index, entry ->
-                key(entry.id) { OverlayLayerContent(entry, hiddenFromAccessibility = index < topModal) }
+                key(entry.id) { OverlayLayerContent(entry, hiddenFromAccessibility = index < topModal, blocked = blocked) }
             }
         }
     }
@@ -98,6 +108,7 @@ val LocalOverlayHost = staticCompositionLocalOf<OverlayHostState?> { null }
 class OverlayHostState {
     private var nextId = 0L
     internal val layers = mutableStateListOf<OverlayLayerEntry>()
+    private val blocks = mutableStateListOf<Any>()
 
     /** Number of layers up (shown or still animating out). */
     val layerCount: Int get() = layers.size
@@ -105,7 +116,25 @@ class OverlayHostState {
     /** True while any modal layer is up; the content below is then hidden from TalkBack. */
     val hasModalLayer: Boolean get() = layers.any { it.modal }
 
+    /** True while a [BlockOverlays] is up: no layer is placed. */
+    val isBlocked: Boolean get() = blocks.isNotEmpty()
+
     internal fun newEntry(): OverlayLayerEntry = OverlayLayerEntry(nextId++)
+
+    /** Starts a block for [token] and asks every layer up to close. */
+    internal fun block(token: Any) {
+        if (blocks.none { it === token }) blocks.add(token)
+        dismissAll()
+    }
+
+    internal fun unblock(token: Any) {
+        blocks.removeAll { it === token }
+    }
+
+    /** Asks every layer up that can close to close (its `onDismissRequest`); the others stay. */
+    fun dismissAll() {
+        for (layer in layers.toList()) layer.onDismissRequest?.invoke()
+    }
 
     internal fun show(entry: OverlayLayerEntry) {
         if (entry !in layers) layers.add(entry)
@@ -136,6 +165,7 @@ internal class OverlayLayerEntry(val id: Long) {
     var blur: () -> Dp by mutableStateOf({ 0.dp })
     var locals: CompositionLocalContext? by mutableStateOf(null)
     var content: @Composable () -> Unit by mutableStateOf({})
+    var onDismissRequest: (() -> Unit)? by mutableStateOf(null)
 }
 
 /**
@@ -146,13 +176,16 @@ internal class OverlayLayerEntry(val id: Long) {
  * Keep [active] true while the layer animates out ([rememberOverlayTransition] and
  * [isOverlayUp] do that), or the exit is cut off. [modal] layers hide what is below from
  * TalkBack. [backdropBlur] is read while drawing (animate it without recomposing) and blurs the
- * app content below on API 31+ ([overlayCanBlur]).
+ * app content below on API 31+ ([overlayCanBlur]). [onDismissRequest] closes the overlay the way
+ * its own Back or scrim would; [BlockOverlays] calls it. Without one the layer is only hidden
+ * while a block is up.
  */
 @Composable
 fun OverlayLayer(
     active: Boolean,
     modal: Boolean = true,
     backdropBlur: () -> Dp = NoBackdropBlur,
+    onDismissRequest: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val host = LocalOverlayHost.current
@@ -167,6 +200,7 @@ fun OverlayLayer(
         entry.blur = backdropBlur
         entry.locals = locals
         entry.content = content
+        entry.onDismissRequest = onDismissRequest
     }
     if (active) {
         DisposableEffect(host, entry) {
@@ -201,19 +235,61 @@ val MutableTransitionState<Boolean>.isOverlayUp: Boolean get() = currentState ||
 
 private val NoBackdropBlur: () -> Dp = { 0.dp }
 
+/**
+ * While [active], the nearest [OverlayHost] asks every open layer to close and places none — for a
+ * full-screen block drawn in the app content that must not have a sheet or menu above it (the
+ * "Update required" screen). The layers' composition stays, so one that cannot close keeps its
+ * state and shows again when the block ends.
+ */
 @Composable
-private fun OverlayLayerContent(entry: OverlayLayerEntry, hiddenFromAccessibility: Boolean) {
+fun BlockOverlays(active: Boolean) {
+    val host = LocalOverlayHost.current ?: return
+    if (active) {
+        DisposableEffect(host) {
+            val token = Any()
+            host.block(token)
+            onDispose { host.unblock(token) }
+        }
+    }
+}
+
+/**
+ * Keeps focus out of this subtree while [blocked]: neither D-pad / Tab moves nor a focus request
+ * enter it. For content under a full-screen block, which stays composed but must not be typed into.
+ */
+fun Modifier.focusBlocked(blocked: Boolean): Modifier =
+    if (blocked) focusProperties { onEnter = { cancelFocusChange() } }.focusGroup() else this
+
+@Composable
+private fun OverlayLayerContent(entry: OverlayLayerEntry, hiddenFromAccessibility: Boolean, blocked: Boolean) {
     val locals = entry.locals ?: return
     CompositionLocalProvider(locals) {
-        Box(Modifier.fillMaxSize().then(if (hiddenFromAccessibility) Modifier.clearAndSetSemantics {} else Modifier)) {
-            entry.content()
+        // Blocked: measured but not placed, so it draws nothing and takes no touch, and its
+        // composition (and state) stays for when the block ends.
+        Layout(
+            content = {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .then(if (hiddenFromAccessibility || blocked) Modifier.clearAndSetSemantics {} else Modifier)
+                        .focusBlocked(blocked),
+                ) {
+                    entry.content()
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) { measurables, constraints ->
+            val placeables = measurables.map { it.measure(constraints) }
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                if (!blocked) placeables.forEach { it.place(0, 0) }
+            }
         }
     }
 }
 
 /** API 31+: blurs the app content behind a layer that asks for it (RenderEffect, no Haze needed). */
 private fun Modifier.backdropBlur(state: OverlayHostState): Modifier = graphicsLayer {
-    val radius = state.backdropBlur().toPx()
+    val radius = if (state.isBlocked) 0f else state.backdropBlur().toPx()
     renderEffect = if (radius >= 0.5f) BlurEffect(radius, radius, TileMode.Clamp) else null
 }
 

@@ -115,11 +115,76 @@ function Get-ComposeArgs {
     return $args
 }
 
+# The web bundle's build id: a hash of what goes into the web image, so a redeploy that
+# changes the web client offers open tabs a reload and one that doesn't stays quiet. Compose
+# bakes it into the bundle (VITE_WEB_BUILD); once the stack is up, Publish-WebBuild writes it to
+# .shroud-run\web-build, which the API reads on each question (GET /client-version) without
+# being restarted. Outside a git checkout, or when git fails, every deploy gets a new one.
+$script:webBuild = $null
+function Get-WebBuildId {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        # Native stderr must not stop the deploy under Windows PowerShell's "Stop".
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & git -C $repoRoot rev-parse --git-dir *> $null
+            if ($LASTEXITCODE -eq 0) {
+                # The image's files: web/.dockerignore leaves out the top-level Markdown and .env
+                # files; .gitignore the rest. quotePath=false keeps non-ASCII names as on disk.
+                $files = @(& git -C $repoRoot -c core.quotePath=false ls-files -co --exclude-standard -- web 2>$null |
+                    Where-Object {
+                        -not ($_ -clike "web/*.md" -and $_ -notlike "web/*/*") -and
+                        (Test-Path -LiteralPath (Join-Path $repoRoot $_) -PathType Leaf)
+                    })
+                if ($files.Count -gt 0) {
+                    $hashes = @($files | & git -C $repoRoot hash-object --stdin-paths 2>$null)
+                    if ($LASTEXITCODE -eq 0) {
+                        $id = [string]((($files + $hashes) -join "`n") | & git -C $repoRoot hash-object --stdin 2>$null)
+                        if ($LASTEXITCODE -eq 0 -and $id.Length -ge 12) { return $id.Substring(0, 12) }
+                    }
+                }
+            }
+        } catch {
+        } finally {
+            $ErrorActionPreference = $previous
+        }
+    }
+    return (New-HexSecret -Bytes 6)
+}
+
+# Tells the running API which bundle the web container now serves. Written only after `up`
+# succeeded; the directory is bind-mounted read-only into the API (docker-compose.yml).
+function Publish-WebBuild {
+    $dir = Join-Path $repoRoot ".shroud-run"
+    try {
+        $tmp = Join-Path $dir ("web-build." + (New-HexSecret -Bytes 4))
+        Set-Content -LiteralPath $tmp -Value $script:webBuild -Encoding ascii
+        Move-Item -LiteralPath $tmp -Destination (Join-Path $dir "web-build") -Force
+    } catch {
+        Write-Line "WARNING: cannot write $dir - open tabs won't be offered a reload" "Yellow"
+    }
+}
+
 function Invoke-Compose {
     param([string[]]$ComposeArgs)
-    $files = Get-ComposeArgs
-    & docker compose @files @ComposeArgs
-    if ($LASTEXITCODE -ne 0) { throw "docker compose $($ComposeArgs -join ' ') exited $LASTEXITCODE" }
+    # `build` and `up` bake the build id into the web image; it is set for this call only, so
+    # a later hand-run `docker compose` in this window doesn't reuse it.
+    $stampsWeb = $ComposeArgs[0] -in @("up", "build")
+    $previousBuild = $env:SHROUD_WEB_BUILD
+    if ($stampsWeb) {
+        if (-not $script:webBuild) { $script:webBuild = Get-WebBuildId }
+        $env:SHROUD_WEB_BUILD = $script:webBuild
+        # Created here, not by Docker: a missing bind-mount source would be made by the daemon.
+        New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot ".shroud-run") | Out-Null
+    }
+    try {
+        $files = Get-ComposeArgs
+        & docker compose @files @ComposeArgs
+        if ($LASTEXITCODE -ne 0) { throw "docker compose $($ComposeArgs -join ' ') exited $LASTEXITCODE" }
+    } finally {
+        if ($stampsWeb) { $env:SHROUD_WEB_BUILD = $previousBuild }
+    }
+    if ($ComposeArgs[0] -eq "up") { Publish-WebBuild }
 }
 
 function Show-Info {

@@ -87,22 +87,33 @@ data class AlertField(
     val noPersonalizedLearning: Boolean = true,
 )
 
-/** The dialog's confirming button; [destructive] draws it in `danger`, [enabled] false dims it to 0.45. */
-data class AlertButton(val title: String, val destructive: Boolean = false, val enabled: Boolean = true, val onClick: () -> Unit)
+/**
+ * The dialog's confirming button; [destructive] draws it in `danger`, [enabled] false dims it to
+ * 0.45. [closesAlert] false leaves closing to [onClick] (the update offer stays up when its link
+ * cannot open).
+ */
+data class AlertButton(
+    val title: String,
+    val destructive: Boolean = false,
+    val enabled: Boolean = true,
+    val closesAlert: Boolean = true,
+    val onClick: () -> Unit,
+)
 
 /**
  * A centred dialog drawn by the app (iOS `.alert`; settings-lock §2.4). By decision C22 / P13c it
- * is only for input — destructive confirmations use [ActionSheet] — so its use is "Rename Device"
- * (`DevicesView.swift:728-748`, settings-lock §4.6).
+ * is only for input — destructive confirmations use [ActionSheet] — so its uses are "Rename Device"
+ * (`DevicesView.swift:728-748`, settings-lock §4.6) and the root's "Update available" offer.
  *
  * Human: A rounded card fades and grows in (0.94 → 1) over a dim: bold [title], grey [message],
  * the [field] (focused, keyboard up), then Cancel and the [primary] button side by side. Back, a
  * tap on the dim or Cancel close it; the keyboard's Done does what [primary] does while it is
- * enabled.
+ * enabled. A null [cancelTitle] leaves [primary] alone, full width (an "OK" notice).
  *
  * Agent: [visible] is the caller's state; [onDismiss] asks to hide it. [primary] calls [onDismiss]
- * first, then its own `onClick` (an iOS alert button always closes the alert). The card is
- * `min(320, width − 80)` wide and stays above the keyboard. Drawn in the [OverlayHost] layer.
+ * first, then its own `onClick` (an iOS alert button always closes the alert), unless its
+ * `closesAlert` is false. The card is `min(320, width − 80)` wide and stays above the keyboard.
+ * Drawn in the [OverlayHost] layer.
  */
 @Composable
 fun ShroudAlertDialog(
@@ -112,14 +123,14 @@ fun ShroudAlertDialog(
     field: AlertField? = null,
     primary: AlertButton,
     onDismiss: () -> Unit,
-    cancelTitle: String = "Cancel",
+    cancelTitle: String? = "Cancel",
 ) {
     val visibility = rememberOverlayTransition(visible)
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     val shown = remember { ShownAlert() }
     if (visible) shown.content = AlertContent(title, message, field, primary, cancelTitle)
 
-    OverlayLayer(active = visibility.isOverlayUp) {
+    OverlayLayer(active = visibility.isOverlayUp, onDismissRequest = { if (visibility.targetState) currentOnDismiss() }) {
         val content = shown.content ?: return@OverlayLayer
         val colors = ShroudTheme.colors
         val palette = ShroudTheme.colors
@@ -129,7 +140,7 @@ fun ShroudAlertDialog(
         val dismiss: () -> Unit = { if (visibility.targetState) currentOnDismiss() }
         val confirm: () -> Unit = {
             if (visibility.targetState && content.primary.enabled) {
-                currentOnDismiss()
+                if (content.primary.closesAlert) currentOnDismiss()
                 content.primary.onClick()
             }
         }
@@ -181,14 +192,16 @@ fun ShroudAlertDialog(
                             AlertTextField(content.field, onDone = confirm)
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AlertCapsule(
-                                title = content.cancelTitle,
-                                fill = colors.accentSoft,
-                                textColor = colors.accentText,
-                                enabled = true,
-                                onClick = dismiss,
-                                modifier = Modifier.weight(1f),
-                            )
+                            if (content.cancelTitle != null) {
+                                AlertCapsule(
+                                    title = content.cancelTitle,
+                                    fill = colors.accentSoft,
+                                    textColor = colors.accentText,
+                                    enabled = true,
+                                    onClick = dismiss,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                             AlertCapsule(
                                 title = content.primary.title,
                                 fill = if (content.primary.destructive) colors.danger else colors.accent,
@@ -224,7 +237,7 @@ private data class AlertContent(
     val message: String?,
     val field: AlertField?,
     val primary: AlertButton,
-    val cancelTitle: String,
+    val cancelTitle: String?,
 )
 
 private class ShownAlert {

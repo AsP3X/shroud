@@ -43,6 +43,13 @@ class ShroudApi(internal val client: ApiClient) {
     /** `GET /config` — the reaction limit (`MessagesService.swift:71-74`). */
     suspend fun clientConfig(token: String): ClientConfigDto = client.get("config", token, ClientConfigDto.serializer())
 
+    /**
+     * `GET /client-version?platform=&version=` — no token, so it answers before sign-in and on the
+     * lock screen, and never reports an auth outcome (server `routes/client_version.rs`).
+     */
+    suspend fun clientVersion(platform: String, version: String): ClientVersionDto =
+        client.get("client-version", null, ClientVersionDto.serializer(), mapOf("platform" to platform, "version" to version))
+
     // ---- Auth (`AuthService.swift`) ----
 
     /** `POST /auth/register` (`AuthService.swift:22-35`). No token: a failure never touches a stored session. */

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::client_version::ClientVersions;
 use crate::error::AppError;
 use crate::media_store::NebularConfig;
 use crate::push::UnifiedPushPolicy;
@@ -60,6 +61,8 @@ pub struct Config {
     pub reactions_max_per_user: u32,
     /// Where Android (UnifiedPush) subscriptions may point (`UNIFIEDPUSH_*`).
     pub unifiedpush: UnifiedPushPolicy,
+    /// Released app versions (`IOS_*`, `ANDROID_*`, `WEB_BUILD`).
+    pub client_versions: ClientVersions,
 }
 
 /// Where encrypted media blobs live (see [`crate::media_store`]).
@@ -156,6 +159,10 @@ impl Config {
             );
         }
 
+        // Human: Handed to clients by `GET /client-version`, which prompts them to update.
+        let client_versions =
+            crate::client_version::client_versions(&|name| std::env::var(name).ok())?;
+
         Ok(Self {
             database_url,
             database_pool_max,
@@ -170,6 +177,7 @@ impl Config {
             turn: ice.turn,
             reactions_max_per_user,
             unifiedpush,
+            client_versions,
         })
     }
 

@@ -16,6 +16,8 @@
 
 # Environment & secrets
 .env
+# The deployed web build id the API reads (scripts/compose-env.sh)
+/.shroud-run/
 .env.*
 !.env.example
 

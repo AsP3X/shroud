@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::http::HeaderMap;
 use sqlx::PgPool;
 
+use crate::client_version::ClientVersions;
 use crate::config::IceServer;
 use crate::link_relay::RelayPolicy;
 use crate::media_store::MediaStore;
@@ -42,6 +43,8 @@ pub struct AppState {
     pub link_relay: Arc<LinkRelay>,
     /// Most emoji one person may leave on one message; clients read it from `GET /config`.
     pub reactions_max_per_user: u32,
+    /// Released app versions; clients read them from `GET /client-version`.
+    pub client_versions: Arc<ClientVersions>,
 }
 
 impl AppState {
@@ -71,6 +74,7 @@ impl AppState {
             ice_servers: vec![],
             turn: None,
             reactions_max_per_user: 5,
+            client_versions: Arc::new(ClientVersions::default()),
             rate_limiter,
             redis_required: false,
             trust_forwarded_headers: true,
