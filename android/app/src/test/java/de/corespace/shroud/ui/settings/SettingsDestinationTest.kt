@@ -53,6 +53,9 @@ class SettingsDestinationTest {
         SettingsRoute.PrivacySecurity -> "Privacy and Security"
         SettingsRoute.PushDelivery -> "Delivery"
         SettingsRoute.SavedMessages -> null
+        SettingsRoute.About -> "About Shroud"
+        SettingsRoute.Licenses -> "Open-Source Licenses"
+        is SettingsRoute.License -> "Haze"
     }
 
     private val expected = listOf(
@@ -64,6 +67,9 @@ class SettingsDestinationTest {
         SettingsRoute.NotificationSound,
         SettingsRoute.PrivacySecurity,
         SettingsRoute.PushDelivery,
+        SettingsRoute.About,
+        SettingsRoute.Licenses,
+        SettingsRoute.License("haze"),
     ).map { it to title(it)!! }
 
     @Test
@@ -79,8 +85,15 @@ class SettingsDestinationTest {
         for ((shown, title) in expected) {
             route = shown
             ui.idle()
-            // The bar's title is one node labelled with it.
-            val bar = ui.nodes().filter { node -> node.config.getOrNull(SemanticsProperties.ContentDescription) == listOf(title) }
+            // The bar's title is one node labelled with it. The license screens read their asset on
+            // the IO dispatcher first, so they get a moment.
+            fun bar() = ui.nodes().filter { node -> node.config.getOrNull(SemanticsProperties.ContentDescription) == listOf(title) }
+            var waited = 0
+            while (bar().isEmpty() && waited++ < 100) {
+                Thread.sleep(20)
+                ui.idle()
+            }
+            val bar = bar()
             assertTrue("$shown shows \"$title\": ${ui.describe()}", bar.isNotEmpty())
             val back = ui.nodes().single { it.config.getOrNull(SemanticsProperties.ContentDescription) == listOf("Back") }
             val before = popped

@@ -34,17 +34,27 @@ enum class ClientUpdateStatus {
 
 /**
  * The last answer of `GET /client-version`. [latestVersion] and [updateUrl] are null when the
- * operator set none; [updateUrl] is only ever an `http(s)` link.
+ * operator set none; [updateUrl] is only ever an `http(s)` link. [serverVersion] is the server's own
+ * version (Settings › About Shroud), null from servers that do not send it; it is kept whatever the
+ * status.
  */
-data class ClientUpdate(val status: ClientUpdateStatus, val latestVersion: String?, val updateUrl: String?) {
+data class ClientUpdate(
+    val status: ClientUpdateStatus,
+    val latestVersion: String?,
+    val updateUrl: String?,
+    val serverVersion: String? = null,
+) {
     companion object {
         val CURRENT = ClientUpdate(ClientUpdateStatus.Current, null, null)
 
         fun from(dto: ClientVersionDto): ClientUpdate {
             val status = ClientUpdateStatus.fromWire(dto.status)
-            if (status == ClientUpdateStatus.Current) return CURRENT
-            return ClientUpdate(status, dto.latestVersion?.trim()?.takeIf { it.isNotEmpty() }, updateLink(dto.updateUrl))
+            val serverVersion = dto.serverVersion.nonBlank()
+            if (status == ClientUpdateStatus.Current) return CURRENT.copy(serverVersion = serverVersion)
+            return ClientUpdate(status, dto.latestVersion.nonBlank(), updateLink(dto.updateUrl), serverVersion)
         }
+
+        private fun String?.nonBlank(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
 
         /** [raw] when it is an `http`/`https` URL (OkHttp parses no other scheme), else null. */
         internal fun updateLink(raw: String?): String? = raw?.trim()?.takeIf { it.toHttpUrlOrNull() != null }
@@ -103,6 +113,8 @@ sealed interface UpdateCheckOutcome {
  *   stays. A status this build does not know reads as current.
  * - **Later** ([dismissAvailable], with the offer the dialog showed) silences that one latest
  *   version for this process only: a newer release offers again, and so does the next cold start.
+ * - **About** reads [update] (status and server version, whatever "Later" said) and [lastOutcome]
+ *   (whether the last check got an answer).
  *
  * Main-confined (00-plan §1.1 rule 3): [scope] is the app scope; [fetch] switches threads itself.
  */
@@ -115,6 +127,7 @@ class ClientUpdateChecker(
     private val updateState = MutableStateFlow(ClientUpdate.CURRENT)
     private val promptState = MutableStateFlow<UpdatePrompt>(UpdatePrompt.None)
     private val checkingState = MutableStateFlow(false)
+    private val outcomeState = MutableStateFlow<UpdateCheckOutcome?>(null)
 
     /** The latest versions the user answered "Later" for (null: an offer without a version). */
     private val dismissed = HashSet<String?>()
@@ -130,6 +143,13 @@ class ClientUpdateChecker(
 
     /** A check is on its way (the required screen's "Checking…"). */
     val isChecking: StateFlow<Boolean> = checkingState.asStateFlow()
+
+    /**
+     * How the last finished check on this server ended: [UpdateCheckOutcome.Answered] or
+     * [UpdateCheckOutcome.Failed] (a failure leaves [update] as it was); null until one finished
+     * and again after a server switch. A dropped check ([UpdateCheckOutcome.Skipped]) never shows here.
+     */
+    val lastOutcome: StateFlow<UpdateCheckOutcome?> = outcomeState.asStateFlow()
 
     /** The app came to the foreground: checks unless the last answer is under 10 minutes old. */
     fun onForeground() {
@@ -158,7 +178,7 @@ class ClientUpdateChecker(
                 }
                 // A server switch cancels this check: its answer belongs to the old server.
                 ensureActive()
-                if (answer == null) {
+                val outcome = if (answer == null) {
                     UpdateCheckOutcome.Failed
                 } else {
                     val update = ClientUpdate.from(answer)
@@ -166,6 +186,8 @@ class ClientUpdateChecker(
                     publish(update)
                     UpdateCheckOutcome.Answered(update.status)
                 }
+                outcomeState.value = outcome
+                outcome
             } finally {
                 if (running === coroutineContext.job) {
                     running = null
@@ -206,6 +228,7 @@ class ClientUpdateChecker(
         stale?.cancel()
         dismissed.clear()
         lastAnswerAt = null
+        outcomeState.value = null
         publish(ClientUpdate.CURRENT)
         check()
     }

@@ -13,6 +13,8 @@ export function SettingsRow({
   onClick,
   soon = false,
   danger = false,
+  disabled = false,
+  dot,
 }: {
   title: string;
   subtitle?: string;
@@ -22,6 +24,10 @@ export function SettingsRow({
   onClick?: () => void;
   soon?: boolean;
   danger?: boolean;
+  /** Shown but not usable right now (dimmed, still a button). */
+  disabled?: boolean;
+  /** An accent dot after the value, read out as this text (e.g. "Update available"). */
+  dot?: string;
 }) {
   const interactive = Boolean(onClick) && !soon;
   const body = (
@@ -34,6 +40,7 @@ export function SettingsRow({
         {subtitle ? <span>{subtitle}</span> : null}
       </span>
       {value ? <span className="set-row-value">{value}</span> : null}
+      {dot ? <span className="set-dot" role="img" aria-label={dot} /> : null}
       {soon ? <span className="set-soon">Soon</span> : null}
       {interactive ? <ChevronRight size={16} className="set-chevron" aria-hidden="true" /> : null}
     </>
@@ -47,7 +54,7 @@ export function SettingsRow({
     );
   }
   return (
-    <button type="button" className="set-row set-row-button" onClick={onClick}>
+    <button type="button" className="set-row set-row-button" onClick={onClick} disabled={disabled}>
       {body}
     </button>
   );

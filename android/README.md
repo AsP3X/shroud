@@ -220,8 +220,12 @@ receive messages and calls without a push service". The call service is
 `phoneCall|microphone|mediaProjection`. Incoming calls declare `USE_FULL_SCREEN_INTENT`. Play is
 not set up.
 
-Licence notices ship in `app/src/main/assets/licenses/` (Inter, JetBrains Mono, whisper.cpp, Haze,
-icons).
+Licence notices ship in `app/src/main/assets/licenses/`: one text per component and
+`third_party.json`, the list Settings › About Shroud › Open-Source Licenses shows (every module of the
+release runtime classpath, plus native code, fonts, icons and data files). After a dependency change,
+run `python3 scripts/generate_licenses.py` from `android/` (it calls `:app:dependencies` and reads the
+POMs from the Gradle cache) and commit the JSON; it fails when a license cannot be mapped or a text is
+missing.
 
 F-Droid listing copy is `fastlane/metadata/android/en-US/` (`title.txt`, `short_description.txt`,
 `full_description.txt`). `fdroid build` is not run here. A builder needs JDK 21, NDK

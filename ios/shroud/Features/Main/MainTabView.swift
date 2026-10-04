@@ -316,4 +316,5 @@ struct MainTabView: View {
         .environment(CryptoController())
         .environment(CallController())
         .environment(NotificationsController.shared)
+        .environment(ClientVersionController())
 }

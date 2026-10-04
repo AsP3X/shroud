@@ -52,6 +52,7 @@ import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.core.notifications.NotificationAuthorization
+import de.corespace.shroud.core.update.ClientUpdateStatus
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.ActionSheet
 import de.corespace.shroud.ui.components.ActionSheetItem
@@ -85,8 +86,10 @@ import dev.chrisbanes.haze.rememberHazeState
  * Reads the session (name, handle, user id), the saved server, the colour theme and the
  * notification state from the container, loads the linked-device count once per appearance (best
  * effort: offline it shows no count, `SettingsView.swift:553-559`), and pushes its rows' screens on
- * the shell's Settings stack ([LocalShellNavigation]). Log Out confirms in an action sheet and then
- * runs the shell's wipe ([LocalAppActions]). The drawing is [SettingsRootContent].
+ * the shell's Settings stack ([LocalShellNavigation]). The About Shroud row shows this build's version
+ * and a dot while the server's last answer offers or requires an update (`ClientUpdateChecker`). Log
+ * Out confirms in an action sheet and then runs the shell's wipe ([LocalAppActions]). The drawing is
+ * [SettingsRootContent].
  */
 @Composable
 fun SettingsScreen(onOpenCalls: (() -> Unit)?) {
@@ -103,6 +106,7 @@ fun SettingsScreen(onOpenCalls: (() -> Unit)?) {
     val loggingOut by actions.isLoggingOut.collectAsState()
     val devices = container.auth.devices
     val devicesState by devices.state.collectAsState()
+    val update by container.update.checker.update.collectAsState()
     // Core's list (K3): Devices' loads and removals show here at once (iOS `DevicesView(onCount:)`,
     // `SettingsView.swift:209-210`), and a failed reload keeps the rows, so the count stays what was shown.
     val deviceCount = devicesState.rows.size.takeIf { devicesState.hasLoaded }
@@ -122,6 +126,8 @@ fun SettingsScreen(onOpenCalls: (() -> Unit)?) {
         serverSubtitle = SettingsCopy.serverSubtitle(server),
         isLoggingOut = loggingOut,
         deviceNoun = DeviceNoun.current(context),
+        appVersion = container.update.appVersion.name,
+        hasUpdate = update.status != ClientUpdateStatus.Current,
     )
     SettingsRootContent(
         state = state,
@@ -138,6 +144,8 @@ fun SettingsScreen(onOpenCalls: (() -> Unit)?) {
  * @property userId the session's user id, shown lower-case under "Signed in as".
  * @property deviceCount linked devices, null until the first load (the row shows no value).
  * @property deviceNoun "phone" or "tablet" ([DeviceNoun]), for the Log Out message.
+ * @property appVersion this build's `versionName`, the About Shroud row's value.
+ * @property hasUpdate the server's last answer offers or requires an update: the About row's dot.
  */
 @Immutable
 data class SettingsRootState(
@@ -149,6 +157,8 @@ data class SettingsRootState(
     val serverSubtitle: String,
     val isLoggingOut: Boolean,
     val deviceNoun: String,
+    val appVersion: String,
+    val hasUpdate: Boolean,
 )
 
 /** The Settings root's copy and value rules (settings-lock §3.4). Pure. */
@@ -160,6 +170,10 @@ object SettingsCopy {
     const val SIGNING_OUT_SPOKEN = "Signing out"
     const val LOG_OUT_TITLE = "Log out of Shroud?"
     const val OFFICIAL_SERVER_SUBTITLE = "Official · api.shroud.app"
+    const val ABOUT = "About Shroud"
+
+    /** TalkBack for the About row's dot (`SettingsView.swift:548`). */
+    const val UPDATE_AVAILABLE = "Update available"
 
     /**
      * The Log Out confirmation's message (`SettingsView.swift:292-295`) with this device's noun
@@ -246,6 +260,7 @@ fun SettingsRootContent(
                 SignedInCard(handle, state.userId)
                 PrimaryGroup(state, onRoute, onOpenCalls)
                 SecondaryGroup(state, onRoute)
+                AboutGroup(state, onRoute)
                 LogOutButton(state.isLoggingOut) { showLogOutConfirm = true }
                 Spacer(Modifier.height(16.dp))
             }
@@ -394,7 +409,25 @@ private fun SecondaryGroup(state: SettingsRootState, onRoute: (SettingsRoute) ->
 }
 
 /**
- * Card 5: Log Out (`SettingsView.swift:529-551`), disabled with a spinner and "Signing out…"
+ * Card 5: About Shroud (`SettingsView.swift:541-553`): Phosphor `info-fill` on the blue tile, the
+ * version as its value, and the accent dot while an update is offered or required.
+ */
+@Composable
+private fun AboutGroup(state: SettingsRootState, onRoute: (SettingsRoute) -> Unit) {
+    SettingsCard {
+        SettingsRow(
+            SettingsCopy.ABOUT,
+            ShroudIcons.InfoFill,
+            TilePalette.blue,
+            value = state.appVersion,
+            badge = if (state.hasUpdate) SettingsCopy.UPDATE_AVAILABLE else null,
+            onClick = { onRoute(SettingsRoute.About) },
+        )
+    }
+}
+
+/**
+ * Card 6: Log Out (`SettingsView.swift:529-551`), disabled with a spinner and "Signing out…"
  * while the wipe runs.
  */
 @Composable
@@ -430,6 +463,8 @@ private val previewState = SettingsRootState(
     serverSubtitle = SettingsCopy.OFFICIAL_SERVER_SUBTITLE,
     isLoggingOut = false,
     deviceNoun = DeviceNoun.PHONE,
+    appVersion = "0.1.0",
+    hasUpdate = false,
 )
 
 @Preview(name = "Settings · 412", widthDp = 412, heightDp = 917)
@@ -444,6 +479,6 @@ private fun SettingsRootPreview() {
 @Composable
 private fun SettingsRootDarkPreview() {
     ShroudTheme(dark = true) {
-        SettingsRootContent(previewState.copy(isLoggingOut = true, deviceCount = null), onRoute = {}, onOpenCalls = null, onLogOut = {})
+        SettingsRootContent(previewState.copy(isLoggingOut = true, deviceCount = null, hasUpdate = true), onRoute = {}, onOpenCalls = null, onLogOut = {})
     }
 }

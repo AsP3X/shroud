@@ -1729,7 +1729,7 @@ and other users' mutes of them.
 #### `GET /client-version?platform=ios&version=1.2.0` → `200`
 
 ```json
-{ "status": "update_available", "latest_version": "1.4.0", "update_url": "https://testflight.apple.com/join/…" }
+{ "status": "update_available", "latest_version": "1.4.0", "update_url": "https://testflight.apple.com/join/…", "server_version": "0.1.0" }
 ```
 
 No session needed, so the sign-in and lock screens can ask too; the route keeps nothing about the
@@ -1746,7 +1746,8 @@ needs a higher `MARKETING_VERSION`, not just a new build number. `status`:
 
 `latest_version` is the version to update to (the minimum when only that is set), or null.
 `update_url` is the operator's `<PLATFORM>_UPDATE_URL`, or null: the prompt then has no Update
-button.
+button. `server_version` is this server's release (the crate version); the apps show it on their About
+page.
 
 The web client sends its build id. `./deploy.sh` hashes what goes into the web image and bakes the
 hash into the bundle (`VITE_WEB_BUILD`, also a `shroud-build` meta in `index.html`). Once the stack

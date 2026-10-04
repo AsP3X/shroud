@@ -58,6 +58,7 @@ async fn ios_below_minimum_must_update_without_signing_in() {
             "status": "update_required",
             "latest_version": "1.4.0",
             "update_url": "https://testflight.apple.com/join/abc",
+            "server_version": env!("CARGO_PKG_VERSION"),
         })
     );
 }
@@ -76,7 +77,12 @@ async fn android_with_nothing_published_is_current() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body,
-        serde_json::json!({ "status": "current", "latest_version": null, "update_url": null })
+        serde_json::json!({
+            "status": "current",
+            "latest_version": null,
+            "update_url": null,
+            "server_version": env!("CARGO_PKG_VERSION"),
+        })
     );
 }
 

@@ -92,6 +92,16 @@ server {
         try_files $uri =404;
     }
 
+    # Settings → About Shroud → Open-Source Licenses, written by every build under the same name
+    # (bundleLicenses.ts): revalidated so a deploy's list replaces the last one; a missing file
+    # must 404, never fall back to index.html.
+    location = /licenses.json {
+        include /etc/nginx/security-headers.conf;
+        add_header Cache-Control "no-cache, must-revalidate";
+        default_type application/json;
+        try_files $uri =404;
+    }
+
     # Notification sounds. Stock mime.types has no wav, and an octet-stream answer with nosniff
     # is one Safari will not play.
     location /sounds/ {

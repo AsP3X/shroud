@@ -20,7 +20,8 @@ import org.junit.Test
 /**
  * The update check's decisions: the status mapping (unknown → current), the answer's parsing with
  * nulls, the 10-minute foreground limit, "Later" for one version and one process, failures that
- * keep the last answer, and a server switch that forgets the old server.
+ * keep the last answer, a server switch that forgets the old server, and what About reads: the
+ * server's version and how the last check ended.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ClientUpdateCheckerTest {
@@ -322,5 +323,59 @@ class ClientUpdateCheckerTest {
         assertEquals(UpdatePrompt.Available("0.1.0", "0.2.1", "https://example.org/shroud"), checker.prompt.value)
         checker.dismissAvailable(checker.shownOffer())
         assertEquals(UpdatePrompt.None, checker.prompt.value)
+    }
+
+    // ---- What About reads ----
+
+    @Test
+    fun theServerVersionComesWithEveryAnswer() {
+        val decoded = json.decodeFromString(
+            ClientVersionDto.serializer(),
+            """{"status":"current","latest_version":"0.1.0","update_url":null,"server_version":"0.1.0"}""",
+        )
+        assertEquals("0.1.0", decoded.serverVersion)
+        // Current keeps the server version although it drops the rest.
+        assertEquals(ClientUpdate(ClientUpdateStatus.Current, null, null, "0.1.0"), ClientUpdate.from(decoded))
+        assertEquals("0.4.2", ClientUpdate.from(ClientVersionDto("update_required", "0.3.0", null, " 0.4.2 ")).serverVersion)
+        assertNull(ClientUpdate.from(ClientVersionDto("update_available", "0.2.0", null, "  ")).serverVersion)
+        // Servers older than the field leave it out.
+        assertNull(json.decodeFromString(ClientVersionDto.serializer(), """{"status":"current"}""").serverVersion)
+        assertNull(json.decodeFromString(ClientVersionDto.serializer(), """{"status":"current","server_version":null}""").serverVersion)
+    }
+
+    @Test
+    fun lastOutcomeTellsAFailureFromAnAnswer() = runTest(UnconfinedTestDispatcher()) {
+        val checker = checker(this)
+        server.queue(ClientVersionDto("update_available", "0.2.0", null, "0.1.5"), ApiError.Transport("offline"), current)
+        assertNull("nothing finished yet", checker.lastOutcome.value)
+        checker.check()
+        assertEquals(UpdateCheckOutcome.Answered(ClientUpdateStatus.UpdateAvailable), checker.lastOutcome.value)
+        assertEquals("0.1.5", checker.update.value.serverVersion)
+        checker.check()
+        assertEquals(UpdateCheckOutcome.Failed, checker.lastOutcome.value)
+        // The failure keeps the last answer, its server version included.
+        assertEquals(ClientUpdate(ClientUpdateStatus.UpdateAvailable, "0.2.0", null, "0.1.5"), checker.update.value)
+        checker.check()
+        assertEquals(UpdateCheckOutcome.Answered(ClientUpdateStatus.Current), checker.lastOutcome.value)
+        assertNull("this answer has no server version", checker.update.value.serverVersion)
+    }
+
+    @Test
+    fun aServerSwitchForgetsTheLastOutcomeAndADroppedCheckNeverShows() = runTest(UnconfinedTestDispatcher()) {
+        val checker = checker(this)
+        server.queue(ClientVersionDto("current", null, null, "0.1.0"), required(), ClientVersionDto("current", null, null, "0.9.0"))
+        checker.check()
+        assertEquals(UpdateCheckOutcome.Answered(ClientUpdateStatus.Current), checker.lastOutcome.value)
+        // The old server's check is still running when the switch drops it.
+        val gate = CompletableDeferred<Unit>().also { server.gate = it }
+        checker.check()
+        checker.onServerChanged()
+        assertNull(checker.lastOutcome.value)
+        assertNull(checker.update.value.serverVersion)
+        gate.complete(Unit)
+        testScheduler.advanceUntilIdle()
+        // Only the new server's answer lands: the dropped "required" never shows.
+        assertEquals(UpdateCheckOutcome.Answered(ClientUpdateStatus.Current), checker.lastOutcome.value)
+        assertEquals("0.9.0", checker.update.value.serverVersion)
     }
 }

@@ -120,6 +120,8 @@ class SettingsScreensRenderTest {
         serverSubtitle = SettingsCopy.OFFICIAL_SERVER_SUBTITLE,
         isLoggingOut = false,
         deviceNoun = DeviceNoun.PHONE,
+        appVersion = "0.1.0",
+        hasUpdate = false,
     )
 
     private val local = ServerConfiguration.localDevelopment("10.0.2.2", 8080)

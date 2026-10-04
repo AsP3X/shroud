@@ -5,6 +5,7 @@ import {
   Database,
   Folder,
   Globe,
+  Info,
   Key,
   Languages,
   Laptop,
@@ -17,12 +18,14 @@ import {
   User,
 } from "lucide-react";
 import type { Session } from "../../api/client";
+import { webVersion } from "../../appVersion";
 import { bytesToB64 } from "../../crypto/bytes";
 import type { IdentityMaterial } from "../../crypto/identity";
 import { useNotificationPrefs } from "../../notifications/prefs";
 import { useThemePref } from "../../theme";
 import { Avatar } from "../Avatar";
 import { CopyButton } from "../CopyButton";
+import { useUpdateSnapshot } from "./AboutView";
 import { notificationsSummary } from "./NotificationsView";
 import { themeLabel } from "./PreferencesViews";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
@@ -59,6 +62,7 @@ export function SettingsHome({
   const pref = useThemePref();
   // Re-renders the Notifications row's On/Off when it changes.
   useNotificationPrefs();
+  const update = useUpdateSnapshot();
   const handle = `@${session.user.username}`;
 
   return (
@@ -175,6 +179,17 @@ export function SettingsHome({
         Same X25519 identity as iOS, derived from your 12-word phrase. The phrase itself is never
         stored here.
       </SettingsNote>
+
+      <SettingsCard>
+        <SettingsRow
+          title="About Shroud"
+          value={webVersion()}
+          dot={update.status === "available" ? "Update available" : undefined}
+          Icon={Info}
+          tint="#2e8fe0"
+          onClick={() => onNavigate("about")}
+        />
+      </SettingsCard>
 
       <div className="set-group">
         <button type="button" className="set-logout" onClick={onLogout}>

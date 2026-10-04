@@ -42049,13 +42049,13 @@
       "x": 3040,
       "y": 1500,
       "name": "Desktop — Settings",
-      "context": "Settings (rail › gear): one centred 620 px column on the canvas. Profile hero; signed-in card with the user ID; Invite (share code, invite link, QR); the same groups as iOS ('Soon' rows dimmed); Encryption; Log Out. Sub-pages open with a back bar (Notifications, Devices, Privacy, Data, Appearance, Server).",
+      "context": "Settings (rail › gear): one centred 620 px column on the canvas. Profile hero; signed-in card with the user ID; Invite (share code, invite link, QR); the same groups as iOS ('Soon' rows dimmed); Encryption; About Shroud (version, with an accent dot while an update is available); Log Out. Sub-pages open with a back bar (Notifications, Devices, Privacy, Data, Appearance, Server, About).",
       "theme": {
         "mode": "dark"
       },
       "clip": true,
       "width": 1440,
-      "height": 1324,
+      "height": 1398,
       "fill": "$canvas",
       "children": [
         {
@@ -43908,6 +43908,108 @@
                           "fontFamily": "$font-ui",
                           "fontSize": 12,
                           "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "BKHBj",
+                      "name": "Card About",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": 14,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "MPvwV",
+                          "name": "Row About Shroud",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            11,
+                            14
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "tHj5O",
+                              "name": "Tile",
+                              "width": 30,
+                              "height": 30,
+                              "fill": "#2E8FE0",
+                              "cornerRadius": 8,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "U9FuBq",
+                                  "name": "Glyph",
+                                  "width": 15,
+                                  "height": 15,
+                                  "icon": "info",
+                                  "library": "lucide",
+                                  "fill": "#FFFFFF"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "egmEC",
+                              "name": "Copy",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "MsiyD",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "About Shroud",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "Pjj25",
+                              "name": "Value",
+                              "fill": "$text-secondary",
+                              "content": "0.1.0",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 14,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "P7XqE",
+                              "name": "Update Dot",
+                              "fill": "$accent",
+                              "width": 8,
+                              "height": 8
+                            },
+                            {
+                              "type": "icon",
+                              "id": "ADgT6",
+                              "name": "Chevron",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "chevron-right",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            }
+                          ]
                         }
                       ]
                     },
@@ -109422,6 +109524,2234 @@
               "width": "fill_container"
             }
           }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "ed1IM",
+      "x": 15200,
+      "y": 6100,
+      "name": "Desktop — Settings · About",
+      "context": "Settings › About Shroud: version and build, update status (idle / checking / up to date / available with Reload / failed) and Check for Updates, the server's address and version, a privacy note, Source Code (opens GitHub) and Open-Source Licenses.",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$canvas",
+      "children": [
+        {
+          "type": "frame",
+          "id": "IWUyN",
+          "name": "Rail",
+          "width": 76,
+          "height": "fill_container",
+          "fill": "$bg",
+          "stroke": "$separator",
+          "strokeWidth": {
+            "right": 1
+          },
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "padding": [
+            18,
+            0
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "misCz",
+              "name": "Mark",
+              "width": 36,
+              "height": 36,
+              "fill": "$accent",
+              "cornerRadius": 12,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "path",
+                  "id": "hjefi",
+                  "name": "Veil",
+                  "geometry": "M512 204c174 0 276 126 280 296 3 112 14 190 26 252 8 40-12 66-42 66-34 0-56-66-92-66-38 0-56 72-94 72-38 0-58-66-96-66-48 0-94 32-154 60-40 18-90 32-134 34 30-32 36-76 30-132-6-70-6-140-4-220 4-170 106-296 280-296z",
+                  "viewBox": [
+                    172,
+                    188,
+                    680,
+                    680
+                  ],
+                  "fill": "#FFFFFF",
+                  "width": 22,
+                  "height": 22
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "nVnCV",
+              "name": "Tabs",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "IBDbq",
+                  "name": "Tab Chats",
+                  "width": 46,
+                  "height": 46,
+                  "cornerRadius": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "M0OXfg",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 46,
+                      "height": 46,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Xes24",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "message-circle",
+                          "library": "lucide",
+                          "fill": "$text-secondary"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xGshT",
+                      "x": 25,
+                      "y": 4,
+                      "name": "Badge",
+                      "height": 17,
+                      "fill": "$accent",
+                      "cornerRadius": 9,
+                      "stroke": "$bg",
+                      "strokeWidth": 2,
+                      "strokeAlignment": "outer",
+                      "padding": [
+                        0,
+                        5
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "vrwCT",
+                          "name": "Count",
+                          "fill": "#FFFFFF",
+                          "content": "1",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "V4hGM",
+                  "name": "Tab Contacts",
+                  "width": 46,
+                  "height": 46,
+                  "cornerRadius": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "J3EfP3",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 46,
+                      "height": 46,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "s7w3P",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "users",
+                          "library": "lucide",
+                          "fill": "$text-secondary"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "GChst",
+                  "name": "Tab Settings",
+                  "width": 46,
+                  "height": 46,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "lGLiF",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 46,
+                      "height": 46,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "CV4hI",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$accent-text"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Tsv4e",
+              "name": "Me",
+              "cornerRadius": 20,
+              "padding": 2,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "M0Fqiq",
+                  "name": "Avatar NO",
+                  "width": 32,
+                  "height": 32,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 16,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "IGC4a",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 32,
+                      "height": 32,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "jAkXu",
+                          "name": "Initials",
+                          "fill": "#FFFFFF",
+                          "content": "NO",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "CYa5B",
+          "name": "Settings",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$canvas",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "w4nbnW",
+              "name": "Nav",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$bg",
+              "stroke": "$separator",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 4,
+              "padding": [
+                0,
+                8
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pdDO6",
+                  "name": "Back",
+                  "width": 36,
+                  "height": 36,
+                  "cornerRadius": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "PiE8Q",
+                      "name": "Glyph",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "VNPs7",
+                  "name": "Title",
+                  "fill": "$text-primary",
+                  "content": "About Shroud",
+                  "fontFamily": "$font-ui",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "N41T77",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                20,
+                20,
+                56,
+                20
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "FUFiz",
+                  "name": "Column",
+                  "width": 620,
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "T0xEgZ",
+                      "name": "Hero",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": [
+                        16,
+                        0,
+                        8,
+                        0
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "dgrhQ",
+                          "name": "Brand Mark",
+                          "width": 80,
+                          "height": 80,
+                          "fill": "$accent",
+                          "cornerRadius": 20,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "path",
+                              "id": "fHXu8",
+                              "name": "Veil",
+                              "geometry": "M512 204c174 0 276 126 280 296 3 112 14 190 26 252 8 40-12 66-42 66-34 0-56-66-92-66-38 0-56 72-94 72-38 0-58-66-96-66-48 0-94 32-154 60-40 18-90 32-134 34 30-32 36-76 30-132-6-70-6-140-4-220 4-170 106-296 280-296z",
+                              "viewBox": [
+                                172,
+                                188,
+                                680,
+                                680
+                              ],
+                              "fill": "#FFFFFF",
+                              "width": 48,
+                              "height": 48
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "zqxmc",
+                          "name": "Gap",
+                          "width": 1,
+                          "height": 4
+                        },
+                        {
+                          "type": "text",
+                          "id": "Gc979",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "Shroud",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 26,
+                          "fontWeight": "700",
+                          "letterSpacing": -0.52
+                        },
+                        {
+                          "type": "text",
+                          "id": "O3YqEF",
+                          "name": "Version",
+                          "fill": "$text-secondary",
+                          "content": "Version 0.1.0 (build abc123def456)",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "yCET4",
+                      "name": "Group Updates",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "yJMfx",
+                          "name": "Header",
+                          "padding": [
+                            0,
+                            4
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "UzpMw",
+                              "name": "Label",
+                              "fill": "$text-tertiary",
+                              "content": "UPDATES",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.66
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "c1bamj",
+                          "name": "Card",
+                          "clip": true,
+                          "width": "fill_container",
+                          "fill": "$surface-2",
+                          "cornerRadius": 14,
+                          "stroke": "$separator",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "J8eRwJ",
+                              "name": "Row A new version is available",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "YQTNr",
+                                  "name": "Tile",
+                                  "width": 30,
+                                  "height": 30,
+                                  "fill": "$accent",
+                                  "cornerRadius": 8,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "G4TAg",
+                                      "name": "Glyph",
+                                      "width": 15,
+                                      "height": 15,
+                                      "icon": "download",
+                                      "library": "lucide",
+                                      "fill": "#FFFFFF"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "VPqKl",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "JSNQ1",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "A new version is available",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "cojjQ",
+                                  "name": "Reload",
+                                  "height": 30,
+                                  "fill": "$accent",
+                                  "cornerRadius": 999,
+                                  "padding": [
+                                    0,
+                                    14
+                                  ],
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "M5JitH",
+                                      "name": "Label",
+                                      "fill": "$on-accent",
+                                      "content": "Reload",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "600"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "K2LwXo",
+                              "name": "Row Check for Updates",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "oqnW0",
+                                  "name": "Tile",
+                                  "width": 30,
+                                  "height": 30,
+                                  "fill": "$accent",
+                                  "cornerRadius": 8,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "nRhz7",
+                                      "name": "Glyph",
+                                      "width": 15,
+                                      "height": 15,
+                                      "icon": "refresh-cw",
+                                      "library": "lucide",
+                                      "fill": "#FFFFFF"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "tWuAK",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "TZbsy",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Check for Updates",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "K9RKn",
+                                  "name": "Trailing",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Nc8C4",
+                      "name": "Group Server",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Q3phOq",
+                          "name": "Header",
+                          "padding": [
+                            0,
+                            4
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "B0fKza",
+                              "name": "Label",
+                              "fill": "$text-tertiary",
+                              "content": "SERVER",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.66
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "oZE3J",
+                          "name": "Card",
+                          "clip": true,
+                          "width": "fill_container",
+                          "fill": "$surface-2",
+                          "cornerRadius": 14,
+                          "stroke": "$separator",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "CqOWu",
+                              "name": "Row Address",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ZiJIu",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "tCvJP",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Address",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ccam4",
+                                  "name": "Value",
+                                  "fill": "$text-secondary",
+                                  "content": "shroud.corespace.de",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ZOxXJ",
+                              "name": "Row Server version",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "E5AgD",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "F0ISr8",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Server version",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "N37Uw",
+                                  "name": "Value",
+                                  "fill": "$text-secondary",
+                                  "content": "0.1.0",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cC6bw",
+                      "name": "Group Privacy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "lcDwM",
+                          "name": "Header",
+                          "padding": [
+                            0,
+                            4
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "k4aiX4",
+                              "name": "Label",
+                              "fill": "$text-tertiary",
+                              "content": "PRIVACY",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.66
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "e9I6vK",
+                          "name": "Card",
+                          "clip": true,
+                          "width": "fill_container",
+                          "fill": "$surface-2",
+                          "cornerRadius": 14,
+                          "stroke": "$separator",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "CKeUx",
+                              "name": "Row Messages, media and calls are end-to-end encrypted. They’re sealed on your devices, so the server passes them on without being able to read them.",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "Z8Pdh",
+                                  "name": "Tile",
+                                  "width": 30,
+                                  "height": 30,
+                                  "fill": "#2FA85B",
+                                  "cornerRadius": 8,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "EaMRb",
+                                      "name": "Glyph",
+                                      "width": 15,
+                                      "height": 15,
+                                      "icon": "lock",
+                                      "library": "lucide",
+                                      "fill": "#FFFFFF"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "eavdW",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "padding": [
+                                    4,
+                                    0,
+                                    0,
+                                    0
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "dTj66",
+                                      "name": "Text",
+                                      "fill": "$text-secondary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Messages, media and calls are end-to-end encrypted. They’re sealed on your devices, so the server passes them on without being able to read them.",
+                                      "lineHeight": 1.5,
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 14,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CrwfG",
+                      "name": "Group More",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "z0aaS3",
+                          "name": "Header",
+                          "padding": [
+                            0,
+                            4
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "dKXDu",
+                              "name": "Label",
+                              "fill": "$text-tertiary",
+                              "content": "MORE",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.66
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "maHX9",
+                          "name": "Card",
+                          "clip": true,
+                          "width": "fill_container",
+                          "fill": "$surface-2",
+                          "cornerRadius": 14,
+                          "stroke": "$separator",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "EqoAw",
+                              "name": "Row Source Code",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "M8mHB9",
+                                  "name": "Tile",
+                                  "width": 30,
+                                  "height": 30,
+                                  "fill": "$text-tertiary",
+                                  "cornerRadius": 8,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "ktyo1",
+                                      "name": "Glyph",
+                                      "width": 15,
+                                      "height": 15,
+                                      "icon": "code-xml",
+                                      "library": "lucide",
+                                      "fill": "#FFFFFF"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "b0Ulsf",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "gCeNs",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Source Code",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "OAGSE",
+                                  "name": "Trailing",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "external-link",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "PM5pU",
+                              "name": "Row Open-Source Licenses",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "zsUrk",
+                                  "name": "Tile",
+                                  "width": 30,
+                                  "height": 30,
+                                  "fill": "#F76B1C",
+                                  "cornerRadius": 8,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "Z43ssb",
+                                      "name": "Glyph",
+                                      "width": 15,
+                                      "height": 15,
+                                      "icon": "scroll-text",
+                                      "library": "lucide",
+                                      "fill": "#FFFFFF"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "G2RVjK",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "y13zRm",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Open-Source Licenses",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "KLF2I",
+                                  "name": "Trailing",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "moE4v",
+      "x": 16720,
+      "y": 6100,
+      "name": "Desktop — Settings · Open-Source Licenses",
+      "context": "About › Open-Source Licenses: every package in the production bundle (npm) and the link-preview TLS crates (Rust), from dist/licenses.json generated at build. Each entry is a disclosure: name, version · license; one open at a time shows the full text (mono 11, scrolls inside, max 420 px).",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 1100,
+      "fill": "$canvas",
+      "children": [
+        {
+          "type": "frame",
+          "id": "tU2SZ",
+          "name": "Rail",
+          "width": 76,
+          "height": "fill_container",
+          "fill": "$bg",
+          "stroke": "$separator",
+          "strokeWidth": {
+            "right": 1
+          },
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "padding": [
+            18,
+            0
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "E9i9i7",
+              "name": "Mark",
+              "width": 36,
+              "height": 36,
+              "fill": "$accent",
+              "cornerRadius": 12,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "path",
+                  "id": "VQTth",
+                  "name": "Veil",
+                  "geometry": "M512 204c174 0 276 126 280 296 3 112 14 190 26 252 8 40-12 66-42 66-34 0-56-66-92-66-38 0-56 72-94 72-38 0-58-66-96-66-48 0-94 32-154 60-40 18-90 32-134 34 30-32 36-76 30-132-6-70-6-140-4-220 4-170 106-296 280-296z",
+                  "viewBox": [
+                    172,
+                    188,
+                    680,
+                    680
+                  ],
+                  "fill": "#FFFFFF",
+                  "width": 22,
+                  "height": 22
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "X3jbXA",
+              "name": "Tabs",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "zxCvg",
+                  "name": "Tab Chats",
+                  "width": 46,
+                  "height": 46,
+                  "cornerRadius": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mvuz6",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 46,
+                      "height": 46,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "O7vEiU",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "message-circle",
+                          "library": "lucide",
+                          "fill": "$text-secondary"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Kyt0J",
+                      "x": 25,
+                      "y": 4,
+                      "name": "Badge",
+                      "height": 17,
+                      "fill": "$accent",
+                      "cornerRadius": 9,
+                      "stroke": "$bg",
+                      "strokeWidth": 2,
+                      "strokeAlignment": "outer",
+                      "padding": [
+                        0,
+                        5
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Vxvka",
+                          "name": "Count",
+                          "fill": "#FFFFFF",
+                          "content": "1",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 10,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "AzbS5",
+                  "name": "Tab Contacts",
+                  "width": 46,
+                  "height": 46,
+                  "cornerRadius": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "nwn17",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 46,
+                      "height": 46,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "VKqfx",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "users",
+                          "library": "lucide",
+                          "fill": "$text-secondary"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "p7MflN",
+                  "name": "Tab Settings",
+                  "width": 46,
+                  "height": 46,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 12,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "YLdzd",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 46,
+                      "height": 46,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "NslQg",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$accent-text"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Wp3VJ",
+              "name": "Me",
+              "cornerRadius": 20,
+              "padding": 2,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "lvARx",
+                  "name": "Avatar NO",
+                  "width": 32,
+                  "height": 32,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 180,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#7C7AFF",
+                        "position": 0
+                      },
+                      {
+                        "color": "#5E5CE6",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 16,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "V69tTZ",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Center",
+                      "width": 32,
+                      "height": 32,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Uz2f8",
+                          "name": "Initials",
+                          "fill": "#FFFFFF",
+                          "content": "NO",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "J7T8eR",
+          "name": "Settings",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$canvas",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "MCekp",
+              "name": "Nav",
+              "width": "fill_container",
+              "height": 56,
+              "fill": "$bg",
+              "stroke": "$separator",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "gap": 4,
+              "padding": [
+                0,
+                8
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "M9GDB",
+                  "name": "Back",
+                  "width": 36,
+                  "height": 36,
+                  "cornerRadius": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "r2034",
+                      "name": "Glyph",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "oRxfX",
+                  "name": "Title",
+                  "fill": "$text-primary",
+                  "content": "Open-Source Licenses",
+                  "fontFamily": "$font-ui",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hvrvi",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                20,
+                20,
+                56,
+                20
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "JOBVf",
+                  "name": "Column",
+                  "width": 620,
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "z52PC",
+                      "name": "Group NPM PACKAGES",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "o6w3l",
+                          "name": "Header",
+                          "padding": [
+                            0,
+                            4
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "lhl3G",
+                              "name": "Label",
+                              "fill": "$text-tertiary",
+                              "content": "NPM PACKAGES",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.66
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "GFNLQ",
+                          "name": "Card",
+                          "clip": true,
+                          "width": "fill_container",
+                          "fill": "$surface-2",
+                          "cornerRadius": 14,
+                          "stroke": "$separator",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "s29u1",
+                              "name": "Entry @fontsource-variable/inter",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "j9EK8",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "CLF2Y",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "@fontsource-variable/inter",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "tS7Ab",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "5.3.0 · OFL-1.1",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "iASCS",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "LlIHu",
+                              "name": "Entry @noble/ciphers",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "a0KSy",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "t5MIBr",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "@noble/ciphers",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "nveW9",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "2.4.0 · MIT",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "O4J1d",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "oCOqK",
+                              "name": "Entry libheif-js",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "N4329",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "E9kwJG",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "libheif-js",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "dwnMe",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "1.23.2 · LGPL-3.0",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "r13sL",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "I0sLT",
+                              "name": "Entry lucide-react",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "s6GiK",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "z3IVgA",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "lucide-react",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "UUNel",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "0.544.0 · ISC",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "d8L8nc",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "vSChp",
+                              "name": "Entry mediabunny",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "d541ze",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "VakD3",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "mediabunny",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "jQowo",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "1.58.1 · MPL-2.0",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "vguN3",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ykEle",
+                              "name": "Entry react",
+                              "width": "fill_container",
+                              "fill": "$hover",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "YlTiK",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "tFl7H",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "react",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "cIHP0",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "19.3.0 · MIT",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "VLKt7",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-up",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "AVISy",
+                              "name": "License Text",
+                              "width": "fill_container",
+                              "fill": "$surface-3",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "padding": [
+                                12,
+                                14,
+                                14,
+                                14
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "AH7sA",
+                                  "name": "Text",
+                                  "fill": "$text-secondary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "MIT License\n\nCopyright (c) Meta Platforms, Inc. and affiliates.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.",
+                                  "lineHeight": 1.55,
+                                  "fontFamily": "JetBrains Mono",
+                                  "fontSize": 11,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "BpsGf",
+                              "name": "Entry react-dom",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "Y9Zia",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "u7GzIQ",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "react-dom",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "K1Voa",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "19.3.0 · MIT",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "adGJN",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "SWcBl",
+                              "name": "Entry react-router",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "XTHrm",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "CTwWA",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "react-router",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "K6p6R",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "7.18.4 · MIT",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "Q8Hzkl",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "W7UtV",
+                      "name": "Group RUST CRATES",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "yugui",
+                          "name": "Header",
+                          "padding": [
+                            0,
+                            4
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "hcTL6",
+                              "name": "Label",
+                              "fill": "$text-tertiary",
+                              "content": "RUST CRATES",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "700",
+                              "letterSpacing": 0.66
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "d0Hm8",
+                          "name": "Card",
+                          "clip": true,
+                          "width": "fill_container",
+                          "fill": "$surface-2",
+                          "cornerRadius": 14,
+                          "stroke": "$separator",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "lvhNV",
+                              "name": "Entry ring",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "r34kDq",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "B7ZyyI",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "ring",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "gWNes",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "0.17.14 · Apache-2.0 AND ISC",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "dP5v3",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "StEuZ",
+                              "name": "Entry rustls",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "IBIpr",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "Mt4Qs",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "rustls",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "K3xGaV",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "0.23.45 · Apache-2.0 OR ISC OR MIT",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "m8NOz",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "NGqOn",
+                              "name": "Entry webpki-roots",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "top": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                11,
+                                14
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "N9joLO",
+                                  "name": "Copy",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 2,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "F5Mpp7",
+                                      "name": "Name",
+                                      "fill": "$text-primary",
+                                      "content": "webpki-roots",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 15,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "SxGdp",
+                                      "name": "Subtitle",
+                                      "fill": "$text-secondary",
+                                      "content": "1.0.9 · CDLA-Permissive-2.0",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "zcAbL",
+                                  "name": "Chevron",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "chevron-down",
+                                  "library": "lucide",
+                                  "fill": "$text-tertiary"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "qHGfH",
+                      "name": "Note",
+                      "width": "fill_container",
+                      "padding": [
+                        0,
+                        4
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zd8Ft",
+                          "name": "Text",
+                          "fill": "$text-tertiary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Shroud is built with these open-source components. Select one to read its license.",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     }

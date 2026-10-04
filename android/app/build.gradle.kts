@@ -61,6 +61,9 @@ android {
         targetSdk = 37
         versionCode = shroudVersionCode
         versionName = shroudVersionName
+        // The versionCode without the release splits' ABI offset (BuildConfig.VERSION_CODE carries it
+        // in release builds): Settings › About Shroud shows "Version 0.1.0 (1)".
+        buildConfigField("int", "BASE_VERSION_CODE", shroudVersionCode.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -170,6 +170,8 @@ export type ClientVersion = {
   status: ClientVersionStatus;
   latest_version: string | null;
   update_url: string | null;
+  /** The server's own release (Settings → About Shroud). Older servers don't send it. */
+  server_version?: string;
 };
 
 async function request<T>(

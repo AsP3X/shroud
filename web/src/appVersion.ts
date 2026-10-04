@@ -8,6 +8,9 @@ import { api, type ClientVersion, type ClientVersionStatus } from "./api/client"
  * Mid-deploy the old web container may still answer, so the banner waits until the page a reload
  * would load carries the build the server names (its `shroud-build` meta, from vite.config.ts).
  *
+ * Settings → About Shroud reads the same store: whether a question is out, whether the last one
+ * failed, the server's version, and a "Check for Updates" that skips the wait between questions.
+ *
  * Kept in memory only, like everything this page does not need to seal: a dismissal holds for
  * this tab until the server names a different build.
  */
@@ -19,7 +22,7 @@ export const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 export const CONFIRM_RETRY_MS = 30 * 1000;
 const CONFIRM_RETRIES = 20;
 
-export type CheckReason = "startup" | "visible" | "interval" | "reconnect" | "confirm";
+export type CheckReason = "startup" | "visible" | "interval" | "reconnect" | "confirm" | "manual";
 
 /** What the server said, kept only when it is an answer this page understands. */
 export type UpdateState = { status: ClientVersionStatus; latest: string | null };
@@ -27,9 +30,19 @@ export type UpdateState = { status: ClientVersionStatus; latest: string | null }
 /** The latest build the banner was closed for; `null` while it has not been closed. */
 export type Dismissal = { latest: string | null } | null;
 
+/** The About page's status row. `idle`: nothing asked yet, or a build that never asks. */
+export type UpdateStatus = "idle" | "checking" | "current" | "available" | "failed";
+
+export type UpdateSnapshot = { status: UpdateStatus; serverVersion: string | null };
+
 /** This bundle's build id, stamped by the deploy (`VITE_WEB_BUILD`). Empty in `npm run dev`. */
-function webBuild(): string {
+export function webBuild(): string {
   return (import.meta.env?.VITE_WEB_BUILD ?? "").trim();
+}
+
+/** web/package.json's version, stamped by vite.config.ts. Empty outside a Vite build. */
+export function webVersion(): string {
+  return (import.meta.env?.VITE_WEB_VERSION ?? "").trim();
 }
 
 /**
@@ -37,7 +50,7 @@ function webBuild(): string {
  * when it is shown, which waits for the gap since the last question so tab switching is cheap.
  */
 export function shouldCheck(reason: CheckReason, now: number, lastCheckAt: number | null, hidden: boolean): boolean {
-  if (reason === "startup" || reason === "reconnect" || reason === "confirm") return true;
+  if (reason === "startup" || reason === "reconnect" || reason === "confirm" || reason === "manual") return true;
   if (hidden) return false;
   return lastCheckAt == null || now - lastCheckAt >= CHECK_GAP_MS;
 }
@@ -50,6 +63,29 @@ export function updateFromAnswer(answer: ClientVersion | null | undefined): Upda
   return { status, latest: typeof latest === "string" && latest ? latest : null };
 }
 
+/** The server's own version (`server_version`); older servers don't send it. */
+export function serverVersionFromAnswer(answer: ClientVersion | null | undefined): string | null {
+  const version = answer && typeof answer === "object" ? answer.server_version : null;
+  return typeof version === "string" && version.trim() ? version.trim() : null;
+}
+
+/**
+ * The About page's row. A newer build shows only once it is confirmed served (`state` holds
+ * nothing else), and stays shown when a later question fails: a reload still gets it.
+ */
+export function updateStatus(
+  canCheck: boolean,
+  checking: boolean,
+  failed: boolean,
+  state: UpdateState | null,
+): UpdateStatus {
+  if (!canCheck) return "idle";
+  if (checking) return "checking";
+  if (state && state.status !== "current") return "available";
+  if (failed) return "failed";
+  return state ? "current" : "idle";
+}
+
 /** The banner shows for a newer build unless it was closed for that same build. */
 export function bannerShown(state: UpdateState | null, dismissed: Dismissal): boolean {
   if (!state || state.status === "current") return false;
@@ -60,11 +96,18 @@ let state: UpdateState | null = null;
 let dismissed: Dismissal = null;
 let lastCheckAt: number | null = null;
 let inFlight = false;
+let failed = false;
+let serverVersion: string | null = null;
 let confirmRetries = 0;
 let installed = false;
+let snapshot: UpdateSnapshot = { status: "idle", serverVersion: null };
 const listeners = new Set<() => void>();
 
 function emit() {
+  const status = updateStatus(Boolean(webBuild()), inFlight, failed, state);
+  if (status !== snapshot.status || serverVersion !== snapshot.serverVersion) {
+    snapshot = { status, serverVersion };
+  }
   for (const listener of listeners) listener();
 }
 
@@ -75,6 +118,11 @@ export function subscribeUpdate(listener: () => void): () => void {
 
 export function updateBannerShown(): boolean {
   return bannerShown(state, dismissed);
+}
+
+/** For `useSyncExternalStore`: the same object until something on the About page changes. */
+export function updateSnapshot(): UpdateSnapshot {
+  return snapshot;
 }
 
 export function dismissUpdate(): void {
@@ -90,7 +138,11 @@ async function servedBuild(): Promise<string | null> {
   return /<meta name="shroud-build" content="([^"]*)"/.exec(html)?.[1] ?? null;
 }
 
-/** Asks the server when `reason` calls for it. A failed question keeps what the last one said. */
+/**
+ * Asks the server when `reason` calls for it. A failed question keeps what the last one said.
+ * A newer build the page a reload would load doesn't carry yet changes nothing either, manual
+ * check included: the row keeps saying what it said, and the retries flip it once it is served.
+ */
 export function checkForUpdate(reason: CheckReason): void {
   const build = webBuild();
   if (!build || inFlight) return;
@@ -102,9 +154,14 @@ export function checkForUpdate(reason: CheckReason): void {
   if (reason !== "confirm") confirmRetries = 0;
   inFlight = true;
   lastCheckAt = now;
+  emit();
   void (async () => {
     try {
-      const next = updateFromAnswer(await api.clientVersion("web", build));
+      const answer = await api.clientVersion("web", build);
+      serverVersion = serverVersionFromAnswer(answer);
+      const next = updateFromAnswer(answer);
+      // An answer this page doesn't understand is no answer.
+      failed = !next;
       if (!next) return;
       // Mid-deploy the old web container still answers: a reload now would load this build again.
       if (next.status !== "current" && next.latest && (await servedBuild().catch(() => null)) !== next.latest) {
@@ -117,9 +174,9 @@ export function checkForUpdate(reason: CheckReason): void {
       confirmRetries = 0;
       if (next.status === state?.status && next.latest === state.latest) return;
       state = next;
-      emit();
     } catch {
       // Offline, or an older server: a tab shown again soon asks again.
+      failed = true;
       lastCheckAt = previousCheckAt;
       if (reason === "confirm" && confirmRetries < CONFIRM_RETRIES) {
         confirmRetries += 1;
@@ -127,6 +184,7 @@ export function checkForUpdate(reason: CheckReason): void {
       }
     } finally {
       inFlight = false;
+      emit();
     }
   })();
 }

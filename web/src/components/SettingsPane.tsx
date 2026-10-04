@@ -4,12 +4,13 @@ import { api, ApiError, type Session } from "../api/client";
 import type { WipeReason } from "./DeviceWipeDialog";
 import type { IdentityMaterial } from "../crypto/identity";
 import { LogoutDialog } from "./LogoutDialog";
+import { AboutView, LicensesView } from "./settings/AboutView";
 import { DevicesView } from "./settings/DevicesView";
 import { NotificationsView, type MutedChat } from "./settings/NotificationsView";
 import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
 import { SettingsHome } from "./settings/SettingsHome";
-import { SETTINGS_TITLES, type SettingsRoute } from "./settings/routes";
+import { SETTINGS_PARENTS, SETTINGS_TITLES, type SettingsRoute } from "./settings/routes";
 
 export function SettingsPane({
   session,
@@ -69,7 +70,8 @@ export function SettingsPane({
     };
   }, [session.token, route]);
 
-  const back = useCallback(() => setRoute(null), []);
+  const back = useCallback(() => setRoute((current) => (current && SETTINGS_PARENTS[current]) ?? null), []);
+  const parent = route ? SETTINGS_PARENTS[route] : undefined;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -87,12 +89,18 @@ export function SettingsPane({
       {route ? (
         <>
           <header className="set-nav">
-            <button type="button" className="icon-btn" onClick={back} aria-label="Back to settings">
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={back}
+              aria-label={parent ? `Back to ${SETTINGS_TITLES[parent]}` : "Back to settings"}
+            >
               <ChevronLeft size={20} />
             </button>
             <h1>{SETTINGS_TITLES[route]}</h1>
           </header>
-          <div className="set-body">
+          {/* Keyed: a page opened from another one starts at its top. */}
+          <div className="set-body" key={route}>
             {route === "notifications" ? (
               <NotificationsView
                 session={session}
@@ -119,6 +127,8 @@ export function SettingsPane({
             {route === "data" ? <DataStorageView onCleared={onCacheCleared} /> : null}
             {route === "appearance" ? <AppearanceView /> : null}
             {route === "server" ? <ServerView /> : null}
+            {route === "about" ? <AboutView onNavigate={setRoute} /> : null}
+            {route === "licenses" ? <LicensesView /> : null}
           </div>
         </>
       ) : (

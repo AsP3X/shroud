@@ -79213,355 +79213,6 @@
           "children": [
             {
               "type": "frame",
-              "id": "GvjMr",
-              "name": "Settings Group",
-              "clip": true,
-              "width": "fill_container",
-              "fill": "$bg",
-              "cornerRadius": 14,
-              "layout": "vertical",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "Zu3Vn",
-                  "name": "Row Saved Messages",
-                  "width": "fill_container",
-                  "gap": 12,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "U6Jczd",
-                      "name": "Icon Square",
-                      "width": 30,
-                      "height": 30,
-                      "fill": "#2E8FE0",
-                      "cornerRadius": 8,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "OXsj4",
-                          "name": "Glyph",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "bookmark-simple-fill",
-                          "library": "phosphor",
-                          "fill": "#FFFFFF"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "S5Rf6",
-                      "name": "Label Wrap",
-                      "width": "fill_container",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "dhBQb",
-                          "name": "Label",
-                          "fill": "$text-primary",
-                          "content": "Saved Messages",
-                          "fontFamily": "$font",
-                          "fontSize": 16,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "icon",
-                      "id": "obeoG",
-                      "name": "Chevron",
-                      "width": 16,
-                      "height": 16,
-                      "icon": "chevron-right",
-                      "library": "lucide",
-                      "fill": "#C7C7CC"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "uFnLl",
-                  "name": "Sep",
-                  "width": "fill_container",
-                  "padding": [
-                    0,
-                    0,
-                    0,
-                    54
-                  ],
-                  "children": [
-                    {
-                      "type": "rectangle",
-                      "id": "i6W7Zo",
-                      "name": "Line",
-                      "fill": "$separator",
-                      "width": "fill_container",
-                      "height": 1
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "R1Z3sE",
-                  "name": "Row Recent Calls",
-                  "width": "fill_container",
-                  "gap": 12,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "iy0gM",
-                      "name": "Icon Square",
-                      "width": 30,
-                      "height": 30,
-                      "fill": "#2FA85B",
-                      "cornerRadius": 8,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "vLzZ3",
-                          "name": "Glyph",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "phone-fill",
-                          "library": "phosphor",
-                          "fill": "#FFFFFF"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "Y9FIQw",
-                      "name": "Label Wrap",
-                      "width": "fill_container",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "VZRnv",
-                          "name": "Label",
-                          "fill": "$text-primary",
-                          "content": "Recent Calls",
-                          "fontFamily": "$font",
-                          "fontSize": 16,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "icon",
-                      "id": "u4KmE",
-                      "name": "Chevron",
-                      "width": 16,
-                      "height": 16,
-                      "icon": "chevron-right",
-                      "library": "lucide",
-                      "fill": "#C7C7CC"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "TVssq",
-                  "name": "Sep",
-                  "width": "fill_container",
-                  "padding": [
-                    0,
-                    0,
-                    0,
-                    54
-                  ],
-                  "children": [
-                    {
-                      "type": "rectangle",
-                      "id": "idj6u",
-                      "name": "Line",
-                      "fill": "$separator",
-                      "width": "fill_container",
-                      "height": 1
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "reZa5",
-                  "name": "Row Devices",
-                  "width": "fill_container",
-                  "gap": 12,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "XnxtM",
-                      "name": "Icon Square",
-                      "width": 30,
-                      "height": 30,
-                      "fill": "#F76B1C",
-                      "cornerRadius": 8,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "s8TT1",
-                          "name": "Glyph",
-                          "width": 17,
-                          "height": 17,
-                          "icon": "monitor-smartphone",
-                          "library": "lucide",
-                          "fill": "#FFFFFF"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "P9CBM",
-                      "name": "Label Wrap",
-                      "width": "fill_container",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "GB9ei",
-                          "name": "Label",
-                          "fill": "$text-primary",
-                          "content": "Devices",
-                          "fontFamily": "$font",
-                          "fontSize": 16,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "id": "WytY8",
-                      "name": "Value",
-                      "fill": "$text-secondary",
-                      "content": "3",
-                      "fontFamily": "$font",
-                      "fontSize": 16,
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "icon",
-                      "id": "t3Gu8",
-                      "name": "Chevron",
-                      "width": 16,
-                      "height": 16,
-                      "icon": "chevron-right",
-                      "library": "lucide",
-                      "fill": "#C7C7CC"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "VutZc",
-                  "name": "Sep",
-                  "width": "fill_container",
-                  "padding": [
-                    0,
-                    0,
-                    0,
-                    54
-                  ],
-                  "children": [
-                    {
-                      "type": "rectangle",
-                      "id": "EvHiz",
-                      "name": "Line",
-                      "fill": "$separator",
-                      "width": "fill_container",
-                      "height": 1
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "mc2E2",
-                  "name": "Row Chat Folders",
-                  "opacity": 0.72,
-                  "width": "fill_container",
-                  "gap": 12,
-                  "padding": [
-                    10,
-                    14
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "YSCl8",
-                      "name": "Icon Square",
-                      "width": 30,
-                      "height": 30,
-                      "fill": "#4AC7FA",
-                      "cornerRadius": 8,
-                      "justifyContent": "center",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "G31aU",
-                          "name": "Glyph",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "folder-simple-fill",
-                          "library": "phosphor",
-                          "fill": "#FFFFFF"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "M4hwMD",
-                      "name": "Label Wrap",
-                      "width": "fill_container",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "pOP8T",
-                          "name": "Label",
-                          "fill": "$text-primary",
-                          "content": "Chat Folders",
-                          "fontFamily": "$font",
-                          "fontSize": 16,
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "id": "nHDya",
-                      "name": "Soon",
-                      "fill": "$text-secondary",
-                      "content": "Soon",
-                      "fontFamily": "$font",
-                      "fontSize": 13,
-                      "fontWeight": "500"
-                    }
-                  ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
               "id": "tXeWx",
               "name": "Settings Group",
               "clip": true,
@@ -80183,6 +79834,101 @@
                     {
                       "type": "icon",
                       "id": "WUNia",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "zluWh",
+              "name": "About Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ZOLfX",
+                  "name": "Row About Shroud",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "lAg2u",
+                      "name": "Icon Square",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#2E8FE0",
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "B9x2J",
+                          "name": "Glyph",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "info-fill",
+                          "library": "phosphor",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hMr94",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fMFh8",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "content": "About Shroud",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "Y3RsC6",
+                      "name": "Update Dot",
+                      "fill": "$accent",
+                      "width": 8,
+                      "height": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "bKREN",
+                      "name": "Value",
+                      "fill": "$text-secondary",
+                      "content": "1.0",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "wWn9K",
                       "name": "Chevron",
                       "width": 16,
                       "height": 16,
@@ -97287,7 +97033,8 @@
                       "fill": "$text-primary",
                       "content": "Later",
                       "fontFamily": "$font",
-                      "fontSize": 17
+                      "fontSize": 17,
+                      "fontWeight": "normal"
                     }
                   ]
                 },
@@ -97309,9 +97056,1609 @@
                       "fill": "$text-primary",
                       "content": "Update",
                       "fontFamily": "$font",
-                      "fontSize": 17
+                      "fontSize": 17,
+                      "fontWeight": "normal"
                     }
                   ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "sJ1sL",
+      "x": 6210,
+      "y": 13281,
+      "name": "About Shroud",
+      "context": "Settings › Appearance. Inline nav-bar title. Theme: System (default), Light or Dark, kept on this iPhone only and cleared by Log Out; System follows the iPhone's setting. The choice sets the window's style, so the call screen and photo/video compose still go dark over it. Logo: Detailed draws the app icon's veil with folds and shading (design/icon/shroud-icon.svg), Simple the flat veil (shroud-icon-simple.svg); changing it also changes the home screen icon, which iOS confirms with its own alert. If iOS refuses the icon change, a red 13 pt line under the Logo footer reads “The app icon couldn’t be changed. Try again.” Rows highlight on press; the checkmark swaps with Motion.iconSwap. Switching the theme cross-fades the whole window over 0.3 s.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "ctvK0",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "id": "dNP1A",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "About Shroud"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "qiUAT",
+          "name": "Body",
+          "width": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            8,
+            16,
+            40,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "YZ4HS",
+              "name": "Hero",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "padding": [
+                12,
+                0,
+                6,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "S1qLI",
+                  "type": "ref",
+                  "ref": "DDyyw",
+                  "name": "Brand Mark",
+                  "width": 72,
+                  "height": 72
+                },
+                {
+                  "type": "text",
+                  "id": "sDstc",
+                  "name": "Name",
+                  "fill": "$text-primary",
+                  "content": "Shroud",
+                  "fontFamily": "$font",
+                  "fontSize": 22,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "aHfTs",
+                  "name": "Version",
+                  "fill": "$text-secondary",
+                  "content": "Version 1.0 (1)",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "miAss",
+              "name": "Header UPDATES",
+              "width": "fill_container",
+              "padding": [
+                0,
+                14,
+                6,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "FfPzm",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "UPDATES",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SvvKT",
+              "name": "UPDATES Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "oIEe1",
+                  "name": "Row Status",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "nAyFG",
+                      "name": "Icon Slot",
+                      "width": 24,
+                      "height": 24,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "misWs",
+                          "name": "Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "arrow-circle-down-fill",
+                          "library": "phosphor",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "gmHkF",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "C4mYtT",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "content": "Version 1.4 is available",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "S2y1k",
+                      "name": "Update Button",
+                      "fill": "$accent",
+                      "cornerRadius": 999,
+                      "padding": [
+                        6,
+                        14
+                      ],
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "z2CGG",
+                          "name": "Label",
+                          "fill": "#FFFFFF",
+                          "content": "Update",
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "QP9cs",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "E8GDl",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "uTBJZ",
+                  "name": "Row Check for Updates",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ZYbUO",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "m7fOLw",
+                          "name": "Label",
+                          "fill": "$accent",
+                          "content": "Check for Updates",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "x5v6E",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "HFCTg",
+              "name": "Header SERVER",
+              "width": "fill_container",
+              "padding": [
+                0,
+                14,
+                6,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "NPICn",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "SERVER",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "dp5BS",
+              "name": "SERVER Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "h9z5z",
+                  "name": "Row Address",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "J0VdWc",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "WoODQ",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "content": "Address",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "AkhSz",
+                      "name": "Value",
+                      "fill": "$text-secondary",
+                      "content": "Official Shroud server",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "MWOL3",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "y0ihuZ",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "sVAo9",
+                  "name": "Row Server version",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "lER5z",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "IKLU4",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "content": "Server version",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "esEdA",
+                      "name": "Value",
+                      "fill": "$text-secondary",
+                      "content": "0.1.0",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "daqIC",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "UlJfE",
+              "name": "Header PRIVACY",
+              "width": "fill_container",
+              "padding": [
+                0,
+                14,
+                6,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "uSUq2",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "PRIVACY",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "o7XTqy",
+              "name": "PRIVACY Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sx7ey",
+                  "name": "Row Note",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "OUFhi",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "H7EU8m",
+                          "name": "Label",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Messages, media and calls are end-to-end encrypted. They’re sealed on your devices, so the server passes them on without being able to read them.",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "QFvtu",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "ZtoH2",
+              "name": "Header MORE",
+              "width": "fill_container",
+              "padding": [
+                0,
+                14,
+                6,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t8Opr",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "MORE",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "X3qpc7",
+              "name": "MORE Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "yKXCJ",
+                  "name": "Row Source Code",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "qFgit",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Pwalk",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "content": "Source Code",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "Kx4gV",
+                      "name": "Trailing",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "arrow-up-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "usVOl",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Ja42v",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gi88q",
+                  "name": "Row Open-Source Licenses",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "K3pqM",
+                      "name": "Label Wrap",
+                      "width": "fill_container",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "nVK7q",
+                          "name": "Label",
+                          "fill": "$text-primary",
+                          "content": "Open-Source Licenses",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "BbRHk",
+                      "name": "Trailing",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "F24NN",
+      "x": 6680,
+      "y": 13281,
+      "name": "Open-Source Licenses",
+      "context": "Settings › Appearance. Inline nav-bar title. Theme: System (default), Light or Dark, kept on this iPhone only and cleared by Log Out; System follows the iPhone's setting. The choice sets the window's style, so the call screen and photo/video compose still go dark over it. Logo: Detailed draws the app icon's veil with folds and shading (design/icon/shroud-icon.svg), Simple the flat veil (shroud-icon-simple.svg); changing it also changes the home screen icon, which iOS confirms with its own alert. If iOS refuses the icon change, a red 13 pt line under the Logo footer reads “The app icon couldn’t be changed. Try again.” Rows highlight on press; the checkmark swaps with Motion.iconSwap. Switching the theme cross-fades the whole window over 0.3 s.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "avnuI",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "id": "UNhBI",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Open-Source Licenses"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "l4bc4",
+          "name": "Body",
+          "width": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            8,
+            16,
+            40,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "oJ0b8",
+              "name": "Intro",
+              "width": "fill_container",
+              "padding": [
+                4,
+                14,
+                12,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "uAKIB",
+                  "name": "Text",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Shroud is built with these open-source components. Tap one to read its license.",
+                  "lineHeight": 1.3,
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FH4Qi",
+              "name": "Licenses Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sc7OU",
+                  "name": "Row Abseil",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "F7kRh",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "viLXm",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "Abseil",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Z9waz",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "WebRTC M153 · Apache-2.0",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "yaISU",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "GzI12",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "UwWGU",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "e4CdQY",
+                  "name": "Row BIP39 English Wordlist",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "VpWoC",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "LI07y",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "BIP39 English Wordlist",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "LVUP1",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "BIP-0039 · MIT",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "rN7sD",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "N0e8n8",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "N9fsg",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "BeI20",
+                  "name": "Row BoringSSL",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sJ9lH",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "w1qeUK",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "BoringSSL",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "w6TQ0W",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "WebRTC M153 · Apache-2.0",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "lLKGO",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "wFk4v",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "QAuoS",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "CuK19",
+                  "name": "Row dav1d",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "PjOMH",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "KqFTk",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "dav1d",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fwbmB",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "WebRTC M153 · BSD-2-Clause",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "eA3lI",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Vk2gW",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "eth3x",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "K5Fc18",
+                  "name": "Row libvpx",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ZGv1m",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "hc5N4",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "libvpx",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "SgZ4h",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "1.16.0 · BSD-3-Clause",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "sx34J",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "N6yo0",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "b4k7sv",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "TxVaE",
+                  "name": "Row Opus",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sci56",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "r4SUYL",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "Opus",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pBdag",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "WebRTC M153 · BSD-3-Clause",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "lENFC",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "tI2ku",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "v7qXL",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Aamr4",
+                  "name": "Row swift-collections",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "DV2kp",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "m5mbV",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "swift-collections",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "emye9",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "1.6.0 · Apache-2.0 WITH Swift-exception",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "dFcBc",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "TF3he",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "oq0zX",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ClHxl",
+                  "name": "Row swift-crypto",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "O6xbIs",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ukCoA",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "swift-crypto",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "QQrI5",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "4.5.2 · Apache-2.0",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "fblh7",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "YhSwC",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "MJ1l7",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Nwb5D",
+                  "name": "Row WebRTC",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "PVt0c",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "HJqSx",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "WebRTC",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "kGLWO",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "M153 · BSD-3-Clause",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "Pfnpn",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SsmDJ",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "WDP7s",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ydHlZ",
+                  "name": "Row WhisperKit",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "a93Lg",
+                      "name": "Copy",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sh8wp",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "WhisperKit",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "q4Qo1Q",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "content": "0.18.0 · MIT",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "RM56x",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "vcQr3",
+      "x": 7150,
+      "y": 13281,
+      "name": "License — WhisperKit",
+      "context": "Settings › Appearance. Inline nav-bar title. Theme: System (default), Light or Dark, kept on this iPhone only and cleared by Log Out; System follows the iPhone's setting. The choice sets the window's style, so the call screen and photo/video compose still go dark over it. Logo: Detailed draws the app icon's veil with folds and shading (design/icon/shroud-icon.svg), Simple the flat veil (shroud-icon-simple.svg); changing it also changes the home screen icon, which iOS confirms with its own alert. If iOS refuses the icon change, a red 13 pt line under the Logo footer reads “The app icon couldn’t be changed. Try again.” Rows highlight on press; the checkmark swaps with Motion.iconSwap. Switching the theme cross-fades the whole window over 0.3 s.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "nDaWl",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "id": "AqtwT",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "WhisperKit"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "px0e5",
+          "name": "Body",
+          "width": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            8,
+            16,
+            40,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "lmv8a",
+              "name": "Summary Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "gap": 4,
+              "padding": [
+                12,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Ltkw4",
+                  "name": "Name",
+                  "fill": "$text-primary",
+                  "content": "WhisperKit",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "UuYiC",
+                  "name": "Subtitle",
+                  "fill": "$text-secondary",
+                  "content": "0.18.0 · MIT",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "cgcWh",
+                  "name": "Link",
+                  "fill": "$accent-text",
+                  "content": "github.com/argmaxinc/WhisperKit",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "O9p1Z4",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "HRcuH",
+              "name": "Text Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "padding": 14,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "D0g2gW",
+                  "name": "License Text",
+                  "fill": "$text-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "MIT License\n\nCopyright (c) 2024 argmax, inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
                 }
               ]
             }

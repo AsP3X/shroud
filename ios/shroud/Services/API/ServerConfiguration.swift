@@ -61,6 +61,18 @@ nonisolated struct ServerConfiguration: Equatable, Codable, Sendable {
         Self.composeURL(host: host, port: port, apiPath: apiPath, useHTTPS: useHTTPS)
     }
 
+    /// Which server this is, in a few words: "Official Shroud server", or the self-hosted host.
+    /// The full address while the host is empty, so the label is never blank.
+    var addressLabel: String {
+        switch mode {
+        case .official:
+            return "Official Shroud server"
+        case .selfHosted:
+            let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedHost.isEmpty ? selfHostedPreviewString : trimmedHost
+        }
+    }
+
     static func composeURL(host: String, port: String, apiPath: String, useHTTPS: Bool) -> String {
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedPort = port.trimmingCharacters(in: .whitespacesAndNewlines)

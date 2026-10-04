@@ -4,6 +4,9 @@ import androidx.compose.runtime.Composable
 import de.corespace.shroud.core.model.NOTES_DISPLAY_NAME
 import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.ui.conversation.ConversationScreen
+import de.corespace.shroud.ui.settings.about.AboutScreen
+import de.corespace.shroud.ui.settings.about.LicenseDetailScreen
+import de.corespace.shroud.ui.settings.about.LicensesScreen
 import de.corespace.shroud.ui.settings.devices.DevicesScreen
 import de.corespace.shroud.ui.settings.notifications.NotificationSoundScreen
 import de.corespace.shroud.ui.settings.notifications.NotificationsSettingsScreen
@@ -22,6 +25,8 @@ import de.corespace.shroud.ui.shell.SettingsRoute
  * - Notifications → W3-SETTINGS-B's screen, which pushes the Sound picker; Privacy and Security,
  *   Devices → W3-SETTINGS-B's screens; Delivery → W3-PUSH's screen (Android only).
  * - Saved Messages → the Notes conversation, "Notes to me" (`:213-217`).
+ * - About → [AboutScreen], which pushes Licenses → [LicensesScreen], which pushes one License →
+ *   [LicenseDetailScreen].
  *
  * The root's device count follows core's device list (`auth.devices`, K3), which Devices updates, as
  * iOS updates it through `DevicesView(onCount:)` (`:209-210`).
@@ -39,5 +44,8 @@ fun SettingsDestination(route: SettingsRoute, onBack: () -> Unit) {
         SettingsRoute.NotificationSound -> NotificationSoundScreen(onBack)
         SettingsRoute.PrivacySecurity -> PrivacySecurityScreen(onBack)
         SettingsRoute.PushDelivery -> PushDeliveryScreen(onBack)
+        SettingsRoute.About -> AboutScreen(onBack, onOpenLicenses = { navigation.push(SettingsRoute.Licenses) })
+        SettingsRoute.Licenses -> LicensesScreen(onBack, onOpen = { navigation.push(SettingsRoute.License(it)) })
+        is SettingsRoute.License -> LicenseDetailScreen(route.id, onBack)
     }
 }

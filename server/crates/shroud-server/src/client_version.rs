@@ -72,7 +72,12 @@ pub struct ClientVersionCheck {
     /// The version (or web build id) to update to; clients remember a dismissal by it.
     pub latest_version: Option<String>,
     pub update_url: Option<String>,
+    /// This server's release, for the apps' About page.
+    pub server_version: &'static str,
 }
+
+/// This server's release (the crate version).
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A dotted release number. `1.2` and `1.2.0` are equal.
 #[derive(Debug, Clone)]
@@ -173,6 +178,7 @@ impl AppRelease {
             status,
             latest_version: target.map(|v| v.as_str().to_string()),
             update_url: self.update_url.clone(),
+            server_version: SERVER_VERSION,
         }
     }
 }
@@ -189,6 +195,7 @@ impl ClientVersions {
             status,
             latest_version: deployed,
             update_url: None,
+            server_version: SERVER_VERSION,
         }
     }
 }
@@ -506,6 +513,7 @@ mod tests {
                 "status": "update_available",
                 "latest_version": "1.4",
                 "update_url": "https://example.com/app",
+                "server_version": SERVER_VERSION,
             })
         );
     }

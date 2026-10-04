@@ -27,6 +27,13 @@ struct ClientVersionTests {
         #expect(throws: (any Error).self) { try JSONDecoder.api.decode(ClientVersionResponse.self, from: unknown) }
     }
 
+    @Test func decodesTheServerVersionAndToleratesItsAbsence() throws {
+        let json = Data(#"{"status":"current","latest_version":"1.0","update_url":null,"server_version":"0.1.0"}"#.utf8)
+        #expect(try JSONDecoder.api.decode(ClientVersionResponse.self, from: json).serverVersion == "0.1.0")
+        let older = Data(#"{"status":"current","latest_version":"1.0","update_url":null}"#.utf8)
+        #expect(try JSONDecoder.api.decode(ClientVersionResponse.self, from: older).serverVersion == nil)
+    }
+
     // MARK: - What shows
 
     @Test func statusMapsToThePrompt() {
@@ -62,6 +69,35 @@ struct ClientVersionTests {
             ClientVersionPolicy.requiredMessage(latest: nil, hasUpdateURL: false)
                 == "This version of Shroud no longer works with this server. Update to keep using it. Get the new version where you installed Shroud."
         )
+    }
+
+    @Test func aboutStatusFollowsTheLastCheck() {
+        let url = URL(string: "https://testflight.apple.com/join/abc")
+        #expect(ClientVersionPolicy.status(answer: nil, lastCheckFailed: false, isChecking: false) == .unknown)
+        #expect(ClientVersionPolicy.status(answer: nil, lastCheckFailed: false, isChecking: true) == .checking)
+        #expect(ClientVersionPolicy.status(answer: answer(.current), lastCheckFailed: false, isChecking: false) == .current)
+        #expect(
+            ClientVersionPolicy.status(answer: answer(.updateAvailable), lastCheckFailed: false, isChecking: false)
+                == .available(latest: "1.4", url: url)
+        )
+        #expect(
+            ClientVersionPolicy.status(answer: answer(.updateAvailable, latest: "", url: "tel:1"), lastCheckFailed: false, isChecking: false)
+                == .available(latest: nil, url: nil)
+        )
+        #expect(ClientVersionPolicy.status(answer: answer(.updateRequired), lastCheckFailed: false, isChecking: false) == .required)
+        // A failed check outranks an older answer; a running one outranks everything.
+        #expect(ClientVersionPolicy.status(answer: answer(.current), lastCheckFailed: true, isChecking: false) == .failed)
+        #expect(ClientVersionPolicy.status(answer: answer(.current), lastCheckFailed: true, isChecking: true) == .checking)
+    }
+
+    @Test func aboutStatusCopy() {
+        #expect(ClientVersionPolicy.statusTitle(.checking) == "Checking for updates…")
+        #expect(ClientVersionPolicy.statusTitle(.current) == "Shroud is up to date")
+        #expect(ClientVersionPolicy.statusTitle(.available(latest: "1.4", url: nil)) == "Version 1.4 is available")
+        #expect(ClientVersionPolicy.statusTitle(.available(latest: nil, url: nil)) == "A new version is available")
+        #expect(ClientVersionPolicy.statusTitle(.required) == "Update required")
+        #expect(ClientVersionPolicy.statusTitle(.failed) == "Couldn’t check for updates")
+        #expect(ClientVersionPolicy.statusTitle(.unknown) == "Updates are checked automatically")
     }
 
     // MARK: - When to ask
@@ -167,6 +203,66 @@ struct ClientVersionTests {
         #expect(controller.isUpdateRequired)
         #expect(await controller.check(.serverChanged, configuration: config, now: start) == .failed)
         #expect(controller.prompt == .none)
+    }
+
+    @Test func controllerKeepsTheLastOutcomeAndServerVersion() async {
+        let results = Script([
+            .success(ClientVersionResponse(status: .current, latestVersion: "1.0", updateURL: nil, serverVersion: " 0.1.0 ")),
+            .failure,
+            .success(ClientVersionResponse(status: .updateAvailable, latestVersion: "1.4", updateURL: nil, serverVersion: "")),
+        ])
+        let controller = ClientVersionController(currentVersion: "1.0") { _, _ in try await results.next() }
+        #expect(controller.lastOutcome == nil)
+        #expect(controller.updateStatus == .unknown)
+        #expect(controller.serverVersion == nil)
+
+        await controller.check(.launch, configuration: config, now: start)
+        #expect(controller.lastOutcome == .answered(.current))
+        #expect(controller.updateStatus == .current)
+        #expect(controller.serverVersion == "0.1.0")
+        #expect(!controller.hasUpdate)
+
+        await controller.check(.manual, configuration: config, now: start)
+        #expect(controller.lastOutcome == .failed)
+        #expect(controller.updateStatus == .failed)
+        #expect(controller.serverVersion == "0.1.0", "a failed check keeps the last answer's version")
+
+        await controller.check(.manual, configuration: config, now: start)
+        #expect(controller.lastOutcome == .answered(.updateAvailable))
+        #expect(controller.updateStatus == .available(latest: "1.4", url: nil))
+        #expect(controller.serverVersion == nil, "an empty server_version reads as unknown")
+        #expect(controller.hasUpdate)
+    }
+
+    @Test func dismissedOfferStillShowsOnAbout() async {
+        let controller = ClientVersionController(currentVersion: "1.0") { _, _ in
+            ClientVersionResponse(status: .updateAvailable, latestVersion: "1.4", updateURL: nil)
+        }
+        await controller.check(.launch, configuration: config, now: start)
+        controller.dismissAvailable()
+        #expect(controller.prompt == .none)
+        #expect(controller.updateStatus == .available(latest: "1.4", url: nil))
+        #expect(controller.hasUpdate)
+    }
+
+    @Test func serverChangeForgetsTheLastOutcome() async {
+        let newServer = HeldFetch()
+        let calls = Counter()
+        let controller = ClientVersionController(currentVersion: "1.0") { _, _ in
+            await calls.bump()
+            // The old server is unreachable; the new one answers once released.
+            if await calls.value == 1 { throw Script.Offline() }
+            return await newServer.wait()
+        }
+        await controller.check(.launch, configuration: config, now: start)
+        #expect(controller.lastOutcome == .failed)
+        let switched = Task { await controller.check(.serverChanged, configuration: config, now: start) }
+        while await !newServer.isWaiting { await Task.yield() }
+        #expect(controller.lastOutcome == nil, "the old server's failure says nothing about the new one")
+        #expect(controller.updateStatus == .checking)
+        await newServer.release(answer(.current))
+        #expect(await switched.value == .answered(.current))
+        #expect(controller.updateStatus == .current)
     }
 
     @Test func sendsThisBuildsVersion() async {

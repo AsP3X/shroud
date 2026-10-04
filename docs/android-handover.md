@@ -300,12 +300,16 @@ interface MediaEditRenderer : MediaEditBaker {          // MediaEditBaker = exis
 ```kotlin
 // di: update.checker — main-confined (R1)
 val prompt: StateFlow<UpdatePrompt>                       // None | Available(current, latest?, url?) | Required(current, latest?, url?)
+val update: StateFlow<ClientUpdate>                       // last answer: status, latestVersion?, updateUrl?, serverVersion? (CURRENT before one)
 val isChecking: StateFlow<Boolean>
+val lastOutcome: StateFlow<UpdateCheckOutcome?>           // Answered(status) | Failed; null until a check on this server finished (never Skipped)
 fun check(): Deferred<UpdateCheckOutcome>                 // joins a running check
 suspend fun checkAgain(): UpdateCheckOutcome              // Answered(status) | Failed | Skipped (dropped by a server switch)
 fun dismissAvailable(offer: UpdatePrompt.Available)       // "Later" on the offer shown; this process only
 ```
 The UI (`ui/update/UpdatePrompts.kt`, layer 95 in `RootScreen`) opens links with `core/update/UpdateLinkOpener`.
+`ClientVersionDto.serverVersion` (`server_version`, nullable: older servers leave it out) feeds `ClientUpdate.serverVersion`, which a failed check keeps and a server switch clears.
+`di/UpdateModule.kt` also holds what Settings › About Shroud shows: `appVersion: AppVersion` (`versionName` + `BuildConfig.BASE_VERSION_CODE`, the versionCode without the release splits' ABI offset) and `licenses: OpenSourceLicenses` (`core/about/`, reads `assets/licenses/third_party.json` and the texts next to it; regenerate the JSON with `android/scripts/generate_licenses.py` after a dependency change).
 
 ### OPEN items (each with the one question that unblocks it)
 - **OPEN-1 (owner):** may each agent merge its own finished branch into `dev` and push once its gate is green, or does the owner merge every branch?

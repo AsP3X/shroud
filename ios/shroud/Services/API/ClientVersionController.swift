@@ -7,7 +7,8 @@ import Foundation
 /// server without the route, a bad answer) changes nothing. Dismissing "Update available" lasts
 /// for this process only, per version: a cold launch or a newer release asks again.
 /// Agent: CALLS `GET /client-version` without a session; READS nothing else. `RootView` presents
-/// `prompt` (alert or `UpdateRequiredView`).
+/// `prompt` (alert or `UpdateRequiredView`) and shares the controller through the environment;
+/// About Shroud reads `updateStatus` and `serverVersion` and runs `.manual` checks.
 @MainActor
 @Observable
 final class ClientVersionController {
@@ -25,6 +26,9 @@ final class ClientVersionController {
     private(set) var answer: ClientVersionResponse?
     private(set) var dismissed: Set<String> = []
     private(set) var isChecking = false
+    /// How the last finished check ended: `.answered` or `.failed`, never `.skipped`. Nil until
+    /// one finishes (and after a server change).
+    private(set) var lastOutcome: Outcome?
     /// This build's `CFBundleShortVersionString`.
     let currentVersion: String
 
@@ -51,6 +55,25 @@ final class ClientVersionController {
         return false
     }
 
+    /// The About page's status row. Unlike `prompt`, a dismissed "available" still shows.
+    var updateStatus: UpdateCheckStatus {
+        ClientVersionPolicy.status(answer: answer, lastCheckFailed: lastOutcome == .failed, isChecking: isChecking)
+    }
+
+    /// The server offers or needs a newer build: the About Shroud row's badge.
+    var hasUpdate: Bool {
+        guard let status = answer?.status else { return false }
+        return status != .current
+    }
+
+    /// The server's release from its last answer; nil before one, or from a server too old to say.
+    var serverVersion: String? {
+        guard let version = answer?.serverVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !version.isEmpty
+        else { return nil }
+        return version
+    }
+
     /// Asks the server at `configuration` unless `trigger` is throttled or a check is running.
     @discardableResult
     func check(
@@ -62,6 +85,7 @@ final class ClientVersionController {
             // The old server's answer says nothing about the new one.
             generation += 1
             answer = nil
+            lastOutcome = nil
             isChecking = false
         }
         guard !isChecking,
@@ -78,9 +102,13 @@ final class ClientVersionController {
         guard started == generation else { return .skipped }
         isChecking = false
         // Only an answer starts the ten minutes: offline on the way back, the next return asks again.
-        guard let result else { return .failed }
+        guard let result else {
+            lastOutcome = .failed
+            return .failed
+        }
         lastCheckAt = now
         answer = result
+        lastOutcome = .answered(result.status)
         return .answered(result.status)
     }
 

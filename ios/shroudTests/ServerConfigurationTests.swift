@@ -48,4 +48,19 @@ struct ServerConfigurationTests {
         config.port = "99999"
         #expect(config.validationError() != nil)
     }
+
+    @Test
+    func addressLabelNamesTheOfficialServerOrTheHost() {
+        var config = ServerConfiguration.default
+        config.mode = .official
+        #expect(config.addressLabel == "Official Shroud server")
+        config.mode = .selfHosted
+        config.host = " chat.example.com "
+        config.port = "8443"
+        #expect(config.addressLabel == "chat.example.com")
+        config.host = ""
+        config.useHTTPS = true
+        config.apiPath = "/api/v1"
+        #expect(config.addressLabel == "https://…/api/v1")
+    }
 }

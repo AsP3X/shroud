@@ -3,6 +3,8 @@ package de.corespace.shroud.di
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
 import de.corespace.shroud.BuildConfig
+import de.corespace.shroud.core.about.AppVersion
+import de.corespace.shroud.core.about.OpenSourceLicenses
 import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.update.ClientUpdateChecker
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -12,7 +14,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * App updates: the process's one [ClientUpdateChecker], which the root's update prompts read.
+ * App updates: the process's one [ClientUpdateChecker], which the root's update prompts and
+ * Settings › About Shroud read, and what else About shows: [appVersion] and the bundled
+ * [licenses].
  *
  * [onProcessStart] wires when it asks: each time one of our activities comes up from the
  * background (the app's start included; a process a push or the boot receiver started asks
@@ -29,6 +33,12 @@ class UpdateModule(container: AppContainer) : AppModule(container) {
             scope = container.appScope,
         )
     }
+
+    /** "0.1.0" and the base versionCode, without the release splits' ABI offset. */
+    val appVersion: AppVersion = AppVersion(BuildConfig.VERSION_NAME, BuildConfig.BASE_VERSION_CODE)
+
+    /** The open-source license list (`assets/licenses/`). */
+    val licenses: OpenSourceLicenses by lazy { OpenSourceLicenses(container.appContext.assets::open) }
 
     override fun onProcessStart() {
         val scope = container.appScope

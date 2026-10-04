@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   /** The deploy's build id (web/Dockerfile); absent in `npm run dev` and a manual build. */
   readonly VITE_WEB_BUILD?: string;
+  /** web/package.json's version, stamped by vite.config.ts (Settings → About Shroud). */
+  readonly VITE_WEB_VERSION?: string;
 }
 
 declare module "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url" {

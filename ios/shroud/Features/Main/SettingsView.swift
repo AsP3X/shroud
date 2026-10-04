@@ -11,6 +11,10 @@ enum SettingsRoute: Hashable {
     case appearance
     /// The notes chat ("Notes to me" in Chats), opened from the Saved Messages row.
     case savedMessages
+    case about
+    case licenses
+    /// One component's license text; the value is `OpenSourceLicense.id`.
+    case license(String)
 }
 
 /// Settings tab — Telegram-style profile hero for the **title-only** sticky bar
@@ -31,6 +35,7 @@ struct SettingsView: View {
     @Environment(SessionController.self) private var sessionController
     @Environment(ServerConfigurationController.self) private var serverConfig
     @Environment(NotificationsController.self) private var notifications
+    @Environment(ClientVersionController.self) private var clientVersion
     @Environment(\.tabBarClearance) private var tabBarClearance
 
     @State private var scrollOffsetY: CGFloat = 0
@@ -215,6 +220,12 @@ struct SettingsView: View {
                             peerUserID: MessagingController.notesPeerID,
                             peerUsername: MessagingController.notesDisplayName
                         )
+                    case .about:
+                        AboutShroudView(navigationPath: $navigationPath)
+                    case .licenses:
+                        OpenSourceLicensesView(navigationPath: $navigationPath)
+                    case let .license(id):
+                        OpenSourceLicenseDetailView(licenseID: id)
                     }
                 }
         }
@@ -240,6 +251,7 @@ struct SettingsView: View {
                             myProfileCard
                             primaryGroup
                             secondaryGroup
+                            aboutGroup
                             logOutGroup
                             Color.clear.frame(height: 16)
                         }
@@ -526,6 +538,20 @@ struct SettingsView: View {
         }
     }
 
+    private var aboutGroup: some View {
+        settingsCard {
+            SettingsRowView(
+                title: "About Shroud",
+                systemImage: "info.circle.fill",
+                iconBackground: Color(red: 46 / 255, green: 143 / 255, blue: 224 / 255),
+                value: clientVersion.currentVersion,
+                badge: clientVersion.hasUpdate ? "Update available" : nil
+            ) {
+                navigationPath.append(.about)
+            }
+        }
+    }
+
     private var logOutGroup: some View {
         Button {
             showLogOutConfirm = true
@@ -579,4 +605,5 @@ struct SettingsView: View {
         .environment(SessionController())
         .environment(ServerConfigurationController())
         .environment(NotificationsController.shared)
+        .environment(ClientVersionController())
 }

@@ -1,7 +1,15 @@
 /**
- * When the tab asks about a newer build, and when the banner shows. Run: `npx tsx src/appVersion.selftest.ts`.
+ * When the tab asks about a newer build, when the banner shows, and what Settings → About Shroud
+ * says. Run: `npx tsx src/appVersion.selftest.ts`.
  */
-import { bannerShown, CHECK_GAP_MS, shouldCheck, updateFromAnswer } from "./appVersion";
+import {
+  bannerShown,
+  CHECK_GAP_MS,
+  serverVersionFromAnswer,
+  shouldCheck,
+  updateFromAnswer,
+  updateStatus,
+} from "./appVersion";
 
 function check(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
@@ -21,6 +29,8 @@ check(!shouldCheck("visible", now, null, true), "a still-hidden tab does not ask
 check(shouldCheck("interval", now, now - 30 * 60 * 1000, false), "the half-hourly timer asks in front");
 check(!shouldCheck("interval", now, now - 30 * 60 * 1000, true), "the timer skips a hidden tab");
 check(!shouldCheck("interval", now, now - 60 * 1000, false), "the timer skips right after another question");
+check(shouldCheck("manual", now, now - 1000, false), "Check for Updates asks right after another question");
+check(shouldCheck("manual", now, now - 1000, true), "Check for Updates asks whatever the tab says about being hidden");
 
 // Reading the answer.
 {
@@ -39,6 +49,36 @@ check(!shouldCheck("interval", now, now - 60 * 1000, false), "the timer skips ri
     "an unknown status is ignored",
   );
   check(updateFromAnswer(null) === null, "no answer is ignored");
+}
+
+// The server's version.
+{
+  const answer = { status: "current" as const, latest_version: "abc", update_url: null };
+  check(serverVersionFromAnswer({ ...answer, server_version: "0.1.0" }) === "0.1.0", "the server's version is kept");
+  check(serverVersionFromAnswer(answer) === null, "an older server sends none");
+  check(serverVersionFromAnswer({ ...answer, server_version: " " }) === null, "a blank version is none");
+  check(serverVersionFromAnswer({ ...answer, server_version: 7 as never }) === null, "a number is not a version");
+  check(serverVersionFromAnswer(null) === null, "no answer, no version");
+}
+
+// What the About page's row says.
+{
+  const current = { status: "current" as const, latest: "b1" };
+  const newer = { status: "update_available" as const, latest: "b2" };
+  check(updateStatus(false, false, false, null) === "idle", "a build without an id never asks");
+  check(updateStatus(false, true, true, newer) === "idle", "whatever else is known");
+  check(updateStatus(true, false, false, null) === "idle", "nothing asked yet");
+  check(updateStatus(true, true, false, null) === "checking", "a question out");
+  check(updateStatus(true, true, false, newer) === "checking", "a question out, even with a newer build known");
+  check(updateStatus(true, false, false, current) === "current", "up to date");
+  check(updateStatus(true, false, false, newer) === "available", "a newer build, served");
+  check(
+    updateStatus(true, false, false, { status: "update_required", latest: "b2" }) === "available",
+    "a required one reads the same",
+  );
+  check(updateStatus(true, false, true, null) === "failed", "the first question failed");
+  check(updateStatus(true, false, true, current) === "failed", "the last question failed");
+  check(updateStatus(true, false, true, newer) === "available", "a failed question doesn't hide a newer build");
 }
 
 // When the banner shows.

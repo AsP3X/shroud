@@ -14,11 +14,21 @@ nonisolated struct ClientVersionResponse: Decodable, Equatable, Sendable {
     let latestVersion: String?
     /// Operator-set link to the new build (TestFlight, App Store, a website); may be missing.
     let updateURL: String?
+    /// The server's own release, for About Shroud. Servers before it was added don't send it.
+    let serverVersion: String?
+
+    init(status: ClientVersionStatus, latestVersion: String?, updateURL: String?, serverVersion: String? = nil) {
+        self.status = status
+        self.latestVersion = latestVersion
+        self.updateURL = updateURL
+        self.serverVersion = serverVersion
+    }
 
     enum CodingKeys: String, CodingKey {
         case status
         case latestVersion = "latest_version"
         case updateURL = "update_url"
+        case serverVersion = "server_version"
     }
 }
 
@@ -29,6 +39,20 @@ nonisolated enum UpdatePrompt: Equatable, Sendable {
     case available(latest: String?, url: URL?)
     /// The blocking "Update required" screen over everything.
     case required(latest: String?, url: URL?)
+}
+
+/// The update status row on About Shroud.
+nonisolated enum UpdateCheckStatus: Equatable, Sendable {
+    case checking
+    case current
+    /// The server offers a newer build; shown even after the alert was dismissed.
+    case available(latest: String?, url: URL?)
+    /// The blocking screen is up anyway; the row just names it.
+    case required
+    /// The last check got no answer (offline, an older server, a bad reply).
+    case failed
+    /// No check has finished yet.
+    case unknown
 }
 
 /// Pure rules behind the update prompt: what to show, when to ask again, and the copy.
@@ -89,7 +113,41 @@ nonisolated enum ClientVersionPolicy {
         return url
     }
 
+    /// The About row for the last answer. A running check wins; then a failed last check, even
+    /// over an older answer, so "Check for Updates" never looks as if it had worked.
+    static func status(answer: ClientVersionResponse?, lastCheckFailed: Bool, isChecking: Bool) -> UpdateCheckStatus {
+        if isChecking { return .checking }
+        if lastCheckFailed { return .failed }
+        guard let answer else { return .unknown }
+        switch answer.status {
+        case .current:
+            return .current
+        case .updateAvailable:
+            return .available(latest: answer.latestVersion.flatMap { $0.isEmpty ? nil : $0 }, url: updateURL(answer.updateURL))
+        case .updateRequired:
+            return .required
+        }
+    }
+
     // MARK: - Copy
+
+    static func statusTitle(_ status: UpdateCheckStatus) -> String {
+        switch status {
+        case .checking:
+            return "Checking for updates…"
+        case .current:
+            return "Shroud is up to date"
+        case let .available(latest, _):
+            if let latest { return "Version \(latest) is available" }
+            return "A new version is available"
+        case .required:
+            return "Update required"
+        case .failed:
+            return "Couldn’t check for updates"
+        case .unknown:
+            return "Updates are checked automatically"
+        }
+    }
 
     static func availableMessage(latest: String?, current: String) -> String {
         if let latest {
@@ -118,6 +176,11 @@ nonisolated struct ClientVersionService: Sendable {
     /// `CFBundleShortVersionString`, as the server compares it.
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    /// `CFBundleVersion`, the build number shown next to the version on About Shroud.
+    static var buildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
     }
 
     func check(configuration: ServerConfiguration, version: String) async throws -> ClientVersionResponse {

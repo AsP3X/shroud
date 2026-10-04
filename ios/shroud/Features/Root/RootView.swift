@@ -177,6 +177,8 @@ struct RootView: View {
         .environment(serverConfig)
         .environment(deviceWipe)
         .environment(notifications)
+        // Settings › About Shroud reads the same answer and runs its own manual checks.
+        .environment(clientVersion)
         // Its own task: the answer shouldn't wait for the session checks below.
         .task {
             await clientVersion.check(.launch, configuration: serverConfig.configuration)

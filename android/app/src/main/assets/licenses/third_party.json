@@ -1,0 +1,673 @@
+{
+  "components": [
+    {
+      "id": "abseil",
+      "name": "Abseil",
+      "version": "WebRTC 150.7871.01",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "androidx-apache-2.0",
+      "name": "AndroidX libraries",
+      "version": null,
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "androidx.activity:activity:1.13.0",
+        "androidx.activity:activity-compose:1.13.0",
+        "androidx.activity:activity-ktx:1.13.0",
+        "androidx.annotation:annotation:1.10.0",
+        "androidx.annotation:annotation-experimental:1.4.1",
+        "androidx.annotation:annotation-jvm:1.10.0",
+        "androidx.arch.core:core-common:2.2.0",
+        "androidx.arch.core:core-runtime:2.2.0",
+        "androidx.autofill:autofill:1.0.0",
+        "androidx.browser:browser:1.10.0",
+        "androidx.camera.featurecombinationquery:featurecombinationquery:1.6.2",
+        "androidx.camera.viewfinder:viewfinder-compose:1.6.2",
+        "androidx.camera.viewfinder:viewfinder-core:1.6.2",
+        "androidx.camera:camera-camera2:1.6.2",
+        "androidx.camera:camera-camera2-pipe:1.6.2",
+        "androidx.camera:camera-compose:1.6.2",
+        "androidx.camera:camera-lifecycle:1.6.2",
+        "androidx.camera:camera-video:1.6.2",
+        "androidx.collection:collection:1.6.0",
+        "androidx.collection:collection-jvm:1.6.0",
+        "androidx.collection:collection-ktx:1.6.0",
+        "androidx.compose.animation:animation:1.12.1",
+        "androidx.compose.animation:animation-android:1.12.1",
+        "androidx.compose.animation:animation-core:1.12.1",
+        "androidx.compose.animation:animation-core-android:1.12.1",
+        "androidx.compose.foundation:foundation:1.12.1",
+        "androidx.compose.foundation:foundation-android:1.12.1",
+        "androidx.compose.foundation:foundation-layout:1.12.1",
+        "androidx.compose.foundation:foundation-layout-android:1.12.1",
+        "androidx.compose.runtime:runtime:1.12.1",
+        "androidx.compose.runtime:runtime-android:1.12.1",
+        "androidx.compose.runtime:runtime-annotation:1.12.1",
+        "androidx.compose.runtime:runtime-annotation-android:1.12.1",
+        "androidx.compose.runtime:runtime-retain:1.12.1",
+        "androidx.compose.runtime:runtime-retain-android:1.12.1",
+        "androidx.compose.runtime:runtime-saveable:1.12.1",
+        "androidx.compose.runtime:runtime-saveable-android:1.12.1",
+        "androidx.compose.ui:ui:1.12.1",
+        "androidx.compose.ui:ui-android:1.12.1",
+        "androidx.compose.ui:ui-geometry:1.12.1",
+        "androidx.compose.ui:ui-geometry-android:1.12.1",
+        "androidx.compose.ui:ui-graphics:1.12.1",
+        "androidx.compose.ui:ui-graphics-android:1.12.1",
+        "androidx.compose.ui:ui-text:1.12.1",
+        "androidx.compose.ui:ui-text-android:1.12.1",
+        "androidx.compose.ui:ui-tooling-preview:1.12.1",
+        "androidx.compose.ui:ui-tooling-preview-android:1.12.1",
+        "androidx.compose.ui:ui-unit:1.12.1",
+        "androidx.compose.ui:ui-unit-android:1.12.1",
+        "androidx.compose.ui:ui-util:1.12.1",
+        "androidx.compose.ui:ui-util-android:1.12.1",
+        "androidx.concurrent:concurrent-futures:1.2.0",
+        "androidx.concurrent:concurrent-futures-ktx:1.2.0",
+        "androidx.core:core:1.19.1",
+        "androidx.core:core-backported-fixes:1.0.0",
+        "androidx.core:core-ktx:1.19.1",
+        "androidx.core:core-telecom:1.0.1",
+        "androidx.core:core-viewtree:1.0.0",
+        "androidx.customview:customview:1.0.0",
+        "androidx.customview:customview-poolingcontainer:1.0.0",
+        "androidx.datastore:datastore:1.2.1",
+        "androidx.datastore:datastore-android:1.2.1",
+        "androidx.datastore:datastore-core:1.2.1",
+        "androidx.datastore:datastore-core-android:1.2.1",
+        "androidx.datastore:datastore-core-okio:1.2.1",
+        "androidx.datastore:datastore-core-okio-jvm:1.2.1",
+        "androidx.datastore:datastore-preferences:1.2.1",
+        "androidx.datastore:datastore-preferences-android:1.2.1",
+        "androidx.datastore:datastore-preferences-core:1.2.1",
+        "androidx.datastore:datastore-preferences-core-android:1.2.1",
+        "androidx.datastore:datastore-preferences-proto:1.2.1",
+        "androidx.emoji2:emoji2:1.7.0",
+        "androidx.emoji2:emoji2-bundled:1.7.0",
+        "androidx.exifinterface:exifinterface:1.4.2",
+        "androidx.fragment:fragment:1.5.7",
+        "androidx.fragment:fragment-ktx:1.5.7",
+        "androidx.graphics:graphics-core:1.0.4",
+        "androidx.graphics:graphics-path:1.0.1",
+        "androidx.ink:ink-authoring:1.0.0",
+        "androidx.ink:ink-authoring-android:1.0.0",
+        "androidx.ink:ink-authoring-compose:1.0.0",
+        "androidx.ink:ink-authoring-compose-android:1.0.0",
+        "androidx.ink:ink-brush:1.0.0",
+        "androidx.ink:ink-brush-android:1.0.0",
+        "androidx.ink:ink-geometry:1.0.0",
+        "androidx.ink:ink-geometry-android:1.0.0",
+        "androidx.ink:ink-nativeloader:1.0.0",
+        "androidx.ink:ink-nativeloader-android:1.0.0",
+        "androidx.ink:ink-rendering:1.0.0",
+        "androidx.ink:ink-rendering-android:1.0.0",
+        "androidx.ink:ink-strokes:1.0.0",
+        "androidx.ink:ink-strokes-android:1.0.0",
+        "androidx.input:input-motionprediction:1.0.0",
+        "androidx.interpolator:interpolator:1.0.0",
+        "androidx.lifecycle:lifecycle-common:2.11.0",
+        "androidx.lifecycle:lifecycle-common-jvm:2.11.0",
+        "androidx.lifecycle:lifecycle-livedata:2.11.0",
+        "androidx.lifecycle:lifecycle-livedata-core:2.11.0",
+        "androidx.lifecycle:lifecycle-livedata-core-ktx:2.11.0",
+        "androidx.lifecycle:lifecycle-process:2.11.0",
+        "androidx.lifecycle:lifecycle-runtime:2.11.0",
+        "androidx.lifecycle:lifecycle-runtime-android:2.11.0",
+        "androidx.lifecycle:lifecycle-runtime-compose:2.11.0",
+        "androidx.lifecycle:lifecycle-runtime-compose-android:2.11.0",
+        "androidx.lifecycle:lifecycle-runtime-ktx:2.11.0",
+        "androidx.lifecycle:lifecycle-runtime-ktx-android:2.11.0",
+        "androidx.lifecycle:lifecycle-service:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel-android:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel-compose-android:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0",
+        "androidx.lifecycle:lifecycle-viewmodel-savedstate-android:2.11.0",
+        "androidx.loader:loader:1.0.0",
+        "androidx.media3:media3-common:1.11.1",
+        "androidx.media3:media3-common-ktx:1.11.1",
+        "androidx.media3:media3-container:1.11.1",
+        "androidx.media3:media3-database:1.11.1",
+        "androidx.media3:media3-datasource:1.11.1",
+        "androidx.media3:media3-decoder:1.11.1",
+        "androidx.media3:media3-effect:1.11.1",
+        "androidx.media3:media3-exoplayer:1.11.1",
+        "androidx.media3:media3-extractor:1.11.1",
+        "androidx.media3:media3-muxer:1.11.1",
+        "androidx.media3:media3-transformer:1.11.1",
+        "androidx.media3:media3-ui-compose:1.11.1",
+        "androidx.navigation:navigation-common:2.10.2",
+        "androidx.navigation:navigation-common-android:2.10.2",
+        "androidx.navigation:navigation-compose:2.10.2",
+        "androidx.navigation:navigation-compose-android:2.10.2",
+        "androidx.navigation:navigation-runtime:2.10.2",
+        "androidx.navigation:navigation-runtime-android:2.10.2",
+        "androidx.navigationevent:navigationevent:1.1.2",
+        "androidx.navigationevent:navigationevent-android:1.1.2",
+        "androidx.navigationevent:navigationevent-compose:1.1.2",
+        "androidx.navigationevent:navigationevent-compose-android:1.1.2",
+        "androidx.profileinstaller:profileinstaller:1.4.0",
+        "androidx.room:room-common:2.7.0",
+        "androidx.room:room-common-jvm:2.7.0",
+        "androidx.room:room-runtime:2.7.0",
+        "androidx.room:room-runtime-android:2.7.0",
+        "androidx.savedstate:savedstate:1.5.0",
+        "androidx.savedstate:savedstate-android:1.5.0",
+        "androidx.savedstate:savedstate-compose:1.5.0",
+        "androidx.savedstate:savedstate-compose-android:1.5.0",
+        "androidx.savedstate:savedstate-ktx:1.5.0",
+        "androidx.sqlite:sqlite:2.5.0",
+        "androidx.sqlite:sqlite-android:2.5.0",
+        "androidx.sqlite:sqlite-framework:2.5.0",
+        "androidx.sqlite:sqlite-framework-android:2.5.0",
+        "androidx.startup:startup-runtime:1.2.0",
+        "androidx.test.espresso:espresso-idling-resource:3.5.0",
+        "androidx.tracing:tracing:2.0.3",
+        "androidx.tracing:tracing-android:2.0.3",
+        "androidx.tracing:tracing-ktx:2.0.3",
+        "androidx.versionedparcelable:versionedparcelable:1.1.1",
+        "androidx.viewpager:viewpager:1.0.0",
+        "androidx.window:window:1.5.0",
+        "androidx.window:window-core:1.5.0",
+        "androidx.window:window-core-android:1.5.0",
+        "androidx.work:work-runtime:2.12.0",
+        "androidx.work:work-runtime-ktx:2.12.0"
+      ]
+    },
+    {
+      "id": "autovalue-annotations",
+      "name": "AutoValue Annotations",
+      "version": "1.6.3",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.auto.value:auto-value-annotations:1.6.3"
+      ]
+    },
+    {
+      "id": "bip39",
+      "name": "BIP-39 English word list",
+      "version": "bitcoin/bips",
+      "license": "MIT",
+      "text": "BIP39-LICENSE.txt",
+      "kind": "Data",
+      "artifacts": [
+        "assets/bip39-english.txt"
+      ]
+    },
+    {
+      "id": "boringssl",
+      "name": "BoringSSL",
+      "version": "WebRTC 150.7871.01",
+      "license": "Apache-2.0",
+      "text": "BoringSSL-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "bouncy-castle",
+      "name": "Bouncy Castle",
+      "version": "1.86",
+      "license": "MIT",
+      "text": "BouncyCastle-LICENSE.txt",
+      "kind": "Library",
+      "artifacts": [
+        "org.bouncycastle:bcprov-jdk18on:1.86"
+      ]
+    },
+    {
+      "id": "camerax-core",
+      "name": "CameraX core",
+      "version": "1.6.2",
+      "license": "Apache-2.0 AND BSD-3-Clause",
+      "text": "CameraX-core-LICENSE.txt",
+      "kind": "Library",
+      "artifacts": [
+        "androidx.camera:camera-core:1.6.2"
+      ]
+    },
+    {
+      "id": "checker-framework-qualifiers",
+      "name": "Checker Framework qualifiers",
+      "version": "3.43.0",
+      "license": "MIT",
+      "text": "checker-qual-LICENSE.txt",
+      "kind": "Library",
+      "artifacts": [
+        "org.checkerframework:checker-qual:3.43.0"
+      ]
+    },
+    {
+      "id": "dagger",
+      "name": "Dagger",
+      "version": "2.59",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.dagger:dagger:2.59"
+      ]
+    },
+    {
+      "id": "dav1d",
+      "name": "dav1d",
+      "version": "WebRTC 150.7871.01",
+      "license": "BSD-2-Clause",
+      "text": "dav1d-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "error-prone-annotations",
+      "name": "Error Prone annotations",
+      "version": "2.28.0",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.errorprone:error_prone_annotations:2.28.0"
+      ]
+    },
+    {
+      "id": "ggml",
+      "name": "ggml",
+      "version": "whisper.cpp 1.9.4",
+      "license": "MIT",
+      "text": "whisper.cpp-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libggml.so, libggml-base.so, libggml-cpu-*.so (app/src/main/cpp/whisper.cpp/ggml)"
+      ]
+    },
+    {
+      "id": "guava",
+      "name": "Guava",
+      "version": null,
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.guava:failureaccess:1.0.2",
+        "com.google.guava:guava:33.3.1-android",
+        "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
+      ]
+    },
+    {
+      "id": "haze",
+      "name": "Haze",
+      "version": "2.0.1",
+      "license": "Apache-2.0",
+      "text": "Haze-LICENSE.txt",
+      "kind": "Library",
+      "artifacts": [
+        "dev.chrisbanes.haze:haze:2.0.1",
+        "dev.chrisbanes.haze:haze-android:2.0.1",
+        "dev.chrisbanes.haze:haze-blur:2.0.1",
+        "dev.chrisbanes.haze:haze-blur-android:2.0.1",
+        "dev.chrisbanes.haze:haze-utils:2.0.1",
+        "dev.chrisbanes.haze:haze-utils-android:2.0.1"
+      ]
+    },
+    {
+      "id": "inter",
+      "name": "Inter",
+      "version": "4.1",
+      "license": "OFL-1.1",
+      "text": "Inter-OFL.txt",
+      "kind": "Font",
+      "artifacts": [
+        "res/font/inter_*.ttf"
+      ]
+    },
+    {
+      "id": "j2objc-annotations",
+      "name": "J2ObjC annotations",
+      "version": "3.0.0",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.j2objc:j2objc-annotations:3.0.0"
+      ]
+    },
+    {
+      "id": "jakarta-dependency-injection",
+      "name": "Jakarta Dependency Injection",
+      "version": "2.0.1",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "jakarta.inject:jakarta.inject-api:2.0.1"
+      ]
+    },
+    {
+      "id": "javax-inject",
+      "name": "javax.inject",
+      "version": "1",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "javax.inject:javax.inject:1"
+      ]
+    },
+    {
+      "id": "jetbrains-java-annotations",
+      "name": "JetBrains Java annotations",
+      "version": "23.0.0",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "org.jetbrains:annotations:23.0.0"
+      ]
+    },
+    {
+      "id": "jetbrains-mono",
+      "name": "JetBrains Mono",
+      "version": "2.304",
+      "license": "OFL-1.1",
+      "text": "JetBrainsMono-OFL.txt",
+      "kind": "Font",
+      "artifacts": [
+        "res/font/jetbrains_mono_*.ttf"
+      ]
+    },
+    {
+      "id": "jspecify",
+      "name": "JSpecify",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "org.jspecify:jspecify:1.0.0"
+      ]
+    },
+    {
+      "id": "jsr-305-annotations",
+      "name": "JSR-305 annotations",
+      "version": "3.0.2",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.code.findbugs:jsr305:3.0.2"
+      ]
+    },
+    {
+      "id": "kotlin-apache-2.0",
+      "name": "Kotlin libraries",
+      "version": null,
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "org.jetbrains.androidx.lifecycle:lifecycle-common:2.11.0",
+        "org.jetbrains.androidx.lifecycle:lifecycle-common-jvm:2.11.0",
+        "org.jetbrains.androidx.lifecycle:lifecycle-runtime:2.11.0",
+        "org.jetbrains.androidx.lifecycle:lifecycle-runtime-android:2.11.0",
+        "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.11.0",
+        "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose-android:2.11.0",
+        "org.jetbrains.androidx.savedstate:savedstate:1.3.6",
+        "org.jetbrains.androidx.savedstate:savedstate-compose:1.3.6",
+        "org.jetbrains.compose.animation:animation-core:1.12.1",
+        "org.jetbrains.compose.animation:animation-core-android:1.12.1",
+        "org.jetbrains.compose.runtime:runtime:1.12.1",
+        "org.jetbrains.compose.runtime:runtime-android:1.12.1",
+        "org.jetbrains.compose.runtime:runtime-saveable:1.12.1",
+        "org.jetbrains.compose.runtime:runtime-saveable-android:1.12.1",
+        "org.jetbrains.compose.ui:ui:1.12.1",
+        "org.jetbrains.compose.ui:ui-android:1.12.1",
+        "org.jetbrains.compose.ui:ui-geometry:1.12.1",
+        "org.jetbrains.compose.ui:ui-geometry-android:1.12.1",
+        "org.jetbrains.compose.ui:ui-graphics:1.12.1",
+        "org.jetbrains.compose.ui:ui-graphics-android:1.12.1",
+        "org.jetbrains.compose.ui:ui-text:1.12.1",
+        "org.jetbrains.compose.ui:ui-text-android:1.12.1",
+        "org.jetbrains.compose.ui:ui-unit:1.12.1",
+        "org.jetbrains.compose.ui:ui-unit-android:1.12.1",
+        "org.jetbrains.compose.ui:ui-util:1.12.1",
+        "org.jetbrains.compose.ui:ui-util-android:1.12.1",
+        "org.jetbrains.kotlin:kotlin-stdlib:2.4.20",
+        "org.jetbrains.kotlinx:atomicfu:0.28.0",
+        "org.jetbrains.kotlinx:atomicfu-jvm:0.28.0",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0",
+        "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0"
+      ]
+    },
+    {
+      "id": "libaom",
+      "name": "libaom",
+      "version": "WebRTC 150.7871.01",
+      "license": "BSD-2-Clause",
+      "text": "libaom-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "libsrtp",
+      "name": "libsrtp",
+      "version": "WebRTC 150.7871.01",
+      "license": "BSD-3-Clause",
+      "text": "libsrtp-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "libvpx",
+      "name": "libvpx",
+      "version": "1.16.0",
+      "license": "BSD-3-Clause",
+      "text": "libvpx-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "libyuv",
+      "name": "libyuv",
+      "version": "WebRTC 150.7871.01",
+      "license": "BSD-3-Clause",
+      "text": "libyuv-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "libc++",
+      "name": "LLVM libc++",
+      "version": "NDK 30.0.16248370",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "text": "LLVM-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libc++_shared.so (Android NDK)"
+      ]
+    },
+    {
+      "id": "lucide",
+      "name": "Lucide icons",
+      "version": "1.49.0",
+      "license": "ISC",
+      "text": "Lucide-LICENSE.txt",
+      "kind": "Icons",
+      "artifacts": [
+        "ui/theme/ShroudIcons.kt (vector paths; list in icons.txt)"
+      ]
+    },
+    {
+      "id": "noto-color-emoji",
+      "name": "Noto Color Emoji",
+      "version": "emoji2-bundled 1.7.0",
+      "license": "OFL-1.1",
+      "text": "NotoColorEmoji-LICENSE.txt",
+      "kind": "Font",
+      "artifacts": [
+        "assets/NotoColorEmojiCompat.ttf (androidx.emoji2:emoji2-bundled)"
+      ]
+    },
+    {
+      "id": "okhttp",
+      "name": "OkHttp",
+      "version": "5.5.0",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.squareup.okhttp3:okhttp:5.5.0",
+        "com.squareup.okhttp3:okhttp-android:5.5.0"
+      ]
+    },
+    {
+      "id": "okio",
+      "name": "Okio",
+      "version": "3.18.1",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.squareup.okio:okio:3.18.1",
+        "com.squareup.okio:okio-jvm:3.18.1"
+      ]
+    },
+    {
+      "id": "opus",
+      "name": "Opus",
+      "version": "WebRTC 150.7871.01",
+      "license": "BSD-3-Clause",
+      "text": "Opus-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libjingle_peerconnection_so.so (io.github.webrtc-sdk:android)"
+      ]
+    },
+    {
+      "id": "phosphor",
+      "name": "Phosphor Icons",
+      "version": "2.1.1",
+      "license": "MIT",
+      "text": "Phosphor-LICENSE.txt",
+      "kind": "Icons",
+      "artifacts": [
+        "ui/theme/ShroudIcons.kt (vector paths; list in icons.txt)"
+      ]
+    },
+    {
+      "id": "protocol-buffers-lite-in-androidx-datastore",
+      "name": "Protocol Buffers (lite, in AndroidX DataStore)",
+      "version": "1.2.1",
+      "license": "BSD-3-Clause",
+      "text": "protobuf-LICENSE.txt",
+      "kind": "Library",
+      "artifacts": [
+        "androidx.datastore:datastore-preferences-external-protobuf:1.2.1"
+      ]
+    },
+    {
+      "id": "public-suffix-list",
+      "name": "Public Suffix List",
+      "version": "OkHttp 5.5.0",
+      "license": "MPL-2.0",
+      "text": "MPL-2.0.txt",
+      "kind": "Data",
+      "artifacts": [
+        "assets/PublicSuffixDatabase.list (com.squareup.okhttp3:okhttp)"
+      ]
+    },
+    {
+      "id": "unicode-data",
+      "name": "Unicode emoji data",
+      "version": "emoji2-bundled 1.7.0",
+      "license": "Unicode-DFS-2016",
+      "text": "Unicode-LICENSE.txt",
+      "kind": "Data",
+      "artifacts": [
+        "assets/NotoColorEmojiCompat.ttf (androidx.emoji2:emoji2-bundled)"
+      ]
+    },
+    {
+      "id": "unifiedpush",
+      "name": "UnifiedPush",
+      "version": "3.1.0",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "org.unifiedpush.android:embedded-fcm-distributor:3.1.0"
+      ]
+    },
+    {
+      "id": "webrtc",
+      "name": "WebRTC",
+      "version": "150.7871.01",
+      "license": "BSD-3-Clause",
+      "text": "WebRTC-LICENSE.txt",
+      "kind": "Library",
+      "artifacts": [
+        "io.github.webrtc-sdk:android:150.7871.01"
+      ]
+    },
+    {
+      "id": "whisper-models",
+      "name": "Whisper models",
+      "version": "ggml base / small, q5_1",
+      "license": "MIT",
+      "text": "Whisper-models-LICENSE.txt",
+      "kind": "Model",
+      "artifacts": [
+        "Downloaded on first use from huggingface.co/ggerganov/whisper.cpp; not in the APK"
+      ]
+    },
+    {
+      "id": "whisper.cpp",
+      "name": "whisper.cpp",
+      "version": "1.9.4",
+      "license": "MIT",
+      "text": "whisper.cpp-LICENSE.txt",
+      "kind": "Native code",
+      "artifacts": [
+        "libshroud_whisper.so (app/src/main/cpp/whisper.cpp)"
+      ]
+    },
+    {
+      "id": "zxing",
+      "name": "ZXing",
+      "version": "3.5.4",
+      "license": "Apache-2.0",
+      "text": "Apache-2.0.txt",
+      "kind": "Library",
+      "artifacts": [
+        "com.google.zxing:core:3.5.4"
+      ]
+    }
+  ]
+}

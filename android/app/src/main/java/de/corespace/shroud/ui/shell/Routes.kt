@@ -29,6 +29,7 @@ sealed interface ChatRoute {
 /**
  * Screens pushed on the Settings stack (iOS `SettingsRoute`, settings-lock §2). [PushDelivery] is
  * Android only: the UnifiedPush / background connection screen (W3-PUSH, decision record 1).
+ * [About] pushes [Licenses], which pushes one [License] by its id in `third_party.json`.
  */
 sealed interface SettingsRoute {
     data object Server : SettingsRoute
@@ -40,4 +41,7 @@ sealed interface SettingsRoute {
     data object Appearance : SettingsRoute
     data object SavedMessages : SettingsRoute
     data object PushDelivery : SettingsRoute
+    data object About : SettingsRoute
+    data object Licenses : SettingsRoute
+    data class License(val id: String) : SettingsRoute
 }

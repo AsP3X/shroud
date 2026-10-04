@@ -2,16 +2,21 @@ package de.corespace.shroud.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -29,7 +34,9 @@ import de.corespace.shroud.ui.theme.inter
  *
  * - **Navigation** ([onClick] set, not [destructive]): optional [value] 16 sp `textSecondary`
  *   (only shown with an action, `SettingsRowView.swift:31-35`) and the Phosphor `caret-right`
- *   13 dp chevron in the `chevron` token. With a [subtitle] the title and a one-line 13 sp
+ *   13 dp chevron in the `chevron` token. A [badge] draws an 8 dp `accent` dot before the value
+ *   (something new behind the row, like an app update; `SettingsRowView.swift:34-40`); TalkBack
+ *   reads [badge] after the row. With a [subtitle] the title and a one-line 13 sp
  *   `textSecondary` subtitle stack with spacing 2 (the Server row, `SettingsView.swift:497-528`;
  *   TalkBack "Server, <subtitle>").
  * - **Action** ([destructive]): title in `danger`, no chevron; a subtitle wraps ("Reset QR code",
@@ -54,6 +61,7 @@ fun SettingsRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     busy: Boolean = false,
+    badge: String? = null,
     onClick: (() -> Unit)?,
 ) {
     val colors = ShroudTheme.colors
@@ -94,6 +102,15 @@ fun SettingsRow(
             busy -> Spinner(colors.textSecondary, size = 18.dp)
             kind == SettingsRowKind.Soon -> ShroudText("Soon", inter(13f, FontWeight.Medium), colors.textSecondary, maxLines = 1)
             kind == SettingsRowKind.Navigation -> {
+                if (badge != null) {
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(colors.accent)
+                            .semantics { contentDescription = badge },
+                    )
+                }
                 if (value != null) ShroudText(value, inter(16f), colors.textSecondary, maxLines = 1)
                 ShroudIcon(ShroudIcons.CaretRight, colors.chevron, size = 13.dp)
             }

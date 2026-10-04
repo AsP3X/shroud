@@ -1,9 +1,18 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { bundleLicenses } from "./bundleLicenses";
+
+const root = fileURLToPath(new URL(".", import.meta.url));
 
 // The deploy's build id (web/Dockerfile → VITE_WEB_BUILD). It is also written into index.html, so
 // a tab offers a reload only once the page a reload would load carries it (src/appVersion.ts).
 const webBuild = (process.env.VITE_WEB_BUILD ?? "").trim();
+// The release Settings → About Shroud shows: package.json's version.
+const webVersion = String(JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version);
+
+const licenses = bundleLicenses(root);
 
 export default defineConfig({
   plugins: [
@@ -13,7 +22,11 @@ export default defineConfig({
       transformIndexHtml: () =>
         webBuild ? [{ tag: "meta", attrs: { name: "shroud-build", content: webBuild }, injectTo: "head" }] : [],
     },
+    licenses.page,
   ],
+  define: {
+    "import.meta.env.VITE_WEB_VERSION": JSON.stringify(webVersion),
+  },
   assetsInclude: ["**/*.wasm"],
   optimizeDeps: {
     exclude: [
@@ -26,6 +39,7 @@ export default defineConfig({
   },
   worker: {
     format: "es",
+    plugins: () => [licenses.worker()],
   },
   server: {
     port: 5173,

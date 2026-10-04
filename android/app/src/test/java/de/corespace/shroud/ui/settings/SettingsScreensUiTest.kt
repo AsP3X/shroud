@@ -46,6 +46,8 @@ class SettingsScreensUiTest {
         serverSubtitle = "Official · api.shroud.app",
         isLoggingOut = false,
         deviceNoun = DeviceNoun.PHONE,
+        appVersion = "0.1.0",
+        hasUpdate = false,
     )
 
     private fun SemanticsNode.click() = config[SemanticsActions.OnClick].action!!.invoke()

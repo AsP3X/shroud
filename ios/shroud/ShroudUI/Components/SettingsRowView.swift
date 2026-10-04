@@ -7,6 +7,9 @@ struct SettingsRowView: View {
     let iconBackground: Color
     /// Secondary text before the chevron (e.g. a count).
     var value: String? = nil
+    /// Shows a small accent dot before the value (something new behind the row, like an app
+    /// update); the text is what VoiceOver reads for the dot.
+    var badge: String? = nil
     var action: (() -> Void)? = nil
 
     var body: some View {
@@ -28,6 +31,13 @@ struct SettingsRowView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let badge, action != nil {
+                    Circle()
+                        .fill(Theme.accent)
+                        .frame(width: 8, height: 8)
+                        .accessibilityElement()
+                        .accessibilityLabel(badge)
+                }
                 if let value, action != nil {
                     Text(value)
                         .font(.system(size: 16))
