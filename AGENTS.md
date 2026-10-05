@@ -14,6 +14,7 @@ the rule.
 | [Keep the designs in sync with the UI](docs/agent-rules/design-sync.md) | Visible UI changes in `ios/`, `web/`, `android/` | Every UI change also lands in the matching `design/*.pen`, edited only through the Pencil MCP tools. |
 | [No deprecated APIs](docs/agent-rules/no-deprecated-apis.md) | Every code change | Don't call, extend or suppress deprecated APIs; replace them or implement the behavior. |
 | [No AI attribution](docs/agent-rules/no-ai-attribution.md) | Every commit and pull request | No `Co-Authored-By` trailer or "Generated with …" footer for an AI assistant. |
+| [Worktrees start from an up-to-date dev](docs/agent-rules/worktrees-from-dev.md) | Every git worktree an agent creates or works in | Base worktrees on `dev`, fast-forward to `origin/dev` before the first edit, and catch up again before testing and merging back. |
 
 ## Adding or changing a rule
 

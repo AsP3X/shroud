@@ -5,3 +5,4 @@ loads them for Claude Code.
 @docs/agent-rules/design-sync.md
 @docs/agent-rules/no-deprecated-apis.md
 @docs/agent-rules/no-ai-attribution.md
+@docs/agent-rules/worktrees-from-dev.md
