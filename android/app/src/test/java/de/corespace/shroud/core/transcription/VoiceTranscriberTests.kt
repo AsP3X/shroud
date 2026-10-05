@@ -51,18 +51,6 @@ class VoiceTranscriberTests {
     }
 
     @Test
-    fun punctuationOnlyCandidateScoresZeroEvenAtHighConfidence() {
-        assertEquals(0.0, VoiceTranscript.score(", , ,", 0.99), 0.0)
-    }
-
-    @Test
-    fun longerConfidentTranscriptBeatsAShortOne() {
-        val long = VoiceTranscript.score("Hallo, ich wollte kurz Bescheid geben dass ich später komme", 0.8)
-        val short = VoiceTranscript.score("Hallo", 0.8)
-        assertTrue(long > short)
-    }
-
-    @Test
     fun prepareModelIsSingleFlightAndReportsDownloadProgress() = runTest {
         val rig = rig()
         rig.engine.prepareDelayMs = 80
@@ -174,12 +162,41 @@ class VoiceTranscriberTests {
     }
 
     @Test
-    fun conversationStatsForceGermanWhenThereIsNoOverride() = runTest {
+    fun conversationStatsWeighDetectionButNeverForceALanguage() = runTest {
         val rig = rig()
         val chat = UUID.randomUUID()
         repeat(4) { rig.memory.record("de", chat, 1.0) }
         rig.voice.transcribe(byteArrayOf(1), "audio/mp4", conversationId = chat)
-        assertEquals(listOf("de"), rig.engine.languages)
+        // One decode, with Whisper detecting; the chat's German only weighs that detection.
+        assertEquals(listOf<String?>(null), rig.engine.languages)
+        assertEquals(setOf("de"), rig.engine.histories.single().keys)
+    }
+
+    @Test
+    fun aNoteTheAudioSettledTeachesTheChat() = runTest {
+        val rig = rig()
+        val chat = UUID.randomUUID()
+        rig.engine.outputFor = { TranscriptionOutput("See you at eight tonight", "en", 0.9, languageProbability = 0.97) }
+        rig.voice.transcribe(byteArrayOf(1), "audio/mp4", conversationId = chat)
+        assertEquals(setOf("en"), rig.memory.history(chat).keys)
+    }
+
+    @Test
+    fun aNoteTheHistoryCarriedTeachesNothing() = runTest {
+        val rig = rig()
+        val chat = UUID.randomUUID()
+        rig.engine.outputFor = { TranscriptionOutput("Ja, mach ich", "de", 0.9, languageProbability = 0.35) }
+        rig.voice.transcribe(byteArrayOf(1), "audio/mp4", conversationId = chat)
+        assertTrue(rig.memory.history(chat).isEmpty())
+    }
+
+    @Test
+    fun aPinnedLanguageTeachesNothing() = runTest {
+        val rig = rig()
+        val chat = UUID.randomUUID()
+        rig.voice.languageOverride = Locale.forLanguageTag("fr")
+        rig.voice.transcribe(byteArrayOf(1), "audio/mp4", conversationId = chat)
+        assertTrue(rig.memory.history(chat).isEmpty())
     }
 
     @Test
@@ -190,9 +207,6 @@ class VoiceTranscriberTests {
         rig.voice.transcribe(byteArrayOf(1), "audio/mp4")
         assertNull(rig.engine.languages.first())
         assertEquals(listOf("de", "en"), rig.engine.candidates.first())
-        assertEquals(listOf("de", "en"), TranscriptionLanguage.detectionCandidates(listOf("de")))
-        assertEquals(listOf("en", "de"), TranscriptionLanguage.detectionCandidates(listOf("en", "de")))
-        assertEquals(emptyList<String>(), TranscriptionLanguage.detectionCandidates(emptyList()))
     }
 
     @Test
@@ -202,8 +216,7 @@ class VoiceTranscriberTests {
         val text = rig.voice.transcribe(byteArrayOf(1), "audio/mp4", conversationId = chat)
         assertEquals("Hallo, wie geht es dir heute Abend", text)
         assertFalse(rig.file.exists())
-        assertEquals(0.5, rig.memory.prior("de", chat), 0.0)
-        assertNull(rig.memory.expectedLanguage(chat))
+        assertTrue(rig.memory.history(chat).isEmpty())
     }
 
     @Test
@@ -261,7 +274,7 @@ class VoiceTranscriberTests {
         val memory = TranscriptionLanguageMemory(file, state, StorageSeal())
         if (unlock) state.unlock(SealedTestKey.bytes())
         val prefs = FakeSharedPreferences()
-        val language = TranscriptionLanguage(prefs, StorageSeal(), memory)
+        val language = TranscriptionLanguage(prefs, StorageSeal())
         language.preferredLanguageTagsOverride = listOf("en-US")
         language.currentLocaleOverride = Locale.US
         val engine = ScriptEngine()
@@ -293,6 +306,7 @@ class VoiceTranscriberTests {
         val languages = mutableListOf<String?>()
         val hints = mutableListOf<List<String>>()
         val candidates = mutableListOf<List<String>>()
+        val histories = mutableListOf<Map<String, Double>>()
         val phases = mutableListOf<TranscriptionInstallState.Phase>()
         var duringDownload: TranscriptionInstallState? = null
         var duringTranscribe: TranscriptionInstallState? = null
@@ -318,6 +332,7 @@ class VoiceTranscriberTests {
             languages += request.language
             hints += request.hints
             candidates += request.candidateLanguages
+            histories += request.languageHistory
             duringTranscribe = install()
             onTranscribe?.invoke()
             return outputFor(request)

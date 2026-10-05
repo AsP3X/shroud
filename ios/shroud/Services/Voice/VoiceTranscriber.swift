@@ -124,15 +124,12 @@ enum VoiceTranscriber {
         TranscriptionModelInstall.shared.transcribing()
 
         let duration = audioDuration(of: fileURL)
-        let hints = TranscriptionLanguage.decodeHints(peerID: conversationID)
         let output: TranscriptionOutput
         do {
             output = try await decodeVoiceNote(
                 fileURL: fileURL,
-                hints: hints,
                 contextualStrings: contextualStrings,
-                conversationID: conversationID,
-                duration: duration
+                conversationID: conversationID
             )
         } catch let error as TranscriptionEngineError {
             throw map(error)
@@ -140,21 +137,9 @@ enum VoiceTranscriber {
             throw TranscribeError.failed(error.localizedDescription)
         }
 
-        let winner = VoiceTranscript.Candidate(
-            text: output.text,
-            language: output.language,
-            confidence: output.confidence
-        )
-        let text = VoiceTranscript.cleaned(winner.text)
-        if let code = winner.language, !text.isEmpty {
-            let score = VoiceTranscript.score(
-                candidate: VoiceTranscript.Candidate(
-                    text: text, language: code, confidence: winner.confidence
-                ),
-                peerID: conversationID,
-                audioSeconds: duration
-            )
-            let weight = VoiceTranscript.learningWeight(audioSeconds: duration, score: score)
+        let text = VoiceTranscript.cleaned(output.text)
+        if let code = output.language, let heard = output.languageProbability, !text.isEmpty {
+            let weight = VoiceTranscript.learningWeight(audioSeconds: duration, languageProbability: heard)
             if weight > 0 {
                 TranscriptionLanguageMemory.record(languageCode: code, peerID: conversationID, weight: weight)
             }
@@ -220,85 +205,21 @@ enum VoiceTranscriber {
         await TranscriptionSession.shared.isPrepared
     }
 
-    static func candidateLocales() async -> [Locale] {
-        let hints = TranscriptionLanguage.decodeHints(peerID: nil)
-        if hints.isEmpty { return TranscriptionLanguage.whisperLocales }
-        return hints.map { Locale(identifier: $0) }
-    }
-
-    /// Auto-detect, then a forced second pass when Whisper's English bias disagrees with a hint.
+    /// The pin, else one decode in the language Whisper detects, weighed with the device's
+    /// languages and this chat's history (`SpokenLanguagePick`). A note is never decoded again in
+    /// a language Whisper did not hear: forced, it translates.
     private static func decodeVoiceNote(
         fileURL: URL,
-        hints: [String],
         contextualStrings: [String],
-        conversationID: UUID?,
-        duration: Double
+        conversationID: UUID?
     ) async throws -> TranscriptionOutput {
-        let candidates = TranscriptionLanguage.detectionCandidates(hints: hints)
-        func run(language: String?) async throws -> TranscriptionOutput {
-            let request = TranscriptionRequest.voiceNote(
-                language: language,
-                hints: contextualStrings,
-                candidateLanguages: candidates
-            )
-            return try await TranscriptionSession.shared.transcribe(fileURL: fileURL, request: request)
-        }
-
-        if TranscriptionLanguage.override != nil, let forced = hints.first {
-            return try await run(language: forced)
-        }
-
-        if let trusted = hints.first,
-           TranscriptionLanguage.shouldForceLanguage(
-            trusted,
-            prior: TranscriptionLanguageMemory.prior(for: trusted, peerID: conversationID)
-           )
-        {
-            let forced = try await run(language: trusted)
-            let forcedScore = VoiceTranscript.score(
-                candidate: VoiceTranscript.Candidate(
-                    text: forced.text, language: trusted, confidence: forced.confidence
-                ),
-                peerID: conversationID,
-                audioSeconds: duration
-            )
-            if forcedScore >= VoiceTranscript.minimumTrustedScore {
-                return TranscriptionOutput(text: forced.text, language: trusted, confidence: forced.confidence)
-            }
-            let auto = try await run(language: nil)
-            let chosen = VoiceTranscript.choose(
-                auto: VoiceTranscript.Candidate(
-                    text: auto.text, language: auto.language, confidence: auto.confidence
-                ),
-                challenge: VoiceTranscript.Candidate(
-                    text: forced.text, language: trusted, confidence: forced.confidence
-                ),
-                peerID: conversationID,
-                audioSeconds: duration
-            )
-            return TranscriptionOutput(
-                text: chosen.text, language: chosen.language, confidence: chosen.confidence
-            )
-        }
-
-        let auto = try await run(language: nil)
-        guard let challenger = TranscriptionLanguage.challenger(detected: auto.language, hints: hints)
-        else { return auto }
-
-        let alt = try await run(language: challenger)
-        let chosen = VoiceTranscript.choose(
-            auto: VoiceTranscript.Candidate(
-                text: auto.text, language: auto.language, confidence: auto.confidence
-            ),
-            challenge: VoiceTranscript.Candidate(
-                text: alt.text, language: challenger, confidence: alt.confidence
-            ),
-            peerID: conversationID,
-            audioSeconds: duration
+        let request = TranscriptionRequest.voiceNote(
+            language: TranscriptionLanguage.pinnedLanguage,
+            hints: contextualStrings,
+            candidateLanguages: TranscriptionLanguage.detectionCandidates(TranscriptionLanguage.deviceLanguages),
+            languageHistory: TranscriptionLanguageMemory.history(peerID: conversationID)
         )
-        return TranscriptionOutput(
-            text: chosen.text, language: chosen.language, confidence: chosen.confidence
-        )
+        return try await TranscriptionSession.shared.transcribe(fileURL: fileURL, request: request)
     }
 
     private static func map(_ error: TranscriptionEngineError) -> TranscribeError {

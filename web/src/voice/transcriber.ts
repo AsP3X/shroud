@@ -12,21 +12,7 @@
  */
 
 import { clampTranscript } from "../crypto/mediaPayload";
-import {
-  challenger,
-  choose,
-  cleaned,
-  decodeHints,
-  detectionCandidates,
-  learningWeight,
-  override,
-  prior,
-  record,
-  score as scoreTranscript,
-  MINIMUM_TRUSTED_SCORE,
-  shouldForceLanguage,
-  type Candidate,
-} from "./language";
+import { detectionCandidates, deviceLanguages, history, learningWeight, override, record } from "./language";
 import { concatPcm, transcriptionSession } from "./transcription/session";
 
 export function prepareTranscription(): void {
@@ -61,72 +47,22 @@ export async function transcribeVoiceNote(
 
   try {
     await transcriptionSession.prepare();
-    const winner = await decodeVoiceNote(samples, sampleRate, peerId, audioSeconds);
-    const text = cleanedTranscript(winner.text);
-    if (text && winner.language) {
-      const scored = scoreTranscript({
-        text,
-        modelConfidence: winner.confidence,
-        audioSeconds,
-        prior: prior(winner.language, peerId),
-      });
-      const weight = learningWeight(audioSeconds, scored);
-      if (weight > 0) record(winner.language, peerId, weight);
+    // The pin, else one decode in the language Whisper detects, weighed with the
+    // device's languages and this chat's history. A note is never decoded again in
+    // a language Whisper did not hear: forced, it translates.
+    const out = await transcriptionSession.transcribe(samples, sampleRate, {
+      language: override(),
+      candidates: detectionCandidates(deviceLanguages()),
+      history: history(peerId),
+    });
+    const text = cleanedTranscript(out.text);
+    if (text && out.language && out.languageProbability != null) {
+      const weight = learningWeight(audioSeconds, out.languageProbability);
+      if (weight > 0) record(out.language, peerId, weight);
     }
     return text || null;
   } catch (err) {
     console.warn("Whisper transcription failed:", err);
     return null;
   }
-}
-
-async function decodeVoiceNote(
-  samples: Float32Array,
-  sampleRate: number,
-  peerId: string | null,
-  audioSeconds: number,
-): Promise<Candidate> {
-  const hints = decodeHints(peerId);
-  const candidates = detectionCandidates(hints);
-  const run = (language: string | null) =>
-    transcriptionSession.transcribe(samples, sampleRate, { language, candidates });
-
-  if (override() && hints[0]) {
-    const out = await run(hints[0]);
-    return { text: out.text, language: hints[0], confidence: 0.7 };
-  }
-
-  const trusted =
-    hints[0] && shouldForceLanguage(hints[0], prior(hints[0], peerId)) ? hints[0] : null;
-  if (trusted) {
-    const forced = await run(trusted);
-    const forcedCandidate: Candidate = { text: forced.text, language: trusted, confidence: 0.7 };
-    const forcedScore = scoreTranscript({
-      text: cleaned(forced.text),
-      modelConfidence: 0.7,
-      audioSeconds,
-      prior: prior(trusted, peerId),
-    });
-    if (forcedScore >= MINIMUM_TRUSTED_SCORE) return forcedCandidate;
-    const auto = await run(null);
-    return choose(
-      { text: auto.text, language: auto.language, confidence: 0.7 },
-      forcedCandidate,
-      peerId,
-      audioSeconds,
-    );
-  }
-
-  const auto = await run(null);
-  const challengeLang = challenger(auto.language, hints);
-  if (!challengeLang) {
-    return { text: auto.text, language: auto.language, confidence: 0.7 };
-  }
-  const alt = await run(challengeLang);
-  return choose(
-    { text: auto.text, language: auto.language, confidence: 0.7 },
-    { text: alt.text, language: challengeLang, confidence: 0.7 },
-    peerId,
-    audioSeconds,
-  );
 }

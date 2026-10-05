@@ -38,7 +38,8 @@ const winner = maskToLanguage(scores, vocab, [
   { code: "en", id: 3 },
   { code: "de", id: 5 },
 ]);
-check(winner === 5, "german outranks english even when a text token is louder");
+check(winner?.id === 5 && winner.code === "de", "german outranks english even when a text token is louder");
+check(Math.abs((winner?.probability ?? 0) - 1 / (1 + Math.exp(-2))) < 1e-6, "the pick reports the audio's probability");
 check(scores[5] === 0, "the winning language is the only finite score");
 check(scores[1] === Number.NEGATIVE_INFINITY, "text tokens are masked");
 check(scores[3] === Number.NEGATIVE_INFINITY, "the losing language is masked");
@@ -88,6 +89,35 @@ const restricted = maskToLanguage(close, vocab, [
   { code: "de", id: 5 },
   { code: "nl", id: 6 },
 ], ["de"]);
-check(restricted === 5, "a candidate beats a likelier outsider within the odds");
+check(restricted?.id === 5, "a candidate beats a likelier outsider within the odds");
+
+// Same vectors as the iOS and Android tests.
+const german = { de: 40 };
+const unsure = odds([["en", 0.5], ["de", 0.35], ["nl", 0.15]]);
+check(pickSpokenLanguage(unsure, ["en", "de"]) === "en", "without history an unsure note keeps Whisper's pick");
+check(pickSpokenLanguage(unsure, ["en", "de"], german) === "de", "a German chat settles an unsure note");
+check(
+  pickSpokenLanguage(odds([["en", 0.9], ["de", 0.08], ["nl", 0.02]]), ["en", "de"], german) === "en",
+  "a clear English note in a German chat stays English",
+);
+check(
+  pickSpokenLanguage(odds([["en", 0.93], ["tr", 0.01], ["de", 0.06]]), ["en", "de"], { tr: 10 }) === "en",
+  "a wrong language in the history cannot override clear audio",
+);
+const leaning = odds([["en", 0.5], ["de", 0.3]]);
+check(pickSpokenLanguage(leaning, ["en", "de"], { de: 0.5 }) === "en", "one note of history only nudges");
+check(pickSpokenLanguage(leaning, ["en", "de"], { de: 3 }) === "de", "a few notes of history decide an unsure note");
+
+const weighed = new Float32Array(vocab);
+weighed[3] = Math.log(0.55); // en
+weighed[5] = Math.log(0.4); // de
+weighed[6] = Math.log(0.05); // nl
+const settled = maskToLanguage(weighed, vocab, [
+  { code: "en", id: 3 },
+  { code: "de", id: 5 },
+  { code: "nl", id: 6 },
+], ["en", "de"], { de: 5 });
+check(settled?.code === "de", "history picks the language");
+check(Math.abs((settled?.probability ?? 0) - 0.4) < 1e-6, "the reported probability is the audio's, before weighing");
 
 console.log("language detect selftest ok");

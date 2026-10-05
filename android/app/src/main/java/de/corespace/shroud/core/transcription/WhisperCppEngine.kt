@@ -26,12 +26,13 @@ internal interface WhisperRunner : Closeable {
 /**
  * whisper.cpp behind [TranscriptionEngine] (iOS `WhisperKitEngine.swift`; media §9.4, §9.9).
  * Thin on purpose: download and verify stay in [WhisperModelStore], the JNI stays in
- * [WhisperContext]. This class picks the model, detects the language once (preferring the
- * request's candidate languages, [SpokenLanguagePick]) and forces it for the decode (later windows
- * must not detect again), and frees the weights when memory is tight or chats lock.
+ * [WhisperContext]. This class picks the model, detects the language once (weighed with the
+ * request's candidate languages and chat history, [SpokenLanguagePick]) and forces it for the
+ * decode (later windows must not detect again), and frees the weights when memory is tight or
+ * chats lock.
  *
  * [TranscriptionRequest.hints] are not an initial prompt. whisper.cpp leaves that null
- * (`whisper_jni.cpp`); language bias is [TranscriptionLanguage.decodeHints].
+ * (`whisper_jni.cpp`); language bias is [SpokenLanguagePick].
  * Nothing here contacts the network except [WhisperModelStore.ensure].
  */
 class WhisperCppEngine internal constructor(
@@ -93,17 +94,19 @@ class WhisperCppEngine internal constructor(
                 coroutineContext.ensureActive()
                 val live = runner()
                 val requested = WhisperReportedLanguage.code(request.language)
+                var heard: Double? = null
                 val detected = if (requested == null) {
-                    live.languageProbabilities(pcm16k, WhisperContext.defaultThreads())
-                        ?.let { SpokenLanguagePick.pick(it, request.candidateLanguages) }
-                        ?.let(WhisperReportedLanguage::code)
+                    live.languageProbabilities(pcm16k, WhisperContext.defaultThreads())?.let { probabilities ->
+                        SpokenLanguagePick.pick(probabilities, request.candidateLanguages, request.languageHistory)
+                            ?.also { heard = probabilities[it] }
+                    }?.let(WhisperReportedLanguage::code)
                 } else {
                     null
                 }
                 val forced = requested ?: detected
                 val run = live.transcribe(pcm16k, decodeOptions(request, forced), cancellation)
                 val language = WhisperReportedLanguage.choose(forced, openingToken = null, reported = run.language)
-                TranscriptionOutput(run.text, language, run.confidence)
+                TranscriptionOutput(run.text, language, run.confidence, heard.takeIf { detected != null })
             } catch (aborted: WhisperAbortedException) {
                 // A subclass of CancellationException, so it has to be caught first. A cancelled
                 // caller already asked for the abort; a trim while the call is still active did not.

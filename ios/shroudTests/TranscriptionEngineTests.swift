@@ -164,6 +164,82 @@ struct TranscriptionEngineTests {
         #expect(alreadyContinued == nil)
     }
 
+    /// Words after a real pause are still decoded; a fade after the last word is not.
+    @Test
+    func aResumeNeedsVoiceLeftAfterTheTimestamp() {
+        let time = 5_000
+        let window = 30 * 16_000
+        let tokens = [time, 11, time + 400, 50] // stops at 8 s
+        func resume(voicedEnd: Int?) -> Int? {
+            VoiceNoteSeek.resumeSample(
+                tokens: tokens,
+                timeTokenBegin: time,
+                sampleRate: 16_000,
+                windowStart: 0,
+                segmentSamples: window,
+                engineSeek: window,
+                voicedEnd: voicedEnd
+            )
+        }
+        #expect(resume(voicedEnd: 12 * 16_000) == 8 * 16_000, "more speech after a pause")
+        #expect(resume(voicedEnd: 8 * 16_000 + 8_000) == nil, "only the fade of the last word is left")
+        #expect(resume(voicedEnd: nil) == 8 * 16_000)
+    }
+
+    /// Speech, then room tone: the voice ends where the speech does, not where the recording stops.
+    @Test
+    func theVoiceEndsWhereTheSpeechDoes() throws {
+        let rate = 16_000
+        var samples: [Float] = []
+        var noise: UInt32 = 1
+        func roomTone() -> Float {
+            noise = noise &* 1_664_525 &+ 1_013_904_223
+            return (Float(noise >> 8) / Float(1 << 24) - 0.5) * 0.004
+        }
+        for _ in 0 ..< rate / 2 { samples.append(roomTone()) }
+        for index in 0 ..< 2 * rate { samples.append(0.3 * sin(Float(index) * 0.12) + roomTone()) }
+        for _ in 0 ..< 2 * rate { samples.append(roomTone()) }
+        let end = try #require(VoiceActivity.voicedEnd(samples, sampleRate: rate))
+        #expect(abs(end - rate * 5 / 2) <= rate / 50, "ends at 2.5 s, not 4.5 s")
+
+        let trimmed = VoiceActivity.trimmed(samples, voicedEnd: end, sampleRate: rate)
+        #expect(trimmed.count == end + Int(Double(rate) * VoiceActivity.hangoverSeconds))
+        #expect(abs(trimmed.last ?? 1) < 0.001, "the kept room tone fades to silence")
+        #expect(Array(trimmed.prefix(end)) == Array(samples.prefix(end)), "the speech is untouched")
+    }
+
+    @Test
+    func aQuietNoteIsLeftAlone() {
+        #expect(VoiceActivity.voicedEnd([Float](repeating: 0.0005, count: 32_000), sampleRate: 16_000) == nil)
+        #expect(VoiceActivity.voicedEnd([], sampleRate: 16_000) == nil)
+    }
+
+    /// The made-up "Copyright WDR 2020" started at 9.46 s on a note whose voice ended at 9.48 s.
+    @Test
+    func aSegmentStartingAfterTheVoiceIsNotSpeech() {
+        #expect(!VoiceActivity.isSpoken(segmentStart: 9.46, voicedEndSeconds: 9.48))
+        #expect(VoiceActivity.isSpoken(segmentStart: 6.58, voicedEndSeconds: 9.48))
+        #expect(VoiceActivity.isSpoken(segmentStart: 0, voicedEndSeconds: 1.2))
+    }
+
+    /// OpenAI's `non_speech_tokens`: single-token symbols and music notes, never words.
+    @Test
+    func nonSpeechTokensCoverBracketsAndMusicButNotWords() {
+        let begin = 50_000
+        let vocabulary: [String: [Int]] = [
+            "[": [1], " [": [2], "(": [3], " (": [4], "♪": [5, 6], " ♪": [7, 8],
+            " -": [9], " '": [10], "<<": [11, 12], " <<": [13], "Musik": [14], " Musik": [15],
+        ]
+        let ids = NonSpeechTokens.ids(specialTokenBegin: begin) { text in
+            // Special tokens around the text, as swift-transformers adds them.
+            [begin + 8] + (vocabulary[text] ?? [20_000, 20_001]) + [begin + 7]
+        }
+        #expect(Set(ids).isSuperset(of: [1, 2, 3, 4, 5, 7, 9, 10, 13]))
+        #expect(!ids.contains(11), "a symbol split into two tokens is not suppressed")
+        #expect(!ids.contains(14) && !ids.contains(15), "words stay")
+        #expect(!ids.contains(where: { $0 >= begin }), "special tokens are never suppressed")
+    }
+
     /// A quiet tail must not replace the language the opening of the note already settled.
     @Test
     func theOpeningLanguageTokenWins() {
@@ -221,6 +297,32 @@ struct TranscriptionEngineTests {
         #expect(SpokenLanguagePick.pick(probabilities: [:], candidates: ["de"]) == nil)
     }
 
+    /// A chat's history settles a note Whisper is unsure about, and never a clear one.
+    /// Same vectors as the web and Android tests.
+    @Test
+    func chatHistorySettlesAnUnsureNoteButNotAClearOne() {
+        let german = ["de": 40.0]
+        let unsure = ["en": 0.5, "de": 0.35, "nl": 0.15]
+        #expect(SpokenLanguagePick.pick(probabilities: unsure, candidates: ["en", "de"]) == "en")
+        #expect(SpokenLanguagePick.pick(probabilities: unsure, candidates: ["en", "de"], history: german) == "de")
+        let english = ["en": 0.9, "de": 0.08, "nl": 0.02]
+        #expect(SpokenLanguagePick.pick(probabilities: english, candidates: ["en", "de"], history: german) == "en")
+    }
+
+    /// The regression: English heard clearly, but one misdetected note taught the chat Turkish.
+    @Test
+    func aWrongLanguageInTheHistoryCannotOverrideClearAudio() {
+        let english = ["en": 0.93, "tr": 0.01, "de": 0.06]
+        #expect(SpokenLanguagePick.pick(probabilities: english, candidates: ["en", "de"], history: ["tr": 10]) == "en")
+    }
+
+    @Test
+    func aSingleNoteOfHistoryOnlyNudges() {
+        let unsure = ["en": 0.5, "de": 0.3]
+        #expect(SpokenLanguagePick.pick(probabilities: unsure, candidates: ["en", "de"], history: ["de": 0.5]) == "en")
+        #expect(SpokenLanguagePick.pick(probabilities: unsure, candidates: ["en", "de"], history: ["de": 3]) == "de")
+    }
+
     @Test
     func languageScoresBecomeProbabilities() {
         let probabilities = SpokenLanguageSampler.probabilities(["de": 2, "en": 1, "fr": -.infinity])
@@ -230,10 +332,10 @@ struct TranscriptionEngineTests {
     }
 
     @Test
-    func detectionCandidatesAreTheHintsAndEnglish() {
-        #expect(TranscriptionLanguage.detectionCandidates(hints: ["de"]) == ["de", "en"])
-        #expect(TranscriptionLanguage.detectionCandidates(hints: ["en", "de"]) == ["en", "de"])
-        #expect(TranscriptionLanguage.detectionCandidates(hints: []).isEmpty)
+    func detectionCandidatesAreTheDeviceLanguagesAndEnglish() {
+        #expect(TranscriptionLanguage.detectionCandidates(["de"]) == ["de", "en"])
+        #expect(TranscriptionLanguage.detectionCandidates(["en", "de"]) == ["en", "de"])
+        #expect(TranscriptionLanguage.detectionCandidates([]).isEmpty)
         let request = TranscriptionRequest.voiceNote(candidateLanguages: ["de", "en"])
         #expect(request.candidateLanguages == ["de", "en"])
         #expect(TranscriptionRequest.liveCall().candidateLanguages.isEmpty)

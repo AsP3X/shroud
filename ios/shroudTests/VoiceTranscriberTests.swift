@@ -43,57 +43,6 @@ struct VoiceTranscriberTests {
         #expect(VoiceTranscript.cleaned("Hello   there\n\nworld") == "Hello there world")
     }
 
-    // MARK: - Candidate scoring
-
-    @Test
-    func punctuationOnlyCandidateScoresZeroEvenAtHighConfidence() {
-        // The wrong-language model can be confidently wrong; substance is what breaks the tie.
-        let score = VoiceTranscript.score(text: ", , ,", modelConfidence: 0.99)
-        #expect(score == 0)
-    }
-
-    @Test
-    func longerConfidentTranscriptBeatsAShortOne() {
-        let long = VoiceTranscript.score(
-            text: "Hallo, ich wollte kurz Bescheid geben dass ich später komme",
-            modelConfidence: 0.8
-        )
-        let short = VoiceTranscript.score(text: "Hallo", modelConfidence: 0.8)
-        #expect(long > short)
-    }
-
-    @Test
-    func languageDisagreementIsPenalisedButNotDisqualifying() {
-        let text = "Hallo, ich wollte kurz Bescheid geben dass ich später komme"
-        let agreeing = VoiceTranscript.score(
-            text: text, modelConfidence: 0.7, languageProbability: 0.9, audioSeconds: 20
-        )
-        let disagreeing = VoiceTranscript.score(
-            text: text, modelConfidence: 0.7, languageProbability: 0.1, audioSeconds: 20
-        )
-        #expect(disagreeing < agreeing)
-        #expect(disagreeing > 0)
-    }
-
-    /// A confident, substantial transcript in the right language must beat a shaky one, which
-    /// is exactly the comparison that picks the spoken language.
-    @Test
-    func scoringPicksTheBetterOfTwoCandidateLanguages() {
-        let german = VoiceTranscript.score(
-            text: "Hallo, wie geht es dir heute Abend",
-            modelConfidence: 0.86,
-            languageProbability: 0.9,
-            audioSeconds: 20
-        )
-        let englishGuess = VoiceTranscript.score(
-            text: "Hollow, we get his deer",
-            modelConfidence: 0.31,
-            languageProbability: 0.2,
-            audioSeconds: 20
-        )
-        #expect(german > englishGuess)
-    }
-
     // MARK: - Language preference
 
     @Test
@@ -203,7 +152,5 @@ struct VoiceTranscriberTests {
         let locales = await VoiceTranscriber.availableLocales()
         #expect(!locales.isEmpty)
         #expect(await VoiceTranscriber.supportsLongForm())
-        let candidates = await VoiceTranscriber.candidateLocales()
-        #expect(!candidates.isEmpty)
     }
 }

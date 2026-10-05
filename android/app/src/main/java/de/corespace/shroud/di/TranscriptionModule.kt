@@ -68,7 +68,7 @@ class TranscriptionModule(container: AppContainer) : AppModule(container) {
     }
 
     private val language: TranscriptionLanguage by lazy {
-        TranscriptionLanguage(voicePrefs, container.storageSeal, languageMemory)
+        TranscriptionLanguage(voicePrefs, container.storageSeal)
     }
 
     /**

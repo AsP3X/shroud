@@ -14,18 +14,17 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ThreadLocalRandom
-import kotlin.math.min
 
 /**
- * Which language was actually spoken, per conversation and overall (iOS `TranscriptionLanguageMemory`,
- * `TranscriptionLanguage.swift:216-388`). Language is stable per chat, and a two-second note cannot
- * decide it, so decisive notes teach a prior that later short notes lean on.
+ * Which language was actually spoken, per conversation and overall (iOS `TranscriptionLanguageMemory`).
+ * Language is stable per chat, and a two-second note cannot decide it, so notes whose audio was
+ * decisive teach a [history] that later short notes lean on.
  *
  * Sealed at `noBackupFilesDir/shroud/voice/language-stats.sealed` with history-key context
  * [LocalHistoryCrypto.Context.LanguageStats] (`shroud-local-language-stats-v1`) and AAD
  * [AAD] (plan C10). Peer keys inside are lowercase UUIDs. The file is deleted with the voice
  * directory on Log Out (`DeviceDataWipe` settings step). While chats are locked, reads are the
- * neutral prior and writes are dropped — transcription still runs, it just does not learn.
+ * empty history and writes are dropped — transcription still runs, it just does not learn.
  * [StorageSeal] drops a write during a wipe. Never logs stats, and the bytes never leave the device.
  */
 class TranscriptionLanguageMemory(
@@ -42,43 +41,19 @@ class TranscriptionLanguageMemory(
         if (state.isUnlocked) reload()
     }
 
-    /** Learned likelihood of [languageCode], 0…1. **0.5 means no opinion** (`prior`, `:324-353`). */
-    fun prior(languageCode: String, conversationId: UUID?): Double {
-        val all = snapshot()
-        val peer = if (conversationId == null) emptyMap() else all[conversationId.toString()] ?: emptyMap()
-        val global = all[GLOBAL] ?: emptyMap()
-        val peerTotal = peer.values.sum()
-        val globalTotal = global.values.sum()
-        if (peerTotal + globalTotal <= 0.0) return 0.5
-        fun share(counts: Map<String, Double>, total: Double): Double =
-            if (total > 0.0) (counts[languageCode] ?: 0.0) / total else 0.5
-        val combined = if (peerTotal > 0.0) {
-            0.75 * share(peer, peerTotal) + 0.25 * share(global, globalTotal)
-        } else {
-            share(global, globalTotal)
-        }
-        val evidenceTotal = if (peerTotal > 0.0) peerTotal else globalTotal
-        val evidence = min(1.0, evidenceTotal / SATURATION)
-        return 0.5 + (combined - 0.5) * evidence
-    }
-
     /**
-     * The language this scope most expects, if it has a real opinion (`expectedLanguage`, `:356-362`).
-     * A conversation with its own entry does not fall through to the global habit.
+     * The languages heard in [conversationId], by weight: this chat's own record, or the overall one
+     * while the chat has none yet (iOS `history(peerID:)`). Empty while locked. [SpokenLanguagePick]
+     * weighs Whisper's probabilities with it; it never replaces what the audio says.
      */
-    fun expectedLanguage(conversationId: UUID?): String? {
+    fun history(conversationId: UUID?): Map<String, Double> {
         val all = snapshot()
-        val counts = if (conversationId != null && all.containsKey(conversationId.toString())) {
-            all.getValue(conversationId.toString())
-        } else {
-            all[GLOBAL] ?: emptyMap()
-        }
-        if (counts.values.sum() < 1.0) return null
-        return counts.maxByOrNull { it.value }?.key
+        val peer = conversationId?.let { all[it.toString()] }.orEmpty()
+        return if (peer.values.sum() > 0.0) peer else all[GLOBAL].orEmpty()
     }
 
     /**
-     * Records one decisive observation (`record`, `:366-380`). [weight] ≤ 0 is ignored. While
+     * Records one decisive observation (`record`). [weight] ≤ 0 is ignored. While
      * locked or sealed, the call does nothing and does not throw — a transcription must not fail
      * because the stats could not be saved.
      */
@@ -179,7 +154,6 @@ class TranscriptionLanguageMemory(
 
         private const val GLOBAL = "*"
         private const val DECAY = 0.9
-        private const val SATURATION = 3.0
         private const val MIN_WEIGHT = 0.05
 
         private val json = Json { ignoreUnknownKeys = true }

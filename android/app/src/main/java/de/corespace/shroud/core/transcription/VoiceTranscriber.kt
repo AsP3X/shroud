@@ -18,8 +18,8 @@ fun interface Pcm16kSource {
  * On-device transcription of voice notes (iOS `VoiceTranscriber`, `VoiceTranscriber.swift:81-316`;
  * media-voice-links §9.5). [VoiceTranscription] for the composer and the bubbles.
  *
- * Language: a Settings pin wins, otherwise a trusted per-chat prior, otherwise detect and let a
- * region or memory hint challenge English. [transcribe]'s [hints][VoiceTranscription.transcribe]
+ * Language: a Settings pin wins; otherwise Whisper detects it once, weighed with the device's
+ * languages and this chat's history ([SpokenLanguagePick]), and the note is decoded in it. [transcribe]'s [hints][VoiceTranscription.transcribe]
  * are chat words carried on the request; whisper.cpp does not prompt with them (§9.4).
  * A locked history key does not throw: the note is still decoded, and the memory writes nothing.
  * Audio, text and language stats stay on the device. The only network is the model download.
@@ -95,7 +95,7 @@ class VoiceTranscriber(
             }
             val duration = pcm.size.toDouble() / SAMPLE_RATE
             val output = try {
-                decodeVoiceNote(pcm, hints, language.decodeHints(conversationId), conversationId, duration)
+                decodeVoiceNote(pcm, hints, conversationId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: TranscriptionEngineError) {
@@ -105,14 +105,9 @@ class VoiceTranscriber(
             }
             val text = VoiceTranscript.cleaned(output.text)
             val code = output.language
-            if (code != null && text.isNotEmpty()) {
-                val scored = VoiceTranscript.score(
-                    VoiceTranscript.Candidate(text, code, output.confidence),
-                    memory,
-                    conversationId,
-                    duration,
-                )
-                val weight = VoiceTranscript.learningWeight(duration, scored)
+            val heard = output.languageProbability
+            if (code != null && heard != null && text.isNotEmpty()) {
+                val weight = VoiceTranscript.learningWeight(duration, heard)
                 if (weight > 0.0) memory.record(code, conversationId, weight)
             }
             return text
@@ -132,60 +127,18 @@ class VoiceTranscriber(
     override fun handOff(from: UUID, to: UUID) = installs.handOff(from, to)
 
     /**
-     * Pin, else a trusted prior, else auto-detect and one challenger
-     * (`decodeVoiceNote`, `VoiceTranscriber.swift:230-302`).
+     * The pin, else one decode in the language Whisper detects, weighed with the device's
+     * languages and this chat's history (`decodeVoiceNote`, `VoiceTranscriber.swift`). A note is
+     * never decoded again in a language Whisper did not hear: forced, it translates.
      */
-    private suspend fun decodeVoiceNote(
-        pcm: FloatArray,
-        contextual: List<String>,
-        hints: List<String>,
-        conversationId: UUID?,
-        duration: Double,
-    ): TranscriptionOutput {
-        val candidates = TranscriptionLanguage.detectionCandidates(hints)
-        suspend fun run(lang: String?): TranscriptionOutput =
-            session.transcribe(
-                pcm,
-                TranscriptionRequest.voiceNote(language = lang, hints = contextual, candidateLanguages = candidates),
-            )
-
-        if (language.override != null) {
-            val forced = hints.firstOrNull() ?: return run(null)
-            return run(forced)
-        }
-        val trusted = hints.firstOrNull()
-        if (trusted != null && TranscriptionLanguage.shouldForceLanguage(trusted, memory.prior(trusted, conversationId))) {
-            val forced = run(trusted)
-            val forcedScore = VoiceTranscript.score(
-                VoiceTranscript.Candidate(forced.text, trusted, forced.confidence),
-                memory,
-                conversationId,
-                duration,
-            )
-            if (forcedScore >= VoiceTranscript.MINIMUM_TRUSTED_SCORE) {
-                return TranscriptionOutput(forced.text, trusted, forced.confidence)
-            }
-            val auto = run(null)
-            val chosen = VoiceTranscript.choose(
-                VoiceTranscript.Candidate(auto.text, auto.language, auto.confidence),
-                VoiceTranscript.Candidate(forced.text, trusted, forced.confidence),
-                memory,
-                conversationId,
-                duration,
-            )
-            return TranscriptionOutput(chosen.text, chosen.language, chosen.confidence)
-        }
-        val auto = run(null)
-        val challenger = TranscriptionLanguage.challenger(auto.language, hints) ?: return auto
-        val alt = run(challenger)
-        val chosen = VoiceTranscript.choose(
-            VoiceTranscript.Candidate(auto.text, auto.language, auto.confidence),
-            VoiceTranscript.Candidate(alt.text, challenger, alt.confidence),
-            memory,
-            conversationId,
-            duration,
+    private suspend fun decodeVoiceNote(pcm: FloatArray, contextual: List<String>, conversationId: UUID?): TranscriptionOutput {
+        val request = TranscriptionRequest.voiceNote(
+            language = language.pinnedLanguage(),
+            hints = contextual,
+            candidateLanguages = TranscriptionLanguage.detectionCandidates(language.deviceLanguages()),
+            languageHistory = memory.history(conversationId),
         )
-        return TranscriptionOutput(chosen.text, chosen.language, chosen.confidence)
+        return session.transcribe(pcm, request)
     }
 
     private fun sentence(error: TranscriptionEngineError): String =

@@ -49,6 +49,7 @@ type WorkerIn =
       sampleRate: number;
       language: string | null;
       candidates: readonly string[];
+      history: Readonly<Record<string, number>>;
     };
 
 type AsrPipe = {
@@ -93,7 +94,8 @@ async function handle(data: WorkerIn): Promise<void> {
   const samples = resample(new Float32Array(data.audio), data.sampleRate, WHISPER_RATE);
   // A missing language used to be transcribed as English. Detect it from the
   // opening of the note and keep that code for every later window.
-  const language = data.language || (await detectSpokenLanguage(pipe, samples, data.candidates));
+  const detected = data.language ? null : await detectSpokenLanguage(pipe, samples, data.candidates, data.history);
+  const language = data.language || detected?.code || null;
   const pieces: string[] = [];
   let offset = 0;
   // Each pass hears one window. A long or paused note takes several; the cap
@@ -125,7 +127,12 @@ async function handle(data: WorkerIn): Promise<void> {
     if (next == null) break;
     offset = next;
   }
-  self.postMessage({ type: "result", text: joinVoicePieces(pieces), language: language || null });
+  self.postMessage({
+    type: "result",
+    text: joinVoicePieces(pieces),
+    language,
+    languageProbability: detected?.probability ?? null,
+  });
 }
 
 let chain: Promise<void> = Promise.resolve();

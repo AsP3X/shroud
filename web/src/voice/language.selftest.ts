@@ -1,70 +1,48 @@
 import {
-  challenger,
-  choose,
-  decodeHints,
   detectionCandidates,
+  deviceLanguages,
+  history,
   languageForRegion,
-  languageProbability,
+  learningWeight,
   normalize,
-  prior,
   record,
   resetMemory,
   setCurrentLocale,
   setPreferredLanguageTags,
-  shouldForceLanguage,
-  TRUSTED_PRIOR,
 } from "./language";
 
+function check(cond: boolean, message: string): void {
+  if (!cond) throw new Error(message);
+}
+
 resetMemory();
 setPreferredLanguageTags(["en-DE"]);
 setCurrentLocale("en-DE");
-const hints = decodeHints(null);
-if (!hints.includes("de")) throw new Error("en-DE must hint German");
-if (challenger("en", hints) !== "de") throw new Error("English auto-detect must be challenged with German");
-if (challenger(null, ["en", "de"]) !== "de") throw new Error("unknown detection must skip a wasted English pass");
-if (challenger("de", ["de", "en"]) !== null) throw new Error("matching German detection must not spend a second pass");
-if (challenger("fr", ["en", "de"]) !== null) throw new Error("a detected language must not be replaced by the region");
-if (detectionCandidates(["de"]).join() !== "de,en") throw new Error("detection prefers the hints and English");
-if (detectionCandidates(["en", "de"]).join() !== "en,de") throw new Error("English is not listed twice");
-if (detectionCandidates([]).length !== 0) throw new Error("no hints, no preference");
-if (normalize("german") !== "de") throw new Error("normalize german");
-if (languageForRegion("DE") !== "de") throw new Error("region DE");
+check(deviceLanguages().join() === "en,de", "en-DE counts English and German");
+check(detectionCandidates(["de"]).join() === "de,en", "detection weighs the device's languages and English");
+check(detectionCandidates(["en", "de"]).join() === "en,de", "English is not listed twice");
+check(detectionCandidates([]).length === 0, "no languages, no preference");
+check(normalize("german") === "de", "normalize german");
+check(languageForRegion("DE") === "de", "region DE");
 
-const deOnGerman = languageProbability(
-  "de",
-  "Guten Morgen, ich wollte dir nur schnell Bescheid geben dass es später wird",
-);
-const enOnGerman = languageProbability(
-  "en",
-  "Guten Morgen, ich wollte dir nur schnell Bescheid geben dass es später wird",
-);
-if (deOnGerman <= enOnGerman) throw new Error("German text should score as German");
-
-const chosen = choose(
-  { text: "House goes to the deer tonight", language: "en", confidence: 0.72 },
-  { text: "Haus, ich gehe später noch zu dir", language: "de", confidence: 0.68 },
-  null,
-  6,
-);
-if (chosen.language !== "de") throw new Error("challenger must win against English-biased auto-detect");
-
-resetMemory();
 const peer = "11111111-1111-4111-8111-111111111111";
-for (let i = 0; i < 4; i++) record("de", peer, 1);
-setPreferredLanguageTags(["en-US"]);
-setCurrentLocale("en-US");
-if (decodeHints(peer)[0] !== "de") throw new Error("conversation memory must outrank the UI language");
+for (let i = 0; i < 4; i++) record("tr", peer, 1);
+check(deviceLanguages().join() === "en,de", "a chat's memory is not a device language");
+check(Object.keys(history(peer)).join() === "tr", "the chat's history holds what it heard");
+check(Object.keys(history("22222222-2222-4222-8222-222222222222")).join() === "tr", "a new chat starts from the overall habit");
 
 resetMemory();
-if (shouldForceLanguage("en", 0.99)) throw new Error("must not force English from memory");
-if (!shouldForceLanguage("de", 0.8)) throw new Error("must force German once memory is trusted");
-if (shouldForceLanguage("de", 0.5)) throw new Error("must not force German from a weak prior");
-for (let i = 0; i < 5; i++) record("en", peer, 1);
-if (prior("en", peer) < TRUSTED_PRIOR) throw new Error("english memory should saturate");
-if (shouldForceLanguage("en", prior("en", peer))) throw new Error("saturated english must still allow a German challenger");
-setPreferredLanguageTags(["en-DE"]);
-setCurrentLocale("en-DE");
-if (challenger("en", decodeHints(peer)) !== "de") throw new Error("poisoned english memory must still challenge with German");
+for (let i = 0; i < 5; i++) record("de", peer, 1);
+for (let i = 0; i < 6; i++) record("en", peer, 1);
+const changed = history(peer);
+check((changed.en ?? 0) > (changed.de ?? 0), "decay lets a chat change language");
+
+// Only what the audio settled teaches the history.
+check(learningWeight(10, 0.5) === 0, "an unsure note teaches nothing");
+check(learningWeight(10, 0.3) === 0, "a note the history carried teaches nothing");
+check(learningWeight(10, Number.NaN) === 0, "no probability, no lesson");
+check(learningWeight(10, 0.95) === 1, "a clear note teaches fully");
+check(learningWeight(2, 0.95) < learningWeight(8, 0.95), "short notes teach less");
 
 resetMemory();
 console.log("language selftest ok");

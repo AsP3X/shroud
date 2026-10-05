@@ -136,6 +136,50 @@ class TranscriptionEngineTests {
     }
 
     @Test
+    fun chatHistorySettlesAnUnsureNoteButNotAClearOne() {
+        val german = mapOf("de" to 40.0)
+        // A short German note Whisper leans English on: the German chat settles it.
+        val unsure = mapOf("en" to 0.5, "de" to 0.35, "nl" to 0.15)
+        assertEquals("en", SpokenLanguagePick.pick(unsure, listOf("en", "de")))
+        assertEquals("de", SpokenLanguagePick.pick(unsure, listOf("en", "de"), german))
+        // A clear English note in the same chat stays English.
+        val english = mapOf("en" to 0.9, "de" to 0.08, "nl" to 0.02)
+        assertEquals("en", SpokenLanguagePick.pick(english, listOf("en", "de"), german))
+    }
+
+    @Test
+    fun aWrongLanguageInTheHistoryCannotOverrideClearAudio() {
+        // English heard clearly, but a misdetected note once taught this chat Turkish.
+        val english = mapOf("en" to 0.93, "tr" to 0.01, "de" to 0.06)
+        assertEquals("en", SpokenLanguagePick.pick(english, listOf("en", "de"), mapOf("tr" to 10.0)))
+    }
+
+    @Test
+    fun aSingleNoteOfHistoryOnlyNudges() {
+        val unsure = mapOf("en" to 0.5, "de" to 0.3)
+        assertEquals("en", SpokenLanguagePick.pick(unsure, listOf("en", "de"), mapOf("de" to 0.5)))
+        assertEquals("de", SpokenLanguagePick.pick(unsure, listOf("en", "de"), mapOf("de" to 3.0)))
+    }
+
+    @Test
+    fun theEngineReportsWhatTheAudioGaveTheLanguage() = runBlocking {
+        val harness = tinyEngine()
+        harness.engine.prepare(TranscriptionModelId.Base)
+        val runner = harness.runners.single()
+        runner.probabilities = mapOf("en" to 0.55, "de" to 0.4, "nl" to 0.05)
+
+        val weighed = harness.engine.transcribe(
+            floatArrayOf(0f),
+            TranscriptionRequest.voiceNote(candidateLanguages = listOf("en", "de"), languageHistory = mapOf("de" to 5.0)),
+        )
+        assertEquals("de", weighed.language)
+        assertEquals(0.4, weighed.languageProbability ?: error("no probability"), 1e-9)
+
+        val pinned = harness.engine.transcribe(floatArrayOf(0f), TranscriptionRequest.voiceNote(language = "fr"))
+        assertNull(pinned.languageProbability)
+    }
+
+    @Test
     fun theDetectedLanguageHonoursTheRequestsCandidates() = runBlocking {
         val harness = tinyEngine()
         harness.engine.prepare(TranscriptionModelId.Base)

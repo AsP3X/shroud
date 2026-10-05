@@ -10,6 +10,8 @@ actor WhisperKitEngine: TranscriptionEngine {
     let id = "whisperkit"
     private var preparedModel: TranscriptionModelID?
     private var kit: WhisperKit?
+    /// Token ids Whisper may not sample: brackets, music notes and the like (`NonSpeechTokens`).
+    private var nonSpeechTokens: [Int] = []
     /// Resumes a voice note after Whisper stops early. Probes and live chunks keep the stock seeker.
     private let wholeNoteSeeker = WholeVoiceNoteSeeker()
     private let windowSeeker = SegmentSeeker()
@@ -33,6 +35,7 @@ actor WhisperKitEngine: TranscriptionEngine {
             let loaded = try await WhisperKit(config)
             // Swap only once the new model is ready, so a switch never strands a running note.
             kit = loaded
+            nonSpeechTokens = loaded.tokenizer.map(NonSpeechTokens.ids(in:)) ?? []
             preparedModel = model
         } catch {
             throw TranscriptionEngineError.modelUnavailable
@@ -40,16 +43,13 @@ actor WhisperKitEngine: TranscriptionEngine {
     }
 
     func transcribe(fileURL: URL, request: TranscriptionRequest) async throws -> TranscriptionOutput {
-        let request = await applyingDetection(request) {
-            await self.detectSpokenLanguage(fileURL: fileURL, candidates: request.candidateLanguages)
-        }
-        let (kit, options) = try prepared(for: request)
+        let pcm: [Float]
         do {
-            let results = try await kit.transcribe(audioPath: fileURL.path, decodeOptions: options)
-            return Self.output(from: results, tokenizer: kit.tokenizer, forced: request.language)
+            pcm = try AudioProcessor.loadAudioAsFloatArray(fromPath: fileURL.path)
         } catch {
             throw TranscriptionEngineError.failed(error.localizedDescription)
         }
+        return try await transcribe(pcm: pcm, request: request)
     }
 
     func transcribe(
@@ -66,13 +66,37 @@ actor WhisperKitEngine: TranscriptionEngine {
             }
             pcm = resampled
         }
-        let request = await applyingDetection(request) {
-            await self.detectSpokenLanguage(samples: pcm, candidates: request.candidateLanguages)
+        return try await transcribe(pcm: pcm, request: request)
+    }
+
+    /// 16 kHz mono `pcm`. A whole voice note ends where the voice does (`VoiceActivity`): the quiet
+    /// tail after the last word is cut, and the note resumes after a pause only while voice is left.
+    /// Fed silence, Whisper writes "[MUSIK]", "Thank you." or a subtitle credit.
+    private func transcribe(pcm: [Float], request: TranscriptionRequest) async throws -> TranscriptionOutput {
+        var audio = pcm
+        var voicedEnd: Int?
+        if WhisperDecodePlan.make(for: request).keepTimestamps,
+           let end = VoiceActivity.voicedEnd(pcm, sampleRate: Self.sampleRate)
+        {
+            voicedEnd = end
+            audio = VoiceActivity.trimmed(pcm, voicedEnd: end, sampleRate: Self.sampleRate)
+        }
+        let (request, heard) = await applyingDetection(request) {
+            await self.detectSpokenLanguage(samples: audio, request: request)
         }
         let (kit, options) = try prepared(for: request)
+        wholeNoteSeeker.voicedEnd = voicedEnd
+        defer { wholeNoteSeeker.voicedEnd = nil }
         do {
-            let results = try await kit.transcribe(audioArray: pcm, decodeOptions: options)
-            return Self.output(from: results, tokenizer: kit.tokenizer, forced: request.language)
+            let results = try await kit.transcribe(audioArray: audio, decodeOptions: options)
+            var output = Self.output(
+                from: results,
+                tokenizer: kit.tokenizer,
+                forced: request.language,
+                voicedEndSeconds: voicedEnd.map { Double($0) / Double(Self.sampleRate) }
+            )
+            output.languageProbability = heard
+            return output
         } catch {
             throw TranscriptionEngineError.failed(error.localizedDescription)
         }
@@ -80,33 +104,31 @@ actor WhisperKitEngine: TranscriptionEngine {
 
     /// Whisper's decoder is prefilled with English before its own detector runs, and each
     /// later window detects again. A fresh check on the opening of the note avoids both, and
-    /// lets the request's candidate languages weigh in (`SpokenLanguagePick`).
+    /// lets the device's languages and the chat's history weigh in (`SpokenLanguagePick`).
+    /// Returns the request with the detected language and what the audio alone gave it.
     private func applyingDetection(
         _ request: TranscriptionRequest,
-        detect: () async -> String?
-    ) async -> TranscriptionRequest {
-        if WhisperReportedLanguage.code(request.language) != nil { return request }
-        guard let detected = await detect() else { return request }
+        detect: () async -> SpokenLanguage?
+    ) async -> (TranscriptionRequest, Double?) {
+        if WhisperReportedLanguage.code(request.language) != nil { return (request, nil) }
+        guard let detected = await detect(), let code = WhisperReportedLanguage.code(detected.code)
+        else { return (request, nil) }
         var copy = request
-        copy.language = detected
-        return copy
+        copy.language = code
+        return (copy, detected.probability)
     }
 
-    private func detectSpokenLanguage(fileURL: URL, candidates: [String]) async -> String? {
-        guard let kit,
-              let opening = try? AudioProcessor.loadAudio(fromPath: fileURL.path, endTime: Self.detectionSeconds)
-        else { return nil }
-        let samples = AudioProcessor.convertBufferToArray(buffer: opening)
-        return WhisperReportedLanguage.code(try? await kit.spokenLanguage(samples: samples, candidates: candidates))
-    }
-
-    private func detectSpokenLanguage(samples: [Float], candidates: [String]) async -> String? {
+    private func detectSpokenLanguage(samples: [Float], request: TranscriptionRequest) async -> SpokenLanguage? {
         guard let kit else { return nil }
-        return WhisperReportedLanguage.code(try? await kit.spokenLanguage(samples: samples, candidates: candidates))
+        return try? await kit.spokenLanguage(
+            samples: samples,
+            candidates: request.candidateLanguages,
+            history: request.languageHistory
+        )
     }
 
-    /// Whisper detects the language from one 30-second window.
-    nonisolated private static let detectionSeconds = 30.0
+    /// Whisper's input rate.
+    nonisolated private static let sampleRate = 16_000
 
     private func prepared(for request: TranscriptionRequest) throws -> (WhisperKit, DecodingOptions) {
         let kit = try readyKit()
@@ -143,6 +165,9 @@ actor WhisperKitEngine: TranscriptionEngine {
             clipTimestamps: clip,
             windowClipTime: plan.tailClipSeconds,
             suppressBlank: true,
+            // WhisperKit leaves these unsuppressed, unlike OpenAI's decoder: a quiet tail then
+            // comes out as "[MUSIK]" or "[BLANK_AUDIO]".
+            supressTokens: nonSpeechTokens,
             compressionRatioThreshold: profile.compressionRatioThreshold,
             logProbThreshold: profile.logProbThreshold,
             firstTokenLogProbThreshold: profile.firstTokenLogProbThreshold,
@@ -206,8 +231,20 @@ actor WhisperKitEngine: TranscriptionEngine {
     nonisolated private static func output(
         from results: [TranscriptionResult],
         tokenizer: WhisperTokenizer?,
-        forced: String?
+        forced: String?,
+        voicedEndSeconds: Double? = nil
     ) -> TranscriptionOutput {
+        if let voicedEndSeconds {
+            // A segment that starts once the voice has ended describes the silence after it.
+            for result in results {
+                let kept = result.segments.filter {
+                    VoiceActivity.isSpoken(segmentStart: Double($0.start), voicedEndSeconds: voicedEndSeconds)
+                }
+                guard kept.count < result.segments.count else { continue }
+                result.segments = kept
+                result.text = kept.map(\.text).joined()
+            }
+        }
         let merged = TranscriptionUtilities.mergeTranscriptionResults(results).text
         let text = merged.trimmingCharacters(in: .whitespacesAndNewlines)
         let language = WhisperReportedLanguage.choose(
@@ -258,10 +295,51 @@ actor WhisperKitEngine: TranscriptionEngine {
     }
 }
 
+/// Tokens Whisper writes for sounds instead of speech — "[MUSIK]", "(Applaus)", "♪" — suppressed the
+/// way OpenAI's decoder does by default (`non_speech_tokens` in `whisper/tokenizer.py`). WhisperKit
+/// 0.18 leaves this as a to-do, so a quiet tail after the last word comes out as a bracketed tag.
+nonisolated enum NonSpeechTokens {
+    static let symbols: [String] = "\"#()*+/:;<=>@[\\]^_`{|}~「」『』".map(String.init)
+        + "<< >> <<< >>> -- --- -( -[ (' (\" (( )) ((( ))) [[ ]] {{ }} ♪♪ ♪♪♪".split(separator: " ").map(String.init)
+    static let miscellaneous: Set<String> = ["♩", "♪", "♫", "♬", "♭", "♮", "♯"]
+
+    static func ids(in tokenizer: WhisperTokenizer) -> [Int] {
+        ids(specialTokenBegin: tokenizer.specialTokens.specialTokenBegin, encode: tokenizer.encode(text:))
+    }
+
+    /// A symbol counts when it is a single token on its own or after a space; a music symbol always
+    /// counts by its first token. A hyphen or apostrophe after a space is suppressed too, so neither
+    /// can start a word. `encode`'s special tokens (start of transcript, end of text) are ignored.
+    static func ids(specialTokenBegin: Int, encode: (String) -> [Int]) -> [Int] {
+        func text(_ string: String) -> [Int] { encode(string).filter { $0 < specialTokenBegin } }
+        var result = Set<Int>()
+        for start in [" -", " '"] {
+            if let first = text(start).first { result.insert(first) }
+        }
+        for symbol in symbols + miscellaneous.sorted() {
+            for tokens in [text(symbol), text(" " + symbol)] {
+                guard let first = tokens.first else { continue }
+                if tokens.count == 1 || miscellaneous.contains(symbol) { result.insert(first) }
+            }
+        }
+        return result.sorted()
+    }
+}
+
+/// The language picked for a note, and the probability the audio alone gave it.
+nonisolated struct SpokenLanguage: Sendable, Equatable {
+    var code: String
+    var probability: Double
+}
+
 extension WhisperKit {
     /// `detectLangauge(audioArray:)` with `SpokenLanguageSampler` in place of the greedy sampler,
     /// which reports only the winning token. Nil for an English-only model.
-    nonisolated func spokenLanguage(samples: [Float], candidates: [String]) async throws -> String? {
+    nonisolated func spokenLanguage(
+        samples: [Float],
+        candidates: [String],
+        history: [String: Double]
+    ) async throws -> SpokenLanguage? {
         guard textDecoder.isModelMultilingual, let tokenizer, !samples.isEmpty else { return nil }
         guard let window = audioProcessor.padOrTrim(
             fromArray: samples,
@@ -280,7 +358,8 @@ extension WhisperKit {
                     .flatMap(WhisperLanguageToken.code(from:))
                     .map { (token, $0) }
             }),
-            candidates: candidates
+            candidates: candidates,
+            history: history
         )
         let result = try await textDecoder.detectLanguage(
             from: encoded,
@@ -290,21 +369,28 @@ extension WhisperKit {
             temperature: 0
         )
         // Without a sampled language token WhisperKit reports English; that is not a detection.
-        return result.languageProbs.isEmpty ? nil : result.language
+        // The sampler stores the log of the audio-only probability under the picked language.
+        guard let logProbability = result.languageProbs[result.language] else { return nil }
+        return SpokenLanguage(code: result.language, probability: Double(exp(logProbability)))
     }
 }
 
 /// Samples the language token after Whisper's single detection step. The logits arrive with
 /// every non-language token masked; this turns the language scores into probabilities and lets
-/// `SpokenLanguagePick` choose.
+/// `SpokenLanguagePick` choose. The log probability it records is the audio's own, before weighing.
 nonisolated struct SpokenLanguageSampler: TokenSampling {
     /// Token id → two-letter code.
     let languages: [Int: String]
     let candidates: [String]
+    let history: [String: Double]
 
     func update(tokens: [Int], logits: MLMultiArray, logProbs: [Float]) -> SamplingResult {
         let probabilities = Self.probabilities(scores(in: logits))
-        guard let code = SpokenLanguagePick.pick(probabilities: probabilities, candidates: candidates),
+        guard let code = SpokenLanguagePick.pick(
+            probabilities: probabilities,
+            candidates: candidates,
+            history: history
+        ),
               let token = languages.first(where: { $0.value == code })?.key,
               let probability = probabilities[code]
         else { return SamplingResult(tokens: tokens, logProbs: logProbs, completed: true) }
@@ -343,6 +429,8 @@ nonisolated struct SpokenLanguageSampler: TokenSampling {
 /// (or after the token budget) are still transcribed.
 nonisolated final class WholeVoiceNoteSeeker: SegmentSeeking {
     private let inner = SegmentSeeker()
+    /// Sample where the note's voice ends (`VoiceActivity`); no resume past it. Set per note by the engine.
+    nonisolated(unsafe) var voicedEnd: Int?
 
     func findSeekPointAndSegments(
         decodingResult: DecodingResult,
@@ -374,6 +462,7 @@ nonisolated final class WholeVoiceNoteSeeker: SegmentSeeking {
             windowStart: seek,
             segmentSamples: segmentSize,
             engineSeek: engineSeek,
+            voicedEnd: voicedEnd,
             secondsPerTimestamp: Double(WhisperKit.secondsPerTimeToken)
         ) else {
             return (engineSeek, segments)

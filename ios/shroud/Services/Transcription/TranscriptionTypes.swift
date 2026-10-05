@@ -55,8 +55,10 @@ nonisolated struct TranscriptionRequest: Sendable {
     var language: String?
     /// Contact names and other terms to bias toward. Engines may ignore this.
     var hints: [String]
-    /// Languages this person uses. Detection prefers them (`SpokenLanguagePick`).
+    /// The device's languages. Detection weighs Whisper's probabilities with them (`SpokenLanguagePick`).
     var candidateLanguages: [String] = []
+    /// The languages heard in this chat, by weight. Detection leans on them for an unsure note.
+    var languageHistory: [String: Double] = [:]
     var profile: TranscriptionProfile
     /// Optional clip in seconds, e.g. `0...8` for language detection.
     var clipSeconds: ClosedRange<Double>?
@@ -64,12 +66,14 @@ nonisolated struct TranscriptionRequest: Sendable {
     static func voiceNote(
         language: String? = nil,
         hints: [String] = [],
-        candidateLanguages: [String] = []
+        candidateLanguages: [String] = [],
+        languageHistory: [String: Double] = [:]
     ) -> TranscriptionRequest {
         TranscriptionRequest(
             language: language,
             hints: hints,
             candidateLanguages: candidateLanguages,
+            languageHistory: languageHistory,
             profile: .voiceNote,
             clipSeconds: nil
         )
@@ -86,22 +90,37 @@ nonisolated struct TranscriptionRequest: Sendable {
 
 /// The spoken language from Whisper's language probabilities.
 ///
-/// Whisper picks from about a hundred languages and confuses close ones on short notes
-/// (German heard as Dutch or Afrikaans). The candidates are the languages this person is
-/// known to use. A language outside them wins only when it is `outsideCandidateOdds` times
-/// likelier than the best candidate, so a note that really is in another language still gets
-/// it. With no candidates the most likely language wins. Same rule as the web
+/// The audio decides; what is known about this person only weighs it. The candidates are the
+/// device's languages and English: a language outside them needs `outsideCandidateOdds` times the
+/// probability. A chat's history makes the language it is spoken in up to `1 + historyOdds` times
+/// likelier, at full strength once `historySaturation` notes' worth has been heard. That settles a
+/// short note Whisper is unsure about, and a clear note in another language still wins. With no
+/// candidates and no history the most likely language wins. Same rule as the web
 /// (`pickSpokenLanguage`) and Android.
 nonisolated enum SpokenLanguagePick {
     static let outsideCandidateOdds = 5.0
+    static let historyOdds = 2.0
+    static let historySaturation = 3.0
 
     /// Whisper's code where it differs from the ISO code the hints use.
     private static let whisperCode = ["nb": "no"]
 
-    static func pick(probabilities: [String: Double], candidates: [String]) -> String? {
+    static func pick(
+        probabilities: [String: Double],
+        candidates: [String],
+        history: [String: Double] = [:]
+    ) -> String? {
         let allowed = Set(candidates.map { whisperCode[$0] ?? $0 })
+        var heard: [String: Double] = [:]
+        for (code, weight) in history where weight > 0 {
+            heard[whisperCode[code] ?? code, default: 0] += weight
+        }
+        let total = heard.values.reduce(0, +)
+        let strength = historyOdds * min(1, total / historySaturation)
         func score(_ code: String, _ probability: Double) -> Double {
-            allowed.isEmpty || allowed.contains(code) ? probability : probability / outsideCandidateOdds
+            let known = allowed.isEmpty || allowed.contains(code) ? 1 : 1 / outsideCandidateOdds
+            let share = total > 0 ? (heard[code] ?? 0) / total : 0
+            return probability * known * (1 + strength * share)
         }
         // Ties go to the smaller code, so the pick never depends on dictionary order.
         return probabilities
@@ -151,7 +170,13 @@ nonisolated enum VoiceNoteSeek {
     static let secondsPerTimestamp = 0.02
     /// A shorter tail than this stays with the pass that already decoded it.
     static let minimumTailSeconds = 0.2
+    /// Voice the rest of the note must still hold for a resume. Whisper's last timestamp lands a
+    /// little before the voice fades, and decoding only that fade repeats a word or invents one.
+    static let minimumVoiceSeconds = 1.0
 
+    /// `voicedEnd` is where the note's voice ends (`VoiceActivity`). With less than
+    /// `minimumVoiceSeconds` left before it, the note is finished: decoding that tail only makes
+    /// Whisper describe the silence.
     static func resumeSample(
         tokens: [Int],
         timeTokenBegin: Int,
@@ -159,6 +184,7 @@ nonisolated enum VoiceNoteSeek {
         windowStart: Int,
         segmentSamples: Int,
         engineSeek: Int,
+        voicedEnd: Int? = nil,
         secondsPerTimestamp: Double = secondsPerTimestamp
     ) -> Int? {
         guard segmentSamples > 0, sampleRate > 0, secondsPerTimestamp > 0 else { return nil }
@@ -169,6 +195,9 @@ nonisolated enum VoiceNoteSeek {
         let resume = windowStart + Int((Double(steps) * secondsPerTimestamp * Double(sampleRate)).rounded())
         let minimumTail = Int((minimumTailSeconds * Double(sampleRate)).rounded())
         guard resume > windowStart, resume + minimumTail < windowStart + segmentSamples else { return nil }
+        if let voicedEnd, resume + Int((minimumVoiceSeconds * Double(sampleRate)).rounded()) > voicedEnd {
+            return nil
+        }
         return resume
     }
 
@@ -200,6 +229,66 @@ nonisolated enum VoiceNoteSeek {
     private static func lastTimestampSteps(in tokens: [Int], timeTokenBegin: Int) -> Int {
         guard let last = tokens.last(where: { $0 >= timeTokenBegin }) else { return 0 }
         return max(0, last - timeTokenBegin)
+    }
+}
+
+/// Where the voice in a note ends, from its loudness: 20 ms frames against the note's own noise
+/// floor and speech level. A voice note usually ends with a second or two of room tone before the
+/// button is released; Whisper fed that silence writes "[MUSIK]", "Thank you." or a subtitle credit.
+nonisolated enum VoiceActivity {
+    static let frameSeconds = 0.02
+    /// Quiet kept after the last voiced frame, so a soft last syllable is not clipped.
+    static let hangoverSeconds = 0.3
+    /// Below this level (about −50 dBFS) a note is all quiet, and nothing is cut.
+    static let silentLevel: Float = 0.003
+
+    /// The sample just past the last voiced frame, or nil when no frame stands out as voice.
+    static func voicedEnd(_ samples: [Float], sampleRate: Int) -> Int? {
+        let frame = max(1, Int(Double(sampleRate) * frameSeconds))
+        guard samples.count >= frame else { return nil }
+        var levels: [Float] = []
+        levels.reserveCapacity(samples.count / frame)
+        var start = 0
+        while start + frame <= samples.count {
+            var sum: Float = 0
+            for index in start ..< start + frame {
+                sum += samples[index] * samples[index]
+            }
+            levels.append((sum / Float(frame)).squareRoot())
+            start += frame
+        }
+        let sorted = levels.sorted()
+        let floor = sorted[sorted.count / 10]
+        // The 99th percentile, so a single click does not set the speech level.
+        let speech = sorted[min(sorted.count - 1, sorted.count * 99 / 100)]
+        guard speech >= silentLevel else { return nil }
+        // Voice is well above the room (12 dB) and not far below the note's speech (30 dB).
+        let threshold = max(floor * 4, speech * 0.03, silentLevel / 2)
+        guard let last = levels.lastIndex(where: { $0 > threshold }) else { return nil }
+        return min(samples.count, (last + 1) * frame)
+    }
+
+    /// How close to the voice's end a segment may start and still hold a word.
+    static let segmentStartToleranceSeconds = 0.15
+
+    /// False for a segment Whisper starts once the voice has ended: it describes the silence
+    /// ("Copyright WDR 2020", "[MUSIK]"), since no word starts after the last voiced frame.
+    static func isSpoken(segmentStart: Double, voicedEndSeconds: Double) -> Bool {
+        segmentStart < voicedEndSeconds - segmentStartToleranceSeconds
+    }
+
+    /// The note through `voicedEnd`, then its hangover faded to silence. Room noise after the last
+    /// word is what Whisper describes; the silence Whisper pads a window with is not.
+    static func trimmed(_ samples: [Float], voicedEnd: Int, sampleRate: Int) -> [Float] {
+        let end = min(samples.count, voicedEnd + Int(Double(sampleRate) * hangoverSeconds))
+        var kept = Array(samples.prefix(end))
+        let fade = end - voicedEnd
+        if fade > 0 {
+            for offset in 0 ..< fade {
+                kept[voicedEnd + offset] *= Float(fade - offset) / Float(fade + 1)
+            }
+        }
+        return kept
     }
 }
 
@@ -251,6 +340,8 @@ nonisolated struct TranscriptionOutput: Sendable, Equatable {
     var text: String
     var language: String?
     var confidence: Double
+    /// What the audio alone gave `language` when the engine detected it; nil when it was asked for one.
+    var languageProbability: Double? = nil
 }
 
 nonisolated enum TranscriptionEngineError: Error, LocalizedError, Equatable {

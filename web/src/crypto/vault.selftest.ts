@@ -79,7 +79,7 @@ const { closeVault, derivePinSecrets, isVaultOpen, openVaultWithPhrase, openVaul
   await import("./vault");
 const { clearPin, hasPin, needsPhrase, setPin, unlockWithPin } = await import("./vaultAccess");
 const { loadSession } = await import("../session");
-const { expectedLanguage } = await import("../voice/language");
+const { history } = await import("../voice/language");
 
 function check(ok: boolean, message: string): void {
   if (!ok) throw new Error(message);
@@ -136,7 +136,7 @@ check(JSON.parse(loadUnboundPlaintext(messageId) ?? "{}").c === secret, "the bod
 check(loadPlaintext(messageId, peer) === null, "an unbound body is not readable as a sender's");
 check(loadPreview(me, peer)?.text === secret, "the preview opens after migration");
 check(loadIdentity(me)?.userId === me, "the identity opens after migration");
-check(expectedLanguage(peer) === "de", "language statistics survive migration");
+check(Object.keys(history(peer)).join() === "de", "language statistics survive migration");
 
 /* Locked: nothing reads, nothing writes. */
 closeVault();

@@ -1,15 +1,12 @@
 import CryptoKit
 import Foundation
-import NaturalLanguage
 
 /// User preference for which language voice messages are transcribed in.
 ///
-/// Human: Whisper's own language ID is strongly English-biased, especially on short notes, so
-/// "Automatic" is not a coin flip — it will happily transcribe German as English. An English UI
-/// with a German region is a common setup, and that region *is* a useful *challenger* (not a
-/// forced language): when detection lands on English we decode again with the hint and keep
-/// the better transcript. A detection that is already another language is kept.
-/// Conversation history then takes over.
+/// Human: "Automatic" means Whisper hears the language. The device's languages — UI languages and
+/// the region's, so an English UI in Germany counts German — are the candidates its probabilities
+/// are weighed with (`SpokenLanguagePick`), together with the chat's history. They never replace
+/// what the audio says: decoding a note in a language Whisper did not hear makes it translate.
 /// Agent: READS/WRITES UserDefaults key `transcription.locale`; no other state.
 nonisolated enum TranscriptionLanguage {
     private static let defaultsKey = "transcription.locale"
@@ -72,24 +69,22 @@ nonisolated enum TranscriptionLanguage {
         return whisperCodes.contains(prefix) ? prefix : raw
     }
 
-    /// Languages we should try, in priority order. Override (if set) is the only entry.
-    /// Otherwise: conversation memory, then the languages this device actually lives in —
-    /// preferred UI languages *and* the region of an English UI in Germany.
-    static func decodeHints(peerID: UUID?) -> [String] {
-        if let override = override.flatMap({ $0.language.languageCode?.identifier }) {
-            let code = normalize(override)
-            return whisperCodes.contains(code) ? [code] : []
-        }
+    /// The pinned language as a Whisper code, or nil for automatic (also for a pin Whisper can't use).
+    static var pinnedLanguage: String? {
+        guard let code = override.flatMap({ $0.language.languageCode?.identifier }) else { return nil }
+        let normalized = normalize(code)
+        return whisperCodes.contains(normalized) ? normalized : nil
+    }
+
+    /// The languages this device lives in: preferred UI languages first, then the region's
+    /// (`en-DE` gives `en`, `de`).
+    static var deviceLanguages: [String] {
         var ordered: [String] = []
         func add(_ raw: String?) {
             guard let raw else { return }
             let code = normalize(raw)
             guard whisperCodes.contains(code), !ordered.contains(code) else { return }
             ordered.append(code)
-        }
-        add(TranscriptionLanguageMemory.expectedLanguage(peerID: peerID))
-        if peerID != nil {
-            add(TranscriptionLanguageMemory.expectedLanguage(peerID: nil))
         }
         for tag in preferredLanguageTags {
             add(Locale(identifier: tag).language.languageCode?.identifier)
@@ -100,34 +95,10 @@ nonisolated enum TranscriptionLanguage {
         return ordered
     }
 
-    /// Languages detection should prefer (`SpokenLanguagePick`): the hints, and English, which
-    /// Whisper is best at and many people mix in. No hints, no preference.
-    static func detectionCandidates(hints: [String]) -> [String] {
-        hints.isEmpty || hints.contains("en") ? hints : hints + ["en"]
-    }
-
-    /// Second pass when detection landed on English or failed. Nil means one pass is enough.
-    /// A French or German detection is the language of the note. English is Whisper's biased
-    /// default, so a hint may challenge that and nothing else. The hint itself is never English.
-    static func challenger(detected: String?, hints: [String]) -> String? {
-        let detected = detected.map { normalize($0) } ?? ""
-        guard detected.isEmpty || detected == "en" else { return nil }
-        for hint in hints {
-            let code = normalize(hint)
-            if code.isEmpty || code == detected || code == "en" { continue }
-            return code
-        }
-        return nil
-    }
-
-    /// Above this, conversation history is trusted enough to skip auto-detect.
-    static let trustedPrior = 0.75
-
-    /// English is Whisper's default; forcing it from a poisoned memory would hide German forever.
-    static func shouldForceLanguage(_ code: String, prior: Double) -> Bool {
-        let code = normalize(code)
-        guard whisperCodes.contains(code), code != "en" else { return false }
-        return prior >= trustedPrior
+    /// Languages detection weighs fully (`SpokenLanguagePick`): the device's, and English, which
+    /// Whisper is best at and many people mix in. None, no preference.
+    static func detectionCandidates(_ languages: [String]) -> [String] {
+        languages.isEmpty || languages.contains("en") ? languages : languages + ["en"]
     }
 
     static var preferredLanguageTags: [String] {
@@ -138,7 +109,7 @@ nonisolated enum TranscriptionLanguage {
         currentLocaleOverride ?? .current
     }
 
-    /// Spoken language implied by region, so `en-DE` still challenges Whisper's English default.
+    /// Spoken language implied by region, so `en-DE` also counts German.
     static var regionLanguageHints: [String] {
         var tags = preferredLanguageTags
         tags.append(currentLocale.identifier)
@@ -155,7 +126,7 @@ nonisolated enum TranscriptionLanguage {
     }
 
     /// Non-English region → likely spoken language. English-speaking regions are omitted on
-    /// purpose: Whisper already defaults to English.
+    /// purpose: English is always a candidate.
     static func language(forRegion region: String) -> String? {
         switch region.uppercased() {
         case "DE", "AT", "LI": "de"
@@ -203,11 +174,11 @@ nonisolated enum TranscriptionLanguage {
 /// Remembers which language was actually spoken, per conversation and overall.
 ///
 /// Human: This is what makes *short* voice messages work. Two seconds of "Ja, mach ich" carries
-/// almost no evidence — acoustically it is a coin flip against "Yeah, mush ish", and text-based
-/// language ID needs far more characters than that to be reliable. But language is extremely
-/// stable per conversation: whoever you spoke German with yesterday you will speak German with
-/// today. So we learn from the messages that *were* long enough to be decisive, and lean on that
-/// history exactly when the audio itself cannot decide.
+/// little evidence, and Whisper may lean English on it. But language is stable per conversation:
+/// whoever you spoke German with yesterday you will speak German with today. So we learn from the
+/// notes whose audio settled the language, and lean on that history when the audio is unsure.
+/// Only the audio teaches it (`VoiceTranscript.learningWeight`): a pick the history carried
+/// teaches nothing, so one wrong entry can't feed itself.
 /// Agent: READS/WRITES a sealed file (`shroud/voice/language-stats.sealed`, `LocalHistoryCrypto`
 /// context `.languageStats`); stores only language codes and weights — never text, audio, or
 /// message ids beyond the peer UUID key. The peer keys reveal who the user exchanges voice notes
@@ -241,8 +212,6 @@ nonisolated enum TranscriptionLanguageMemory {
     private static let globalScope = "*"
     /// Older observations decay so a language switch is picked up within a few messages.
     private static let decay = 0.9
-    /// Weight at which a scope is considered to have a real opinion.
-    private static let saturation = 3.0
 
     /// `[scope: [languageCode: weight]]`. Empty while locked; a write while locked is dropped.
     private static var store: [String: [String: Double]] {
@@ -319,46 +288,15 @@ nonisolated enum TranscriptionLanguageMemory {
         }
     }
 
-    /// Learned likelihood of `languageCode`, 0…1. **0.5 means "no opinion"** — the neutral value
-    /// the scoring model expects, so a first-ever message is judged on its audio alone.
-    static func prior(for languageCode: String, peerID: UUID?) -> Double {
+    /// The languages heard in `peerID`'s chat, by weight: its own record, or the overall one while
+    /// the chat has none yet. Empty while locked. `SpokenLanguagePick` weighs Whisper's
+    /// probabilities with it; it never replaces what the audio says.
+    static func history(peerID: UUID?) -> [String: Double] {
         let all = store
-        let peer = peerID.map { all[$0.uuidString] ?? [:] } ?? [:]
-        let global = all[globalScope] ?? [:]
-
-        let peerTotal = peer.values.reduce(0, +)
-        let globalTotal = global.values.reduce(0, +)
-        guard peerTotal + globalTotal > 0 else { return 0.5 }
-
-        func share(_ counts: [String: Double], _ total: Double) -> Double {
-            guard total > 0 else { return 0.5 }
-            return (counts[languageCode] ?? 0) / total
+        if let peer = peerID.flatMap({ all[$0.uuidString] }), peer.values.reduce(0, +) > 0 {
+            return peer
         }
-
-        // This conversation dominates; the global history only breaks ties for a new chat.
-        let combined: Double
-        if peerTotal > 0 {
-            combined = 0.75 * share(peer, peerTotal) + 0.25 * share(global, globalTotal)
-        } else {
-            combined = share(global, globalTotal)
-        }
-
-        // Shrink toward neutral until we have seen a few messages, so one observation cannot
-        // lock a conversation into the wrong language. Every observation is written to both the
-        // peer and global scopes, so summing the two would double-count the same evidence —
-        // measure whichever scope is actually driving the answer.
-        let evidenceTotal = peerTotal > 0 ? peerTotal : globalTotal
-        let evidence = min(1, evidenceTotal / saturation)
-        return 0.5 + (combined - 0.5) * evidence
-    }
-
-    /// The language this scope most expects, if it has a real opinion.
-    static func expectedLanguage(peerID: UUID?) -> String? {
-        let all = store
-        let counts = peerID.flatMap { all[$0.uuidString] } ?? all[globalScope] ?? [:]
-        let total = counts.values.reduce(0, +)
-        guard total >= 1 else { return nil }
-        return counts.max { $0.value < $1.value }?.key
+        return all[globalScope] ?? [:]
     }
 
     /// Records a decisive observation. `weight` should reflect how trustworthy it was —
@@ -387,7 +325,8 @@ nonisolated enum TranscriptionLanguageMemory {
     }
 }
 
-/// Pure helpers for judging whether a transcript is real speech, and how much to trust it.
+/// Pure helpers for judging whether a transcript is real speech, and how much a note teaches the
+/// language memory.
 ///
 /// Human: Extracted so the decision rules are testable without audio hardware.
 nonisolated enum VoiceTranscript {
@@ -413,123 +352,18 @@ nonisolated enum VoiceTranscript {
             .joined(separator: " ")
     }
 
-    /// Ranks a candidate transcription. Higher is better; 0 means "not speech".
-    ///
-    /// Three modifiers, each centred on a neutral 0.5 so that a no-information case collapses to
-    /// plain `modelConfidence × substance`:
-    ///
-    /// - `substance` — a one-word fluke must not outrank a real sentence.
-    /// - `languageProbability` — text-based language ID, faded toward "no opinion" when the
-    ///   transcript is too short for it to mean anything (it needs ~40 characters).
-    /// - `prior` — learned conversation history, weighted *up* as the audio gets shorter. This is
-    ///   the term that carries short messages, where the acoustics cannot decide alone.
-    static func score(
-        text: String,
-        modelConfidence: Double,
-        languageProbability: Double = 0.5,
-        prior: Double = 0.5,
-        audioSeconds: Double = .greatestFiniteMagnitude
-    ) -> Double {
-        guard containsSpeech(text) else { return 0 }
+    /// Below this probability the audio did not settle the language, so the note teaches nothing.
+    static let decisiveProbability = 0.5
+    /// At this probability the audio settled it fully.
+    static let certainProbability = 0.9
 
-        let letters = Double(letterCount(text))
-        let substance = min(1, letters / 12)
-
-        let textTrust = min(1, letters / 40)
-        let languageTerm = 0.5 + (languageProbability - 0.5) * textTrust
-
-        // Full weight below ~2s of audio, fading out by ~8s where the audio speaks for itself.
-        let priorTrust = 1 - min(1, max(0, audioSeconds - 2) / 6)
-        let priorTerm = 0.5 + (prior - 0.5) * priorTrust
-
-        // Each modifier lands in [0.5, 1.5]; neutral inputs give exactly 1.
-        return modelConfidence * substance * (0.5 + languageTerm) * (0.5 + priorTerm)
-    }
-
-    /// Below this the detection is not trustworthy and the caller should fall back to history.
-    static let minimumTrustedScore = 0.12
-
-    /// How much a finished transcription should teach the language memory.
-    /// Short or shaky results teach little; a long confident one teaches a lot.
-    static func learningWeight(audioSeconds: Double, score: Double) -> Double {
-        guard score >= minimumTrustedScore else { return 0 }
-        let duration = min(1, audioSeconds / 8)
-        let strength = min(1, score / 0.4)
-        return duration * strength
-    }
-
-    /// Text-based language ID for `languageCode` (ISO 639-1). Neutral 0.5 when the text is
-    /// too short to tell, or when the recogniser has no opinion.
-    static func languageProbability(of languageCode: String, in text: String) -> Double {
-        let code = TranscriptionLanguage.normalize(languageCode)
-        guard !code.isEmpty, letterCount(text) >= 8 else { return 0.5 }
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(text)
-        let hypotheses = recognizer.languageHypotheses(withMaximum: 12)
-        guard !hypotheses.isEmpty else { return 0.5 }
-        for (language, probability) in hypotheses {
-            let raw = language.rawValue.lowercased()
-            if raw == code || raw.hasPrefix(code) { return Double(probability) }
-        }
-        return 0.05
-    }
-
-    /// Auto-detect is English-biased; a non-English challenger only has to be close, not better.
-    static let englishChallengeMargin = 1.2
-
-    /// One candidate from a decode pass.
-    struct Candidate: Equatable {
-        var text: String
-        var language: String?
-        var confidence: Double
-    }
-
-    /// Picks between Whisper's auto-detect and a forced-language challenger.
-    static func choose(
-        auto: Candidate,
-        challenge: Candidate?,
-        peerID: UUID?,
-        audioSeconds: Double
-    ) -> Candidate {
-        let autoClean = cleaned(auto.text)
-        let autoLang = auto.language.map { TranscriptionLanguage.normalize($0) }
-        let autoScored = Candidate(text: autoClean, language: autoLang, confidence: auto.confidence)
-        let autoScore = score(
-            candidate: autoScored,
-            peerID: peerID,
-            audioSeconds: audioSeconds
-        )
-
-        guard var challenge else { return autoScored }
-        challenge.text = cleaned(challenge.text)
-        challenge.language = challenge.language.map { TranscriptionLanguage.normalize($0) }
-        let altScore = score(
-            candidate: challenge,
-            peerID: peerID,
-            audioSeconds: audioSeconds
-        )
-
-        var autoEffective = autoScore
-        // A missing language is Whisper's English default, not "we don't know".
-        let autoLooksEnglish = autoLang == nil || autoLang == "en"
-        if autoLooksEnglish, challenge.language != "en" {
-            autoEffective = autoScore / englishChallengeMargin
-        }
-        return altScore > autoEffective ? challenge : autoScored
-    }
-
-    static func score(
-        candidate: Candidate,
-        peerID: UUID?,
-        audioSeconds: Double
-    ) -> Double {
-        let language = candidate.language ?? ""
-        return score(
-            text: candidate.text,
-            modelConfidence: candidate.confidence,
-            languageProbability: languageProbability(of: language, in: candidate.text),
-            prior: language.isEmpty ? 0.5 : TranscriptionLanguageMemory.prior(for: language, peerID: peerID),
-            audioSeconds: audioSeconds
-        )
+    /// How much a finished note teaches the memory. Only what the audio itself settled counts:
+    /// `languageProbability` is Whisper's probability for the language the note was decoded in,
+    /// before any weighting. A note the history carried teaches nothing, so a wrong entry can't
+    /// feed itself. Longer notes count more, up to 8 s.
+    static func learningWeight(audioSeconds: Double, languageProbability: Double) -> Double {
+        guard languageProbability.isFinite, audioSeconds > 0 else { return 0 }
+        let settled = (languageProbability - decisiveProbability) / (certainProbability - decisiveProbability)
+        return min(1, audioSeconds / 8) * min(1, max(0, settled))
     }
 }

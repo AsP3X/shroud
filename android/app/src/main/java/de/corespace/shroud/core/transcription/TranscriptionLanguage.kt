@@ -5,7 +5,6 @@ import android.os.LocaleList
 import androidx.core.content.edit
 import de.corespace.shroud.core.storage.StorageSeal
 import java.util.Locale
-import java.util.UUID
 
 /**
  * Which language a voice note is decoded in (iOS `TranscriptionLanguage`,
@@ -13,14 +12,13 @@ import java.util.UUID
  * (absent = automatic) in [de.corespace.shroud.core.storage.PrefsFiles.VOICE]. Log Out wipes
  * that key; [StorageSeal] drops the write while a wipe is running.
  *
- * Automatic is not a coin flip: Whisper prefers English, so a region (`en-DE`) and the
- * per-chat memory are challengers, not a forced language, until the memory is sure.
- * Nothing here leaves the device.
+ * Automatic means Whisper hears the language. The device's languages (UI and region, so `en-DE`
+ * counts German) are the candidates its probabilities are weighed with ([SpokenLanguagePick]);
+ * they never replace what the audio says. Nothing here leaves the device.
  */
 class TranscriptionLanguage(
     private val prefs: SharedPreferences,
     private val seal: StorageSeal,
-    private val memory: TranscriptionLanguageMemory,
 ) {
     /** Test seam — replaces `LocaleList.getDefault()` when non-null (`preferredLanguageTagsOverride`). */
     var preferredLanguageTagsOverride: List<String>? = null
@@ -64,30 +62,29 @@ class TranscriptionLanguage(
         return ordered.map { Locale.forLanguageTag(it) }
     }
 
+    /** The pinned language as a Whisper code, or null for automatic (also for a pin Whisper can't use). */
+    fun pinnedLanguage(): String? {
+        val pinned = override ?: return null
+        val code = normalize(languageCode(pinned))
+        return code.takeIf { it in WHISPER_SET }
+    }
+
     /**
-     * Languages to try, best first (`decodeHints`, `TranscriptionLanguage.swift:78-107`).
-     * A pin is the only entry. Otherwise: this chat's memory, the global habit when a chat is
-     * given, the UI languages, then the region.
+     * The languages this device lives in, UI languages first, then the region's (`deviceLanguages`,
+     * `TranscriptionLanguage.swift`). An English UI in Germany gives `en`, `de`.
      */
-    fun decodeHints(conversationId: UUID?): List<String> {
-        override?.let { pinned ->
-            val code = normalize(languageCode(pinned))
-            return if (code in WHISPER_SET) listOf(code) else emptyList()
-        }
+    fun deviceLanguages(): List<String> {
         val ordered = LinkedHashSet<String>()
-        fun add(raw: String?) {
-            if (raw == null) return
+        fun add(raw: String) {
             val code = normalize(raw)
             if (code in WHISPER_SET) ordered += code
         }
-        add(memory.expectedLanguage(conversationId))
-        if (conversationId != null) add(memory.expectedLanguage(null))
         for (tag in preferredLanguageTags()) add(languageCode(Locale.forLanguageTag(tag.replace('_', '-'))))
         for (code in regionLanguageHints()) add(code)
         return ordered.toList()
     }
 
-    /** Spoken language implied by region, so `en-DE` still challenges English (`regionLanguageHints`). */
+    /** Spoken language implied by region, so `en-DE` also counts German (`regionLanguageHints`). */
     fun regionLanguageHints(): List<String> {
         val tags = preferredLanguageTags().toMutableList()
         tags += (currentLocaleOverride ?: Locale.getDefault()).toLanguageTag()
@@ -104,9 +101,6 @@ class TranscriptionLanguage(
 
     companion object {
         const val LOCALE_KEY = "transcription.locale"
-
-        /** Above this, conversation history may skip auto-detect. English is never forced. */
-        const val TRUSTED_PRIOR = 0.75
 
         val WHISPER_CODES = listOf(
             "en", "de", "es", "fr", "it", "pt", "nl", "pl", "ru", "uk",
@@ -151,33 +145,11 @@ class TranscriptionLanguage(
         fun languageForRegion(region: String): String? = REGIONS[region.uppercase()]
 
         /**
-         * Languages detection should prefer ([SpokenLanguagePick]): the hints, and English, which
-         * Whisper is best at and many people mix in (`detectionCandidates`). No hints, no preference.
+         * Languages detection weighs fully ([SpokenLanguagePick]): the device's, and English, which
+         * Whisper is best at and many people mix in (`detectionCandidates`). None, no preference.
          */
-        fun detectionCandidates(hints: List<String>): List<String> =
-            if (hints.isEmpty() || "en" in hints) hints else hints + "en"
-
-        /**
-         * Second pass when detection landed on English or failed (`challenger`, `:112-121`).
-         * A French or German detection is kept. The challenger is never English.
-         */
-        fun challenger(detected: String?, hints: List<String>): String? {
-            val found = detected?.let(::normalize) ?: ""
-            if (found.isNotEmpty() && found != "en") return null
-            for (hint in hints) {
-                val code = normalize(hint)
-                if (code.isEmpty() || code == found || code == "en") continue
-                return code
-            }
-            return null
-        }
-
-        /** English is Whisper's default; forcing it would hide every other language (`shouldForceLanguage`). */
-        fun shouldForceLanguage(code: String, prior: Double): Boolean {
-            val normalized = normalize(code)
-            if (normalized !in WHISPER_SET || normalized == "en") return false
-            return prior >= TRUSTED_PRIOR
-        }
+        fun detectionCandidates(languages: List<String>): List<String> =
+            if (languages.isEmpty() || "en" in languages) languages else languages + "en"
 
         /** `iw` / `in` are the legacy JDK codes for Hebrew and Indonesian. */
         internal fun languageCode(locale: Locale): String = when (val code = locale.language.lowercase()) {

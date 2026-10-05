@@ -12,13 +12,17 @@ export const WHISPER_MODELS: Record<TranscriptionModelId, string> = {
 export type TranscriptionRequest = {
   /** ISO 639-1 (`en`, `de`). Omit to let Whisper detect. */
   language?: string | null;
-  /** Languages this person uses; detection prefers them (`pickSpokenLanguage`). */
+  /** The device's languages; detection weighs Whisper's probabilities with them (`pickSpokenLanguage`). */
   candidates?: readonly string[];
+  /** The languages heard in this chat, by weight. Detection leans on them for an unsure note. */
+  history?: Readonly<Record<string, number>>;
 };
 
 export type TranscriptionOutput = {
   text: string;
   language: string | null;
+  /** What the audio alone gave `language` when the engine detected it; null when it was asked for one. */
+  languageProbability?: number | null;
 };
 
 export type TranscriptionEngine = {

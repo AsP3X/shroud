@@ -41,7 +41,8 @@ data class ClipSeconds(val start: Double, val endInclusive: Double)
 /**
  * One decode (`TranscriptionRequest`, `TranscriptionTypes.swift`). [language] null means detect.
  * [hints] are chat words; the whisper.cpp engine does not prompt with them. [candidateLanguages]
- * are the languages this person uses; detection prefers them ([SpokenLanguagePick]).
+ * are the device's languages and [languageHistory] the chat's; detection weighs Whisper's
+ * probabilities with both ([SpokenLanguagePick]).
  */
 data class TranscriptionRequest(
     val language: String?,
@@ -49,13 +50,15 @@ data class TranscriptionRequest(
     val profile: TranscriptionProfile,
     val clipSeconds: ClipSeconds?,
     val candidateLanguages: List<String> = emptyList(),
+    val languageHistory: Map<String, Double> = emptyMap(),
 ) {
     companion object {
         fun voiceNote(
             language: String? = null,
             hints: List<String> = emptyList(),
             candidateLanguages: List<String> = emptyList(),
-        ) = TranscriptionRequest(language, hints, TranscriptionProfile.voiceNote, null, candidateLanguages)
+            languageHistory: Map<String, Double> = emptyMap(),
+        ) = TranscriptionRequest(language, hints, TranscriptionProfile.voiceNote, null, candidateLanguages, languageHistory)
 
         fun liveCall(language: String? = null) =
             TranscriptionRequest(language, emptyList(), TranscriptionProfile.liveCall, null)
@@ -114,22 +117,35 @@ object WhisperLanguageToken {
  * The spoken language from Whisper's language probabilities (`SpokenLanguagePick`,
  * `TranscriptionTypes.swift`; web `pickSpokenLanguage`).
  *
- * Whisper picks from about a hundred languages and confuses close ones on short notes (German
- * heard as Dutch or Afrikaans). The candidates are the languages this person is known to use. A
- * language outside them wins only when it is [OUTSIDE_CANDIDATE_ODDS] times likelier than the best
- * candidate, so a note that really is in another language still gets it. With no candidates the
- * most likely language wins.
+ * The audio decides; what is known about this person only weighs it. The candidates are the
+ * device's languages and English: a language outside them needs [OUTSIDE_CANDIDATE_ODDS] times
+ * the probability. A chat's history makes the language it is spoken in up to
+ * 1 + [HISTORY_ODDS] times likelier, at full strength once [HISTORY_SATURATION] notes' worth has
+ * been heard. That settles a short note Whisper is unsure about, and a clear note in another
+ * language still wins. With no candidates and no history the most likely language wins.
  */
 object SpokenLanguagePick {
     const val OUTSIDE_CANDIDATE_ODDS = 5.0
+    const val HISTORY_ODDS = 2.0
+    const val HISTORY_SATURATION = 3.0
 
     /** Whisper's code where it differs from the ISO code the hints use. */
     private val WHISPER_CODE = mapOf("nb" to "no")
 
-    fun pick(probabilities: Map<String, Double>, candidates: List<String>): String? {
+    fun pick(
+        probabilities: Map<String, Double>,
+        candidates: List<String>,
+        history: Map<String, Double> = emptyMap(),
+    ): String? {
         val allowed = candidates.map { WHISPER_CODE[it] ?: it }.toSet()
-        fun score(code: String, probability: Double) =
-            if (allowed.isEmpty() || code in allowed) probability else probability / OUTSIDE_CANDIDATE_ODDS
+        val heard = history.entries.groupBy({ WHISPER_CODE[it.key] ?: it.key }, { it.value }).mapValues { it.value.sum() }
+        val total = heard.values.filter { it > 0.0 }.sum()
+        val strength = HISTORY_ODDS * minOf(1.0, total / HISTORY_SATURATION)
+        fun score(code: String, probability: Double): Double {
+            val known = if (allowed.isEmpty() || code in allowed) 1.0 else 1.0 / OUTSIDE_CANDIDATE_ODDS
+            val share = if (total > 0.0) (heard[code] ?: 0.0).coerceAtLeast(0.0) / total else 0.0
+            return probability * known * (1.0 + strength * share)
+        }
         // Ties go to the smaller code, so the pick never depends on map order.
         return probabilities.entries
             .filter { it.value.isFinite() }
@@ -156,11 +172,18 @@ object WhisperReportedLanguage {
 }
 
 /**
- * One transcription (`TranscriptionTypes.swift:250-254`). [toString] omits [text]: a log must not
- * record a transcript.
+ * One transcription (`TranscriptionOutput`, `TranscriptionTypes.swift`). [languageProbability] is
+ * what the audio alone gave [language] when the engine detected it, null when it was asked for one.
+ * [toString] omits [text]: a log must not record a transcript.
  */
-class TranscriptionOutput(val text: String, val language: String?, val confidence: Double) {
-    override fun toString(): String = "TranscriptionOutput(language=$language, confidence=$confidence, chars=${text.length})"
+class TranscriptionOutput(
+    val text: String,
+    val language: String?,
+    val confidence: Double,
+    val languageProbability: Double? = null,
+) {
+    override fun toString(): String =
+        "TranscriptionOutput(language=$language, confidence=$confidence, chars=${text.length})"
 }
 
 /** The engine could not run. [message] is the sentence shown to the user (`TranscriptionTypes.swift:256-271`). */

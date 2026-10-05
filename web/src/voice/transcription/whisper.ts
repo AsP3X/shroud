@@ -9,14 +9,15 @@ type WorkerIn =
       sampleRate: number;
       language: string | null;
       candidates: readonly string[];
+      history: Readonly<Record<string, number>>;
     };
 
-type WorkerResult = { text: string; language: string | null };
+type WorkerResult = { text: string; language: string | null; languageProbability: number | null };
 
 type WorkerOut =
   | { type: "progress"; fraction: number }
   | { type: "ready" }
-  | { type: "result"; text: string; language?: string | null }
+  | { type: "result"; text: string; language?: string | null; languageProbability?: number | null }
   | { type: "error"; message: string };
 
 /**
@@ -48,7 +49,11 @@ export class WhisperEngine implements TranscriptionEngine {
       if (!waiting) return;
       if (msg.type === "error") waiting.reject(new Error(msg.message));
       else if (msg.type === "result") {
-        waiting.resolve({ text: msg.text, language: msg.language ?? null });
+        waiting.resolve({
+          text: msg.text,
+          language: msg.language ?? null,
+          languageProbability: msg.languageProbability ?? null,
+        });
       } else waiting.resolve();
     };
     worker.onerror = (event) => {
@@ -123,10 +128,15 @@ export class WhisperEngine implements TranscriptionEngine {
         sampleRate,
         language: request.language ?? null,
         candidates: request.candidates ?? [],
+        history: request.history ?? {},
       },
       [copy.buffer],
     );
-    if (!sent) return { text: "", language: request.language ?? null };
-    return { text: sent.text, language: sent.language ?? request.language ?? null };
+    if (!sent) return { text: "", language: request.language ?? null, languageProbability: null };
+    return {
+      text: sent.text,
+      language: sent.language ?? request.language ?? null,
+      languageProbability: sent.languageProbability,
+    };
   }
 }
