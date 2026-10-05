@@ -5,7 +5,7 @@ Grok owns everything non-UI.** You implement exactly one C item (your prompt nam
 boundary "helpfully".
 
 ## Sources (read the parts your item needs)
-- `/Users/nvorberg/Documents/development/shroud/CLAUDE.md` (project rules).
+- `/Users/nvorberg/Documents/development/shroud/AGENTS.md` (project rules, each linked to its file in `docs/agent-rules/`).
 - Owner's split: `/Users/nvorberg/Documents/development/shroud/docs/android-handover.md`, which is untracked
   and lives only in the main checkout, so read it by that absolute path. You need:
   - §2: rules R1–R5 and contracts K1–K12;
@@ -87,11 +87,11 @@ boundary "helpfully".
 - **Worktree:** you work in an isolated git worktree.
   - If your branch already exists (`git rev-parse --verify --quiet <branch>`), it holds work from an earlier, interrupted run of your item: `git checkout <branch>` (NEVER `checkout -B`), review what is there, and continue.
   - Otherwise `git checkout -b <branch> claude/android-ui`.
-- **Commit EARLY and OFTEN**, at least after every meaningful step and before every long build. Uncommitted work is lost when a session ends. Message: one plain sentence starting `ADD: `, `TASK: ` or `FIX: `, then a blank line and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- **Commit EARLY and OFTEN**, at least after every meaningful step and before every long build. Uncommitted work is lost when a session ends. Message: one plain sentence starting `ADD: `, `TASK: ` or `FIX: `, and no Co-Authored-By or other AI attribution line (AGENTS.md).
 - **Never** push, merge into `dev` or `grok/*`, rewrite history, or commit anything under `.claude/`.
 
 ## Design
-CLAUDE.md wants every UI change in `design/Android-App.pen`. In this run, only the separate design item C16 edits the `.pen` (the Pen app is shared and parallel agents would clobber each other). So in your final report, list every visible UI state you built or changed under **DESIGN NOTES**:
+The design-sync rule (`docs/agent-rules/design-sync.md`) wants every UI change in `design/Android-App.pen`. In this run, only the separate design item C16 edits the `.pen` (the Pen app is shared and parallel agents would clobber each other). So in your final report, list every visible UI state you built or changed under **DESIGN NOTES**:
 - screen and state;
 - exact copy;
 - sizes in dp/sp;

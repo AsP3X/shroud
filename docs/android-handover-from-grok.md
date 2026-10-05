@@ -312,7 +312,7 @@ If a contract is insufficient, STOP that item and list the gap (path, signature,
 which C item), then continue with the next item that does not depend on it.
 
 BEFORE C1
-- Read CLAUDE.md, docs/android-handover.md, and docs/android-handover-from-grok.md.
+- Read AGENTS.md (and its rule files), docs/android-handover.md, and docs/android-handover-from-grok.md.
 - Branch from grok/phase-a (2e53e5a). Do not branch from dev: K2–K11 are not on dev.
 - The android/w3-* branches are your starting material (based on c0dd437). Conflicts in
   Grok-owned paths are not yours. Stop and report.

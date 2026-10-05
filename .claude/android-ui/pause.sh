@@ -7,9 +7,7 @@ git worktree list --porcelain | awk '/^worktree /{p=$2} /^branch /{print p" "$2}
   case "$b" in claude/c*) ;; *) continue ;; esac
   if [ -n "$(git -C "$wt" status --porcelain -- android)" ]; then
     git -C "$wt" add -A android
-    git -C "$wt" commit -q -m "WIP: Save the paused UI work on $b (stopped before the usage limit; unverified, may not compile).
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" && echo "committed $b"
+    git -C "$wt" commit -q -m "WIP: Save the paused UI work on $b (stopped before the usage limit; unverified, may not compile)." && echo "committed $b"
   fi
   git worktree remove --force --force "$wt" && echo "removed $wt ($b)"
 done

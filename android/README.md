@@ -1,7 +1,7 @@
 # Shroud for Android
 
 Kotlin + Jetpack Compose. Plan and open decisions: [docs/android-plan.md](../docs/android-plan.md).
-Design: `design/Android-App.pen` — keep it in sync with every UI change (see `CLAUDE.md`).
+Design: `design/Android-App.pen` — keep it in sync with every UI change (see `docs/agent-rules/design-sync.md`).
 
 **One build, no Google.** There are no product flavors and no Firebase, Google Play services,
 ML Kit, Tink, Play Core or analytics code anywhere. Push is UnifiedPush through a distributor the

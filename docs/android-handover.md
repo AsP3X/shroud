@@ -498,7 +498,7 @@ The UI (`ui/update/UpdatePrompts.kt`, layer 95 in `RootScreen`) opens links with
 
 **Every C item is done only when:**
 - `:app:testDebugUnitTest :app:lintDebug :app:verifyNoMaterial :app:verifyNoGoogleServices :app:assembleDebug` is green;
-- the changed screens match their frames in `design/Android-App.pen` (CLAUDE.md); new or changed UI lands in the `.pen` in the same item, through Pencil, followed by the owner's ⌘S and an audited diff.
+- the changed screens match their frames in `design/Android-App.pen` (`docs/agent-rules/design-sync.md`); new or changed UI lands in the `.pen` in the same item, through Pencil, followed by the owner's ⌘S and an audited diff.
 
 **C1. Integrate the stopped W3 UI branches**
 - **Outcome:** one UI branch based on `dev` (after phase A is merged) contains the work of `android/w3-{shell,lock-onboard,chats,settings-a,settings-b,contacts-ui,thread-list,thread-bubbles,composer}`, compiling with the gate green. The interim root (`ui/ShroudApp.kt`, `SignedInPlaceholder.kt`, `ui/navigation/AppRouter.kt`) is replaced by the shell.
@@ -705,7 +705,7 @@ The UI (`ui/update/UpdatePrompts.kt`, layer 95 in `RootScreen`) opens links with
 - **History:** `dev` is never rewritten. The WIP-titled commits stay. No force pushes.
 - **The server API contract** (`server/**` routes and payloads) is unchanged, except G11's `assetlinks.json`.
 - **iOS and web UI.** `design/iOS-App.pen`, `design/iPad-App.pen` and `design/webclient.pen` are not touched in this handover.
-- **Owner and agent configuration:** `CLAUDE.md`, `.claude/**`, the plan folder (read-only for both), `gradle/gradle-daemon-jvm.properties` (JDK 21 pin), the Gradle wrapper and its checksum.
+- **Owner and agent configuration:** `AGENTS.md`, `CLAUDE.md`, `docs/agent-rules/**`, `.claude/**`, the plan folder (read-only for both), `gradle/gradle-daemon-jvm.properties` (JDK 21 pin), the Gradle wrapper and its checksum.
 - **The owner's emulator** `Pixel_10_Pro_XL` (emulator-5554), the owner's simulators, and the owner's dev database (`shroud-postgres`). Use throwaway stacks only (`android/e2e/stack-up.sh` with its env overrides).
 - **This file** (`docs/android-handover.md`): only the owner edits it.
 
@@ -755,7 +755,7 @@ ios/shroud/Services/**, ios/ShroudShared/**, ios/shroudTests/**, web/src/**/*.ts
 FORBIDDEN: $SRC/ui/**, $SRC/MainActivity.kt, $SRC/di/ShellModule.kt,
 android/app/src/main/res/{drawable,mipmap*,values*,font}/**, android/app/src/test/java/de/corespace/shroud/ui/**,
 android/app/src/androidTest/java/de/corespace/shroud/{ui,e2e/ui}/**, design/** (all .pen files),
-ios/shroud/{Features,ShroudUI,App}/**, web/src/components/**, any *.tsx, CLAUDE.md, .claude/**,
+ios/shroud/{Features,ShroudUI,App}/**, web/src/components/**, any *.tsx, AGENTS.md, CLAUDE.md, docs/agent-rules/**, .claude/**,
 the plan folder (read-only), gradle/gradle-daemon-jvm.properties, the Gradle wrapper.
 The android/w3-* branches hold Claude's UI work: read them for reference, never commit to them.
 
@@ -892,7 +892,7 @@ depend on it. Never add logic, I/O, API calls, SharedPreferences, MediaStore, fi
 under ui/: UI-side ports adapters only forward 1:1 to Grok's public members (rule R4).
 
 BEFORE C1
-- Read CLAUDE.md, docs/android-handover.md (all sections), the plan
+- Read AGENTS.md (and its rule files), docs/android-handover.md (all sections), the plan
   /Users/nvorberg/.claude/projects/-Users-nvorberg-Documents-development-shroud/android-port-specs/00-plan.md
   (§1.7.12–1.7.13, §2.4 cards of the W3 UI packages, §2.5 W4-A11Y-UI/W4-DESIGN, §6.4, §6.6) and the
   memory notes android-port-plan / android-build-env.
@@ -925,8 +925,8 @@ RULES
   file to the front first: open -a /Applications/Pen.app design/Android-App.pen). Tell the owner the
   .pen change is not on disk until they press ⌘S; audit the diff against HEAD before committing it.
 - Render core-produced sentences verbatim (R2); own all other interface copy, matching iOS.
-- Commits: one plain sentence starting "ADD: ", "TASK: " or "FIX: ", ending with
-  "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"; commit early and often; do not push or merge into dev
+- Commits: one plain sentence starting "ADD: ", "TASK: " or "FIX: ", with
+  no Co-Authored-By or other AI attribution line (AGENTS.md); commit early and often; do not push or merge into dev
   without the owner's go (OPEN-1); never rewrite history.
 - When C1–C17 are done, report to the owner so Grok can start phase B (G9–G11).
 ````

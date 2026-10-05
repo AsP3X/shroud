@@ -82,7 +82,7 @@ the design on purpose and goes in wave 3.
   (`ios/shroudTests`), not against prose.
 - **Security invariants 1–13 in architecture.md hold.** Where an invariant names Keychain or
   Face ID, the Android mapping is in [Key storage](#1-key-storage-and-unlock).
-- **Design stays in sync.** `android/` ↔ `design/Android-App.pen`, as in `CLAUDE.md`.
+- **Design stays in sync.** `android/` ↔ `design/Android-App.pen`, as in `docs/agent-rules/design-sync.md`.
 
 ## Decisions
 
