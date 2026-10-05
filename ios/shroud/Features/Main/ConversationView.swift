@@ -966,7 +966,7 @@ struct ConversationView: View {
                                 // bubble while its menu is up cancels them; the gestures below sit
                                 // outside and have already done their job.
                                 .disabled(focusedMenu?.message.id == message.id)
-                                // Swipe left to answer it (Telegram). Disabled while the
+                                // Swipe right to answer it. Disabled while the
                                 // context menu owns the screen, and for bubbles the peer
                                 // could not resolve yet.
                                 .swipeToReply(

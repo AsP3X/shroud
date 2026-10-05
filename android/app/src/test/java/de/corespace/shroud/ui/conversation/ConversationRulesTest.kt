@@ -41,22 +41,22 @@ class ConversationRulesTest {
 
     @Test
     fun swipeThresholdsAndIconInsetsDependOnTheSide() {
-        assertEquals(45f, SwipeToReplyMetrics.threshold(isMine = false), 0f)
-        assertEquals(60f, SwipeToReplyMetrics.threshold(isMine = true), 0f)
-        assertEquals(8.5f, SwipeToReplyMetrics.iconInset(isMine = false), 0f)
-        assertEquals(42.5f, SwipeToReplyMetrics.iconInset(isMine = true), 0f)
+        assertEquals(60f, SwipeToReplyMetrics.threshold(isMine = false), 0f)
+        assertEquals(45f, SwipeToReplyMetrics.threshold(isMine = true), 0f)
+        assertEquals(42.5f, SwipeToReplyMetrics.iconInset(isMine = false), 0f)
+        assertEquals(8.5f, SwipeToReplyMetrics.iconInset(isMine = true), 0f)
         assertEquals(33f, SwipeToReplyMetrics.ICON_SIDE, 0f)
     }
 
     @Test
-    fun swipeRecognitionLeavesRightwardToBackAndVerticalToTheList() {
-        assertEquals(Decision.Fail, SwipeToReplyMetrics.decide(3f, 0f))
+    fun swipeRecognitionTakesRightwardAndLeavesVerticalToTheList() {
+        assertEquals(Decision.Fail, SwipeToReplyMetrics.decide(-3f, 0f))
         assertEquals(Decision.Fail, SwipeToReplyMetrics.decide(0f, 3f))
-        assertEquals(Decision.Fail, SwipeToReplyMetrics.decide(-1f, -3f))
-        assertEquals(Decision.Begin, SwipeToReplyMetrics.decide(-3f, 0f))
-        assertEquals(Decision.Begin, SwipeToReplyMetrics.decide(-3f, 1f))
-        assertEquals(Decision.Wait, SwipeToReplyMetrics.decide(-1f, 1f))
-        assertEquals(Decision.Wait, SwipeToReplyMetrics.decide(-3f, 2f))
+        assertEquals(Decision.Fail, SwipeToReplyMetrics.decide(1f, -3f))
+        assertEquals(Decision.Begin, SwipeToReplyMetrics.decide(3f, 0f))
+        assertEquals(Decision.Begin, SwipeToReplyMetrics.decide(3f, 1f))
+        assertEquals(Decision.Wait, SwipeToReplyMetrics.decide(1f, 1f))
+        assertEquals(Decision.Wait, SwipeToReplyMetrics.decide(3f, 2f))
     }
 
     // ---- What the menu offers (CV:2032-2042, 2225-2264, 1403-1412) ----------------------------------

@@ -47,15 +47,16 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Geometry and thresholds of swipe to reply, matching Telegram (`SwipeToReplyMetrics`,
- * `SwipeToReply.swift:4-35`; conversation-thread §15.1). Pure; dp.
+ * Geometry and thresholds of swipe to reply: Telegram's numbers, mirrored so the row is pulled to the
+ * right and the icon comes in from the leading edge (`SwipeToReplyMetrics`, `SwipeToReply.swift`;
+ * conversation-thread §15.1). Pure; dp.
  */
 object SwipeToReplyMetrics {
-    /** How far an incoming bubble travels before the gesture arms. */
-    const val INCOMING_THRESHOLD = 45f
+    /** How far an outgoing bubble travels before the gesture arms. */
+    const val OUTGOING_THRESHOLD = 45f
 
-    /** Outgoing bubbles start further from the right edge, so they ask for a longer pull. */
-    const val OUTGOING_THRESHOLD = 60f
+    /** Incoming bubbles start on the edge the icon comes in from, so they ask for a longer pull. */
+    const val INCOMING_THRESHOLD = 60f
 
     /** Past the threshold the row keeps moving, with progressively more resistance. */
     const val BAND_RANGE = 100f
@@ -65,20 +66,20 @@ object SwipeToReplyMetrics {
     const val MAX_TRAVEL = 180f
     const val ICON_SIDE = 33f
 
-    /** Row trailing edge → icon centre at rest (incoming rows). */
-    const val INCOMING_ICON_INSET = 8.5f
+    /** Row leading edge → icon centre at rest (outgoing rows). */
+    const val OUTGOING_ICON_INSET = 8.5f
 
-    /** Outgoing rows keep the icon further out, where the bubble was before it moved. */
-    const val OUTGOING_ICON_INSET = 42.5f
+    /** Incoming rows keep the icon further out, where the bubble was before it moved. */
+    const val INCOMING_ICON_INSET = 42.5f
 
-    /** Movement (dp) before the recogniser decides (`SwipeToReplyGestureRecognizer`, `:72-87`). */
+    /** Movement (dp) before the recogniser decides (`SwipeToReplyGestureRecognizer`). */
     const val DECISION_DISTANCE = 2f
 
     fun threshold(isMine: Boolean): Float = if (isMine) OUTGOING_THRESHOLD else INCOMING_THRESHOLD
 
     fun iconInset(isMine: Boolean): Float = if (isMine) OUTGOING_ICON_INSET else INCOMING_ICON_INSET
 
-    /** Rubber banding past the threshold — 1:1 until then, asymptotic after (`:30-35`). */
+    /** Rubber banding past the threshold — 1:1 until then, asymptotic after. */
     fun banded(distance: Float, threshold: Float): Float {
         if (distance <= threshold) return max(0f, distance)
         val beyond = distance - threshold
@@ -87,12 +88,12 @@ object SwipeToReplyMetrics {
     }
 
     /**
-     * The recogniser's call on a movement of ([dx], [dy]) dp from the touch-down (`:66-87`):
-     * rightward belongs to back navigation, mostly vertical to the list's scroll; a clearly leftward
-     * movement starts the swipe; anything smaller waits.
+     * The recogniser's call on a movement of ([dx], [dy]) dp from the touch-down: leftward is not a
+     * reply, mostly vertical belongs to the list's scroll; a clearly rightward movement starts the
+     * swipe; anything smaller waits. Back is the system's edge gesture and never reaches the row.
      */
     fun decide(dx: Float, dy: Float): Decision = when {
-        dx > DECISION_DISTANCE -> Decision.Fail
+        dx < -DECISION_DISTANCE -> Decision.Fail
         abs(dy) > DECISION_DISTANCE && abs(dy) > abs(dx) * 2 -> Decision.Fail
         abs(dx) > DECISION_DISTANCE && abs(dy) * 2 < abs(dx) -> Decision.Begin
         else -> Decision.Wait
@@ -111,8 +112,8 @@ object SwipeToReplyMetrics {
  * Becoming disabled mid-swipe (the menu opened, the message was deleted) settles without replying.
  *
  * Agent: CALLS [onReply] once, on release past the threshold (the raw translation decides, not the
- * banded one). Decides on the first 2 dp exactly as the iOS recogniser: right → fail (the system
- * back gesture), vertical → fail without consuming so the list scrolls, left → takes the drag and
+ * banded one). Decides on the first 2 dp exactly as the iOS recogniser: left → fail, vertical →
+ * fail without consuming so the list scrolls, right → takes the drag and
  * consumes its horizontal movement. Marks [press] as swiping so a hold can't open the menu under it.
  * TalkBack's "Reply" is a row action (`BubbleContext.accessibilityActions`). The swipe owns its own
  * offset state, so a drag never recomposes the thread.
@@ -146,7 +147,7 @@ fun SwipeToReplyRow(
         if (triggerReply) currentOnReply()
     }
 
-    // A row that stops being swipeable mid-gesture must not stay parked off to the left (`:241-245`).
+    // A row that stops being swipeable mid-gesture must not stay parked off to the right.
     LaunchedEffect(enabled) {
         if (!enabled && swiping) settle(triggerReply = false)
     }
@@ -184,17 +185,17 @@ fun SwipeToReplyRow(
                     translation = (change.position.x - down.position.x).toDp().value
                     change.consume()
                     if (!change.pressed) break
-                    val distance = SwipeToReplyMetrics.banded(-translation, threshold)
-                    scope.launch { offset.snapTo(-distance) }
+                    val distance = SwipeToReplyMetrics.banded(translation, threshold)
+                    scope.launch { offset.snapTo(distance) }
                     progress = min(1f, distance / threshold)
-                    val nowArmed = -translation >= threshold
+                    val nowArmed = translation >= threshold
                     if (nowArmed != armed) {
                         armed = nowArmed
                         // Telegram fires once, on the way in — crossing back and forth stays quiet (`:262-263`).
                         if (nowArmed) haptic(Haptic.Heavy)
                     }
                 }
-                if (swiping) settle(triggerReply = !cancelled && -translation >= threshold)
+                if (swiping) settle(triggerReply = !cancelled && translation >= threshold)
             }
         },
     ) {
@@ -202,9 +203,9 @@ fun SwipeToReplyRow(
         AnimatedVisibility(
             visible = swiping,
             modifier = Modifier
-                .align(Alignment.CenterEnd)
+                .align(Alignment.CenterStart)
                 .offset {
-                    val x = SwipeToReplyMetrics.iconInset(isMine) + SwipeToReplyMetrics.ICON_SIDE / 2 + offset.value
+                    val x = offset.value - SwipeToReplyMetrics.iconInset(isMine) - SwipeToReplyMetrics.ICON_SIDE / 2
                     IntOffset(x.dp.roundToPx(), 0)
                 },
             enter = fadeIn(Motion.respecting(reduceMotion, Motion.snappy())) +
@@ -218,7 +219,7 @@ fun SwipeToReplyRow(
 }
 
 /**
- * The circle that slides in from the trailing edge while a row is swiped (`SwipeReplyIcon`,
+ * The circle that slides in from the leading edge while a row is swiped (`SwipeReplyIcon`,
  * `SwipeToReply.swift:154-202`): 33 dp, `accentSoft` filling to `accent` once armed; a 2 dp progress
  * ring (accent @ 0.85) from 12 o'clock; the reply glyph (design Lucide `reply`) in accent, white
  * once armed, revealed with the pull. Pops to full size with `Motion.bouncy` on arming. Decorative.

@@ -1,22 +1,23 @@
 import SwiftUI
 import UIKit
 
-/// Geometry and thresholds of the swipe-to-reply gesture, matching Telegram iOS.
+/// Geometry and thresholds of the swipe-to-reply gesture: Telegram iOS's numbers, mirrored so the
+/// row is pulled to the right and the icon comes in from the leading edge.
 enum SwipeToReplyMetrics {
-    /// How far an **incoming** bubble travels before the gesture arms.
-    static let incomingThreshold: CGFloat = 45
-    /// Outgoing bubbles start further from the right edge, so they ask for a longer pull.
-    static let outgoingThreshold: CGFloat = 60
+    /// How far an **outgoing** bubble travels before the gesture arms.
+    static let outgoingThreshold: CGFloat = 45
+    /// Incoming bubbles start on the edge the icon comes in from, so they ask for a longer pull.
+    static let incomingThreshold: CGFloat = 60
     /// Past the threshold the row keeps moving, but with progressively more resistance.
     static let bandRange: CGFloat = 100
     static let bandCoefficient: CGFloat = 0.4
     /// Hard stop, so a long drag can never push the bubble off screen.
     static let maxTravel: CGFloat = 180
     static let iconSide: CGFloat = 33
-    /// Distance from the row's trailing edge to the icon's centre at rest (incoming rows).
-    static let incomingIconInset: CGFloat = 8.5
-    /// Outgoing rows keep the icon further out, where the bubble was before it moved.
-    static let outgoingIconInset: CGFloat = 42.5
+    /// Distance from the row's leading edge to the icon's centre at rest (outgoing rows).
+    static let outgoingIconInset: CGFloat = 8.5
+    /// Incoming rows keep the icon further out, where the bubble was before it moved.
+    static let incomingIconInset: CGFloat = 42.5
 
     static func threshold(isMine: Bool) -> CGFloat {
         isMine ? outgoingThreshold : incomingThreshold
@@ -35,12 +36,13 @@ enum SwipeToReplyMetrics {
     }
 }
 
-/// Pan that only takes over once the finger is clearly moving **left**.
+/// Pan that only takes over once the finger is clearly moving **right**.
 ///
 /// Human: Without this test the recogniser would fight the thread's own scrolling and the
 /// interactive back-swipe. Telegram makes the same call in `ChatSwipeToReplyRecognizer`: fail
-/// as soon as the gesture looks vertical (or rightward), and only start tracking once the
-/// horizontal component clearly dominates.
+/// as soon as the gesture looks vertical (or leftward), and only start tracking once the
+/// horizontal component clearly dominates. A drag that starts on the leading edge is the back
+/// swipe's (`BackSwipeMetrics.edgeWidth`), so the recogniser fails there straight away.
 /// Agent: Never calls `super.touchesMoved` before validating, so `translation(in:)` cannot
 /// report a drag the recogniser decided not to own.
 final class SwipeToReplyGestureRecognizer: UIPanGestureRecognizer {
@@ -63,6 +65,10 @@ final class SwipeToReplyGestureRecognizer: UIPanGestureRecognizer {
             state = .failed
             return
         }
+        if let window = view?.window, BackSwipeMetrics.isInEdge(touch.location(in: window).x, of: window) {
+            state = .failed
+            return
+        }
         origin = touch.location(in: view)
     }
 
@@ -72,8 +78,8 @@ final class SwipeToReplyGestureRecognizer: UIPanGestureRecognizer {
             let location = touch.location(in: view)
             let dx = location.x - origin.x
             let dy = location.y - origin.y
-            // Rightward: that belongs to the navigation back-swipe, never to a reply.
-            if dx > 2 {
+            // Leftward is not a reply.
+            if dx < -2 {
                 state = .failed
                 return
             }
@@ -129,7 +135,7 @@ private struct SwipeToReplyGesture: UIGestureRecognizerRepresentable {
     }
 }
 
-/// The circle that slides in from the trailing edge while a row is being swiped.
+/// The circle that slides in from the leading edge while a row is being swiped.
 ///
 /// Human: Progress draws as a ring around the glyph; crossing the threshold fills the circle
 /// and pops it, which is the visual half of the "you can let go now" haptic.
@@ -184,7 +190,7 @@ struct SwipeToReplyModifier: ViewModifier {
     let isMine: Bool
     let onReply: () -> Void
 
-    /// Banded translation actually applied to the row (≤ 0).
+    /// Banded translation actually applied to the row (≥ 0).
     @State private var offset: CGFloat = 0
     /// 0…1 toward the threshold; drives the icon.
     @State private var progress: CGFloat = 0
@@ -199,13 +205,13 @@ struct SwipeToReplyModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .offset(x: offset)
-            .overlay(alignment: .trailing) {
+            .overlay(alignment: .leading) {
                 if isSwiping {
                     SwipeReplyIcon(progress: progress, isArmed: isArmed)
                         .offset(
-                            x: SwipeToReplyMetrics.iconInset(isMine: isMine)
-                                + SwipeToReplyMetrics.iconSide / 2
-                                + offset
+                            x: offset
+                                - SwipeToReplyMetrics.iconInset(isMine: isMine)
+                                - SwipeToReplyMetrics.iconSide / 2
                         )
                         .transition(.opacity.combined(with: .scale(scale: 0.2)))
                         .allowsHitTesting(false)
@@ -225,7 +231,7 @@ struct SwipeToReplyModifier: ViewModifier {
                 }
             }
             // A row that stops being swipeable mid-gesture (menu opened, message deleted)
-            // must not stay parked off to the left.
+            // must not stay parked off to the right.
             .onChange(of: isEnabled) { _, enabled in
                 if !enabled, isSwiping { settle(triggerReply: false) }
             }
@@ -233,14 +239,14 @@ struct SwipeToReplyModifier: ViewModifier {
 
     private func handleChange(_ translation: CGFloat) {
         guard isEnabled else { return }
-        let distance = SwipeToReplyMetrics.banded(-translation, threshold: threshold)
+        let distance = SwipeToReplyMetrics.banded(translation, threshold: threshold)
         if !isSwiping {
             withAnimation(Motion.respecting(reduceMotion, Motion.snappy)) { isSwiping = true }
         }
-        offset = -distance
+        offset = distance
         progress = min(1, distance / threshold)
 
-        let armed = -translation >= threshold
+        let armed = translation >= threshold
         if armed != isArmed {
             isArmed = armed
             // Telegram fires once, on the way in — crossing back and forth stays quiet.
@@ -250,7 +256,7 @@ struct SwipeToReplyModifier: ViewModifier {
 
     private func handleEnd(_ translation: CGFloat, cancelled: Bool) {
         // The raw translation decides, not the banded one: past the threshold is past it.
-        settle(triggerReply: !cancelled && -translation >= threshold)
+        settle(triggerReply: !cancelled && translation >= threshold)
     }
 
     private func settle(triggerReply: Bool) {
@@ -266,10 +272,10 @@ struct SwipeToReplyModifier: ViewModifier {
 }
 
 extension View {
-    /// Adds swipe-left-to-reply to a chat row.
+    /// Adds swipe-right-to-reply to a chat row.
     /// - Parameters:
     ///   - isEnabled: False for bubbles that cannot be quoted yet (sending, failed, deleted).
-    ///   - isMine: Outgoing rows use the longer threshold, as in Telegram.
+    ///   - isMine: Incoming rows use the longer threshold (Telegram's outgoing one, mirrored).
     func swipeToReply(
         isEnabled: Bool = true,
         isMine: Bool,

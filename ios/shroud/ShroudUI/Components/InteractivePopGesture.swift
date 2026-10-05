@@ -87,11 +87,22 @@ private struct InteractivePopGestureInstaller: UIViewControllerRepresentable {
     }
 }
 
+enum BackSwipeMetrics {
+    /// How far in from the leading edge a back swipe may start (the system edge region is ~20 pt).
+    /// Swipe to reply leaves touches that start here to the back swipe.
+    static let edgeWidth: CGFloat = 30
+
+    /// True when `x` (in `view`'s coordinates) lies in the band a back swipe may start from.
+    static func isInEdge(_ x: CGFloat, of view: UIView) -> Bool {
+        view.effectiveUserInterfaceLayoutDirection == .rightToLeft
+            ? x >= view.bounds.width - edgeWidth
+            : x <= edgeWidth
+    }
+}
+
 /// One per navigation controller, kept alive by the controller itself.
 private final class InteractivePopGestureDelegate: NSObject, UIGestureRecognizerDelegate {
     private static var key: UInt8 = 0
-    /// How far in from the leading edge a back swipe may start (the system edge region is ~20 pt).
-    static let edgeWidth: CGFloat = 30
 
     weak var navigationController: UINavigationController?
     var isEnabled = true
@@ -123,10 +134,7 @@ private final class InteractivePopGestureDelegate: NSObject, UIGestureRecognizer
               gestureRecognizer === navigationController.interactiveContentPopGestureRecognizer
         else { return true }
         guard navigationController.topViewController === owner else { return true }
-        let x = touch.location(in: view).x
-        return view.effectiveUserInterfaceLayoutDirection == .rightToLeft
-            ? x >= view.bounds.width - Self.edgeWidth
-            : x <= Self.edgeWidth
+        return BackSwipeMetrics.isInEdge(touch.location(in: view).x, of: view)
     }
 
     /// The thread's scroll view must not steal a swipe that started on the edge.

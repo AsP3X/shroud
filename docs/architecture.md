@@ -347,7 +347,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Files | **done** — text, PDF, Word/Excel/PowerPoint, image and video files as they are, APKs; streamed SHRF1 blobs up to 2 GiB; warnings for APKs and macro-capable Office files ([file-sharing.md](./file-sharing.md)) |
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
-| Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
+| Replies | **done** — swipe right on iOS and Android, left on the web (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
 | Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender builds the preview (the iPhone directly, the browser through the link relay) and seals it, recipients never contact the site; toggle in Privacy & Security |
 | Calls UI / WebRTC | **done** — signaling + native WebRTC + CallKit; voice & video |
 | Notifications | **done** — alert pushes named by the notification service extension; in-app banner, sound and haptic while in front; Settings → Notifications and Sounds (per-device toggles, sound picker, badge, muted chats, test notification); mute from the chat list or contact info; icon badge from server unread counts; a tap opens the chat. PushKit rings calls when the app is backgrounded or locked, and a `call_ended` VoIP push stops the ring |

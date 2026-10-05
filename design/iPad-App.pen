@@ -64556,7 +64556,7 @@
                     {
                       "type": "frame",
                       "id": "b9PbgJ",
-                      "x": -45,
+                      "x": 60,
                       "y": 0.5,
                       "name": "Bubble In",
                       "fill": "$bubble-in",
@@ -64623,7 +64623,7 @@
                       "type": "ref",
                       "ref": "kvPWt",
                       "name": "Swipe Reply Icon",
-                      "x": 289,
+                      "x": -15.5,
                       "y": 0
                     }
                   ]
