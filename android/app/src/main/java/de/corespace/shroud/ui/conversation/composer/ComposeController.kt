@@ -14,6 +14,7 @@ import de.corespace.shroud.core.links.LinkPreviewComposer
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileCategory
 import de.corespace.shroud.core.media.files.FileCopy
 import de.corespace.shroud.core.media.files.FileWarning
 import de.corespace.shroud.core.media.files.PickedFile
@@ -179,6 +180,10 @@ class ComposeController internal constructor(
     /** Photos from the same pick as videos: shown once the video compose closes (CV:55-56). */
     private var photosAfterVideoCompose: List<PickedPhoto> = emptyList()
     private var pendingPhotoCompose: Job? = null
+
+    /** Files from the same file pick as photos or videos: the file composer once the media compose closes. */
+    private var filesAfterMediaCompose: List<PickedFile> = emptyList()
+    private var pendingFileCompose: Job? = null
 
     /** The picker was opened from a compose screen: its results join that send (CV:60-61). */
     private var pickerAppendsToDraft = false
@@ -650,6 +655,7 @@ class ComposeController internal constructor(
     /** The compose screen's Back tool / back (CV:512-516). */
     fun cancelMediaCompose() {
         composeDraft = null
+        presentFilesAfterMediaCompose()
     }
 
     /** Removes a staged photo; the last one closes compose (CV:1875-1881). */
@@ -658,6 +664,7 @@ class ComposeController internal constructor(
         if (index !in draft.photos.indices) return
         val photos = draft.photos.toMutableList().also { it.removeAt(index) }
         composeDraft = if (photos.isEmpty()) null else draft.copy(photos = photos)
+        if (photos.isEmpty()) presentFilesAfterMediaCompose()
     }
 
     /**
@@ -670,6 +677,7 @@ class ComposeController internal constructor(
         clearReply()
         photoComposeSent = true
         composeDraft = null
+        presentFilesAfterMediaCompose()
         services.sendScope.launch { sendPickedPhotos(photos, edits, caption, quality, reference) }
     }
 
@@ -774,7 +782,10 @@ class ComposeController internal constructor(
      */
     private fun closeVideoCompose() {
         videoDraft = null
-        if (photosAfterVideoCompose.isEmpty()) return
+        if (photosAfterVideoCompose.isEmpty()) {
+            presentFilesAfterMediaCompose()
+            return
+        }
         val photos = photosAfterVideoCompose
         photosAfterVideoCompose = emptyList()
         pendingPhotoCompose?.cancel()
@@ -787,8 +798,11 @@ class ComposeController internal constructor(
     // ---- Files (docs/file-sharing.md §6, §7) ---------------------------------------------------
 
     /**
-     * What the document picker handed back: each refused pick says why (one toast each), the rest
-     * open the file composer — at most ten, in pick order.
+     * What the document picker handed back: each refused pick says why (one toast each). Images and
+     * videos the photo/video pipeline can decode go out as photos and videos, so they show in the
+     * chat (docs/file-sharing.md §4, §7): the video compose, then the photo compose, as a mixed
+     * library pick. The rest — and any image or video it can't decode — open the file composer
+     * after them, at most ten, in pick order.
      */
     suspend fun loadPickedFiles(uris: List<Uri>) {
         if (uris.isEmpty()) return
@@ -796,7 +810,54 @@ class ComposeController internal constructor(
         if (left) return
         result.refusals.forEach { showToast(Toast.failure(it, LONG_FAILURE_MS)) }
         if (result.refusals.isNotEmpty()) playHaptic(Haptic.Error)
-        if (result.files.isNotEmpty()) fileDraft = FileComposeDraft(result.files)
+        val photos = ArrayList<PickedPhoto>()
+        val videos = ArrayList<PickedVideo>()
+        val files = ArrayList<PickedFile>()
+        for (file in result.files) {
+            val uri = file.uri
+            when {
+                uri != null && file.type.category == FileCategory.Image -> {
+                    val source = MediaImageSource.ContentUri(uri)
+                    val preview = services.decodePreview(source, PickedPhoto.PREVIEW_MAX_EDGE)
+                    if (preview != null) photos += PickedPhoto(preview = preview, source = source) else files += file
+                }
+                uri != null && file.type.category == FileCategory.Video -> {
+                    val probe = services.probeVideo(uri)
+                    if (probe != null) {
+                        val poster = services.videoPoster(uri, VIDEO_POSTER_MAX_EDGE)
+                        videos += PickedVideo(movie = PickedMovie(uri), probe = probe, poster = poster)
+                    } else {
+                        files += file
+                    }
+                }
+                else -> files += file
+            }
+        }
+        if (left) return
+        when {
+            videos.isNotEmpty() -> {
+                photosAfterVideoCompose = photos
+                filesAfterMediaCompose = files
+                presentVideoCompose(videos)
+            }
+            photos.isNotEmpty() -> {
+                filesAfterMediaCompose = files
+                presentMediaCompose(photos)
+            }
+            files.isNotEmpty() -> fileDraft = FileComposeDraft(files)
+        }
+    }
+
+    /** The rest of a file pick that also held photos or videos, once the media compose has left (260 ms). */
+    private fun presentFilesAfterMediaCompose() {
+        if (filesAfterMediaCompose.isEmpty()) return
+        val files = filesAfterMediaCompose
+        filesAfterMediaCompose = emptyList()
+        pendingFileCompose?.cancel()
+        pendingFileCompose = scope.launch {
+            delay(VIDEO_TO_PHOTO_COMPOSE_MS)
+            fileDraft = FileComposeDraft(files)
+        }
     }
 
     /** The composer's Remove on a row; the last one closes the sheet. */
@@ -1143,6 +1204,9 @@ class ComposeController internal constructor(
         pendingPhotoCompose?.cancel()
         pendingPhotoCompose = null
         photosAfterVideoCompose = emptyList()
+        pendingFileCompose?.cancel()
+        pendingFileCompose = null
+        filesAfterMediaCompose = emptyList()
         composeDraft = null
         fileDraft = null
         fileWarning = null

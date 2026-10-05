@@ -50,7 +50,7 @@ class SendPipelineFileTest {
     private val bytes = ByteArray(150_000) { (it % 251).toByte() }
 
     private fun picked(name: String, data: ByteArray = bytes, size: Long = data.size.toLong(), open: () -> InputStream? = { ByteArrayInputStream(data) }) =
-        PickedFile(name, size, requireNotNull(FileTypes.forName(name)), open)
+        PickedFile(name, size, requireNotNull(FileTypes.forName(name)), opener = open)
 
     @Test
     fun aFileGoesUpAsShrf1WithItsNameAndCanonicalMime() = runTest(main.dispatcher) {

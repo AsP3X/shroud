@@ -16,11 +16,15 @@ import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.testing.MainDispatcherRule
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.conversation.attach.ChatAttachOption
+import de.corespace.shroud.core.media.MediaComposeQuality
+import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.ui.conversation.composer.FakeComposeServices.Companion.PEER
 import de.corespace.shroud.ui.conversation.composer.FakeComposeServices.Companion.message
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -60,6 +64,10 @@ class ComposeControllerFileTest {
     private fun picked(name: String, size: Long = 2_400_000): PickedFile =
         PickedFile(name, size, requireNotNull(FileTypes.forName(name))) { null }
 
+    /** A pick that still carries its document URI, as [FileIntake] hands it over. */
+    private fun pickedDocument(name: String): PickedFile =
+        PickedFile(name, 2_400_000, requireNotNull(FileTypes.forName(name)), Uri.parse("content://docs/$name")) { null }
+
     private fun file(name: String, isMine: Boolean = false, hasFullMedia: Boolean = true, id: UUID = UUID.randomUUID()): ChatMessage =
         message(id = id, text = "", kind = ChatMessageKind.File, isMine = isMine, hasFullMedia = hasFullMedia, mediaObjectId = UUID.randomUUID())
             .copy(fileName = name, mediaByteCount = 2_400_000)
@@ -93,6 +101,53 @@ class ComposeControllerFileTest {
         )
         assertEquals(listOf("Quarterly report 2026.pdf", "notes.txt"), env.controller.fileDraft?.files?.map { it.name })
         assertEquals("Send 2 Files", FileCopy.composerTitle(env.controller.fileDraft!!.files.size))
+    }
+
+    @Test
+    fun `images and videos picked as files open the video then photo compose, then the file composer`() = runTest(main.dispatcher) {
+        val clip = pickedDocument("clip.mp4")
+        val env = env {
+            fileIntake = FileIntake.Result(listOf(pickedDocument("beach.jpg"), clip, pickedDocument("report.pdf")), emptyList())
+            probes[clip.uri!!] = FakeComposeServices.probe()
+        }
+        env.controller.loadPickedFiles(listOf(Uri.parse("content://docs/1")))
+        assertEquals(listOf(clip.uri), env.controller.videoDraft?.videos?.map { it.uri })
+        assertNull(env.controller.composeDraft)
+        assertNull(env.controller.fileDraft)
+
+        env.controller.cancelVideoCompose()
+        advanceTimeBy(ComposeController.VIDEO_TO_PHOTO_COMPOSE_MS + 1)
+        val photo = env.controller.composeDraft?.photos?.single()?.source
+        assertEquals(Uri.parse("content://docs/beach.jpg"), (photo as MediaImageSource.ContentUri).uri)
+        assertNull(env.controller.fileDraft)
+
+        env.controller.cancelMediaCompose()
+        assertNull(env.controller.fileDraft)
+        advanceTimeBy(ComposeController.VIDEO_TO_PHOTO_COMPOSE_MS + 1)
+        assertEquals(listOf("report.pdf"), env.controller.fileDraft?.files?.map { it.name })
+    }
+
+    @Test
+    fun `sending the photos still brings up the rest of the pick`() = runTest(main.dispatcher) {
+        val env = env { fileIntake = FileIntake.Result(listOf(pickedDocument("a.png"), pickedDocument("b.docx")), emptyList()) }
+        env.controller.loadPickedFiles(listOf(Uri.parse("content://docs/1")))
+        assertEquals(1, env.controller.composeDraft?.photos?.size)
+        env.controller.sendComposedPhotos("", MediaComposeQuality.entries.first(), listOf(MediaEdits.Identity))
+        advanceTimeBy(ComposeController.VIDEO_TO_PHOTO_COMPOSE_MS + 1)
+        assertEquals(listOf("b.docx"), env.controller.fileDraft?.files?.map { it.name })
+    }
+
+    @Test
+    fun `an image or video the pipeline can't read stays a file`() = runTest(main.dispatcher) {
+        val scan = pickedDocument("scan.tiff")
+        val env = env {
+            fileIntake = FileIntake.Result(listOf(scan, pickedDocument("talk.mkv")), emptyList())
+            undecodable += scan.uri!!
+        }
+        env.controller.loadPickedFiles(listOf(Uri.parse("content://docs/1")))
+        assertNull(env.controller.videoDraft)
+        assertNull(env.controller.composeDraft)
+        assertEquals(listOf("scan.tiff", "talk.mkv"), env.controller.fileDraft?.files?.map { it.name })
     }
 
     @Test

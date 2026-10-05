@@ -54,6 +54,8 @@ struct ConversationView: View {
     @State private var videoDraft: VideoComposeDraft?
     /// Photos picked in the same session as videos — shown after the video compose closes.
     @State private var photosAfterVideoCompose: [PickedPhoto] = []
+    /// Files picked with photos or videos — shown in the file composer after the media compose closes.
+    @State private var filesAfterMediaCompose: [PickedFile] = []
     @State private var profileDestination: ProfileDestination?
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var showPhotoPicker = false
@@ -578,6 +580,7 @@ struct ConversationView: View {
                     withAnimation(.easeOut(duration: 0.2)) {
                         self.composeDraft = nil
                     }
+                    presentFilesAfterMediaCompose()
                 },
                 onSend: { caption, quality, edits in
                     let photos = composeDraft.photos
@@ -586,6 +589,7 @@ struct ConversationView: View {
                     withAnimation(.easeOut(duration: 0.15)) {
                         self.composeDraft = nil
                     }
+                    presentFilesAfterMediaCompose()
                     Task {
                         await sendPickedPhotos(
                             photos,
@@ -1955,7 +1959,10 @@ struct ConversationView: View {
     /// Closes the video compose and hands any photos from the same pick to the photo compose.
     private func closeVideoCompose() {
         withAnimation(.easeOut(duration: 0.2)) { videoDraft = nil }
-        guard !photosAfterVideoCompose.isEmpty else { return }
+        guard !photosAfterVideoCompose.isEmpty else {
+            presentFilesAfterMediaCompose()
+            return
+        }
         let photos = photosAfterVideoCompose
         photosAfterVideoCompose = []
         Task {
@@ -1970,6 +1977,19 @@ struct ConversationView: View {
         draft.photos.remove(at: index)
         withAnimation(Motion.standard) {
             composeDraft = draft.photos.isEmpty ? nil : draft
+        }
+        if draft.photos.isEmpty { presentFilesAfterMediaCompose() }
+    }
+
+    /// The rest of a file pick that also held photos or videos: the file composer, once the
+    /// media compose has finished leaving.
+    private func presentFilesAfterMediaCompose() {
+        guard !filesAfterMediaCompose.isEmpty else { return }
+        let files = filesAfterMediaCompose
+        filesAfterMediaCompose = []
+        Task {
+            try? await Task.sleep(for: .milliseconds(260))
+            stagedFiles = StagedFiles(files: files)
         }
     }
 
@@ -2548,10 +2568,13 @@ struct ConversationView: View {
         let warning: SharedFile.Warning
     }
 
-    /// The document picker's picks: checked, copied in, then the file composer.
+    /// The document picker's picks: checked, copied in, then the photo and video compose for the
+    /// images and videos Shroud can show in the chat, and the file composer for the rest.
     ///
     /// Human: One toast per pick, for the first file that can't go (or for an eleventh one);
-    /// the rest still reach the composer.
+    /// the rest still reach the composer. A photo or video picked as a file goes out like one
+    /// from the library (compressed, metadata scrubbed), so it shows in the chat; only one the
+    /// photo or video pipeline can't decode (a TIFF it can't read, an MKV) stays a file.
     private func loadPickedFiles(_ result: Result<[URL], any Error>) async {
         guard case let .success(urls) = result, !urls.isEmpty else { return }
         var refusal = urls.count > SharedFile.maxFilesPerSend ? SharedFile.tooManyRefusal : nil
@@ -2575,7 +2598,50 @@ struct ConversationView: View {
             Haptics.notification(.error)
         }
         guard !picked.isEmpty else { return }
-        stagedFiles = StagedFiles(files: picked)
+
+        var photos: [PickedPhoto] = []
+        var videos: [PickedVideo] = []
+        var files: [PickedFile] = []
+        for file in picked {
+            switch file.type.category {
+            case .image:
+                // Read and decoded off the main actor, as the library path does.
+                let decoded = await Task.detached(priority: .userInitiated) { () -> (Data, UIImage)? in
+                    guard let data = try? Data(contentsOf: file.url),
+                          let preview = MediaCrypto.previewImage(from: data, maxEdge: 2048)
+                    else { return nil }
+                    return (data, preview)
+                }.value
+                if let (data, preview) = decoded {
+                    file.cleanup()
+                    photos.append(PickedPhoto(preview: preview, source: .fileData(data)))
+                } else {
+                    files.append(file)
+                }
+            case .video:
+                // The clip keeps the copy in `tmp/`; the video compose removes it.
+                if let probe = await VideoMedia.probe(url: file.url) {
+                    let poster = await VideoMedia.posterImage(url: file.url)
+                    videos.append(PickedVideo(movie: PickedMovie(url: file.url), probe: probe, poster: poster))
+                } else {
+                    files.append(file)
+                }
+            default:
+                files.append(file)
+            }
+        }
+
+        // Clips first, then photos, then the files (as a mixed library pick does).
+        if !videos.isEmpty {
+            photosAfterVideoCompose = photos
+            filesAfterMediaCompose = files
+            presentVideoCompose(videos)
+        } else if !photos.isEmpty {
+            filesAfterMediaCompose = files
+            presentMediaCompose(photos)
+        } else {
+            stagedFiles = StagedFiles(files: files)
+        }
     }
 
     /// The file composer's files, one per pick.

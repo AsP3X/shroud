@@ -65,6 +65,7 @@ import {
   videoFiles,
   type VideoSendDraft,
 } from "../media/prepareVideo";
+import { splitFilePick } from "../media/filePick";
 import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
 import {
   cancelFileDownload,
@@ -997,10 +998,21 @@ export function Thread({
    * supported file goes to the file sheet, and the rest is refused (§7).
    */
   function attach(picked: File[]) {
-    if (!canSend) return;
     const videos = videoFiles(picked);
     const photos = imageFiles(picked);
     const others = picked.filter((file) => !videos.includes(file) && !photos.includes(file));
+    attachSplit(videos, photos, others);
+  }
+
+  /** The paperclip's pick: the images and videos this browser can show still go as photos and videos. */
+  async function attachPickedFiles(picked: File[]) {
+    if (!canSend || picked.length === 0) return;
+    const { videos, photos, files } = await splitFilePick(picked);
+    attachSplit(videos, photos, files);
+  }
+
+  function attachSplit(videos: File[], photos: File[], others: File[]) {
+    if (!canSend) return;
     attachFiles(others, videos.length > 0 || photos.length > 0);
     if (videos.length === 0 && photos.length === 0) return;
 
@@ -1674,7 +1686,7 @@ export function Thread({
               event.target.value = "";
             }}
           />
-          {/* Files go out as they are, photos and videos included: the explicit "original" path. */}
+          {/* Files go out as they are; photos and videos this browser can show go as photos and videos. */}
           <input
             ref={filePicker}
             type="file"
@@ -1682,7 +1694,7 @@ export function Thread({
             multiple
             hidden
             onChange={(event) => {
-              attachFiles(Array.from(event.target.files ?? []));
+              void attachPickedFiles(Array.from(event.target.files ?? []));
               event.target.value = "";
             }}
           />

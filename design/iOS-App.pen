@@ -101358,7 +101358,7 @@
                           "name": "Tile Glyph",
                           "width": 20,
                           "height": 20,
-                          "icon": "image-fill",
+                          "icon": "file-doc-fill",
                           "library": "phosphor",
                           "fill": "#FFFFFF"
                         }
@@ -101387,7 +101387,7 @@
                               "fill": "$text-primary",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "IMG_4821.HEIC",
+                              "content": "Lease agreement.docx",
                               "fontFamily": "$font",
                               "fontSize": 15,
                               "fontWeight": "500"
@@ -101397,7 +101397,7 @@
                               "id": "y65fU",
                               "name": "Detail",
                               "fill": "$text-secondary",
-                              "content": "5.1 MB · HEIC",
+                              "content": "1.2 MB · DOCX",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"

@@ -95,10 +95,13 @@ refuse it, receivers show the bubble with **Unsupported file** and offer no down
 - The legacy binary Office formats (`doc`, `xls`, `ppt` and their templates) carry the macro warning
   too: they hold VBA without a telltale extension and are the classic macro-malware carrier.
 - No SVG, HTML, scripts, executables or archives: nothing a viewer could run.
-- Images and videos picked as photos/videos keep going out as `t: "image"` / `t: "video"`
-  (compressed, metadata scrubbed). Picked **as files**, they go out untouched as `t: "file"` — the
-  sender's metadata (EXIF, GPS) is sent as it is, which is why the file picker is the explicit
-  "original" path and the composer says so (§7).
+- Images and videos go out as `t: "image"` / `t: "video"` (compressed, metadata scrubbed) so they
+  show in the chat — also when they are picked **as files**, dropped or pasted: the file pick hands
+  every image and video the client's photo/video pipeline can decode to the photo or video compose
+  (§7). Only one it can't decode (a TIFF or BMP the platform can't read, an MKV, AVI or WebM the
+  platform can't play) goes out untouched as `t: "file"`, the sender's metadata (EXIF, GPS) and
+  all, which is why the file composer says so (§7). Receivers keep showing image and video
+  `t: "file"` messages as file bubbles.
 
 ### Content check before opening
 
@@ -170,6 +173,13 @@ offers **Save to Downloads** and **Share**, not **Open**.
   extensions. Below 900 px the paperclip is hidden and the **+** button (**Attach**) opens a menu:
   **Photo or Video** and **File**. Dropping or pasting files: images and videos keep their photo/video flow, any other
   §4 file goes to the file composer, the rest is refused with the toast below.
+
+A file pick is split: images and videos the photo/video pipeline can decode (iOS: ImageIO /
+AVFoundation, Android: the preview decoder / the video probe, web: the browser's decoder or the
+HEIC converter / the video worker's probe) go to the photo or video compose, as a photo-library pick
+of them would; the other files go to the file composer. A pick holding both opens them one after
+the other — videos, then photos, then the file composer — so nothing is dropped. Drops and pastes
+on the web split the same way by type.
 
 Then the **file composer** (a sheet on iOS/Android, a modal on the web) lists the files — tile,
 name, `{size} · {TYPE}`, the warning line — with a caption field (**Add a caption…**) and **Send**.
