@@ -83,7 +83,9 @@ class W1SmokeTest {
         val name = "w1smoke_" + UUID.randomUUID().toString().replace("-", "").take(12)
         val response = api.register(name, "W1 smoke test passphrase " + UUID.randomUUID())
         tokens += response.token
-        Session(response.token, Ids.wire(response.user.id), response.user.username, response.user.shareCode, Ids.wire(response.device.id))
+        // Only an account that lost its username has none; a fresh one has the name it signed up with.
+        assertEquals(name, response.user.username)
+        Session(response.token, Ids.wire(response.user.id), name, response.user.shareCode, Ids.wire(response.device.id))
     }
 
     @Test
