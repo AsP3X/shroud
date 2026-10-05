@@ -362,6 +362,54 @@ class AppShellControllerTest {
     }
 
     @Test
+    fun aStopUnderTheDocumentPickerIsNotADeparture() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        val shell = unlockedShell(env)
+        env.systemPickerInFlight.value = true
+        env.phase.value = AppPhase.Background
+        // Browsing folders for a while: still unlocked.
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertFalse("lockChatsInMemory" in env.log)
+        // A file is picked: the activity starts again, then the result arrives.
+        env.phase.value = AppPhase.Inactive
+        env.systemPickerInFlight.value = false
+        env.phase.value = AppPhase.Active
+        advanceTimeBy(AppShellController.SYSTEM_PICKER_HOLD_MS)
+        runCurrent()
+        assertFalse("lockChatsInMemory" in env.log)
+        assertTrue(shell.router.isUnlocked)
+        assertTrue(shell.router.hasUnlockedMessaging)
+    }
+
+    @Test
+    fun aDocumentPickerLeftBehindStillLocks() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        unlockedShell(env)
+        env.systemPickerInFlight.value = true
+        env.phase.value = AppPhase.Background
+        advanceTimeBy(AppShellController.SYSTEM_PICKER_HOLD_MS - 1)
+        runCurrent()
+        assertFalse("lockChatsInMemory" in env.log)
+        advanceTimeBy(AppShellController.PROMPT_RETURN_GRACE_MS + 1)
+        runCurrent()
+        assertTrue("lockChatsInMemory" in env.log)
+    }
+
+    @Test
+    fun theScreenGoingOffUnderTheDocumentPickerLocks() = runTest(UnconfinedTestDispatcher()) {
+        val env = FakeShellEnvironment()
+        unlockedShell(env)
+        env.systemPickerInFlight.value = true
+        env.phase.value = AppPhase.Background
+        // AppPhaseMonitor clears the mark on ACTION_SCREEN_OFF.
+        env.systemPickerInFlight.value = false
+        advanceTimeBy(AppShellController.PROMPT_RETURN_GRACE_MS)
+        runCurrent()
+        assertTrue("lockChatsInMemory" in env.log)
+    }
+
+    @Test
     fun lockChatsNowShowsTheLockScreen() = runTest(UnconfinedTestDispatcher()) {
         val env = FakeShellEnvironment()
         val shell = unlockedShell(env)

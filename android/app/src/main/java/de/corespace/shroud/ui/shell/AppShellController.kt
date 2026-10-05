@@ -340,6 +340,14 @@ class AppShellController(
                 if (returned != null) return@launch
                 if (!router.isUnlocked && env.unlockedUserId.value == null) return@launch
             }
+            // The document picker stops our activity too. Its return starts the activity again,
+            // which cancels this job; a picker left behind with Home still locks after the hold.
+            if (env.systemPickerInFlight.value) {
+                withTimeoutOrNull(SYSTEM_PICKER_HOLD_MS) { env.systemPickerInFlight.first { !it } }
+                val returned = withTimeoutOrNull(PROMPT_RETURN_GRACE_MS) { env.phase.first { it != AppPhase.Background } }
+                if (returned != null) return@launch
+                if (!router.isUnlocked && env.unlockedUserId.value == null) return@launch
+            }
             when (val autoLock = env.autoLockDelay.value) {
                 AutoLockDelay.Immediately -> lockChatsInMemory()
                 AutoLockDelay.Never -> leftForBackgroundAt = null
@@ -497,6 +505,9 @@ class AppShellController(
 
         /** After the vault prompt ends, how long the activity gets to come back before a background lock proceeds. */
         const val PROMPT_RETURN_GRACE_MS = 1_000L
+
+        /** How long a stop under the system picker holds the auto-lock (time to browse folders and providers). */
+        const val SYSTEM_PICKER_HOLD_MS = 120_000L
 
         /** In front, an unreadable identity record is read again after this (Android only). */
         const val IDENTITY_RETRY_MS = 1_000L

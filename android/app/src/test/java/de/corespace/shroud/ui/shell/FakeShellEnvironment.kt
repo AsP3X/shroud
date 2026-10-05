@@ -26,6 +26,7 @@ class FakeShellEnvironment(override val clock: FakeAppClock = FakeAppClock()) : 
     override val pendingFullLocalWipe = MutableStateFlow(false)
     override val unlockedUserId = MutableStateFlow<String?>(null)
     override val vaultPromptInFlight = MutableStateFlow(false)
+    override val systemPickerInFlight = MutableStateFlow(false)
     override val wipePresented = MutableStateFlow(false)
     override val callActive = MutableStateFlow(false)
     override val autoLockDelay = MutableStateFlow(AutoLockDelay.Immediately)

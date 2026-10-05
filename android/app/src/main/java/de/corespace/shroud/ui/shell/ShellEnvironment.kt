@@ -49,6 +49,9 @@ interface ShellEnvironment {
     /** The vault's system prompt is up: a stop under it is not a departure (crypto §10.7). */
     val vaultPromptInFlight: StateFlow<Boolean>
 
+    /** Our system picker (the document UI) is up: a stop under it is not a departure (`AppPhaseMonitor`). */
+    val systemPickerInFlight: StateFlow<Boolean>
+
     /**
      * Present / Absent / Unavailable (`identityPresence(for:)`; Present is `hasLocalIdentity(for:)`);
      * Unavailable while the phone itself is locked. Reads the sealed record — call off main.

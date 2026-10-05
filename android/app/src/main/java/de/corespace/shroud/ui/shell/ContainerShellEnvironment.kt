@@ -49,6 +49,7 @@ class ContainerShellEnvironment(private val container: AppContainer) : ShellEnvi
 
     override val unlockedUserId: StateFlow<String?> get() = crypto.unlockedUserId
     override val vaultPromptInFlight: StateFlow<Boolean> get() = crypto.vaultPromptInFlight
+    override val systemPickerInFlight: StateFlow<Boolean> get() = container.appPhase.systemPickerInFlight
 
     override fun identityPresence(userId: String): IdentityPresence = crypto.identityPresence(userId)
 

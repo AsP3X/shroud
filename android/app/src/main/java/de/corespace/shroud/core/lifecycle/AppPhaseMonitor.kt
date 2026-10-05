@@ -2,6 +2,10 @@ package de.corespace.shroud.core.lifecycle
 
 import android.app.Activity
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -72,8 +76,37 @@ class AppPhaseMonitor(
      */
     val topActivity: Activity? get() = (resumed.last() ?: started.last()) as? Activity
 
+    private val picker = MutableStateFlow(false)
+
+    /**
+     * A system picker we opened is up. The document UI (File in the attach sheet, the photo
+     * picker's fallback on API 30–32) is a full-screen activity of another app, so ours stops and
+     * the phase reads [AppPhase.Background] although the user never left: the shell's auto-lock
+     * holds while this is true (iOS presents its document picker in-process, never leaving
+     * `.active`). Cleared by the picker's result, or when the screen turns off under it.
+     */
+    val systemPickerInFlight: StateFlow<Boolean> = picker.asStateFlow()
+
+    /** Call right before launching the picker. Main thread. */
+    fun systemPickerOpened() {
+        picker.value = true
+    }
+
+    /** The picker returned (picked or closed), or the screen turned off under it. Main thread. */
+    fun systemPickerClosed() {
+        picker.value = false
+    }
+
     fun install(application: Application) {
         application.registerActivityLifecycleCallbacks(this)
+        // The screen going off under the picker is a departure: the held auto-lock goes ahead.
+        // A protected system broadcast, so no export flag (and no ContextCompat permission).
+        application.registerReceiver(
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) = systemPickerClosed()
+            },
+            IntentFilter(Intent.ACTION_SCREEN_OFF),
+        )
     }
 
     override fun onActivityStarted(activity: Activity) {

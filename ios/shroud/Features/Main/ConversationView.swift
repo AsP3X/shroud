@@ -63,8 +63,9 @@ struct ConversationView: View {
     /// The document picker behind the attach sheet's File row.
     @State private var showFileImporter = false
     /// Files copied in from the picker, waiting in the file composer (plaintext in `tmp/`).
-    @State private var stagedFiles: [PickedFile] = []
-    @State private var showFileComposer = false
+    /// The sheet's item: it hands the files to the sheet itself. A separate list read from the
+    /// `isPresented` sheet's closure came through empty ("Sending 0 Files"), and Send sent nothing.
+    @State private var stagedFiles: StagedFiles?
     /// A received file's open or share, waiting on its warning (§6 of docs/file-sharing.md).
     @State private var pendingFileAction: PendingFileAction?
     @State private var isSendingMedia = false
@@ -296,20 +297,19 @@ struct ConversationView: View {
             ) { result in
                 Task { await loadPickedFiles(result) }
             }
-            .sheet(isPresented: $showFileComposer, onDismiss: discardStagedFiles) {
+            .sheet(item: stagedFilesBinding) { staged in
                 FileComposeSheet(
-                    files: stagedFiles,
+                    files: staged.files,
                     onRemove: { file in
                         file.cleanup()
-                        stagedFiles.removeAll { $0.id == file.id }
-                        if stagedFiles.isEmpty { showFileComposer = false }
+                        stagedFiles?.files.removeAll { $0.id == file.id }
+                        if stagedFiles?.files.isEmpty == true { discardStagedFiles() }
                     },
-                    onCancel: { showFileComposer = false },
+                    onCancel: discardStagedFiles,
                     onSend: { caption in
-                        let files = stagedFiles
-                        // Handed to the sends: the dismissal must not delete them.
-                        stagedFiles = []
-                        showFileComposer = false
+                        // Handed to the sends: closing the sheet must not delete them.
+                        let files = staged.files
+                        stagedFiles = nil
                         let reference = outgoingReplyReference
                         clearReply()
                         pinToBottomToken &+= 1
@@ -2575,14 +2575,29 @@ struct ConversationView: View {
             Haptics.notification(.error)
         }
         guard !picked.isEmpty else { return }
-        stagedFiles = picked
-        showFileComposer = true
+        stagedFiles = StagedFiles(files: picked)
+    }
+
+    /// The file composer's files, one per pick.
+    struct StagedFiles: Identifiable {
+        let id = UUID()
+        var files: [PickedFile]
+    }
+
+    /// The file composer's presentation; a swipe-down closes it without sending.
+    private var stagedFilesBinding: Binding<StagedFiles?> {
+        Binding(
+            get: { stagedFiles },
+            set: { staged in
+                if staged == nil { discardStagedFiles() } else { stagedFiles = staged }
+            }
+        )
     }
 
     /// The composer closed without sending: its copies go.
     private func discardStagedFiles() {
-        stagedFiles.forEach { $0.cleanup() }
-        stagedFiles = []
+        stagedFiles?.files.forEach { $0.cleanup() }
+        stagedFiles = nil
     }
 
     /// Sends the composed files in order; the caption and the quote go on the first only.

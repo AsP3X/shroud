@@ -9,6 +9,8 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalContext
+import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.media.files.FileTypes
 
 /** The system document picker for the attach sheet's File option (docs/file-sharing.md §7 "Attach"). */
@@ -22,16 +24,26 @@ class FilePicker internal constructor(private val onOpen: () -> Unit) {
  * returns the opener. [onResult] gets the picked URIs in the order picked, an empty list when the
  * picker was closed. No grant is persisted: the URIs are read once, while the send copies them into
  * the sealed cache. Without a document UI the result is empty.
+ *
+ * The document UI is a full-screen activity, so ours stops under it: the app phase marks the
+ * picker in flight ([AppPhaseMonitor.systemPickerInFlight][de.corespace.shroud.core.lifecycle.AppPhaseMonitor.systemPickerInFlight])
+ * or the auto-lock would lock the chats behind it and drop the user out of the chat.
  */
 @Composable
 fun rememberFilePicker(onResult: (List<Uri>) -> Unit): FilePicker {
     val currentOnResult by rememberUpdatedState(onResult)
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> currentOnResult(uris) }
+    val appPhase = (LocalContext.current.applicationContext as? ShroudApplication)?.appPhase
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        appPhase?.systemPickerClosed()
+        currentOnResult(uris)
+    }
     return remember(launcher) {
         FilePicker {
             try {
+                appPhase?.systemPickerOpened()
                 launcher.launch(FileTypes.pickerMimeTypes)
             } catch (_: ActivityNotFoundException) {
+                appPhase?.systemPickerClosed()
                 currentOnResult(emptyList())
             }
         }

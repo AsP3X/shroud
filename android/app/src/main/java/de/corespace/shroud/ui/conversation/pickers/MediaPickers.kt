@@ -12,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.ui.media.MAX_MEDIA_PER_SEND
 
 /**
@@ -40,19 +42,24 @@ private class PickerLaunch(val request: PickerRequest) {
  * without the photo picker's system update, the AndroidX contract falls back to the document UI
  * (`ACTION_OPEN_DOCUMENT`): the Play-services backport entry of the AndroidX docs is a
  * `com.google.android.gms` manifest component, which the Google-free build refuses (decision record 8).
+ * That fallback stops our activity, so the opening is marked as a system picker in flight (see
+ * [rememberFilePicker]); the photo picker itself only pauses it, and the mark is harmless there.
  */
 @Composable
 fun rememberMediaPicker(onResult: (List<Uri>) -> Unit): MediaPicker {
     val currentOnResult by rememberUpdatedState(onResult)
+    val appPhase = (LocalContext.current.applicationContext as? ShroudApplication)?.appPhase
     var launch by remember { mutableStateOf<PickerLaunch?>(null) }
     val multipleMax = launch?.request?.maxItems?.takeIf { it >= 2 } ?: MAX_MEDIA_PER_SEND
     val multipleContract = remember(multipleMax) { ActivityResultContracts.PickMultipleVisualMedia(multipleMax) }
     val multiple = rememberLauncherForActivityResult(multipleContract) { uris ->
         launch = null
+        appPhase?.systemPickerClosed()
         currentOnResult(uris)
     }
     val single = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         launch = null
+        appPhase?.systemPickerClosed()
         currentOnResult(listOfNotNull(uri))
     }
     // Runs after the composition that registered the contract for this request's room.
@@ -61,6 +68,7 @@ fun rememberMediaPicker(onResult: (List<Uri>) -> Unit): MediaPicker {
         if (pending.launched) return@LaunchedEffect
         pending.launched = true
         try {
+            appPhase?.systemPickerOpened()
             if (pending.request.isSingle) {
                 single.launch(pending.request.visualMediaRequest())
             } else {
@@ -68,6 +76,7 @@ fun rememberMediaPicker(onResult: (List<Uri>) -> Unit): MediaPicker {
             }
         } catch (_: ActivityNotFoundException) {
             launch = null
+            appPhase?.systemPickerClosed()
             currentOnResult(emptyList())
         }
     }
