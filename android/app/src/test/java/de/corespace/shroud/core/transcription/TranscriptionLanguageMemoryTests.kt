@@ -105,6 +105,18 @@ class TranscriptionLanguageMemoryTests {
     }
 
     @Test
+    fun automaticTranscriptionIsOffUntilTurnedOn() {
+        val prefs = FakeSharedPreferences()
+        val language = TranscriptionLanguage(prefs, StorageSeal())
+        assertFalse(language.transcribesAutomatically)
+        language.transcribesAutomatically = true
+        assertTrue(language.transcribesAutomatically)
+        assertTrue(prefs.getBoolean(TranscriptionLanguage.AUTOMATIC_KEY, false))
+        language.transcribesAutomatically = false
+        assertFalse(TranscriptionLanguage(prefs, StorageSeal()).transcribesAutomatically)
+    }
+
+    @Test
     fun languageOverrideRoundTripsAndClears() {
         val (_, language) = language()
         language.override = Locale.forLanguageTag("de-DE")

@@ -124,6 +124,12 @@ class VoiceTranscriber(
             language.override = value
         }
 
+    override var transcribesAutomatically: Boolean
+        get() = language.transcribesAutomatically
+        set(value) {
+            language.transcribesAutomatically = value
+        }
+
     override fun handOff(from: UUID, to: UUID) = installs.handOff(from, to)
 
     /**

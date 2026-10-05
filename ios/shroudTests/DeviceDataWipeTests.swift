@@ -201,6 +201,7 @@ struct DeviceDataWipeTests {
         #expect(DeviceDataWipe.keepsDefaultsKey("AppleLanguages"))
         #expect(DeviceDataWipe.keepsDefaultsKey("AppleLocale"))
         #expect(!DeviceDataWipe.keepsDefaultsKey("transcription.locale"))
+        #expect(!DeviceDataWipe.keepsDefaultsKey(TranscriptionPreferences.automaticKey))
         #expect(!DeviceDataWipe.keepsDefaultsKey("transcription.languageStats"))
         #expect(!DeviceDataWipe.keepsDefaultsKey("security.requireUserPresence"))
         #expect(!DeviceDataWipe.keepsDefaultsKey("msg_plain_v2.e09da208"))

@@ -147,6 +147,19 @@ struct TranscriptionLanguageMemoryTests {
         }
     }
 
+    /// Off until the user turns it on: a note is then transcribed only when its button is tapped.
+    @Test
+    func automaticTranscriptionIsOffUntilTurnedOn() {
+        let original = UserDefaults.standard.object(forKey: TranscriptionPreferences.automaticKey)
+        defer { UserDefaults.standard.set(original, forKey: TranscriptionPreferences.automaticKey) }
+        UserDefaults.standard.removeObject(forKey: TranscriptionPreferences.automaticKey)
+        #expect(!TranscriptionPreferences.transcribesAutomatically)
+        TranscriptionPreferences.transcribesAutomatically = true
+        #expect(TranscriptionPreferences.transcribesAutomatically)
+        TranscriptionPreferences.transcribesAutomatically = false
+        #expect(!TranscriptionPreferences.transcribesAutomatically)
+    }
+
     @Test
     func languageOverrideRoundTripsAndClears() {
         withCleanMemory {

@@ -377,8 +377,9 @@ class ComposeController internal constructor(
         updateRecording()
         playHaptic(Haptic.Medium)
         if (!isNotes) services.setRecording(peer, true)
-        // A clear sign a transcript is wanted: the model downloads while they speak (CV:1427-1430).
-        services.prepareTranscriptionModel()
+        // With automatic transcription on, a clear sign a transcript is wanted: the model
+        // downloads while they speak (CV:1427-1430).
+        if (services.transcribesAutomatically()) services.prepareTranscriptionModel()
         return true
     }
 
@@ -438,8 +439,9 @@ class ComposeController internal constructor(
                 waveform = take.waveform.takeIf { it.isNotEmpty() },
                 replyTo = reference,
                 transcriptProvider = { messageId ->
-                    // Never hold a note back for the one-time model download (CV:1484-1494).
-                    if (!services.transcriptionModelInstalled()) {
+                    // Only when the user turned it on (Settings › Transcription), and never hold a
+                    // note back for the one-time model download (CV:1484-1494).
+                    if (!services.transcribesAutomatically() || !services.transcriptionModelInstalled()) {
                         null
                     } else {
                         try {

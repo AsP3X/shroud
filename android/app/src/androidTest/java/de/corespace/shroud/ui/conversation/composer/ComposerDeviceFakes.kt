@@ -131,6 +131,7 @@ internal class DeviceComposeServices(override val sendScope: CoroutineScope) : C
     // ---- Transcription: never installed here ----
     override fun prepareTranscriptionModel() = Unit
     override suspend fun transcriptionModelInstalled(): Boolean = false
+    override fun transcribesAutomatically(): Boolean = false
     override suspend fun transcribe(audio: ByteArray, hints: List<String>, conversationId: UUID, tracking: UUID): String = ""
 
     // ---- Links: no page ever loads ----

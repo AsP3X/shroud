@@ -125,6 +125,7 @@ class DeviceDataWipeTest {
         assertTrue(keep.keepsPrefsKey(PrefsFiles.WIPE, DeviceDataWipe.PENDING_KEY))
         assertTrue(keep.keepsPrefsKey(PrefsFiles.DEVICE, "notifications.permissionAsked"))
         assertFalse(keep.keepsPrefsKey(PrefsFiles.VOICE, "transcription.locale"))
+        assertFalse(keep.keepsPrefsKey(PrefsFiles.VOICE, "transcription.automatic"))
         assertFalse(keep.keepsPrefsKey(PrefsFiles.VOICE, "transcription.languageStats"))
         assertFalse(keep.keepsPrefsKey(PrefsFiles.PREFERENCES, "security.autoLockDelay"))
         assertFalse(keep.keepsPrefsKey(PrefsFiles.PREFERENCES, "privacy.generatesLinkPreviews"))

@@ -43,6 +43,18 @@ class TranscriptionLanguage(
             }
         }
 
+    /**
+     * Whether a voice note you send is transcribed on its own, right after it goes out (prefs
+     * `transcription.automatic`, iOS `TranscriptionPreferences`). Off by default; Log Out wipes it.
+     * A sealed wipe drops the write.
+     */
+    var transcribesAutomatically: Boolean
+        get() = prefs.getBoolean(AUTOMATIC_KEY, false)
+        set(value) {
+            if (seal.isSealed) return
+            prefs.edit(commit = true) { putBoolean(AUTOMATIC_KEY, value) }
+        }
+
     /** Display name in the user's language, e.g. "German (Germany)". */
     fun displayName(locale: Locale): String {
         val name = locale.getDisplayName(Locale.getDefault())
@@ -101,6 +113,7 @@ class TranscriptionLanguage(
 
     companion object {
         const val LOCALE_KEY = "transcription.locale"
+        const val AUTOMATIC_KEY = "transcription.automatic"
 
         val WHISPER_CODES = listOf(
             "en", "de", "es", "fr", "it", "pt", "nl", "pl", "ru", "uk",

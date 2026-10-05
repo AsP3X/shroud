@@ -58,6 +58,15 @@ interface VoiceTranscription {
     /** Settings › Transcription's language; null = detect. */
     var languageOverride: Locale?
 
+    /**
+     * Settings › Transcription › Transcribe automatically (iOS `TranscriptionPreferences`). Off by
+     * default: a note is then transcribed only when its transcript button is tapped, and recording
+     * does not start the model download.
+     */
+    var transcribesAutomatically: Boolean
+        get() = false
+        set(_) = Unit
+
     /** A note was re-keyed to its server id while being transcribed (`ThreadState.rekey`): progress follows it. */
     fun handOff(from: UUID, to: UUID)
 

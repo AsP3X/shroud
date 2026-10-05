@@ -227,7 +227,7 @@ class ComposeControllerTest {
 
     @Test
     fun `a take starts - playback yields, medium tick, recording signal, model download (CV 1418-1431)`() = runTest(main.dispatcher) {
-        val env = env()
+        val env = env { automaticTranscription = true }
         env.controller.gesture.pointer(0f, 0f)
         advanceUntilIdle()
         assertEquals(1, env.services.playbackStops)
@@ -236,6 +236,18 @@ class ComposeControllerTest {
         assertEquals(listOf(Haptic.Medium), env.effects.haptics())
         assertTrue(env.controller.isRecording.value)
         assertEquals(ComposerPhase.Recording(0f, 0f), env.controller.gesture.phase.value)
+    }
+
+    @Test
+    fun `with automatic transcription off a take downloads no model and sends no transcript`() = runTest(main.dispatcher) {
+        val env = env { modelInstalled = true }
+        env.controller.gesture.pointer(0f, 0f)
+        env.controller.gesture.pointerUp()
+        advanceUntilIdle()
+        assertEquals(0, env.services.modelPrepares)
+        val provider = env.services.voices.single().transcriptProvider!!
+        assertNull(provider(UUID.randomUUID()))
+        assertTrue(env.services.transcribed.isEmpty())
     }
 
     @Test
@@ -265,6 +277,7 @@ class ComposeControllerTest {
         val env = env {
             threads.value = mapOf(PEER to listOf(original))
             contacts = listOf("zed", "amy", "jane")
+            automaticTranscription = true
         }
         env.controller.startReply(original)
         env.controller.gesture.pointer(0f, 0f)

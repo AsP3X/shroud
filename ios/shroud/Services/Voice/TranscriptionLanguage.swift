@@ -171,6 +171,21 @@ nonisolated enum TranscriptionLanguage {
     ]
 }
 
+/// Whether a voice note you send is transcribed on its own, right after it goes out.
+///
+/// Human: Off by default. Transcribing downloads a Whisper model of several hundred megabytes and
+/// runs it for every note, which not everyone wants. With it off a note is transcribed only when
+/// its transcript button is tapped, and recording no longer starts the model download.
+/// Agent: READS/WRITES UserDefaults key `transcription.automatic`; Log Out wipes it (back to off).
+nonisolated enum TranscriptionPreferences {
+    static let automaticKey = "transcription.automatic"
+
+    static var transcribesAutomatically: Bool {
+        get { UserDefaults.standard.bool(forKey: automaticKey) }
+        set { UserDefaults.standard.set(newValue, forKey: automaticKey) }
+    }
+}
+
 /// Remembers which language was actually spoken, per conversation and overall.
 ///
 /// Human: This is what makes *short* voice messages work. Two seconds of "Ja, mach ich" carries

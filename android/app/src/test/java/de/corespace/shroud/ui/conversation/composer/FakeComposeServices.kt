@@ -222,12 +222,15 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
     // ---- Transcription ----
     var modelPrepares = 0
     var modelInstalled = false
+    /** Settings › Transcription › Transcribe automatically; off by default, as in the app. */
+    var automaticTranscription = false
     val transcribed = ArrayList<Pair<List<String>, UUID>>()
     override fun prepareTranscriptionModel() {
         modelPrepares++
     }
 
     override suspend fun transcriptionModelInstalled(): Boolean = modelInstalled
+    override fun transcribesAutomatically(): Boolean = automaticTranscription
     override suspend fun transcribe(audio: ByteArray, hints: List<String>, conversationId: UUID, tracking: UUID): String {
         transcribed += hints to tracking
         return "hello"

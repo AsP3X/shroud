@@ -124,6 +124,9 @@ internal interface ComposeServices {
     fun prepareTranscriptionModel()
     suspend fun transcriptionModelInstalled(): Boolean
 
+    /** Settings › Transcription › Transcribe automatically; off by default. */
+    fun transcribesAutomatically(): Boolean
+
     /** Throws when it cannot transcribe. */
     suspend fun transcribe(audio: ByteArray, hints: List<String>, conversationId: UUID, tracking: UUID): String
 
@@ -245,6 +248,8 @@ internal class ContainerComposeServices(private val container: AppContainer) : C
     }
 
     override suspend fun transcriptionModelInstalled(): Boolean = container.transcription.voice.modelIsInstalled()
+
+    override fun transcribesAutomatically(): Boolean = container.transcription.voice.transcribesAutomatically
 
     override suspend fun transcribe(audio: ByteArray, hints: List<String>, conversationId: UUID, tracking: UUID): String =
         container.transcription.voice.transcribe(audio, VoiceFormat.MIME, hints, conversationId, tracking)

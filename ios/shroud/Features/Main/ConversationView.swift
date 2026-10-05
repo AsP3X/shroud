@@ -1497,10 +1497,12 @@ struct ConversationView: View {
             if !isNotes {
                 messaging.setRecording(peerUserID: peerUserID, isRecording: true)
             }
-            // Recording is a clear signal the user wants a transcript, so start fetching the
-            // language model now — it downloads while they speak instead of stalling the send.
-            // No-op once installed.
-            Task.detached(priority: .utility) { await VoiceTranscriber.prepareModel() }
+            // With automatic transcription on, recording is a clear signal the user wants a
+            // transcript, so start fetching the language model now — it downloads while they
+            // speak instead of stalling the send. No-op once installed.
+            if TranscriptionPreferences.transcribesAutomatically {
+                Task.detached(priority: .utility) { await VoiceTranscriber.prepareModel() }
+            }
             return true
         } catch {
             toast = .failure(SessionController.userMessage(for: error))
@@ -1555,6 +1557,8 @@ struct ConversationView: View {
                     // in front of it (see `sendVoice`): the note goes out right away and the
                     // transcript follows once ready.
                     transcriptProvider: { messageID in
+                        // Only when the user turned it on (Settings › Transcription).
+                        guard TranscriptionPreferences.transcribesAutomatically else { return nil }
                         // Never hold a note back for the one-time Whisper download (hundreds of
                         // megabytes); it keeps going in the background since recording began.
                         guard await VoiceTranscriber.modelIsInstalled() else { return nil }

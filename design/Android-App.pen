@@ -82582,6 +82582,73 @@
             },
             {
               "type": "frame",
+              "id": "c7vVf5",
+              "name": "Card Transcribe automatically",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tQHjq",
+                  "name": "Row Transcribe automatically",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "L9DPsX",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "eNqqg",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Transcribe automatically",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gFXuB",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Transcribes the voice messages you send, right after sending. When off, tap the transcript button next to a voice message to transcribe it.",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "OKK8p",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle",
+                      "fill": "$toggle-off",
+                      "justifyContent": "start"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
               "id": "tnMpc",
               "name": "Automatic Card",
               "clip": true,

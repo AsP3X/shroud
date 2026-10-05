@@ -5,12 +5,14 @@ import SwiftUI
 /// Human: Whisper is one multilingual model. This screen does not download extra packs —
 /// it only pins a language when auto-detection is wrong. The model itself downloads the
 /// first time a voice note is transcribed.
-/// Agent: READS/WRITES `TranscriptionLanguage.override`. Does not start a model download.
+/// Agent: READS/WRITES `TranscriptionLanguage.override` and
+/// `TranscriptionPreferences.transcribesAutomatically`. Does not start a model download.
 struct TranscriptionLanguageView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var available: [Locale] = []
     @State private var selection: Locale?
+    @State private var transcribesAutomatically = TranscriptionPreferences.transcribesAutomatically
     @State private var install = TranscriptionModelInstall.shared
 
     var body: some View {
@@ -18,6 +20,8 @@ struct TranscriptionLanguageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     header
+
+                    automaticTranscriptionCard
 
                     if install.phase == .downloading {
                         downloadProgressCard
@@ -68,6 +72,30 @@ struct TranscriptionLanguageView: View {
         }
         .padding(.top, 4)
         .padding(.bottom, 4)
+    }
+
+    /// Off by default (`TranscriptionPreferences`): a note is then transcribed only on a tap.
+    private var automaticTranscriptionCard: some View {
+        Toggle(isOn: $transcribesAutomatically) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Transcribe automatically")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Transcribes the voice messages you send, right after sending. When off, tap the transcript button next to a voice message to transcribe it.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .tint(Theme.accent)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Theme.background)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onChange(of: transcribesAutomatically) { _, value in
+            TranscriptionPreferences.transcribesAutomatically = value
+            Haptics.impact(.light)
+        }
     }
 
     private var downloadProgressCard: some View {

@@ -36,6 +36,8 @@ import de.corespace.shroud.ui.components.PushedScreen
 import de.corespace.shroud.ui.components.SettingsCard
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.Spinner
+import de.corespace.shroud.ui.components.ToggleRow
+import de.corespace.shroud.ui.components.ToggleRowSpacing
 import de.corespace.shroud.ui.components.highlightRow
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
@@ -69,6 +71,7 @@ internal fun TranscriptionScreen(
     // Read once on appear, as iOS does in `onAppear` (`:40-43`).
     val available = remember(voice) { TranscriptionPicker.order(voice.availableLocales(), deviceLanguageTags()) }
     var selection by remember(voice) { mutableStateOf(voice.languageOverride) }
+    var automatic by remember(voice) { mutableStateOf(voice.transcribesAutomatically) }
     TranscriptionContent(
         install = install,
         languages = available,
@@ -79,6 +82,11 @@ internal fun TranscriptionScreen(
             voice.languageOverride = locale
         },
         onBack = onBack,
+        automatic = automatic,
+        onAutomatic = { on ->
+            automatic = on
+            voice.transcribesAutomatically = on
+        },
     )
 }
 
@@ -90,6 +98,10 @@ object TranscriptionPicker {
             "the first time you transcribe, then works for every language."
     const val AUTOMATIC = "Automatic"
     const val AUTOMATIC_SUBTITLE = "Detects the spoken language. Remembers it per chat when Whisper is unsure."
+    const val AUTO_TRANSCRIBE = "Transcribe automatically"
+    const val AUTO_TRANSCRIBE_SUBTITLE =
+        "Transcribes the voice messages you send, right after sending. When off, tap the transcript button next to " +
+            "a voice message to transcribe it."
 
     /** A row's minimum height, its touch target (iOS draws 41 dp one-line rows). */
     val ROW_MIN_HEIGHT: Dp = 48.dp
@@ -141,7 +153,8 @@ object TranscriptionPicker {
 
 /**
  * The Transcription screen's drawing (`TranscriptionLanguageView.swift:16-44`): header, the
- * download card while the model downloads, the Automatic card and one card of [languages].
+ * Transcribe automatically switch ([automatic], off by default), the download card while the
+ * model downloads, the Automatic card and one card of [languages].
  */
 @Composable
 fun TranscriptionContent(
@@ -150,6 +163,8 @@ fun TranscriptionContent(
     selection: Locale?,
     onChoose: (Locale?) -> Unit,
     onBack: () -> Unit,
+    automatic: Boolean = false,
+    onAutomatic: (Boolean) -> Unit = {},
 ) {
     val colors = ShroudTheme.colors
     PushedScreen(TranscriptionPicker.TITLE, onBack) {
@@ -165,6 +180,15 @@ fun TranscriptionContent(
                 colors.textSecondary,
                 Modifier.padding(top = 4.dp, bottom = 4.dp),
             )
+            SettingsCard {
+                ToggleRow(
+                    title = TranscriptionPicker.AUTO_TRANSCRIBE,
+                    subtitle = TranscriptionPicker.AUTO_TRANSCRIBE_SUBTITLE,
+                    checked = automatic,
+                    spacing = ToggleRowSpacing.Privacy,
+                    onCheckedChange = onAutomatic,
+                )
+            }
             if (install.phase == TranscriptionInstallState.Phase.Downloading) DownloadCard(install)
             SettingsCard {
                 LanguageRow(TranscriptionPicker.AUTOMATIC, TranscriptionPicker.AUTOMATIC_SUBTITLE, selected = selection == null) { onChoose(null) }

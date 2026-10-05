@@ -168,7 +168,9 @@ class SettingsScreensUiTest {
         assertTrue(ui.nodesWithText("System follows your tablet’s light or dark setting. The choice applies to this tablet only.").isNotEmpty())
     }
 
+    // Tall enough that the language rows sit below the switch and the download card without clipping.
     @Test
+    @Config(sdk = [35], qualifiers = "w411dp-h1000dp")
     fun transcriptionPicksALanguageOrAutomatic() {
         var selection: Locale? by mutableStateOf(Locale.forLanguageTag("de-DE"))
         val ui = ComposeHarness {
@@ -192,6 +194,28 @@ class SettingsScreensUiTest {
         assertEquals(null, selection)
         assertTrue(ui.row("Automatic").isSelected())
         assertFalse(ui.row(german).isSelected())
+    }
+
+    @Test
+    fun transcribeAutomaticallyIsAnOffSwitchThatReportsItsChange() {
+        var automatic by mutableStateOf(false)
+        val ui = ComposeHarness {
+            TranscriptionContent(
+                TranscriptionInstallState.Idle,
+                languages = emptyList(),
+                selection = null,
+                onChoose = {},
+                onBack = {},
+                automatic = automatic,
+                onAutomatic = { automatic = it },
+            )
+        }
+        val toggle = ui.node(TranscriptionPicker.AUTO_TRANSCRIBE)
+        assertEquals("Off", toggle.config.getOrNull(SemanticsProperties.StateDescription))
+        ui.node(TranscriptionPicker.AUTO_TRANSCRIBE).click()
+        ui.idle()
+        assertTrue(automatic)
+        assertEquals("On", ui.node(TranscriptionPicker.AUTO_TRANSCRIBE).config.getOrNull(SemanticsProperties.StateDescription))
     }
 
     @Test
