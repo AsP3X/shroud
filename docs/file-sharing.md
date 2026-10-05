@@ -382,10 +382,17 @@ Acrobat: one column of page thumbnails, each with its number under it.
 - *Wide windows* (iPad and iPhone in regular width, the web from 900 px, Android from 840 dp): a
   sidebar **200 wide** beside the canvas, which shrinks to make room (the zoom stays relative to
   the fit). It is **open by default** for a document of more than one page; **Pages** toggles it
-  (animated 220 ms, none with reduced motion) and the choice holds for the rest of the session.
+  and the choice holds for the rest of the session.
 - *Narrow windows* (phones, the web below 900 px): the same list as a **drawer from the left**,
   `min(280, 80 %)` wide, over a 30 % black scrim; a tap on the scrim, a swipe to the left, Escape
   or picking a page closes it.
+- *Motion*: the sidebar and the drawer **slide in from the left and back out**, 280 ms on
+  `cubic-bezier(0.32, 0.72, 0, 1)` (the scrim fades with them); a drawer closed part-way in or
+  mid-swipe leaves from where it is. With reduced motion they appear and go at once. While the
+  sidebar slides, the pages move and scale with it as a transform only — iOS a Core Animation
+  layer transform, the web a CSS transform — and are laid out at the new width once (pdf.js
+  re-fitting 500 pages costs ~11 ms a frame); Android re-measures the row each frame without
+  composing the viewer again.
 - Sidebar fill: light `#F7F7F9`, dark `#1A1A1D`, a 1 px separator on its right edge (the drawer
   has a shadow instead). The list is padded 16 at the top and bottom, rows 20 apart.
 - Thumbnail: the page's own aspect at **128 wide** (a landscape page is shorter; no page is

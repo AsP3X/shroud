@@ -24,7 +24,12 @@ struct PDFViewerScreen: View {
 
     /// The sidebar sits beside the pages; in compact width the list is a drawer.
     private var isRegular: Bool { sizeClass == .regular }
-    private var sidebarAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.22) }
+    private var sidebarAnimation: Animation? {
+        reduceMotion ? nil : .timingCurve(
+            ShroudPDFView.slideCurve.0, ShroudPDFView.slideCurve.1, ShroudPDFView.slideCurve.2, ShroudPDFView.slideCurve.3,
+            duration: ShroudPDFView.slideDuration
+        )
+    }
 
     static let sidebarWidth: CGFloat = 200
     static let drawerWidth: CGFloat = 280
@@ -70,9 +75,14 @@ struct PDFViewerScreen: View {
                                 .ignoresSafeArea()
                         }
                         .transition(.move(edge: .leading))
+                        // Over the pages while they glide out from under it.
+                        .zIndex(1)
                 }
                 PDFKitView(model: model)
                     .ignoresSafeArea()
+                    // The pages take their new width at once and glide there on their own
+                    // (`ShroudPDFView.glideNextResize`), instead of PDFKit re-fitting every frame.
+                    .transaction { $0.animation = nil }
             }
         case let .locked(wrongPassword):
             PDFPasswordCard(wrongPassword: wrongPassword) { model.unlock(with: $0) }
@@ -108,9 +118,7 @@ struct PDFViewerScreen: View {
             }
             if model.phase == .ready, model.pageCount > 0 {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Pages", systemImage: "sidebar.left") {
-                        withAnimation(sidebarAnimation) { model.togglePages() }
-                    }
+                    Button("Pages", systemImage: "sidebar.left", action: togglePages)
                     .accessibilityAddTraits(model.showsPages ? .isSelected : [])
                 }
             }
@@ -221,16 +229,20 @@ struct PDFViewerScreen: View {
 
     // MARK: - Drawer
 
-    /// Compact width: the page list slides in from the left over a scrim.
-    @ViewBuilder
+    /// Compact width: the page list slides in from the left over a scrim. The scrim and the list
+    /// are inserted on their own, not inside a container that comes and goes, so each keeps its
+    /// own transition (a container's insertion would fade them in together).
     private var drawer: some View {
-        if !isRegular, model.showsPages, model.phase == .ready {
-            ZStack(alignment: .leading) {
+        let open = !isRegular && model.showsPages && model.phase == .ready
+        return ZStack(alignment: .leading) {
+            if open {
                 Color.black.opacity(0.3)
                     .ignoresSafeArea()
                     .onTapGesture { closeDrawer() }
                     .accessibilityHidden(true)
                     .transition(.opacity)
+            }
+            if open {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Pages")
                         .font(.system(size: 17, weight: .semibold))
@@ -258,10 +270,18 @@ struct PDFViewerScreen: View {
                 )
                 .transition(.move(edge: .leading))
             }
-            .accessibilityElement(children: .contain)
-            .accessibilityAddTraits(.isModal)
-            .accessibilityAction(.escape) { closeDrawer() }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(open ? .isModal : [])
+        .accessibilityAction(.escape) { if open { closeDrawer() } }
+    }
+
+    private func togglePages() {
+        if isRegular, !reduceMotion {
+            (model.pdfView as? ShroudPDFView)?.glideNextResize()
+        }
+        withAnimation(sidebarAnimation) { model.togglePages() }
     }
 
     private func closeDrawer() {
@@ -411,10 +431,17 @@ final class ShroudPDFView: PDFView {
     static let maxPageWidth: CGFloat = 920
     static let maxZoom: CGFloat = 6
     static let doubleTapZoom: CGFloat = 2.5
+    /// The pages sidebar's slide (§10.2): decelerating, without a jump at the start.
+    static let slideDuration: TimeInterval = 0.28
+    static let slideCurve: (Double, Double, Double, Double) = (0.32, 0.72, 0, 1)
 
     var onFirstLayout: (() -> Void)?
     private(set) var baseScale: CGFloat = 0
     private var fittedWidth: CGFloat = 0
+    /// Where the view sat in its window at the last layout, for a glide from there.
+    private var lastFrameInWindow: CGRect?
+    /// Until when the next re-fit glides instead of jumping (`glideNextResize`).
+    private var glideUntil: CFTimeInterval = 0
     /// The page opened on, while the first layout passes settle (the bar's insets, the sidebar):
     /// each re-fit lands on its top again instead of keeping the middle of the view.
     private var openingPage: PDFPage?
@@ -427,12 +454,27 @@ final class ShroudPDFView: PDFView {
         }
     }
 
+    /// The sidebar is about to slide in or out beside the pages. The view takes its new width at
+    /// once, so PDFKit lays the pages out a single time; they then glide from where they were to
+    /// where they now are with the sidebar, as a Core Animation transform the render server runs.
+    func glideNextResize() {
+        glideUntil = CACurrentMediaTime() + 0.3
+    }
+
     override func layoutSubviews() {
+        let oldFrame = lastFrameInWindow
+        let oldScale = scaleFactor
         super.layoutSubviews()
+        let frameInWindow = convert(bounds, to: nil)
+        lastFrameInWindow = frameInWindow
         guard bounds.width > 0, document != nil, abs(bounds.width - fittedWidth) > 0.5 else { return }
         let first = fittedWidth == 0
         fittedWidth = bounds.width
         refit()
+        if !first, CACurrentMediaTime() < glideUntil, let oldFrame {
+            glideUntil = 0
+            glide(from: oldFrame, scale: oldScale, to: frameInWindow)
+        }
         if first {
             let callback = onFirstLayout
             onFirstLayout = nil
@@ -464,6 +506,31 @@ final class ShroudPDFView: PDFView {
         minScaleFactor = base
         maxScaleFactor = base * Self.maxZoom
         scaleFactor = base * min(max(1, relative), Self.maxZoom)
+    }
+
+    /// Draws the freshly fitted pages as they were before (`old` frame, `scale`), then lets them
+    /// settle. `refit` kept the spot in the middle of the view in the middle, so the mapping is a
+    /// scale about the middle plus the move between the two middles. It is applied to what the
+    /// scroll view shows, which is clipped to the new frame only once the glide is over: the pages
+    /// still reach where they were, and pages around the view fill in while they shrink.
+    private func glide(from old: CGRect, scale oldScale: CGFloat, to new: CGRect) {
+        guard let scroll = Self.scrollView(in: self), scaleFactor > 0, oldScale > 0 else { return }
+        let ratio = oldScale / scaleFactor
+        var from = CATransform3DMakeTranslation(old.midX - new.midX, old.midY - new.midY, 0)
+        from = CATransform3DScale(from, ratio, ratio, 1)
+        let curve = Self.slideCurve
+        let animation = CABasicAnimation(keyPath: "sublayerTransform")
+        animation.fromValue = NSValue(caTransform3D: from)
+        animation.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        animation.duration = Self.slideDuration
+        animation.timingFunction = CAMediaTimingFunction(
+            controlPoints: Float(curve.0), Float(curve.1), Float(curve.2), Float(curve.3)
+        )
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak scroll] in scroll?.clipsToBounds = true }
+        scroll.clipsToBounds = false
+        scroll.layer.add(animation, forKey: "glide")
+        CATransaction.commit()
     }
 
     /// Puts the top of `page` just under the bar (PDFKit's own `go(to:)` stops short of it and

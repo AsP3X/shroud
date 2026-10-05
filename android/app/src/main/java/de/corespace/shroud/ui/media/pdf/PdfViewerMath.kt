@@ -69,7 +69,8 @@ object PdfViewerMetrics {
     const val SIDEBAR_MIN_WINDOW = 840f
     const val SIDEBAR_WIDTH = 200f
     const val SIDEBAR_SEPARATOR = 1f
-    const val SIDEBAR_ANIMATION_MS = 220
+    /** The sidebar's and the drawer's slide, on the curve in `PdfViewer.kt` (`slideSpec`). */
+    const val SIDEBAR_ANIMATION_MS = 280
     const val DRAWER_MAX_WIDTH = 280f
     const val DRAWER_FRACTION = 0.8f
     const val DRAWER_SCRIM_ALPHA = 0.3f

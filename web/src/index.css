@@ -27,6 +27,8 @@
   --radius: 14px;
 
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* The PDF pages sidebar and drawer slide (§10.2): decelerating, but without the jump at the start. */
+  --pdf-slide: 280ms cubic-bezier(0.32, 0.72, 0, 1);
   --rail-w: 76px;
   --pane-w: 340px;
 
@@ -3220,16 +3222,19 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 
 /* Pages (§10.2): one column of thumbnails — a sidebar 200 wide from 900px (the stage shrinks
    beside it), a drawer from the left below. Rows are absolutely placed from the page sizes, so
-   only those near the visible part exist. */
+   only those near the visible part exist. The sidebar slides in from the left: the column is
+   pinned to the right edge of the opening width, so it moves with it frame for frame, and is
+   contained, so moving it never lays out the thumbnails again. */
 .pdf-sidebar {
   position: relative; flex: none;
   width: 0; overflow: hidden;
-  transition: width 220ms var(--ease);
+  transition: width var(--pdf-slide);
 }
 .pdf-sidebar.is-open { width: 200px; }
 .pdf-sidebar-inner {
-  position: absolute; top: 0; bottom: 0; left: 0;
+  position: absolute; top: 0; bottom: 0; right: 0;
   width: 200px;
+  contain: strict;
   display: flex; flex-direction: column;
   background: var(--pdf-sidebar);
   border-right: 1px solid var(--separator);
@@ -3275,8 +3280,9 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .pdf-drawer-scrim {
   position: absolute; inset: 0; z-index: 3;
   background: rgba(0, 0, 0, 0.3);
-  animation: fade-in 220ms ease;
+  animation: fade-in var(--pdf-slide);
 }
+.pdf-drawer-scrim.is-closing { animation: pdf-fade-out var(--pdf-slide) forwards; pointer-events: none; }
 .pdf-drawer {
   position: absolute; top: 0; bottom: 0; left: 0; z-index: 4;
   width: min(280px, 80%);
@@ -3284,11 +3290,18 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   background: var(--pdf-sidebar);
   box-shadow: 0 0 32px rgba(0, 0, 0, 0.28);
   touch-action: pan-y;
-  animation: pdf-drawer-in 220ms var(--ease);
-  transition: transform 220ms var(--ease);
+  animation: pdf-drawer-in var(--pdf-slide);
+  transition: transform var(--pdf-slide);
 }
 .pdf-drawer.is-dragging { transition: none; }
+/* Closing slides out from where it was (`--pdf-drawer-from`), then the drawer unmounts. */
+.pdf-drawer.is-closing { animation: pdf-drawer-out var(--pdf-slide) forwards; pointer-events: none; }
 @keyframes pdf-drawer-in { from { transform: translateX(-100%); } }
+@keyframes pdf-drawer-out {
+  from { transform: translateX(var(--pdf-drawer-from, 0px)); }
+  to { transform: translateX(-100%); }
+}
+@keyframes pdf-fade-out { to { opacity: 0; } }
 
 @media (max-width: 899px) {
   .pdf-viewer-scrim { padding: 0; }

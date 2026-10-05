@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { createPortal, flushSync } from "react-dom";
 import {
   ChevronDown,
@@ -50,6 +58,10 @@ const SETTLE_MS = 350;
 const WIDE_QUERY = "(min-width: 900px)";
 /** A swipe this far to the left closes the pages drawer. */
 const DRAWER_SWIPE = 56;
+/** A resize this still for this long hands the scale back to pdf.js (the pages are drawn sharp). */
+const RESIZE_SETTLE_MS = 120;
+/** The drawer's slide out (index.css `--pdf-slide`), after which it unmounts. */
+const DRAWER_CLOSE_MS = 280;
 
 type Status = "loading" | "password" | "ready" | "damaged";
 type Matches = { current: number; total: number };
@@ -141,6 +153,9 @@ export function PdfViewer({
   const [sidebarPref, setSidebarPref] = useState<boolean | null>(() => pdfSidebarChoice());
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerDrag, setDrawerDrag] = useState(0);
+  /** While the drawer slides out: where it leaves from (px, ≤ 0). */
+  const [drawerLeaving, setDrawerLeaving] = useState<number | null>(null);
+  const drawerEl = useRef<HTMLElement>(null);
   const drawerGesture = useRef<{ id: number; x: number; y: number; dragging: boolean } | null>(null);
 
   const dialog = useRef<HTMLDivElement>(null);
@@ -328,6 +343,11 @@ export function PdfViewer({
       });
       eventBus.on("scalechanging", ({ scale }: { scale: number }) => {
         if (!fitScale.current || refitting.current) return;
+        // A zoom in the middle of a resize: pdf.js has the scale now, so the resize's stand-in goes.
+        if (viewerEl.current) {
+          viewerEl.current.style.transform = "";
+          viewerEl.current.style.width = "";
+        }
         const z = scale / fitScale.current;
         zoomRef.current = z;
         setZoom(z);
@@ -412,14 +432,37 @@ export function PdfViewer({
   }, [blob, measureFit, pinchBy, goToPage]);
 
   /*
-   * Fit width follows the stage (the window, the sidebar opening or closing), keeping the zoom.
-   * While the size moves (the sidebar's 220 ms), pdf.js scales the pages with CSS and draws them
-   * once it settles.
+   * Fit width follows the stage (the window, the sidebar sliding in or out), keeping the zoom.
+   * While the size moves, the pages follow with a CSS transform only — pdf.js re-lays out every
+   * page on a scale change, 11 ms a frame for 500 pages — anchored where pdf.js keeps the reader's
+   * place: the top of the view, and its left once zoomed past the width. At fit width the column
+   * is widened by 1 / scale first, so after scaling it is the stage's width again with every page
+   * centred where pdf.js will put it (within a pixel). Once the size has held for
+   * RESIZE_SETTLE_MS, pdf.js takes the scale over and draws the pages sharp.
    */
   useEffect(() => {
     const node = container.current;
-    if (!node) return;
+    const pages = viewerEl.current;
+    if (!node || !pages) return;
     let frame = 0;
+    let settle = 0;
+    const commit = () => {
+      settle = 0;
+      pages.style.transform = "";
+      pages.style.transformOrigin = "";
+      pages.style.width = "";
+      node.style.overflowX = "";
+      const viewer = engine.current?.viewer;
+      if (!viewer?.pdfDocument) return;
+      const target = fitScale.current * zoomRef.current;
+      if (Math.abs(target - viewer.currentScale) <= 0.001) return;
+      refitting.current = true;
+      try {
+        viewer.updateScale({ scaleFactor: target / viewer.currentScale });
+      } finally {
+        refitting.current = false;
+      }
+    };
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
@@ -427,19 +470,23 @@ export function PdfViewer({
         if (!viewer?.pdfDocument || !unitWidth.current) return;
         const before = fitScale.current;
         measureFit();
-        if (Math.abs(before - fitScale.current) <= 0.001) return;
-        const target = fitScale.current * zoomRef.current;
-        refitting.current = true;
-        try {
-          viewer.updateScale({ scaleFactor: target / viewer.currentScale, drawingDelay: SETTLE_MS });
-        } finally {
-          refitting.current = false;
-        }
+        if (Math.abs(before - fitScale.current) <= 0.001 && !settle) return;
+        // The scale pdf.js will land on: it rounds to 0.01.
+        const k = Math.round(fitScale.current * zoomRef.current * 100) / 100 / viewer.currentScale;
+        const fit = zoomRef.current <= 1.001;
+        pages.style.width = fit ? `${node.clientWidth / k}px` : "";
+        // The widened column's own box would give the stage a sideways scrollbar for a moment.
+        node.style.overflowX = fit ? "hidden" : "";
+        pages.style.transformOrigin = `${fit ? 0 : node.scrollLeft}px ${node.scrollTop}px`;
+        pages.style.transform = `scale(${k})`;
+        window.clearTimeout(settle);
+        settle = window.setTimeout(commit, RESIZE_SETTLE_MS);
       });
     });
     observer.observe(node);
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
       observer.disconnect();
     };
   }, [measureFit]);
@@ -551,7 +598,31 @@ export function PdfViewer({
 
   /* -------------------------------------------------------------------------------- pages */
   const sidebarOpen = wide && cache != null && (sidebarPref ?? (docPages ?? 0) > 1);
-  const pagesShown = wide ? sidebarOpen : drawerOpen;
+  const drawerShown = drawerOpen && drawerLeaving == null;
+  const pagesShown = wide ? sidebarOpen : drawerShown;
+
+  /* The drawer slides out from wherever it is (open, part-way in, or under a finger), then goes. */
+  const closeDrawer = useCallback(() => {
+    drawerGesture.current = null;
+    setDrawerDrag(0);
+    const node = drawerEl.current;
+    if (!node || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setDrawerOpen(false);
+      setDrawerLeaving(null);
+      return;
+    }
+    const transform = getComputedStyle(node).transform;
+    setDrawerLeaving(transform && transform !== "none" ? Math.min(0, new DOMMatrixReadOnly(transform).m41) : 0);
+  }, []);
+
+  useEffect(() => {
+    if (drawerLeaving == null) return;
+    const timer = window.setTimeout(() => {
+      setDrawerOpen(false);
+      setDrawerLeaving(null);
+    }, DRAWER_CLOSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [drawerLeaving]);
 
   const togglePages = useCallback(() => {
     if (!cache) return;
@@ -559,17 +630,14 @@ export function PdfViewer({
       const next = !sidebarOpen;
       setSidebarPref(next);
       rememberPdfSidebar(next);
+    } else if (drawerShown) {
+      closeDrawer();
     } else {
       setDrawerDrag(0);
-      setDrawerOpen((open) => !open);
+      setDrawerLeaving(null);
+      setDrawerOpen(true);
     }
-  }, [cache, wide, sidebarOpen]);
-
-  const closeDrawer = useCallback(() => {
-    setDrawerOpen(false);
-    setDrawerDrag(0);
-    drawerGesture.current = null;
-  }, []);
+  }, [cache, wide, sidebarOpen, drawerShown, closeDrawer]);
 
   /* The drawer belongs to narrow windows; widening the window puts the sidebar in its place. */
   useEffect(() => {
@@ -622,7 +690,7 @@ export function PdfViewer({
         event.preventDefault();
         event.stopPropagation();
         if (searchOpen) closeSearch();
-        else if (drawerOpen && !wide) closeDrawer();
+        else if (drawerShown && !wide) closeDrawer();
         else latest.current.onClose();
         return;
       }
@@ -673,7 +741,7 @@ export function PdfViewer({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [searchOpen, drawerOpen, wide, status, closeSearch, openSearch, closeDrawer, stepZoom, zoomTo, goToPage]);
+  }, [searchOpen, drawerShown, wide, status, closeSearch, openSearch, closeDrawer, stepZoom, zoomTo, goToPage]);
 
   /* The page underneath doesn't scroll; focus comes back where it was. */
   useEffect(() => {
@@ -920,11 +988,23 @@ export function PdfViewer({
           </div>
           {!wide && cache && drawerOpen ? (
             <>
-              <div className="pdf-drawer-scrim" aria-hidden="true" onClick={closeDrawer} />
+              <div
+                className={`pdf-drawer-scrim${drawerLeaving != null ? " is-closing" : ""}`}
+                aria-hidden="true"
+                onClick={closeDrawer}
+              />
               <aside
-                className={`pdf-drawer${drawerDrag ? " is-dragging" : ""}`}
+                ref={drawerEl}
+                className={`pdf-drawer${drawerDrag ? " is-dragging" : ""}${drawerLeaving != null ? " is-closing" : ""}`}
                 aria-label="Pages"
-                style={drawerDrag ? { transform: `translateX(${drawerDrag}px)` } : undefined}
+                inert={drawerLeaving != null}
+                style={
+                  drawerLeaving != null
+                    ? ({ "--pdf-drawer-from": `${drawerLeaving}px` } as CSSProperties)
+                    : drawerDrag
+                      ? { transform: `translateX(${drawerDrag}px)` }
+                      : undefined
+                }
                 onPointerDown={onDrawerDown}
                 onPointerMove={onDrawerMove}
                 onPointerUp={onDrawerUp}

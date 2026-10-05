@@ -26,6 +26,10 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.AnimationState
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.rememberSplineBasedDecay
@@ -100,6 +104,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -237,6 +242,7 @@ internal fun PdfViewerContent(
             val sidebarWanted = PdfReadingMemory.sidebarOpen ?: (count == null || count > 1)
             val sidebarShown = wide && ready && sidebarWanted
             val sidebarWidth = rememberSidebarWidth(sidebarShown, ready, reduceMotion)
+            val sidebarPresent by remember { derivedStateOf { sidebarWidth.value > 0f } }
             val sidebarTarget = if (sidebarShown) (PdfViewerMetrics.SIDEBAR_WIDTH + PdfViewerMetrics.SIDEBAR_SEPARATOR).dp else 0.dp
 
             val topInset = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
@@ -245,10 +251,16 @@ internal fun PdfViewerContent(
             val contentPadding = PaddingValues(top = barDp + 4.dp, bottom = bottomInset + PdfViewerMetrics.PAGE_MARGIN.dp)
 
             Row(Modifier.fillMaxSize()) {
-                if (sidebarWidth > 0.dp) {
+                if (sidebarPresent) {
                     Box(
                         Modifier
-                            .width(sidebarWidth)
+                            // Read while laying out, so the slide re-measures the row each frame
+                            // without composing the viewer again.
+                            .layout { measurable, constraints ->
+                                val width = sidebarWidth.value.dp.roundToPx().coerceIn(constraints.minWidth, constraints.maxWidth)
+                                val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+                                layout(width, placeable.height) { placeable.place(0, 0) }
+                            }
                             .fillMaxHeight()
                             .clipToBounds(),
                     ) {
@@ -306,7 +318,7 @@ internal fun PdfViewerContent(
                     name = name,
                     currentPage = currentPage,
                     topInset = topInset,
-                    sidebarWidth = sidebarWidth,
+                    sidebarWidth = { sidebarWidth.value.dp },
                     pagesOpen = if (wide) sidebarShown else drawerOpen,
                     onHeight = { barHeight = it },
                     onClose = onClose,
@@ -367,21 +379,27 @@ internal fun PdfViewerContent(
 }
 
 /**
- * The sidebar's width (§10.2): 0 ↔ 200 dp + its separator over 220 ms, none under Reduce Motion;
- * its first appearance (the document opening) does not animate.
+ * The sidebar's width in dp (§10.2): 0 ↔ 200 + its separator, sliding in over 280 ms, none under
+ * Reduce Motion; its first appearance (the document opening) does not animate. Read it in layout
+ * or drawing, not in composition, so the slide doesn't compose the viewer every frame.
  */
 @Composable
-private fun rememberSidebarWidth(shown: Boolean, ready: Boolean, reduceMotion: Boolean): Dp {
+private fun rememberSidebarWidth(shown: Boolean, ready: Boolean, reduceMotion: Boolean): Animatable<Float, AnimationVector1D> {
     val full = PdfViewerMetrics.SIDEBAR_WIDTH + PdfViewerMetrics.SIDEBAR_SEPARATOR
     val width = remember { Animatable(if (shown) full else 0f) }
     val wasReady = remember { BooleanArray(1) }
     LaunchedEffect(shown, ready) {
         val target = if (shown) full else 0f
-        if (reduceMotion || !wasReady[0]) width.snapTo(target) else width.animateTo(target, Motion.easeInOut(PdfViewerMetrics.SIDEBAR_ANIMATION_MS))
+        if (reduceMotion || !wasReady[0]) width.snapTo(target) else width.animateTo(target, slideSpec())
         if (ready) wasReady[0] = true
     }
-    return width.value.dp
+    return width
 }
+
+/** The pages sidebar and drawer slide (§10.2): decelerating, without a jump at the start. */
+private fun <T> slideSpec(): FiniteAnimationSpec<T> = tween(PdfViewerMetrics.SIDEBAR_ANIMATION_MS, easing = SlideEasing)
+
+private val SlideEasing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
 
 // ---- the page column ----
 
@@ -641,7 +659,8 @@ private fun TopBar(
     name: String,
     currentPage: Int,
     topInset: Dp,
-    sidebarWidth: Dp,
+    /** Read while drawing: it moves every frame of the sidebar's slide. */
+    sidebarWidth: () -> Dp,
     pagesOpen: Boolean,
     onHeight: (Int) -> Unit,
     onClose: () -> Unit,
@@ -658,7 +677,7 @@ private fun TopBar(
             .onSizeChanged { onHeight(it.height) }
             // A fade of the surface underneath: the sidebar's fill over the sidebar, the canvas over the pages.
             .drawBehind {
-                val split = sidebarWidth.toPx().coerceIn(0f, size.width)
+                val split = sidebarWidth().toPx().coerceIn(0f, size.width)
                 fun fade(color: Color) = Brush.verticalGradient(
                     0f to color.copy(alpha = 0.92f),
                     0.6f to color.copy(alpha = 0.6f),
@@ -1030,7 +1049,7 @@ private fun PagesDrawer(
     val colors = ShroudTheme.colors
     val reduceMotion = ShroudTheme.reduceMotion
     val density = LocalDensity.current
-    val spec = if (reduceMotion) Motion.reduced<Float>() else Motion.easeInOut(PdfViewerMetrics.SIDEBAR_ANIMATION_MS)
+    val spec = if (reduceMotion) Motion.reduced<Float>() else slideSpec()
     var drag by remember { mutableStateOf(0f) }
     LaunchedEffect(visible) { if (visible) drag = 0f }
     Box(Modifier.fillMaxSize()) {
@@ -1046,8 +1065,8 @@ private fun PagesDrawer(
         }
         AnimatedVisibility(
             visible = visible,
-            enter = if (reduceMotion) fadeIn(spec) else slideInHorizontally(Motion.easeInOut(PdfViewerMetrics.SIDEBAR_ANIMATION_MS)) { -it },
-            exit = if (reduceMotion) fadeOut(spec) else slideOutHorizontally(Motion.easeInOut(PdfViewerMetrics.SIDEBAR_ANIMATION_MS)) { -it },
+            enter = if (reduceMotion) fadeIn(spec) else slideInHorizontally(slideSpec()) { -it },
+            exit = if (reduceMotion) fadeOut(spec) else slideOutHorizontally(slideSpec()) { -it },
         ) {
             PagesList(
                 state = state,
