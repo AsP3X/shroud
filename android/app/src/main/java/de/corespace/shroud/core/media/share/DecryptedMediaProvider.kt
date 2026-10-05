@@ -3,11 +3,18 @@ package de.corespace.shroud.core.media.share
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
+import android.os.ProxyFileDescriptorCallback
+import android.os.storage.StorageManager
+import android.provider.OpenableColumns
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
+import de.corespace.shroud.core.media.SealedMediaReader
 import java.io.FileNotFoundException
 import java.io.IOException
 
@@ -15,6 +22,12 @@ import java.io.IOException
  * Hands decrypted media to a share target on demand (conversation-compose-media §18.5, Q6;
  * `exported=false`, `grantUriPermissions=true`, authority `<applicationId>.media`). The bytes stay
  * in [SharedMediaRegistry]; [openFile] pipes them out and writes nothing to disk.
+ *
+ * A file's grant (docs/file-sharing.md §8) is served straight from its SHRM1 reader: a seekable
+ * proxy descriptor ([StorageManager.openProxyFileDescriptor]) whose reads decrypt the segments the
+ * other app asks for — PDF and Office viewers seek — or, where the platform cannot make one, a
+ * pipe fed segment by segment from a background thread. [query] answers `OpenableColumns` with the
+ * cleaned name and the size, so the receiving app shows the real name.
  *
  * Providers are created at process start, before `ShroudApplication.onCreate`: [onCreate] must
  * never touch the container. [MediaSharing.revokeAll] clears the registry so a later open fails.
@@ -24,17 +37,30 @@ class DecryptedMediaProvider : ContentProvider() {
 
     override fun getType(uri: Uri): String? = SharedMediaRegistry.open(uri.lastPathSegment)?.mime
 
+    /** `DISPLAY_NAME` and `SIZE` of a file's grant (only the columns asked for, both by default); null for a photo's. */
     override fun query(
         uri: Uri,
         projection: Array<out String>?,
         selection: String?,
         selectionArgs: Array<out String>?,
         sortOrder: String?,
-    ): Cursor? = null
+    ): Cursor? {
+        val file = SharedMediaRegistry.open(uri.lastPathSegment) as? SharedMediaRegistry.SealedFile ?: return null
+        val columns = (projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE))
+            .filter { it == OpenableColumns.DISPLAY_NAME || it == OpenableColumns.SIZE }
+            .toTypedArray()
+        return MatrixCursor(columns, 1).apply {
+            addRow(columns.map { if (it == OpenableColumns.DISPLAY_NAME) file.name else file.size })
+        }
+    }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         if (mode.indexOf('w') >= 0 || mode.indexOf('a') >= 0) throw FileNotFoundException("shared media is read only")
-        val item = SharedMediaRegistry.open(uri.lastPathSegment) ?: throw FileNotFoundException("no shared media")
+        val item = when (val found = SharedMediaRegistry.open(uri.lastPathSegment)) {
+            is SharedMediaRegistry.Bytes -> found
+            is SharedMediaRegistry.SealedFile -> return openSealedFile(found)
+            null -> throw FileNotFoundException("no shared media")
+        }
         val pipe = try {
             ParcelFileDescriptor.createPipe()
         } catch (_: IOException) {
@@ -103,6 +129,92 @@ class DecryptedMediaProvider : ContentProvider() {
         writer.start()
     }
 
+    /**
+     * A file's grant: a fresh SHRM1 reader behind a seekable proxy descriptor, else a pipe. The
+     * reader closes when the other app closes the descriptor, or when the grants are revoked.
+     */
+    private fun openSealedFile(file: SharedMediaRegistry.SealedFile): ParcelFileDescriptor {
+        val reader = file.reader() ?: throw FileNotFoundException("no shared media")
+        proxy(file, reader)?.let { return it }
+        return try {
+            pipeFile(file, reader)
+        } catch (e: FileNotFoundException) {
+            file.release(reader)
+            throw e
+        }
+    }
+
+    /** Null when the platform cannot make a proxy descriptor (Robolectric, a device without AppFuse). */
+    private fun proxy(file: SharedMediaRegistry.SealedFile, reader: SealedMediaReader): ParcelFileDescriptor? {
+        val storage = context?.getSystemService(StorageManager::class.java) ?: return null
+        return try {
+            storage.openProxyFileDescriptor(ParcelFileDescriptor.MODE_READ_ONLY, ReaderCallback(file, reader), proxyHandler)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** The reader streamed into a pipe, one segment at a time, on [SHARE_THREAD] (synchronously into a file-backed pipe). */
+    private fun pipeFile(file: SharedMediaRegistry.SealedFile, reader: SealedMediaReader): ParcelFileDescriptor {
+        val pipe = try {
+            ParcelFileDescriptor.createPipe()
+        } catch (_: IOException) {
+            throw FileNotFoundException("no shared media")
+        }
+        val copy = Runnable {
+            try {
+                ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { stream ->
+                    val buffer = ByteArray(PIPE_CHUNK_BYTES)
+                    try {
+                        var position = 0L
+                        while (true) {
+                            val read = reader.read(position, buffer, 0, buffer.size)
+                            if (read <= 0) break
+                            stream.write(buffer, 0, read)
+                            position += read
+                        }
+                    } finally {
+                        buffer.fill(0)
+                    }
+                }
+            } catch (_: IOException) {
+                closeQuietly(pipe[1])
+            } finally {
+                file.release(reader)
+            }
+        }
+        if (isFileBacked(pipe[1])) {
+            copy.run()
+        } else {
+            Thread(copy, SHARE_THREAD).apply { isDaemon = true }.start()
+        }
+        return pipe[0]
+    }
+
+    /** Serves the proxy descriptor's reads from the SHRM1 reader; a segment that does not open is `EIO`. */
+    private class ReaderCallback(
+        private val file: SharedMediaRegistry.SealedFile,
+        private val reader: SealedMediaReader,
+    ) : ProxyFileDescriptorCallback() {
+        override fun onGetSize(): Long = reader.length
+
+        override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
+            var done = 0
+            try {
+                while (done < size) {
+                    val read = reader.read(offset + done, data, done, size - done)
+                    if (read <= 0) break
+                    done += read
+                }
+            } catch (_: IOException) {
+                throw ErrnoException("onRead", OsConstants.EIO)
+            }
+            return done
+        }
+
+        override fun onRelease() = file.release(reader)
+    }
+
     private fun writeAll(writeEnd: ParcelFileDescriptor, bytes: ByteArray, offset: Int) {
         ParcelFileDescriptor.AutoCloseOutputStream(writeEnd).use { stream ->
             stream.write(bytes, offset, bytes.size - offset)
@@ -141,6 +253,16 @@ class DecryptedMediaProvider : ContentProvider() {
 
     private companion object {
         const val SHARE_THREAD = "shroud-share"
+        const val PROXY_THREAD = "shroud-share-proxy"
+
+        /** One SHRM1 segment per write into a file's pipe. */
+        const val PIPE_CHUNK_BYTES = 64 * 1024
+
+        /** Where proxy descriptor callbacks run: one looper for every grant, started on first use. */
+        val proxyHandler: Handler by lazy {
+            val thread = HandlerThread(PROXY_THREAD).apply { start() }
+            Handler(thread.looper)
+        }
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null

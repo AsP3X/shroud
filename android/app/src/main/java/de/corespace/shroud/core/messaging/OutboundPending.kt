@@ -33,6 +33,11 @@ sealed interface OutboundPendingItem {
     }
 
     data class Voice(override val messageId: UUID, override val peerId: UUID) : OutboundPendingItem
+
+    /** [caption] is empty for a captionless file (its bubble shows the name). */
+    data class File(override val messageId: UUID, override val peerId: UUID, val caption: String) : OutboundPendingItem {
+        override fun toString(): String = "OutboundPendingItem.File(id=$messageId)"
+    }
 }
 
 /** Pure extraction of the offline outbound work from the threads (`OutboundPending.swift:12-60`). */
@@ -61,6 +66,7 @@ object OutboundPending {
                         if (message.text == "Video" || message.text.isEmpty()) "" else message.text,
                     )
                     ChatMessageKind.Voice -> OutboundPendingItem.Voice(message.id, peerId)
+                    ChatMessageKind.File -> OutboundPendingItem.File(message.id, peerId, message.text)
                     ChatMessageKind.Todo -> null
                 }
                 if (item != null) collected += message to item

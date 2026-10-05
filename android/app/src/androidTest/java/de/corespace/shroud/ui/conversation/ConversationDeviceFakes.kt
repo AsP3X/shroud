@@ -124,6 +124,7 @@ internal class DeviceConversationBackend : ConversationBackend {
 
     override suspend fun retryFailedImage(messageId: UUID, peer: UUID): String? = null
     override suspend fun retryFailedVideo(messageId: UUID, peer: UUID): String? = null
+    override suspend fun retryFailedFile(messageId: UUID, peer: UUID): String? = null
     override fun toggleTodo(messageId: UUID) = Unit
     override suspend fun startCall(peer: UUID, username: String, modality: CallModality): String? = null
     override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable = AutoCloseable {}

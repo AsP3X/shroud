@@ -44,6 +44,7 @@ enum class BubbleKind {
     Video,
     Voice,
     Todo,
+    File,
     ;
 
     companion object {
@@ -58,12 +59,13 @@ enum class BubbleKind {
             ChatMessageKind.Video -> Video
             ChatMessageKind.Voice -> Voice
             ChatMessageKind.Todo -> Todo
+            ChatMessageKind.File -> File
         }
     }
 }
 
 /**
- * One message bubble: text, links, reply quote, media, voice, to-do, reactions and the meta row
+ * One message bubble: text, links, reply quote, media, voice, to-do, file, reactions and the meta row
  * (conversation-thread §4–§14; iOS `ConversationView.messageRow`, `ConversationView.swift:1504-1677`,
  * and the bubble views it builds). The thread (W3-THREAD-LIST) wraps it in the row: long press, swipe
  * to reply, highlight, insertion transition; this draws what is inside.
@@ -133,6 +135,7 @@ private fun BubbleBody(row: MessageRowModel, context: BubbleContext, services: B
             BubbleKind.Video -> VideoMessageBubble(parts, context, services, modifier)
             BubbleKind.Voice -> VoiceMessageBubble(parts, context, services, modifier)
             BubbleKind.Todo -> TodoMessageBubble(parts, context, modifier)
+            BubbleKind.File -> FileMessageBubble(parts, context, modifier)
         }
     }
 }

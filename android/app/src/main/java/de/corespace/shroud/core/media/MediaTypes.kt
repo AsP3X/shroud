@@ -122,6 +122,29 @@ interface MediaTransfers {
         targetMessageId: UUID,
         onProgress: ((Double) -> Unit)? = null,
     )
+
+    /**
+     * A file message's blob (docs/file-sharing.md §3): [source] sealed as SHRF1 under a fresh key
+     * and nonce prefix, segment by segment while the body is written, then uploaded like [upload]
+     * (`content_type` stays `application/octet-stream`). Fails like [upload]; over
+     * `MediaCrypto.MAX_PLAINTEXT_BYTES` → `ApiError.Server(VALIDATION_ERROR)` before any request.
+     */
+    suspend fun uploadFile(source: PlainSource, token: String, onProgress: ((Double) -> Unit)? = null): UploadedBlob
+
+    /**
+     * Downloads a SHRF1 blob of a file of [plainSize] bytes (the payload's `s`), opens it segment by
+     * segment with [keyBase64] into an uncommitted cache writer under [targetMessageId] and commits
+     * only after the last tag checked and the size matched. Fails like [downloadInto]; a blob that is
+     * not exactly `Shrf1.sealedSize(plainSize)` long → `MediaCrypto.MediaError.DecryptFailed`.
+     */
+    suspend fun downloadFileInto(
+        mediaObjectId: UUID,
+        keyBase64: String,
+        plainSize: Long,
+        token: String,
+        targetMessageId: UUID,
+        onProgress: ((Double) -> Unit)? = null,
+    )
 }
 
 /**

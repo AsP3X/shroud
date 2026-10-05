@@ -6,6 +6,7 @@ import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.MediaTransfer
+import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.core.model.hasLargeLinkImage
 import de.corespace.shroud.core.net.wire.MediaMessagePayload
 import de.corespace.shroud.core.net.wire.WireText
@@ -22,8 +23,8 @@ import kotlin.coroutines.coroutineContext
 
 /**
  * Media on demand (messaging-core §13, §9.1; media-voice-links §3.5; the [MediaLoader] seam of plan
- * §1.7.7), ported from `MessagingController.swift` (MC below): photos and videos download on an
- * explicit tap, voice notes and large link images when their bubble appears. One job per message
+ * §1.7.7), ported from `MessagingController.swift` (MC below): photos, videos and files download on
+ * an explicit tap, voice notes and large link images when their bubble appears. One job per message
  * id; later callers await it (`mediaHydrateTasks`, MC:137).
  *
  * The blob key comes from the media payload cached when the message was first opened; when that is
@@ -76,6 +77,15 @@ class MediaHydrator(
     override suspend fun ensureLinkImageLoaded(message: ChatMessage) {
         if (!needsLinkImage(message) || isOnDevice(message)) return
         deduplicated(message.id) { hydrateLinkImage(message) }
+    }
+
+    /**
+     * Downloads a file's SHRF1 blob into the sealed cache; only from an explicit tap, with the ring,
+     * cancellable through [cancel] (docs/file-sharing.md §7). Unsupported files never download (§4).
+     */
+    override suspend fun ensureFileLoaded(message: ChatMessage) {
+        if (message.kind != ChatMessageKind.File || message.deleted || message.fileType == null || isOnDevice(message)) return
+        deduplicated(message.id) { hydrateFile(message) }
     }
 
     /** Cancels a download (the ring's X) and ends its transfer; uploads cannot be cancelled (`cancelMediaDownload`, MC:2947-2952). */
@@ -233,6 +243,39 @@ class MediaHydrator(
             throw e
         } catch (_: Exception) {
             // The block keeps its placeholder; the next appearance tries again (MC:4006-4008).
+        }
+    }
+
+    /**
+     * A file's blob: SHRF1, opened segment by segment into an uncommitted cache writer that commits
+     * only after the last tag passed and the size is the payload's `s` (docs/file-sharing.md §3).
+     * Without `s` nothing is downloaded: the size cannot be checked.
+     */
+    private suspend fun hydrateFile(message: ChatMessage) {
+        if (message.kind != ChatMessageKind.File || message.deleted) return
+        if (cached(message.id)) {
+            attach(message) { it.copy(hasFullMedia = true) }
+            return
+        }
+        val mediaId = message.mediaObjectId ?: return
+        val token = state.session?.token ?: return
+        if (!deps.keyring.isUnlocked) return
+        val generation = state.lockGeneration
+        beginDownload(message.id, message.mediaByteCount)
+        try {
+            val payload = payload(message) ?: return
+            val size = payload.s ?: return
+            deps.transfers().downloadFileInto(mediaId, payload.k, size, token, message.id) { fraction -> progress(message.id, fraction) }
+            coroutineContext.ensureActive()
+            state.transfers.advance(message.id, MediaTransfer.Phase.Finishing)
+            if (!keepDownload(message, generation)) return
+            attach(message) { it.copy(hasFullMedia = true, mediaByteCount = size) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Leave the bubble as it was; a tap tries again.
+        } finally {
+            state.transfers.end(message.id)
         }
     }
 

@@ -6,6 +6,7 @@ import de.corespace.shroud.core.crypto.Entropy
 import de.corespace.shroud.core.crypto.MediaCrypto
 import de.corespace.shroud.core.crypto.Primitives
 import de.corespace.shroud.core.crypto.SystemEntropy
+import de.corespace.shroud.core.media.files.Shrf1
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.ShroudApi
@@ -64,6 +65,10 @@ import javax.crypto.spec.SecretKeySpec
  * leaves nothing behind (crypto §13.1). The sealed bytes pass through a `cacheDir/shroud-dl-*` file
  * first (ciphertext only — see contract change request CR-1 in the package report for streaming
  * straight from the response).
+ *
+ * **Files** ([uploadFile], [downloadFileInto]): a file message's blob is SHRF1 instead
+ * (docs/file-sharing.md §3), 64 KiB segments each sealed by one JCA call, so no streaming GHASH is
+ * needed and the plaintext still moves one segment at a time on both ends.
  *
  * Progress (0…1, [de.corespace.shroud.core.net.ProgressRequestBody] / `ProgressSource`): at most
  * every 100 ms and in steps of 0.005, never backwards, `1.0` exactly once at the end
@@ -138,6 +143,80 @@ class MediaTransferService(
                     try {
                         api.downloadMediaContentTo(token, mediaObjectId, sealed, onProgress)
                         open(sealed, key, writer, currentCoroutineContext().job)
+                        writer.commit()
+                    } finally {
+                        sealed.delete()
+                    }
+                }
+            }
+        } finally {
+            key.fill(0)
+        }
+    }
+
+    /**
+     * A file message's blob (docs/file-sharing.md §3): SHRF1 under a fresh key and nonce prefix,
+     * sealed segment by segment as OkHttp writes the body ([Shrf1SealingBody]) — no sealed copy in
+     * memory or on disk. Its size is known up front (`Shrf1.sealedSize`), so the limits are checked
+     * before any request, as for [upload].
+     */
+    override suspend fun uploadFile(source: PlainSource, token: String, onProgress: ((Double) -> Unit)?): UploadedBlob {
+        val plain = withContext(io) { Plain.of(source, cache) }
+        val sealedSize = Shrf1.sealedSize(plain.length)
+        if (plain.length > MediaCrypto.MAX_PLAINTEXT_BYTES || sealedSize > MediaCrypto.MAX_SEALED_BYTES) throw tooLarge(sealedSize)
+        // The key, then the prefix (docs/file-sharing.md §9 draws them in this order too).
+        val key = entropy.bytes(MediaCrypto.KEY_BYTES)
+        val prefix = entropy.bytes(Shrf1.NONCE_PREFIX_BYTES)
+        val body = Shrf1SealingBody(plain, key, prefix, sealedSize)
+        try {
+            val upload = api.createMediaUpload(token, sealedSize)
+            api.uploadMediaContent(token, upload.mediaObjectId, body, onProgress)
+            return UploadedBlob(upload.mediaObjectId, B64.encode(key), plain.length, sealedSize)
+        } finally {
+            body.destroy()
+            key.fill(0)
+            prefix.fill(0)
+        }
+    }
+
+    /**
+     * Downloads [mediaObjectId]'s SHRF1 blob and opens it into the cache under [targetMessageId]:
+     * the ciphertext passes through a `cacheDir/shroud-dl-*` file as for [downloadInto], its length
+     * must be `Shrf1.sealedSize(plainSize)`, and the writer commits only after the last segment's tag
+     * checked. Nothing is stored otherwise.
+     *
+     * @throws MediaCrypto.MediaError.InvalidKey when [keyBase64] is not a strict Base64 32-byte key (no request made).
+     * @throws MediaCrypto.MediaError.DecryptFailed when the blob has the wrong size or does not open.
+     * @throws CryptoError.Locked while chats are locked or when they lock meanwhile.
+     * @throws IOException when [targetMessageId] was removed from the cache meanwhile.
+     */
+    override suspend fun downloadFileInto(
+        mediaObjectId: UUID,
+        keyBase64: String,
+        plainSize: Long,
+        token: String,
+        targetMessageId: UUID,
+        onProgress: ((Double) -> Unit)?,
+    ) {
+        val key = B64.decodeStrict(keyBase64)
+        if (key == null || key.size != MediaCrypto.KEY_BYTES) {
+            key?.fill(0)
+            throw MediaCrypto.MediaError.InvalidKey
+        }
+        if (plainSize < 0 || plainSize > MediaCrypto.MAX_PLAINTEXT_BYTES) {
+            key.fill(0)
+            throw MediaCrypto.MediaError.DecryptFailed
+        }
+        try {
+            withContext(io) {
+                cache.writer(targetMessageId).use { writer ->
+                    val sealed = tempFiles.create(TEMP_STEM, TEMP_EXTENSION)
+                    try {
+                        api.downloadMediaContentTo(token, mediaObjectId, sealed, onProgress)
+                        if (sealed.length() != Shrf1.sealedSize(plainSize)) throw MediaCrypto.MediaError.DecryptFailed
+                        CancellableInputStream(FileInputStream(sealed), currentCoroutineContext().job).use { input ->
+                            Shrf1.open(input, plainSize, WriterOutputStream(writer), key)
+                        }
                         writer.commit()
                     } finally {
                         sealed.delete()
@@ -284,6 +363,55 @@ class MediaTransferService(
             }
             oneShot = sealed
             return sealed
+        }
+    }
+
+    /**
+     * A SHRF1 blob sealed segment by segment while OkHttp writes it (docs/file-sharing.md §3).
+     * Repeatable like [SealingBody]: key and prefix are fixed for the upload, and a second write
+     * re-checks every 1 MiB of plaintext against the digest recorded on the first before it seals it
+     * again, so one nonce never covers two different plaintexts. [destroy] zeroes the key and prefix.
+     */
+    internal class Shrf1SealingBody(
+        private val plain: Plain,
+        key: ByteArray,
+        prefix: ByteArray,
+        private val sealedSize: Long,
+    ) : RequestBody() {
+        private val key = key.copyOf() // guarded by this
+        private val prefix = prefix.copyOf() // guarded by this
+        private var destroyed = false // guarded by this
+        private val digests = ArrayList<ByteArray>() // guarded by itself
+
+        override fun contentType(): MediaType = OCTET_STREAM
+
+        override fun contentLength(): Long = sealedSize
+
+        override fun isOneShot(): Boolean = false
+
+        override fun writeTo(sink: BufferedSink) {
+            val (k, p) = snapshot()
+            try {
+                ReplayCheckedInputStream(plain.open(), plain.length, digests).use { input ->
+                    Shrf1.seal(input, plain.length, sink.outputStream(), k, p)
+                }
+            } finally {
+                k.fill(0)
+                p.fill(0)
+            }
+        }
+
+        @Synchronized
+        fun destroy() {
+            destroyed = true
+            key.fill(0)
+            prefix.fill(0)
+        }
+
+        @Synchronized
+        private fun snapshot(): Pair<ByteArray, ByteArray> {
+            if (destroyed) throw IOException("upload finished")
+            return key.copyOf() to prefix.copyOf()
         }
     }
 

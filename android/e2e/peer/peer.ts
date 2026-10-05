@@ -2,7 +2,8 @@
  * The scripted web peer of the Android engine e2e (00-plan §2.3 W2-INT, §6.3).
  *
  * One web account per process, run by the web client's own crypto, API and call modules
- * (web/src/crypto/*, web/src/api/client.ts, reply.ts, reactions.ts, calls/controller.ts) with
+ * (web/src/crypto/*, web/src/api/client.ts, reply.ts, reactions.ts, files.ts, messaging.ts' sendFile
+ * and messageFromMediaPayload, calls/controller.ts) with
  * in-memory stores instead of the browser's: what this peer seals and opens is byte for byte what
  * the real web client seals and opens. EngineE2eTest (androidTest, on the emulator) drives it over a
  * small HTTP control API on the host's loopback (the emulator reaches it as http://10.0.2.2:<port>).
@@ -73,7 +74,10 @@ const { peerIdentityForSending, peerIdentityPublic } = await import("../../../we
 const { aesGcmOpen, sealFile } = await import("../../../web/src/crypto/aes");
 const { b64ToBytes, bytesToB64, randomBytes, utf8, utf8decode } = await import("../../../web/src/crypto/bytes");
 const { textWire, parseTextPayload } = await import("../../../web/src/reply");
-const { parseMediaPayload } = await import("../../../web/src/crypto/mediaPayload");
+const { parseMediaPayload, isFilePayload } = await import("../../../web/src/crypto/mediaPayload");
+const { sealFileBlob, openFileBlob } = await import("../../../web/src/crypto/fileBlob");
+const { sanitizeFileName, fileTypeOf, fileExtension, contentMatches, CONTENT_CHECK_BYTES } = await import("../../../web/src/files");
+const { sendFile: webSendFile, messageFromMediaPayload } = await import("../../../web/src/messaging");
 const { openReaction, saveReaction } = await import("../../../web/src/reactions");
 const { openDeviceName } = await import("../../../web/src/crypto/deviceName");
 const { CallController } = await import("../../../web/src/calls/controller");
@@ -189,7 +193,7 @@ async function seal(peer: string, plaintext: Uint8Array): Promise<string> {
   return envelopeToWireB64(envelope);
 }
 
-type ReplyBody = { id: string; senderUserId: string; kind: "text" | "image" | "video" | "voice"; snippet: string };
+type ReplyBody = { id: string; senderUserId: string; kind: "text" | "image" | "video" | "voice" | "file"; snippet: string };
 type PreviewBody = { url: string; title?: string; siteName?: string; summary?: string };
 
 async function sendText(body: { peer: string; text: string; replyTo?: ReplyBody; linkPreview?: PreviewBody }) {
@@ -246,6 +250,86 @@ async function sendPhoto(body: { peer: string; caption?: string }) {
     media_object_id: upload.media_object_id,
   });
   return { id: dto.id.toLowerCase(), sha256: sha256(bytes), size: bytes.byteLength };
+}
+
+/**
+ * A shared file sent the way the web client sends one (docs/file-sharing.md): SHRF1-sealed by
+ * `crypto/fileBlob.ts`, uploaded and enveloped by `messaging.ts`'s `sendFile`. The bytes are
+ * `text` (UTF-8), `b64`, or `patternBytes` of `i % 251`, optionally after a `prefix`. `name` is
+ * cleaned first unless `raw` — a hostile sender that skips the cleaning, for the receiver's own.
+ */
+async function sendFileMessage(body: {
+  peer: string;
+  name: string;
+  raw?: boolean;
+  text?: string;
+  b64?: string;
+  prefix?: string;
+  patternBytes?: number;
+  caption?: string;
+  replyTo?: ReplyBody;
+}) {
+  const me = need();
+  const peer = body.peer.toLowerCase();
+  const head = body.prefix ? utf8(body.prefix) : new Uint8Array(0);
+  const rest = body.text != null
+    ? utf8(body.text)
+    : body.b64 != null
+      ? b64ToBytes(body.b64)
+      : Uint8Array.from({ length: body.patternBytes ?? 0 }, (_, i) => i % 251);
+  const bytes = new Uint8Array(head.byteLength + rest.byteLength);
+  bytes.set(head, 0);
+  bytes.set(rest, head.byteLength);
+  const name = body.raw ? body.name : sanitizeFileName(body.name);
+  const key = randomBytes(32);
+  const blob = await sealFileBlob(new Blob([bytes]), key);
+  const reply = body.replyTo
+    ? { id: body.replyTo.id.toLowerCase(), senderUserId: body.replyTo.senderUserId.toLowerCase(), kind: body.replyTo.kind, snippet: body.replyTo.snippet }
+    : null;
+  const sent = await webSendFile({
+    token: me.token,
+    me: me.userId,
+    peerUserId: peer,
+    material: me.material,
+    sealed: { blob, key },
+    name,
+    size: bytes.byteLength,
+    caption: body.caption ?? null,
+    replyTo: reply,
+  });
+  return { id: sent.id.toLowerCase(), sha256: sha256(bytes), size: bytes.byteLength, name };
+}
+
+/** What the web reads from a received `t: "file"` payload: the bubble's fields, the opened blob, the checks. */
+async function readFile(payload: NonNullable<ReturnType<typeof parseMediaPayload>>, base: { id: string; sender: string; createdAt: string; isMine: boolean }, mediaObjectId: string | null) {
+  const me = need();
+  const shown = messageFromMediaPayload(
+    { id: base.id, senderUserId: base.sender, createdAt: base.createdAt, isMine: base.isMine, deleted: false, failed: false, delivered: false, read: false },
+    payload,
+    mediaObjectId,
+  ) as unknown as Record<string, unknown>;
+  const cleaned = sanitizeFileName(payload.n ?? "");
+  const type = fileTypeOf(cleaned);
+  const file: Record<string, unknown> = {
+    kind: shown.kind,
+    rawName: payload.n ?? null,
+    fileName: shown.fileName,
+    cleanedName: cleaned,
+    shownMime: shown.mime,
+    tableMime: type?.mime ?? null,
+    warning: type?.warning ?? null,
+    caption: shown.caption ?? null,
+  };
+  if (mediaObjectId && payload.s != null) {
+    const sealed = await api.getMediaContent(me.token, mediaObjectId);
+    const opened = await openFileBlob(new Blob([sealed]), b64ToBytes(payload.k), payload.s, type?.mime ?? "application/octet-stream");
+    const bytes = new Uint8Array(await opened.arrayBuffer());
+    file.sealedBytes = sealed.byteLength;
+    file.sha256 = sha256(bytes);
+    file.bytes = bytes.byteLength;
+    file.contentMatches = contentMatches(fileExtension(cleaned), bytes.subarray(0, CONTENT_CHECK_BYTES));
+  }
+  return file;
 }
 
 async function react(body: { peer: string; messageId: string; emojis: string[] }) {
@@ -331,6 +415,18 @@ async function readMessages(peer: string) {
         opened.set(dto.id.toLowerCase(), plain);
         if (dto.content_type === "media") {
           const payload = parseMediaPayload(plain);
+          // A file before the MIME-sniffing kinds, as the web client reads it.
+          if (payload && isFilePayload(payload)) {
+            entry.media = { t: payload.t, mime: payload.mime, size: payload.s ?? null, reply: payload.re ?? null };
+            entry.file = await readFile(
+              payload,
+              { id: dto.id.toLowerCase(), sender: dto.sender_user_id.toLowerCase(), createdAt: dto.created_at, isMine },
+              dto.media_object_id ?? null,
+            );
+            entry.reactions = [];
+            out.push(entry);
+            continue;
+          }
           entry.media = payload
             ? { t: payload.t, mime: payload.mime, w: payload.w, h: payload.h, caption: payload.c ?? null, duration: payload.d ?? null, size: payload.s ?? null, hasWaveform: Boolean(payload.wf), reply: payload.re ?? null }
             : null;
@@ -625,6 +721,7 @@ const routes: Record<string, (b: Record<string, unknown>, url: URL) => Promise<u
   "POST /contacts/request": (b) => requestContact(b as { userId: string }),
   "POST /text": (b) => sendText(b as Parameters<typeof sendText>[0]),
   "POST /photo": (b) => sendPhoto(b as Parameters<typeof sendPhoto>[0]),
+  "POST /file": (b) => sendFileMessage(b as Parameters<typeof sendFileMessage>[0]),
   "POST /react": (b) => react(b as Parameters<typeof react>[0]),
   "POST /delete": (b) => deleteForEveryone(b as Parameters<typeof deleteForEveryone>[0]),
   "POST /read": (b) => markRead(b as { peer: string }),

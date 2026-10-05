@@ -275,15 +275,26 @@ async function requestBytes(
   return out;
 }
 
+/**
+ * An upload body as a `Blob`. A sealed file already is one (possibly disk-backed), and goes as
+ * it is so the browser streams it instead of copying gigabytes into memory.
+ */
+function bodyBlob(data: Uint8Array | Blob): Blob {
+  // The request's own Content-Type header says octet-stream either way.
+  if (data instanceof Blob) return data;
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  return new Blob([copy], { type: "application/octet-stream" });
+}
+
 /** `fetch` can't report upload progress, so photo uploads go through XHR. */
 function putBytesWithProgress(
   path: string,
   token: string,
-  data: Uint8Array,
+  data: Uint8Array | Blob,
   onProgress: TransferProgress,
 ): Promise<void> {
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
+  const body = bodyBlob(data);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", `${apiBase()}${path}`);
@@ -291,7 +302,7 @@ function putBytesWithProgress(
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.upload.onprogress = (event) => {
-      onProgress(event.loaded, event.lengthComputable ? event.total : copy.byteLength);
+      onProgress(event.loaded, event.lengthComputable ? event.total : body.size);
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -311,14 +322,12 @@ function putBytesWithProgress(
     };
     xhr.onerror = () => reject(new ApiError("transport", "Network error", 0));
     xhr.onabort = () => reject(new ApiError("transport", "Upload cancelled", 0));
-    onProgress(0, copy.byteLength);
-    xhr.send(new Blob([copy], { type: "application/octet-stream" }));
+    onProgress(0, body.size);
+    xhr.send(body);
   });
 }
 
-async function putBytes(path: string, token: string, data: Uint8Array): Promise<void> {
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
+async function putBytes(path: string, token: string, data: Uint8Array | Blob): Promise<void> {
   const headers = new Headers({
     Accept: "application/json",
     Authorization: `Bearer ${token}`,
@@ -329,7 +338,7 @@ async function putBytes(path: string, token: string, data: Uint8Array): Promise<
     res = await fetch(`${apiBase()}${path}`, {
       method: "PUT",
       headers,
-      body: new Blob([copy], { type: "application/octet-stream" }),
+      body: bodyBlob(data),
     });
   } catch (err) {
     throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
@@ -632,7 +641,7 @@ export const api = {
         body: JSON.stringify({ size_bytes: sizeBytes, content_type: contentType }),
       },
     ),
-  putMediaContent: (token: string, mediaId: string, data: Uint8Array, onProgress?: TransferProgress) =>
+  putMediaContent: (token: string, mediaId: string, data: Uint8Array | Blob, onProgress?: TransferProgress) =>
     onProgress
       ? putBytesWithProgress(`/media/${mediaId.toLowerCase()}/content`, token, data, onProgress)
       : putBytes(`/media/${mediaId.toLowerCase()}/content`, token, data),

@@ -51,7 +51,7 @@ enum ThreadMessageMerge {
             kept.reactions = prior.reactions
             // Prefer a more specific media kind once we know it (e.g. "Media" → video).
             if kept.kind != decoded.kind, !decodedFailed {
-                if decoded.kind == .video || decoded.kind == .image || decoded.kind == .voice {
+                if decoded.kind == .video || decoded.kind == .image || decoded.kind == .voice || decoded.kind == .file {
                     kept.kind = decoded.kind
                 }
             }
@@ -65,6 +65,7 @@ enum ThreadMessageMerge {
         if merged.voiceData == nil { merged.voiceData = prior.voiceData }
         if merged.videoData == nil { merged.videoData = prior.videoData }
         if merged.transcript == nil { merged.transcript = prior.transcript }
+        if merged.fileName == nil { merged.fileName = prior.fileName }
         // Reactions live only on this device's copy until a page reconciles them (never on a
         // fresh decode), so the held ones carry over — unless the message is gone.
         merged.reactions = merged.deleted ? [] : prior.reactions
@@ -126,7 +127,7 @@ enum ThreadMessageMerge {
             isMine: message.isMine,
             deleted: true,
             receipt: message.receipt,
-            kind: (message.kind == .image || message.kind == .video || message.kind == .voice)
+            kind: (message.kind == .image || message.kind == .video || message.kind == .voice || message.kind == .file)
                 ? message.kind
                 : .text
         )

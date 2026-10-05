@@ -19,6 +19,7 @@ import de.corespace.shroud.core.links.LinkPreviewAttachment
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.video.VideoSendPlan
+import de.corespace.shroud.core.media.share.FileOpenOutcome
 import de.corespace.shroud.core.media.video.VideoUploadQuality
 import de.corespace.shroud.core.messaging.MessagingController
 import de.corespace.shroud.core.model.AddContactOutcome
@@ -31,6 +32,7 @@ import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.model.MuteDuration
 import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.core.model.ReceiptStatus
+import de.corespace.shroud.core.model.replyReference
 import de.corespace.shroud.core.net.CallModality
 import de.corespace.shroud.core.net.ConversationDeleteScope
 import de.corespace.shroud.core.net.MessageDeleteScope
@@ -87,6 +89,8 @@ import kotlin.math.sin
  *   W2-MSG-SEND, W2-AUTH-WIPE): the other device opens this phone's sealed name as "Android app",
  *   unread/read sync both ways, mutes, Notes, delete for me, a reaction 409 from the other device,
  *   and its revoke wipes this phone.
+ * - [filesTravelBothWaysWithTheWebPeer] (docs/file-sharing.md): SHRF1 files both ways through the
+ *   web's own file modules — names, sizes, MIME, warnings, the content check — and file quotes.
  * - [chatDeletesFollowThePeersConsent] (W2-MSG-CORE): a chat deleted for both, without and with the
  *   peer's consent.
  * - [contactsComeByShareCodeLinkAndNameWithPresenceBlocksAndKeyChanges] (W2-CONTACTS).
@@ -338,6 +342,139 @@ class EngineE2eTest {
         logOutThroughTheWipe()
     }
 
+    // ---- 1b. Files, both ways (docs/file-sharing.md) -----------------------------------------------
+
+    /**
+     * Shared files against the web client's own file modules (`crypto/fileBlob.ts`, `files.ts`,
+     * `messaging.ts` `sendFile` / `messageFromMediaPayload`): what Android seals as SHRF1 the web
+     * opens byte for byte with the cleaned name, `s`, the canonical MIME and the warning; what the
+     * web sends — a hostile name, a multi-segment file, a ".pdf" that is not one — Android
+     * downloads into the SHRM1 cache, names cleanly and checks before opening; file quotes travel
+     * as `k: "file"` with the name both ways.
+     */
+    @Test
+    fun filesTravelBothWaysWithTheWebPeer() {
+        val peer = peer(0).create()
+        signUp()
+        startAndBefriend(peer)
+        peer.socket(on = true)
+        val peerId = peer.id
+
+        // ---- Android → web: a PDF with a caption and a macro workbook, through the real intake ----
+        val pdfBytes = "%PDF-1.7\n".toByteArray() + ByteArray(150_000) { (it % 251).toByte() }
+        val xlsmBytes = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(70_000) { (it * 7 % 256).toByte() }
+        val picks = listOf(cacheFile("Quarterly report 2026.pdf", pdfBytes), cacheFile("Budget Q3.xlsm", xlsmBytes))
+        val intake = runBlocking { container.media.fileIntake.inspect(picks.map { Uri.fromFile(it) }) }
+        assertEquals(emptyList<String>(), intake.refusals)
+        assertEquals(listOf("Quarterly report 2026.pdf", "Budget Q3.xlsm"), intake.files.map { it.name })
+        assertNull(onMain { messaging.sendFile(intake.files[0], peerId, caption = "Q3 numbers") })
+        assertNull(onMain { messaging.sendFile(intake.files[1], peerId) })
+        picks.forEach { it.delete() }
+        val sentPdf = eventually("the PDF is sent") { sentFile(peerId, "Quarterly report 2026.pdf") }
+        val sentXlsm = eventually("the workbook is sent") { sentFile(peerId, "Budget Q3.xlsm") }
+        assertEquals("Q3 numbers", sentPdf.text)
+
+        val webPdf = peer.sees("the PDF on the web", timeoutMs = 60_000) { it.str("id") == Ids.wire(sentPdf.id) && it.obj("file")?.get("sha256") != null }
+        val pdfFile = webPdf.obj("file")!!
+        assertEquals("file", webPdf.obj("media")!!.str("t"))
+        assertEquals("application/pdf", webPdf.obj("media")!!.str("mime"))
+        assertEquals(pdfBytes.size, webPdf.obj("media")!!.int("size"))
+        assertEquals("file", pdfFile.str("kind"))
+        assertEquals("Quarterly report 2026.pdf", pdfFile.str("rawName"))
+        assertEquals("Quarterly report 2026.pdf", pdfFile.str("fileName"))
+        assertEquals("application/pdf", pdfFile.str("tableMime"))
+        assertEquals("Q3 numbers", pdfFile.str("caption"))
+        assertNull(pdfFile.optStr("warning"))
+        assertEquals(sha256(pdfBytes), pdfFile.str("sha256"))
+        assertEquals(16 + pdfBytes.size + 16 * 3, pdfFile.int("sealedBytes"))
+        assertTrue(pdfFile.bool("contentMatches"))
+
+        val webXlsm = peer.sees("the workbook on the web", timeoutMs = 60_000) { it.str("id") == Ids.wire(sentXlsm.id) && it.obj("file")?.get("sha256") != null }
+        val xlsmFile = webXlsm.obj("file")!!
+        assertEquals("application/vnd.ms-excel.sheet.macroEnabled.12", webXlsm.obj("media")!!.str("mime"))
+        assertEquals("Budget Q3.xlsm", xlsmFile.str("fileName"))
+        assertEquals("macros", xlsmFile.str("warning"))
+        assertNull(xlsmFile.optStr("caption"))
+        assertEquals(sha256(xlsmBytes), xlsmFile.str("sha256"))
+        assertTrue(xlsmFile.bool("contentMatches"))
+
+        // ---- Web → Android: a hostile name, a multi-segment file, a ".pdf" that is not a PDF ------
+        val hostile = peer.call("POST", "/file", buildJsonObject {
+            put("peer", Ids.wire(me)); put("name", "../evil\u202Etxt.exe.txt"); put("raw", true); put("text", "hello from the web\n"); put("caption", "read me")
+        })
+        val csv = peer.call("POST", "/file", buildJsonObject { put("peer", Ids.wire(me)); put("name", "Big notes.csv"); put("text", "a,b,c\n".repeat(40_000)) })
+        val fakePdf = peer.call("POST", "/file", buildJsonObject { put("peer", Ids.wire(me)); put("name", "invoice.pdf"); put("text", "this is not a pdf at all") })
+        for (sent in listOf(hostile, csv, fakePdf)) {
+            val id = UUID.fromString(sent.str("id"))
+            val received = incoming(peerId, "the web's ${sent.str("name")}") { it.id == id && it.kind == ChatMessageKind.File }
+            assertEquals(sent.int("size").toLong(), received.mediaByteCount)
+            onMain { messaging.ensureFileLoaded(received) }
+            val held = eventually("${received.fileName} downloads", timeoutMs = 60_000) { bubble(peerId, id)?.takeIf { it.hasFullMedia } }
+            val cached = runBlocking { container.media.localMedia.readAll(id) }!!
+            assertEquals(sent.str("sha256"), sha256(cached))
+            val outcome = runBlocking { container.media.fileSharing.openTarget(id, held.fileName!!) }
+            when (id) {
+                UUID.fromString(hostile.str("id")) -> {
+                    // The receiver's own cleaning: no path, no right-to-left override.
+                    assertEquals("eviltxt.exe.txt", held.fileName)
+                    assertEquals("read me", held.text)
+                    assertTrue("$outcome", outcome is FileOpenOutcome.Ready)
+                    assertEquals("text/plain", (outcome as FileOpenOutcome.Ready).target.mime)
+                }
+                UUID.fromString(csv.str("id")) -> {
+                    assertEquals("Big notes.csv", held.fileName)
+                    assertEquals(240_000L, held.mediaByteCount)
+                    assertTrue("$outcome", outcome is FileOpenOutcome.Ready)
+                }
+                else -> {
+                    assertEquals("invoice.pdf", held.fileName)
+                    assertEquals(FileOpenOutcome.Refused("This file doesn't match its .pdf type, so Shroud won't open it."), outcome)
+                    // Sharing stays possible (§4).
+                    assertNotNull(runBlocking { container.media.fileSharing.fileShareTarget(id, held.fileName!!) })
+                }
+            }
+        }
+        container.media.sharing.revokeAll()
+
+        // ---- File quotes, both ways: `k: "file"`, `x` = the name ----------------------------------
+        val csvId = UUID.fromString(csv.str("id"))
+        val quoteOfCsv = bubble(peerId, csvId)!!.replyReference!!
+        assertEquals(MessageReplyReference.Kind.File, quoteOfCsv.kind)
+        assertEquals("Big notes.csv", quoteOfCsv.snippet)
+        onMain { messaging.sendText("Got the CSV", peerId, replyTo = quoteOfCsv) }
+        val answer = mine("Got the CSV", peerId, peer)
+        peer.sees("our quote of the web's file") {
+            it.str("id") == Ids.wire(answer.id) && it.obj("replyTo")?.optStr("kind") == "file" &&
+                it.obj("replyTo")?.optStr("snippet") == "Big notes.csv" && it.obj("replyTo")?.optStr("id") == Ids.wire(csvId)
+        }
+        val webQuote = UUID.fromString(
+            peer.call("POST", "/text", buildJsonObject {
+                put("peer", Ids.wire(me))
+                put("text", "Which sheet?")
+                put("replyTo", buildJsonObject {
+                    put("id", Ids.wire(sentXlsm.id)); put("senderUserId", Ids.wire(me)); put("kind", "file"); put("snippet", "Budget Q3.xlsm")
+                })
+            }).str("id"),
+        )
+        val quoted = incoming(peerId, "the web's quote of our file") { it.id == webQuote }
+        assertEquals(MessageReplyReference.Kind.File, quoted.replyTo?.kind)
+        assertEquals("Budget Q3.xlsm", quoted.replyTo?.snippet)
+        assertEquals(sentXlsm.id, quoted.replyTo?.messageId)
+        // A file that itself replies: the web sends one quoting our PDF; it arrives with the quote.
+        val fileReply = peer.call("POST", "/file", buildJsonObject {
+            put("peer", Ids.wire(me)); put("name", "answers.txt"); put("text", "see page 2")
+            put("replyTo", buildJsonObject {
+                put("id", Ids.wire(sentPdf.id)); put("senderUserId", Ids.wire(me)); put("kind", "file"); put("snippet", "Quarterly report 2026.pdf")
+            })
+        })
+        val quotingFile = incoming(peerId, "the web's file that quotes our PDF") { it.id == UUID.fromString(fileReply.str("id")) }
+        assertEquals(ChatMessageKind.File, quotingFile.kind)
+        assertEquals(MessageReplyReference.Kind.File, quotingFile.replyTo?.kind)
+        assertEquals(sentPdf.id, quotingFile.replyTo?.messageId)
+
+        logOutThroughTheWipe()
+    }
+
     // ---- 2. Our other device ---------------------------------------------------------------------
 
     @Test
@@ -506,10 +643,12 @@ class EngineE2eTest {
         onMain { messaging.start() }
         val contacts = container.contacts.controller
 
-        // Share code, link and username (contacts §4.2; the invite parser and its lookup).
+        // Share code and link (contacts §4.2; the invite parser and its lookup). A username is
+        // refused before anything reaches the server: it is shared only between contacts.
         addContact(byCode, byCode.shareCode)
         addContact(byLink, "https://shroud.corespace.de/u/${byLink.shareCode}")
-        addContact(byName, byName.name)
+        assertEquals(AddContactOutcome.Failed("Add someone with their QR code or share code."), onMain { contacts.add(byName.name) })
+        addContact(byName, byName.shareCode)
 
         // Presence: a connected, focused socket is online; a closed one is not.
         byName.socket(on = true)
@@ -641,10 +780,10 @@ class EngineE2eTest {
         assertEquals(session.userId, keys.cryptoController.unlockedUserId.value)
     }
 
-    /** Messaging on, [peer] added by username and accepted, its chat open. */
+    /** Messaging on, [peer] added by share code and accepted, its chat open. */
     private fun startAndBefriend(peer: Peer) {
         onMain { messaging.start() }
-        addContact(peer, peer.name)
+        addContact(peer, peer.shareCode)
         onMain { messaging.loadThread(peer.id) }
     }
 
@@ -688,6 +827,14 @@ class EngineE2eTest {
 
     private fun sentMedia(peer: UUID, kind: ChatMessageKind, text: String): ChatMessage? =
         messaging.threads.value[peer]?.lastOrNull { it.isMine && it.kind == kind && it.text == text && !it.pendingSync && it.sendError == null && it.mediaObjectId != null }
+
+    /** Our sent file of [name], once the server re-keyed it. */
+    private fun sentFile(peer: UUID, name: String): ChatMessage? =
+        messaging.threads.value[peer]?.lastOrNull { it.isMine && it.kind == ChatMessageKind.File && it.fileName == name && !it.pendingSync && it.sendError == null && it.mediaObjectId != null }
+
+    /** A picked file as a document provider would hand it over: here a file of the app's cache. */
+    private fun cacheFile(name: String, bytes: ByteArray): File =
+        File(File(app.cacheDir, "e2e-picks").apply { mkdirs() }, name).apply { writeBytes(bytes) }
 
     private fun incoming(peer: UUID, what: String, match: (ChatMessage) -> Boolean): ChatMessage {
         var polls = 0

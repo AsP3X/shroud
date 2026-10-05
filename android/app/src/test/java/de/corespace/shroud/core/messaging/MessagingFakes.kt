@@ -11,6 +11,7 @@ import de.corespace.shroud.core.crypto.OpenAs
 import de.corespace.shroud.core.links.LinkPreviewAttachment
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.model.AddContactOutcome
@@ -501,8 +502,10 @@ class FakeSendEngine : SendEngine {
         replyTo: MessageReplyReference?,
         transcriptProvider: (suspend (messageId: UUID) -> String?)?,
     ): String? = null
+    override suspend fun sendFile(file: PickedFile, storePeer: UUID, caption: String, replyTo: MessageReplyReference?): String? = null
     override suspend fun retryFailedImage(messageId: UUID, storePeer: UUID): String? = null
     override suspend fun retryFailedVideo(messageId: UUID, storePeer: UUID): String? = null
+    override suspend fun retryFailedFile(messageId: UUID, storePeer: UUID): String? = null
     override suspend fun shareTranscript(transcript: String, voiceMessageId: UUID, storePeer: UUID) = Unit
     override suspend fun flushOutbox() {
         log += "flushOutbox"
@@ -569,6 +572,7 @@ class FakeMediaLoader : MediaLoader {
     override suspend fun ensureVideoLoaded(message: ChatMessage) = Unit
     override suspend fun ensureVoiceLoaded(message: ChatMessage) = Unit
     override suspend fun ensureLinkImageLoaded(message: ChatMessage) = Unit
+    override suspend fun ensureFileLoaded(message: ChatMessage) = Unit
     override fun cancel(messageId: UUID) {
         cancelled += messageId
     }

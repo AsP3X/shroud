@@ -55,6 +55,7 @@ import de.corespace.shroud.ui.components.rememberGlassBackdrop
 import de.corespace.shroud.ui.conversation.bubble.LocalBubbleToaster
 import de.corespace.shroud.ui.conversation.bubble.MessageBubble
 import de.corespace.shroud.ui.conversation.composer.ComposeController
+import de.corespace.shroud.ui.conversation.composer.FileAction
 import de.corespace.shroud.ui.conversation.composer.ComposeHost
 import de.corespace.shroud.ui.conversation.composer.ConversationComposeHost
 import de.corespace.shroud.ui.conversation.composer.composerToastInset
@@ -355,6 +356,7 @@ private class ScreenComposeHost(private val vm: ConversationViewModel) : Compose
     override val isShowingMessageMenu: Boolean get() = vm.menu.isOpen
     override fun showToast(toast: Toast) = vm.toasts.show(toast)
     override fun requestDelete(message: ChatMessage) = vm.requestDelete(message)
+    override fun showMessageMenu(message: ChatMessage) = vm.openMessageMenuFromTap(message)
 }
 
 /** The composer as the thread drives it ([ConversationCompose]), forwarded to [ComposeController]. */
@@ -367,6 +369,8 @@ private class ComposerPort(private val controller: ComposeController) : Conversa
     override val isViewingMedia: Boolean get() = controller.viewingMedia != null
     override fun closeMediaViewer() = controller.closeMediaViewer()
     override fun cancelDownload(message: ChatMessage) = controller.cancelDownload(message)
+    override fun saveFileToDownloads(message: ChatMessage) = controller.requestFileAction(message, FileAction.Save)
+    override fun shareFile(message: ChatMessage) = controller.requestFileAction(message, FileAction.Share)
 }
 
 /**

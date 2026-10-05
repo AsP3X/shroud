@@ -18,6 +18,8 @@ final class MessagingLocalRepository {
     private let messageStore = LocalMessageStore()
     private let plaintextCache = LocalPlaintextCache()
     private let mediaCache = LocalMediaCache()
+    /// SHRF1 blobs of shared files; opened only by the key in the sealed payload cache.
+    let fileStore = LocalFileStore()
 
     private(set) var historyKey: SymmetricKey?
 
@@ -84,9 +86,14 @@ final class MessagingLocalRepository {
         mediaCache.save(messageID: messageID, data: data, historyKey: key)
     }
 
+    func hasFileBlob(_ messageID: UUID) -> Bool {
+        fileStore.hasBlob(messageID)
+    }
+
     /// Fills `previewData` / `mediaByteCount` from the sealed media payload when present.
     func attachEnvelopePreview(to message: inout MessagingController.ChatMessage) {
-        guard message.kind == .image || message.kind == .video || message.hasLargeLinkImage else { return }
+        guard message.kind == .image || message.kind == .video || message.kind == .file || message.hasLargeLinkImage
+        else { return }
         guard let plain = sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
               let payload = MediaMessagePayload.parse(plain)
         else { return }
@@ -95,6 +102,9 @@ final class MessagingLocalRepository {
         }
         if message.mediaByteCount == nil {
             message.mediaByteCount = payload.s
+        }
+        if message.kind == .file, message.fileName == nil, let name = payload.n {
+            message.fileName = SharedFile.cleanName(name)
         }
         // Video: keep a poster even when full file is already cached.
         if message.kind == .video, message.imageData == nil, let preview = message.previewData {
@@ -105,6 +115,8 @@ final class MessagingLocalRepository {
     func removeCaches(messageIDs: [UUID]) {
         plaintextCache.remove(messageIDs: messageIDs)
         mediaCache.remove(messageIDs: messageIDs)
+        fileStore.remove(messageIDs: messageIDs)
+        for id in messageIDs { FileOpenStaging.remove(for: id) }
     }
 
     // MARK: - Hydrate / persist
@@ -138,7 +150,7 @@ final class MessagingLocalRepository {
             guard let peerID = UUID(uuidString: mapKey) else { continue }
             let scrubbedBefore = scrubbed.count
             let messages = stored.map { row -> MessagingController.ChatMessage in
-                var message = row.toChatMessage(media: mediaCache, historyKey: key)
+                var message = row.toChatMessage(media: mediaCache, files: fileStore, historyKey: key)
                 // Bind a pre-sender cache file to the sender this device stored, before any
                 // server refresh can ask for the same id under someone else's name.
                 if !message.deleted {
@@ -398,6 +410,7 @@ final class MessagingLocalRepository {
         messageStore.clearAll()
         plaintextCache.clearAll()
         mediaCache.clearAll()
+        fileStore.clearAll()
     }
 
     func clear(userID: UUID?) {
@@ -410,5 +423,6 @@ final class MessagingLocalRepository {
         }
         plaintextCache.clearAll()
         mediaCache.clearAll()
+        fileStore.clearAll()
     }
 }

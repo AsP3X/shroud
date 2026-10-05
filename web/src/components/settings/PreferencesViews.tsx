@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Monitor, Moon, Sun, Trash2 } from "lucide-react";
 import { apiBase } from "../../config";
 import { cacheStats, clearCache } from "../../crypto/plaintextCache";
+import { forgetFiles } from "../../media/fileTransfer";
 import { forgetImages } from "../../media/images";
 import { resetVideoWorker } from "../../media/prepareVideo";
 import { forgetVideos } from "../../media/videos";
@@ -88,6 +89,7 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
     clearCache();
     forgetImages();
     forgetVideos();
+    forgetFiles();
     resetVideoWorker();
     setStats(cacheStats());
     setCleared(true);

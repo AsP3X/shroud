@@ -26,6 +26,14 @@ class ChatListFormattingTest {
     private fun preview(threads: Map<UUID, List<ChatMessage>>, isNotes: Boolean = false) = ChatListFormatting.preview(peer, threads, isNotes)
 
     @Test
+    fun aFileSaysItsCaptionElseItsName() { // docs/file-sharing.md §7 "Elsewhere"
+        val file = ChatMessage(UUID.randomUUID(), peer, peer, "", now, isMine = false, kind = ChatMessageKind.File, fileName = "report.pdf")
+        assertEquals("report.pdf", preview(mapOf(peer to listOf(file))))
+        assertEquals("Q3 numbers", preview(mapOf(peer to listOf(file.copy(text = "Q3 numbers")))))
+        assertEquals("Message deleted", preview(mapOf(peer to listOf(file.copy(deleted = true)))))
+    }
+
+    @Test
     fun previewForEveryKind() { // ChatListFormatting.swift:5-29
         assertEquals("hello", preview(last("hello")))
         assertEquals("Message deleted", preview(last("hello", deleted = true)))

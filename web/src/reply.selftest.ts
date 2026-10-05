@@ -58,6 +58,10 @@ if (parseReplyRef({ id: MESSAGE_ID, u: SENDER_ID, k: "sticker" })?.kind !== "tex
   throw new Error("parseReplyRef: unknown kinds fall back to text");
 }
 if (replyKindLabel("voice") !== "Voice message") throw new Error("replyKindLabel: voice");
+if (replyKindLabel("file") !== "File") throw new Error("replyKindLabel: file");
+if (parseReplyRef({ id: MESSAGE_ID, u: SENDER_ID, k: "file", x: "report.pdf" })?.kind !== "file") {
+  throw new Error("parseReplyRef: a file quote keeps its kind");
+}
 
 /* --- text payload -------------------------------------------------------- */
 

@@ -7,6 +7,7 @@ export function Modal({
   children,
   className,
   sheet = false,
+  actions,
 }: {
   title: string;
   onClose: () => void;
@@ -14,6 +15,8 @@ export function Modal({
   className?: string;
   /** Becomes a bottom sheet below 900px. */
   sheet?: boolean;
+  /** Header buttons drawn before the close button (the text viewer's Download). */
+  actions?: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   /* Read through a ref: callers pass inline closures, and re-running the effect
@@ -51,9 +54,18 @@ export function Modal({
       >
         <header>
           <h2>{title}</h2>
-          <button className="icon-btn" type="button" onClick={() => close.current()} aria-label="Close">
-            <X size={18} />
-          </button>
+          {actions ? (
+            <span className="modal-head-actions">
+              {actions}
+              <button className="icon-btn" type="button" onClick={() => close.current()} aria-label="Close">
+                <X size={18} />
+              </button>
+            </span>
+          ) : (
+            <button className="icon-btn" type="button" onClick={() => close.current()} aria-label="Close">
+              <X size={18} />
+            </button>
+          )}
         </header>
         {children}
       </div>

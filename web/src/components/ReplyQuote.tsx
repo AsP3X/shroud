@@ -1,4 +1,4 @@
-import { ImageIcon, Mic, Video } from "lucide-react";
+import { File as FileIcon, ImageIcon, Mic, Video } from "lucide-react";
 import type { ChatMessage } from "../messaging";
 import { peekImage } from "../media/images";
 import { replyKindLabel, type ReplyRef } from "../reply";
@@ -11,7 +11,7 @@ export type QuotePreview = {
   /** True when `text` is a stand-in ("Photo", "Message deleted") rather than typed words. */
   isStandIn: boolean;
   thumbnail: string | null;
-  icon: "photo" | "video" | "voice" | null;
+  icon: "photo" | "video" | "voice" | "file" | null;
 };
 
 /**
@@ -34,7 +34,14 @@ export function resolveQuote(
       text: reference.snippet || replyKindLabel(reference.kind),
       isStandIn: !reference.snippet,
       thumbnail: null,
-      icon: reference.kind === "text" ? null : reference.kind === "image" ? "photo" : reference.kind === "video" ? "video" : "voice",
+      icon:
+        reference.kind === "text"
+          ? null
+          : reference.kind === "image"
+            ? "photo"
+            : reference.kind === "video" || reference.kind === "voice" || reference.kind === "file"
+              ? reference.kind
+              : null,
     };
   }
   return quoteOf(original, peerName);
@@ -67,6 +74,15 @@ export function quoteOf(message: ChatMessage, peerName: string): QuotePreview {
     case "voice":
       // Telegram quotes a voice note by name, not by its transcript.
       return { author, text: "Voice message", isStandIn: true, thumbnail: null, icon: "voice" };
+    case "file":
+      // Quoted by its name (docs/file-sharing.md §1), whatever the caption says.
+      return {
+        author,
+        text: message.fileName || "File",
+        isStandIn: !message.fileName,
+        thumbnail: thumbnailUrl(message),
+        icon: "file",
+      };
     default:
       return {
         author,
@@ -93,7 +109,7 @@ export function ReplyQuote({
   variant?: "bubble" | "bar";
   onClick?: () => void;
 }) {
-  const Icon = quote.icon === "photo" ? ImageIcon : quote.icon === "video" ? Video : Mic;
+  const Icon = quote.icon === "photo" ? ImageIcon : quote.icon === "video" ? Video : quote.icon === "file" ? FileIcon : Mic;
   const body = (
     <>
       {quote.thumbnail ? (

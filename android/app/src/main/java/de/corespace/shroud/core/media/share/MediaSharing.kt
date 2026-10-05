@@ -3,8 +3,15 @@ package de.corespace.shroud.core.media.share
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import android.provider.MediaStore
+import de.corespace.shroud.core.media.SealedMediaReader
+import de.corespace.shroud.core.media.files.FileContentCheck
+import de.corespace.shroud.core.media.files.FileCopy
+import de.corespace.shroud.core.media.files.FileNames
+import de.corespace.shroud.core.media.files.FileTypes
 import de.corespace.shroud.core.model.AppClock
+import java.io.IOException
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -37,16 +44,28 @@ interface MediaSharing {
 
     fun revokeAll()
 
+    /**
+     * Drops the grants over [messageIds]' media, photo and file alike, and closes the readers file
+     * grants opened: a deleted message stops reading even through a descriptor another app already
+     * holds (docs/file-sharing.md §8; iOS closes Quick Look on delete). Messaging's purges call it.
+     */
+    fun revoke(messageIds: Collection<UUID>)
+
     /** A user sentence in [SaveOutcome.Failed]; this does not throw. */
     suspend fun saveToGallery(messageId: UUID): SaveOutcome
 }
 
+/**
+ * [MediaSharing] for photos and videos (bytes in memory) and [FileSharing] for files (a reader per
+ * open, [openReader]); one registry, so [revokeAll] drops both kinds of grant.
+ */
 internal class MemoryMediaSharing(
     private val context: Context,
     private val load: suspend (UUID) -> ByteArray?,
     private val clock: AppClock,
     private val authority: String = "${context.packageName}.media",
-) : MediaSharing {
+    private val openReader: (UUID) -> SealedMediaReader? = { null },
+) : MediaSharing, FileSharing {
     override suspend fun shareUri(messageId: UUID): Uri? = shareTarget(messageId)?.uri
 
     override suspend fun shareTarget(messageId: UUID): ShareTarget? {
@@ -60,7 +79,7 @@ internal class MemoryMediaSharing(
         if (bytes.isEmpty()) return null
         val id = UUID.randomUUID().toString()
         val kind = MediaKind.of(bytes)
-        SharedMediaRegistry.put(id, bytes, kind.mime)
+        SharedMediaRegistry.put(id, messageId, bytes, kind.mime)
         val uri = Uri.Builder().scheme("content").authority(authority).appendPath(id).build()
         return ShareTarget(uri, kind.mime)
     }
@@ -68,6 +87,8 @@ internal class MemoryMediaSharing(
     override fun revokeAll() {
         SharedMediaRegistry.clear()
     }
+
+    override fun revoke(messageIds: Collection<UUID>) = SharedMediaRegistry.revoke(messageIds)
 
     override suspend fun saveToGallery(messageId: UUID): SaveOutcome = withContext(Dispatchers.IO) {
         val bytes = try {
@@ -112,6 +133,117 @@ internal class MemoryMediaSharing(
         }
     }
 
+    override suspend fun openTarget(messageId: UUID, fileName: String): FileOpenOutcome = withContext(Dispatchers.IO) {
+        val name = FileNames.clean(fileName)
+        val extension = FileNames.extension(name)
+        val type = FileTypes.forExtension(extension)
+        if (type == null || extension == null || !type.canOpen) return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
+        val head = readHead(messageId) ?: return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
+        try {
+            if (!FileContentCheck.matches(type, head.first, head.second)) return@withContext FileOpenOutcome.Refused(FileCopy.mismatch(extension))
+        } finally {
+            head.first.fill(0)
+        }
+        val target = grantFile(messageId, name, type.mime) ?: return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
+        FileOpenOutcome.Ready(target, extension)
+    }
+
+    override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? = withContext(Dispatchers.IO) {
+        val name = FileNames.clean(fileName)
+        val type = FileTypes.forName(name) ?: return@withContext null
+        grantFile(messageId, name, type.mime)
+    }
+
+    override suspend fun saveToDownloads(messageId: UUID, fileName: String): SaveOutcome = withContext(Dispatchers.IO) {
+        val name = FileNames.clean(fileName)
+        val type = FileTypes.forName(name) ?: return@withContext SaveOutcome.Failed(FileCopy.COULD_NOT_SAVE)
+        val reader = openReaderOrNull(messageId) ?: return@withContext SaveOutcome.Failed(FileCopy.COULD_NOT_SAVE)
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, type.mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/Shroud")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = try {
+                context.contentResolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return@withContext SaveOutcome.Failed(FileCopy.COULD_NOT_SAVE)
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    val buffer = ByteArray(COPY_CHUNK_BYTES)
+                    try {
+                        var position = 0L
+                        while (true) {
+                            val read = reader.read(position, buffer, 0, buffer.size)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            position += read
+                        }
+                        if (position != reader.length) throw IOException("short read")
+                    } finally {
+                        buffer.fill(0)
+                    }
+                } ?: throw IOException("no stream")
+                val published = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                if (context.contentResolver.update(uri, published, null, null) == 0) throw IOException("pending")
+                SaveOutcome.Saved
+            } catch (e: CancellationException) {
+                abandon(uri)
+                throw e
+            } catch (_: Exception) {
+                abandon(uri)
+                SaveOutcome.Failed(FileCopy.COULD_NOT_SAVE)
+            }
+        } finally {
+            closeQuietly(reader)
+        }
+    }
+
+    /** A file grant whose reads open a fresh reader each time; null when the file is not on this phone. */
+    private fun grantFile(messageId: UUID, name: String, mime: String): ShareTarget? {
+        val size = openReaderOrNull(messageId)?.let { reader -> reader.length.also { closeQuietly(reader) } } ?: return null
+        val id = UUID.randomUUID().toString()
+        SharedMediaRegistry.putFile(id, SharedMediaRegistry.SealedFile(messageId, name, size, mime) { openReaderOrNull(messageId) })
+        val uri = Uri.Builder().scheme("content").authority(authority).appendPath(id).build()
+        return ShareTarget(uri, mime)
+    }
+
+    /** The file's first [FileContentCheck.HEAD_BYTES] (and how many there are), or null when it is not here. */
+    private fun readHead(messageId: UUID): Pair<ByteArray, Int>? {
+        val reader = openReaderOrNull(messageId) ?: return null
+        return try {
+            val head = ByteArray(FileContentCheck.HEAD_BYTES)
+            var filled = 0
+            while (filled < head.size) {
+                val read = reader.read(filled.toLong(), head, filled, head.size - filled)
+                if (read <= 0) break
+                filled += read
+            }
+            head to filled
+        } catch (_: IOException) {
+            null
+        } finally {
+            closeQuietly(reader)
+        }
+    }
+
+    private fun openReaderOrNull(messageId: UUID): SealedMediaReader? = try {
+        openReader(messageId)
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun closeQuietly(reader: SealedMediaReader) {
+        try {
+            reader.close()
+        } catch (_: IOException) {
+        }
+    }
+
     private fun abandon(uri: Uri) {
         runCatching { context.contentResolver.delete(uri, null, null) }
     }
@@ -125,6 +257,7 @@ internal class MemoryMediaSharing(
     private companion object {
         const val PHOTO = "Could not save that photo."
         const val VIDEO = "Could not save that video."
+        const val COPY_CHUNK_BYTES = 64 * 1024
         val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH.mm.ss", Locale.US)
     }
 }

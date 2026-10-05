@@ -7,6 +7,7 @@ import {
   clampTranscript,
   decodeWaveform,
   encodeWaveform,
+  isFilePayload,
   isVideoPayload,
   isVoicePayload,
   MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES,
@@ -18,6 +19,7 @@ import {
   type MediaPayload,
 } from "./crypto/mediaPayload";
 import { clampSnippet, parseTextPayload, textWire, type ReplyRef } from "./reply";
+import { fileTypeOf, sanitizeFileName, unsupportedRefusal } from "./files";
 import { linkPreviewWire, type LinkPreview } from "./links";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
@@ -40,10 +42,11 @@ import { cacheSealedImage, releaseImage } from "./media/images";
 import type { PreparedImage } from "./media/prepareImage";
 import type { EncodedVideo } from "./media/prepareVideo";
 import { cacheSealedPoster, cacheSealedVideo, releaseVideo } from "./media/videos";
+import { releaseFile } from "./media/fileTransfer";
 import { getVoicePlayback, stopVoice } from "./voice/playback";
 
 /** `annotation` never reaches the thread: `applyAnnotations` folds it into its target. */
-export type ChatKind = "text" | "image" | "voice" | "video" | "annotation";
+export type ChatKind = "text" | "image" | "voice" | "video" | "file" | "annotation";
 
 /**
  * Sealed JSON inside `content_type = annotation`: data one participant attaches
@@ -95,6 +98,11 @@ export type ChatMessage = {
   mediaBytes?: number | null;
   /** Length of a video, from its payload (`d`). */
   videoDurationMs?: number | null;
+  /**
+   * A shared file's name, cleaned again on this side (docs/file-sharing.md §5); its extension
+   * decides the type. `mime` is then the type table's, never the sender's.
+   */
+  fileName?: string | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
   /** Set on `kind === "annotation"`; null when it could not be read. */
@@ -316,18 +324,39 @@ export async function fetchLatest(
 
 function kindFromPayload(payload: MediaPayload | null, isMedia: boolean): ChatKind {
   if (!isMedia) return "text";
+  if (payload && isFilePayload(payload)) return "file";
   if (payload && payloadLinkPreview(payload)) return "text";
   if (payload && isVoicePayload(payload)) return "voice";
   if (payload && isVideoPayload(payload)) return "video";
   return "image";
 }
 
-function messageFromMediaPayload(
+/** The bubble a decoded media payload draws (exported for the selftests). */
+export function messageFromMediaPayload(
   base: Omit<ChatMessage, "text" | "kind">,
   payload: MediaPayload,
   mediaObjectId: string | null | undefined,
 ): ChatMessage {
   base = { ...base, replyTo: payloadReply(payload) };
+  // A file before anything that sniffs `mime`: a PDF named .mp4 is still a file.
+  if (isFilePayload(payload)) {
+    const caption = payload.c?.trim() || "";
+    const fileName = sanitizeFileName(payload.n ?? "");
+    return {
+      ...base,
+      kind: "file",
+      text: caption || fileName,
+      caption: caption || null,
+      fileName,
+      mediaObjectId: mediaObjectId ?? null,
+      mediaKey: payload.k,
+      mime: fileTypeOf(fileName)?.mime ?? null,
+      imageWidth: payload.w > 0 ? payload.w : null,
+      imageHeight: payload.h > 0 ? payload.h : null,
+      thumbnail: payload.th?.trim() || null,
+      mediaBytes: payload.s ?? null,
+    };
+  }
   const linkPreview = payloadLinkPreview(payload);
   if (linkPreview) {
     // A text message whose preview picture is the blob; it reads and quotes as text.
@@ -400,6 +429,8 @@ export function previewCopy(msg: ChatMessage): string {
   if (msg.kind === "voice") return msg.transcript?.trim() || VOICE_LABEL;
   if (msg.kind === "video") return msg.text || VIDEO_LABEL;
   if (msg.kind === "image") return msg.text || PHOTO_LABEL;
+  // The caption, else the file name (docs/file-sharing.md §7).
+  if (msg.kind === "file") return msg.caption?.trim() || msg.fileName || msg.text;
   return msg.text;
 }
 
@@ -651,7 +682,9 @@ export async function hydratePreviews(
           id: dto.id,
           senderUserId: dto.sender_user_id,
           text: payload
-            ? payloadLinkPreview(payload)
+            ? isFilePayload(payload)
+              ? payload.c?.trim() || sanitizeFileName(payload.n ?? "")
+              : payloadLinkPreview(payload)
               ? payload.c?.trim() || ""
               : isVoicePayload(payload)
               ? transcript || VOICE_LABEL
@@ -1047,6 +1080,58 @@ export async function sendVideo(opts: {
   });
 }
 
+/** A file already sealed as SHRF1 under its own key: what a retry uploads again, unchanged. */
+export type SealedFile = { blob: Blob; key: Uint8Array };
+
+/**
+ * Uploads one sealed file and sends it as a `t: "file"` media message (docs/file-sharing.md
+ * §1). `name` is already cleaned; the MIME sealed is the type table's, and the upload itself is
+ * `application/octet-stream`, so the server never learns what kind of file it holds. As with
+ * photos, only sealing the envelope waits for the peer lock.
+ */
+export async function sendFile(opts: {
+  token: string;
+  me: string;
+  peerUserId: string;
+  material: IdentityMaterial;
+  sealed: SealedFile;
+  name: string;
+  /** Plaintext size, sealed as `s`; the receiver checks the blob against it. */
+  size: number;
+  caption?: string | null;
+  /** Quote sealed with the file (first of a batch only). */
+  replyTo?: ReplyRef | null;
+  /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
+  clientMessageId?: string;
+  onProgress?: TransferProgress;
+  /** Every byte is up; sealing and sending the envelope remain. */
+  onUploaded?: () => void;
+}): Promise<ChatMessage> {
+  const type = fileTypeOf(opts.name);
+  if (!type) throw new Error(unsupportedRefusal(opts.name));
+  const caption = opts.caption?.trim() || null;
+
+  const upload = await api.createMediaUpload(opts.token, opts.sealed.blob.size);
+  await api.putMediaContent(opts.token, upload.media_object_id, opts.sealed.blob, opts.onProgress);
+  opts.onUploaded?.();
+
+  const payload: MediaPayload = withReply(
+    {
+      t: "file",
+      n: opts.name,
+      mime: type.mime,
+      w: 0,
+      h: 0,
+      k: bytesToB64(opts.sealed.key),
+      s: opts.size,
+      ...(caption ? { c: caption } : {}),
+    },
+    opts.replyTo,
+  );
+  // Nothing to keep: the web caches no file (§8); the sender's tab still holds the original.
+  return sendMediaEnvelope(opts, payload, upload.media_object_id, "file", () => {});
+}
+
 
 /**
  * The row an idempotent media send should remember.
@@ -1109,7 +1194,7 @@ async function sendMediaEnvelope(
   },
   payload: MediaPayload,
   mediaObjectId: string,
-  noun: "photo" | "video" | "link preview",
+  noun: "photo" | "video" | "file" | "link preview",
   keep: (messageId: string) => void,
 ): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
@@ -1229,9 +1314,11 @@ export function replyRefFor(message: ChatMessage): ReplyRef | null {
   const snippet =
     kind === "voice"
       ? ""
-      : kind === "image" || kind === "video"
-        ? message.caption?.trim() || ""
-        : message.text;
+      : kind === "file"
+        ? message.fileName ?? ""
+        : kind === "image" || kind === "video"
+          ? message.caption?.trim() || ""
+          : message.text;
   return {
     id: message.id.toLowerCase(),
     senderUserId: message.senderUserId.toLowerCase(),
@@ -1252,6 +1339,7 @@ export function tombstone(message: ChatMessage): ChatMessage {
     caption: null,
     transcript: null,
     thumbnail: null,
+    fileName: null,
     mediaKey: null,
     mediaObjectId: null,
     replyTo: null,
@@ -1278,6 +1366,7 @@ function forgetTombstones(dtos: WireMessage[]): void {
     releaseImage(id);
     releaseVideo(id);
     releaseVoice(id);
+    releaseFile(id);
     forgetPlaintext(id);
   }
   void deleteMediaBlobs(...ids);

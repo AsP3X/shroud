@@ -212,6 +212,8 @@ struct RootView: View {
         }
         .task {
             SensitiveTempFiles.prepareAtLaunch()
+            // Shared-file blobs a kill left half-sealed (ciphertext, but never finished).
+            LocalFileStore().sweepStaging()
             SecurityPreferences.removeRetiredKeys()
             // Wire before any network call so 401s during validateSession count toward force-logout.
             SessionAuthBridge.controller = sessionController

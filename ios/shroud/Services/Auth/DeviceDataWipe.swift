@@ -140,11 +140,13 @@ struct DeviceDataWipe {
         for root in messageRoots { remove(root) }
     }
 
-    /// Photos, videos, voice notes and anything cached from the network: the sealed media
-    /// store, temporary files (decrypted clips, recordings, exports) and Library/Caches.
+    /// Photos, videos, voice notes, shared files and anything cached from the network: the
+    /// sealed media and file stores, temporary files (decrypted clips, recordings, exports,
+    /// opened files) and Library/Caches.
     func wipeMedia() {
         if touchesSystemState { URLCache.shared.removeAllCachedResponses() }
         remove(locations.shroud.appendingPathComponent("media", isDirectory: true))
+        remove(locations.shroud.appendingPathComponent("files", isDirectory: true))
         sweep(locations.temporary)
         sweep(locations.caches)
     }
@@ -254,7 +256,12 @@ struct DeviceDataWipe {
     }
 
     private func mediaFiles() -> [(url: URL, bytes: Int64)] {
-        [locations.shroud.appendingPathComponent("media", isDirectory: true), locations.temporary, locations.caches]
+        [
+            locations.shroud.appendingPathComponent("media", isDirectory: true),
+            locations.shroud.appendingPathComponent("files", isDirectory: true),
+            locations.temporary,
+            locations.caches,
+        ]
             .flatMap { regularFiles(under: $0) }
     }
 

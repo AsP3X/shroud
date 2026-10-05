@@ -158,7 +158,7 @@ private sealed interface TransferGlyph {
  * (eased 0.3 s), else a 22 % arc lapping once per 1.1 s — still under reduce motion (`:80-125`).
  */
 @Composable
-private fun TransferRing(transfer: MediaTransfer, diameter: Dp, reduceMotion: Boolean) {
+internal fun TransferRing(transfer: MediaTransfer, diameter: Dp, reduceMotion: Boolean) {
     val fraction by animateFloatAsState(
         targetValue = TransferCopy.arcFraction(transfer),
         animationSpec = Motion.easeOut(300),

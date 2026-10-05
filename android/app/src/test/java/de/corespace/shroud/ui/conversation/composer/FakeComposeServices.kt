@@ -9,8 +9,13 @@ import de.corespace.shroud.core.links.LinkPreviewException
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileIntake
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.library.LibraryAccess
 import de.corespace.shroud.core.media.library.LibraryItem
+import de.corespace.shroud.core.media.share.FileOpenOutcome
+import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import de.corespace.shroud.core.media.video.VideoProbe
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
@@ -120,6 +125,48 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
     override fun cancelMediaDownload(messageId: UUID) {
         cancelledDownloads += messageId
         downloadGate?.complete(Unit)
+    }
+
+    // ---- Files ----
+
+    /** What the next `inspectFiles` answers. */
+    var fileIntake = FileIntake.Result(emptyList(), emptyList())
+    val inspectedUris = ArrayList<List<Uri>>()
+
+    data class SentFile(val file: PickedFile, val caption: String, val replyTo: MessageReplyReference?)
+
+    val files = ArrayList<SentFile>()
+    val fileErrors = ArrayDeque<String?>()
+    val fileActions = ArrayList<String>()
+    var openOutcome: FileOpenOutcome = FileOpenOutcome.Refused("Could not open that file.")
+    var shareTarget: ShareTarget? = null
+    var saveOutcome: SaveOutcome = SaveOutcome.Saved
+
+    override suspend fun inspectFiles(uris: List<Uri>): FileIntake.Result {
+        inspectedUris += uris
+        return fileIntake
+    }
+
+    override suspend fun sendFile(file: PickedFile, peer: UUID, caption: String, replyTo: MessageReplyReference?): String? {
+        files += SentFile(file, caption, replyTo)
+        return fileErrors.removeFirstOrNull()
+    }
+
+    override suspend fun ensureFileLoaded(message: ChatMessage) = download(message)
+
+    override suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome {
+        fileActions += "open:$fileName"
+        return openOutcome
+    }
+
+    override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? {
+        fileActions += "share:$fileName"
+        return shareTarget
+    }
+
+    override suspend fun saveFileToDownloads(messageId: UUID, fileName: String): SaveOutcome {
+        fileActions += "save:$fileName"
+        return saveOutcome
     }
 
     val sinks = ArrayList<MessageArtifactSinks>()
@@ -297,6 +344,13 @@ internal class FakeComposeHost : ComposeHost {
 
     override fun requestDelete(message: ChatMessage) {
         deleteRequests += message
+    }
+
+    /** Messages whose menu a tap asked for (a tapped APK). */
+    val menus = ArrayList<UUID>()
+
+    override fun showMessageMenu(message: ChatMessage) {
+        menus += message.id
     }
 }
 

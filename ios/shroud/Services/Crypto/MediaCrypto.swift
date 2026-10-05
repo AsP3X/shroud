@@ -173,7 +173,8 @@ nonisolated enum MediaCrypto {
     /// Human-readable size for the Telegram-style download chip.
     static func byteCountLabel(_ bytes: Int) -> String {
         let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        // Bytes too: a short text file is under 1 KB, and "0 KB" reads as an empty file.
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB, .useGB]
         formatter.countStyle = .file
         formatter.includesUnit = true
         formatter.isAdaptive = true

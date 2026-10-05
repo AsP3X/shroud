@@ -31,7 +31,8 @@ object ThreadMessageMerge {
      *   the prior had none and the higher receipt. Without a prior copy, the decoded tombstone made bare.
      * - A failed decode next to a readable prior keeps the prior, filling only what it lacks.
      * - Otherwise the decode wins and the prior fills its gaps: media, transcript, reply, link preview
-     *   (text only), reactions (a fresh decode never carries them), and a hydrated video's kind.
+     *   (text only), reactions (a fresh decode never carries them), a file's name, and a hydrated
+     *   video's or a file's kind.
      */
     fun preferReadable(decoded: ChatMessage, prior: ChatMessage?): ChatMessage {
         if (decoded.deleted) {
@@ -59,6 +60,7 @@ object ThreadMessageMerge {
                 transcript = prior.transcript ?: decoded.transcript,
                 replyTo = prior.replyTo ?: decoded.replyTo,
                 linkPreview = prior.linkPreview ?: decoded.linkPreview,
+                fileName = prior.fileName ?: decoded.fileName,
             )
         }
 
@@ -73,6 +75,7 @@ object ThreadMessageMerge {
             reactions = if (decoded.deleted) emptyList() else prior.reactions,
             // A cache written before replies existed has no quote: keep the shown one (`:71-73`).
             replyTo = decoded.replyTo ?: prior.replyTo,
+            fileName = decoded.fileName ?: prior.fileName,
         )
         // Same for a link preview: a cache written before previews existed has none (`:74-75`).
         if (merged.linkPreview == null && merged.kind == ChatMessageKind.Text) merged = merged.copy(linkPreview = prior.linkPreview)
@@ -85,6 +88,12 @@ object ThreadMessageMerge {
                 hasFullMedia = merged.hasFullMedia || prior.hasFullMedia,
                 durationMs = merged.durationMs ?: prior.durationMs,
             )
+        }
+        // Nor a file with a placeholder decode ("Media": its payload is not on this device yet).
+        if (prior.kind == ChatMessageKind.File && merged.kind != ChatMessageKind.File &&
+            (prior.hasFullMedia || prior.mediaObjectId != null)
+        ) {
+            merged = merged.copy(kind = ChatMessageKind.File, text = prior.text, hasFullMedia = merged.hasFullMedia || prior.hasFullMedia)
         }
         if (!priorFailed && decodedFailed) {
             // `:82-86` (a deleted prior lands here).
@@ -115,7 +124,7 @@ object ThreadMessageMerge {
 
     /**
      * What a message deleted for everyone leaves (`ThreadMessageMerge.swift:116-133`): who sent it,
-     * when, and which kind it was — photo, video and voice keep theirs, anything else is text.
+     * when, and which kind it was — photo, video, voice and file keep theirs, anything else is text.
      * Nothing it said remains; the row draws it as the text tombstone (`presentedKind`).
      */
     fun tombstone(message: ChatMessage): ChatMessage = ChatMessage(
@@ -129,7 +138,7 @@ object ThreadMessageMerge {
         deleted = true,
         receipt = message.receipt,
         kind = when (message.kind) {
-            ChatMessageKind.Image, ChatMessageKind.Video, ChatMessageKind.Voice -> message.kind
+            ChatMessageKind.Image, ChatMessageKind.Video, ChatMessageKind.Voice, ChatMessageKind.File -> message.kind
             ChatMessageKind.Text, ChatMessageKind.Todo -> ChatMessageKind.Text
         },
     )

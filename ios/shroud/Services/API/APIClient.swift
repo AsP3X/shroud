@@ -313,6 +313,77 @@ nonisolated final class APIClient: Sendable {
         return data
     }
 
+    // MARK: - File-backed raw transfers
+    //
+    // Shared files can be 2 GB: the body streams from a file and the response lands in one, so
+    // neither side of the transfer ever sits in memory.
+
+    /// PUT the file at `fileURL` as the body, reporting how much has left the device (0…1).
+    func putFile(
+        path: String,
+        fileURL: URL,
+        contentType: String,
+        bearerToken: String? = nil,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
+        var request = rawRequest(path: path, method: "PUT", bearerToken: bearerToken)
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+
+        let observer = onProgress.map { TransferProgressObserver(direction: .upload, onProgress: $0) }
+        defer { observer?.finish() }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.upload(for: request, fromFile: fileURL, delegate: observer)
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.transport("Invalid response")
+        }
+        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        try Self.throwIfNeeded(data: data, status: http.statusCode)
+    }
+
+    /// GET raw bytes into a temporary file, reporting how much has arrived (0…1).
+    ///
+    /// Agent: RETURNS a file the caller owns and must move or delete.
+    func downloadFile(
+        path: String,
+        bearerToken: String? = nil,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        let request = rawRequest(path: path, method: "GET", bearerToken: bearerToken)
+
+        let observer = onProgress.map { TransferProgressObserver(direction: .download, onProgress: $0) }
+        defer { observer?.finish() }
+
+        let location: URL
+        let response: URLResponse
+        do {
+            (location, response) = try await session.download(for: request, delegate: observer)
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+            throw APIError.transport(error.localizedDescription)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            try? FileManager.default.removeItem(at: location)
+            throw APIError.transport("Invalid response")
+        }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            // An error body is a small JSON document, not the blob.
+            let data = (try? Data(contentsOf: location)) ?? Data()
+            try? FileManager.default.removeItem(at: location)
+            noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+            try Self.throwIfNeeded(data: data, status: http.statusCode)
+            throw APIError.transport("Unexpected status \(http.statusCode)")
+        }
+        noteAuthOutcome(status: http.statusCode, data: Data(), bearerToken: bearerToken)
+        return location
+    }
+
     // MARK: - Internals
 
     private func rawRequest(path: String, method: String, bearerToken: String?) -> URLRequest {

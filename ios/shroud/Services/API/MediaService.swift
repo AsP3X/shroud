@@ -68,6 +68,46 @@ struct MediaService: Sendable {
         }
     }
 
+    /// PUT a sealed file (SHRF1) to `media/{id}/content`, streamed from disk.
+    ///
+    /// Human: The content type stays `application/octet-stream`, so the server never learns
+    /// that a blob is a PDF or an APK.
+    func uploadContent(
+        mediaID: UUID,
+        fileURL: URL,
+        token: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
+        let size = FileBlob.fileSize(at: fileURL) ?? 0
+        guard size > 0, size <= Int64(VideoMedia.maxSealedBytes) else {
+            throw APIError.server(
+                code: "VALIDATION_ERROR",
+                message: "This file is too large to send.",
+                statusCode: 400
+            )
+        }
+        try await client.putFile(
+            path: "media/\(mediaID.uuidString.lowercased())/content",
+            fileURL: fileURL,
+            contentType: "application/octet-stream",
+            bearerToken: token,
+            onProgress: onProgress
+        )
+    }
+
+    /// GET a sealed file into a temporary file the caller then owns (moves or deletes).
+    func downloadContentToFile(
+        mediaID: UUID,
+        token: String,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        try await client.downloadFile(
+            path: "media/\(mediaID.uuidString.lowercased())/content",
+            bearerToken: token,
+            onProgress: onProgress
+        )
+    }
+
     /// GET encrypted bytes from `media/{id}/content` (API, authenticated).
     ///
     /// `onProgress` (0…1) drives the download ring on the media bubble.

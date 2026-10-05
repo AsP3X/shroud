@@ -71,6 +71,15 @@ internal object MediaShareIntents {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
+    /**
+     * `ACTION_VIEW` of a checked file grant (docs/file-sharing.md §7): the app the system picks for
+     * [ShareTarget.mime] reads it through the provider with a read grant, nothing else.
+     */
+    fun view(target: ShareTarget): Intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(target.uri, target.mime)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
     /** The system share sheet over [send] (iOS `UIActivityViewController`). */
     fun chooser(send: Intent): Intent = Intent.createChooser(send, null).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 

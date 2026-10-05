@@ -18,6 +18,12 @@ import de.corespace.shroud.core.media.PlainSource
 import de.corespace.shroud.core.media.UploadedBlob
 import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileCopy
+import de.corespace.shroud.core.media.files.FileLimits
+import de.corespace.shroud.core.media.files.FileNames
+import de.corespace.shroud.core.media.files.FileType
+import de.corespace.shroud.core.media.files.FileTypes
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.media.video.VideoUploadQuality
 import de.corespace.shroud.core.model.AppClock
@@ -60,13 +66,14 @@ import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.time.Instant
 import java.util.UUID
 import kotlin.coroutines.CoroutineContext
 
 // The send paths of the messaging engine (messaging-core §11, media-voice-links §1.6, §3; plan §1.7.7):
-// text, link previews with a large image, Notes, todos, photos, videos, voice notes, retries and the
-// offline queue. iOS: `ios/shroud/Services/Messaging/MessagingController.swift` (MC below).
+// text, link previews with a large image, Notes, todos, photos, videos, files (docs/file-sharing.md),
+// voice notes, retries and the offline queue. iOS: `ios/shroud/Services/Messaging/MessagingController.swift` (MC below).
 //
 // Every path keeps the rules of messaging-core §11.1:
 //  1. the server re-keys sent messages: the bubble ends under `dto.id`, the optimistic id's caches go
@@ -1144,6 +1151,283 @@ class SendPipeline(
         markFailed(messageId, error)
     }
 
+    // ---- files (docs/file-sharing.md) ----
+
+    /**
+     * One picked file, untouched (docs/file-sharing.md §2, §3, §7): the bubble lands at once with the
+     * name and size, the provider's bytes stream into the sealed cache under the optimistic id (never
+     * a whole file in memory), then go up as SHRF1 with the transfer ring, and the `t: "file"`
+     * payload follows. Like a video otherwise: offline it waits failed for the outbox, Notes keep it
+     * local and sync it when online, a failure keeps the bubble for Retry.
+     */
+    override suspend fun sendFile(file: PickedFile, storePeer: UUID, caption: String, replyTo: MessageReplyReference?): String? =
+        detached { performSendFile(file, storePeer, caption, replyTo) }
+
+    private suspend fun performSendFile(file: PickedFile, storePeer: UUID, caption: String, replyTo: MessageReplyReference?): String? {
+        val name = FileNames.clean(file.name)
+        val type = FileTypes.forExtension(FileNames.extension(name)) ?: return FileCopy.unsupported(name)
+        if (file.sizeBytes == 0L) return FileCopy.empty(name)
+        if (file.sizeBytes > FileLimits.MAX_PLAINTEXT_BYTES) return FileCopy.tooLarge(name)
+        val trimmedCaption = WireText.trimWhitespacesAndNewlines(caption)
+        val notes = state.isNotes(storePeer)
+        val me = state.myUserId ?: (if (notes) NOTES_PEER_ID else null) ?: return NOT_SIGNED_IN
+        if (!notes && (state.session == null || !deps.keyring.isUnlocked)) return NOT_SIGNED_IN
+
+        val optimisticId = UUID.randomUUID()
+        val generation = state.lockGeneration
+        val knownSize = file.sizeBytes.takeIf { it > 0 }
+        state.edit(storePeer) { list ->
+            list + ChatMessage(
+                id = optimisticId,
+                peerUserId = storePeer,
+                senderUserId = me,
+                text = trimmedCaption,
+                createdAt = deps.clock.now(),
+                isMine = true,
+                receipt = ReceiptStatus.Sending,
+                kind = ChatMessageKind.File,
+                mediaByteCount = knownSize,
+                fileName = name,
+                pendingSync = true,
+                replyTo = replyTo,
+            )
+        }
+        beginTransfer(optimisticId, MediaTransfer.Phase.Preparing, knownSize)
+
+        val size = try {
+            storeFile(optimisticId, file, knownSize)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: FileRefused) {
+            // Too large or empty after all (the provider's size was missing or wrong): a refusal, not a send.
+            if (state.lockGeneration == generation) {
+                state.transfers.end(optimisticId)
+                state.edit(storePeer) { list -> list.filterNot { it.id == optimisticId } }
+                state.purge(listOf(optimisticId))
+            }
+            return if (e.empty) FileCopy.empty(name) else FileCopy.tooLarge(name)
+        } catch (_: Exception) {
+            if (state.lockGeneration == generation) markVideoFailed(optimisticId, FileCopy.COULD_NOT_READ)
+            return FileCopy.COULD_NOT_READ
+        }
+        if (state.lockGeneration != generation) return null
+        state.update(optimisticId) { it.copy(hasFullMedia = true, mediaByteCount = size) }
+        val info = FileInfo(name, type, size)
+
+        if (notes) {
+            sendNotesFile(optimisticId, storePeer, trimmedCaption, info, replyTo, generation)
+            return null
+        }
+
+        val signed = signedIn() ?: run {
+            markVideoFailed(optimisticId, NOT_SIGNED_IN)
+            return NOT_SIGNED_IN
+        }
+        state.persistSnapshot()
+
+        if (!deps.isOnline()) {
+            host().setOffline(true)
+            markVideoFailed(optimisticId, WAITING_FOR_CONNECTION)
+            return null
+        }
+
+        return try {
+            val sent = finishFileSend(optimisticId, storePeer, signed, info, trimmedCaption, replyTo, trackingTransfer = true, rekey = true)
+            endTransfer(optimisticId, sent.id)
+            state.setLastError(null)
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val message = userMessage(e)
+            if (state.lockGeneration == generation) {
+                markVideoFailed(optimisticId, message)
+                state.setLastError(message)
+                state.persistSnapshot()
+            }
+            message
+        }
+    }
+
+    /** A file in Notes: local at once, synced and re-keyed when online, as a video (MC:2646-2706). */
+    private suspend fun sendNotesFile(
+        optimisticId: UUID,
+        storePeer: UUID,
+        caption: String,
+        info: FileInfo,
+        replyTo: MessageReplyReference?,
+        generation: Long,
+    ) {
+        state.update(optimisticId) { it.copy(receipt = ReceiptStatus.Sent, pendingSync = false) }
+        state.persistThread(storePeer)
+        var sentId: UUID? = null
+        val signed = signedIn()
+        if (deps.isOnline() && signed != null) {
+            try {
+                val sent = finishFileSend(optimisticId, storePeer, signed, info, caption, replyTo, trackingTransfer = false, rekey = false)
+                sentId = sent.id
+                if (state.lockGeneration == generation) rekeyIntoNotes(optimisticId, sent.copy(peerUserId = storePeer, receipt = ReceiptStatus.Sent))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Keep the local-only file.
+            }
+        }
+        endTransfer(optimisticId, sentId)
+    }
+
+    /** Re-sends a failed file from the sealed cache: a fresh key and prefix, the same bytes (docs/file-sharing.md §3). */
+    override suspend fun retryFailedFile(messageId: UUID, storePeer: UUID): String? = detached {
+        val signed = signedIn() ?: return@detached NOTHING_TO_RETRY
+        val message = state.messages(storePeer)?.firstOrNull { it.id == messageId && it.isMine && it.kind == ChatMessageKind.File }
+            ?: return@detached NOTHING_TO_RETRY
+        val info = fileFromBubble(message) ?: return@detached NOTHING_TO_RETRY
+        val generation = state.lockGeneration
+        state.update(messageId) { it.copy(receipt = ReceiptStatus.Sending, sendError = null) }
+        beginTransfer(messageId, MediaTransfer.Phase.Transferring, info.sizeBytes)
+        try {
+            val sent = finishFileSend(messageId, storePeer, signed, info, message.text, message.replyTo, trackingTransfer = true, rekey = true)
+            endTransfer(messageId, sent.id)
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val text = userMessage(e)
+            if (state.lockGeneration == generation) markVideoFailed(messageId, text) else endTransfer(messageId, null)
+            text
+        }
+    }
+
+    /**
+     * Upload the cached file as SHRF1, seal the `t: "file"` payload, send, cache under the server id.
+     * The ring moves to "transferring" with the file's size and to "finishing" once the bytes are up.
+     */
+    private suspend fun finishFileSend(
+        optimisticId: UUID,
+        storePeer: UUID,
+        signed: Signed,
+        file: FileInfo,
+        caption: String,
+        replyTo: MessageReplyReference?,
+        trackingTransfer: Boolean,
+        rekey: Boolean,
+    ): ChatMessage {
+        val generation = state.lockGeneration
+        val apiPeer = state.apiPeer(storePeer)
+        if (trackingTransfer) state.transfers.advance(optimisticId, MediaTransfer.Phase.Transferring, file.sizeBytes)
+        val blob = deps.transfers().uploadFile(
+            PlainSource.LocalMedia(optimisticId),
+            signed.token,
+            if (trackingTransfer) { fraction -> progress(optimisticId, fraction) } else null,
+        )
+        if (trackingTransfer) state.transfers.advance(optimisticId, MediaTransfer.Phase.Finishing)
+
+        val trimmedCaption = WireText.trimWhitespacesAndNewlines(caption)
+        val peerPublic = deps.peerIdentities().publicKeyForSending(apiPeer)
+        val sealed = sealMediaPayload(
+            kind = MediaMessagePayload.KIND_FILE,
+            // The canonical type of the extension, never the provider's (docs/file-sharing.md §1).
+            mime = file.type.mime,
+            width = 0,
+            height = 0,
+            key = blob.keyBase64,
+            caption = trimmedCaption.ifEmpty { null },
+            durationMs = null,
+            previewJpeg = null,
+            byteCount = file.sizeBytes,
+            apiPeer = apiPeer,
+            me = signed.me,
+            peerPublic = peerPublic,
+            replyTo = replyTo,
+            fileName = file.name,
+        )
+        val dto = deps.api.sendMessage(
+            signed.token,
+            SendMessageRequest(apiPeer, optimisticId, ContentType.MEDIA, MessageCrypto.toWire(sealed.envelope), blob.mediaObjectId),
+        )
+        moveMedia(optimisticId, dto.id, null)
+        val storedBlob = cacheSentPayload(dto, blob, sealed.payload, apiPeer)
+        val sent = ChatMessage(
+            id = dto.id,
+            peerUserId = storePeer,
+            senderUserId = signed.me,
+            text = trimmedCaption,
+            createdAt = dto.createdAt,
+            createdAtWire = dto.createdAtWire,
+            isMine = true,
+            receipt = receipt(dto),
+            kind = ChatMessageKind.File,
+            mediaObjectId = storedBlob,
+            hasFullMedia = true,
+            mediaByteCount = file.sizeBytes,
+            fileName = file.name,
+            sendError = null,
+            replyTo = replyTo,
+        )
+        if (state.lockGeneration == generation) {
+            if (rekey) reKey(storePeer, optimisticId, sent, appendIfMissing = false)
+            state.persistSnapshot()
+        }
+        host().refreshConversations(force = true)
+        return sent
+    }
+
+    /** A picked file the copy found empty or over the limit after all. */
+    private class FileRefused(val empty: Boolean) : IOException(if (empty) "empty file" else "file too large")
+
+    /**
+     * Streams [file] into the sealed cache under [messageId], 64 KiB at a time, counting: more than
+     * the limit or nothing at all throws [FileRefused] and nothing is committed. The ring shows the
+     * copy's progress when the size is known. Returns the byte count.
+     */
+    private suspend fun storeFile(messageId: UUID, file: PickedFile, knownSize: Long?): Long = withContext(deps.io) {
+        val writer = deps.media().writer(messageId)
+        var reported = 0.0
+        try {
+            var total = 0L
+            file.open().use { input ->
+                val buffer = ByteArray(COPY_CHUNK_BYTES)
+                try {
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (read == 0) continue
+                        total += read
+                        if (total > FileLimits.MAX_PLAINTEXT_BYTES) throw FileRefused(empty = false)
+                        writer.write(buffer, 0, read)
+                        if (knownSize != null) {
+                            val fraction = (total.toDouble() / knownSize).coerceAtMost(1.0)
+                            if (fraction - reported >= PROGRESS_STEP) {
+                                reported = fraction
+                                progress(messageId, fraction)
+                            }
+                        }
+                    }
+                } finally {
+                    buffer.fill(0)
+                }
+            }
+            if (total == 0L) throw FileRefused(empty = true)
+            writer.commit()
+            total
+        } catch (e: Throwable) {
+            writer.abort()
+            throw e
+        } finally {
+            writer.close()
+        }
+    }
+
+    private class FileInfo(val name: String, val type: FileType, val sizeBytes: Long)
+
+    /** A queued or failed file rebuilt from its bubble and the cache; null when it cannot go out. */
+    private suspend fun fileFromBubble(message: ChatMessage): FileInfo? {
+        val name = message.fileName?.let(FileNames::clean) ?: return null
+        val type = FileTypes.forExtension(FileNames.extension(name)) ?: return null
+        val size = cachedLength(message.id)?.takeIf { it > 0 } ?: return null
+        return FileInfo(name, type, size)
+    }
+
     // ---- voice ----
 
     /**
@@ -1451,6 +1735,17 @@ class SendPipeline(
                         if (state.lockGeneration == generation) markFailed(message.id, userMessage(e))
                     }
                 }
+                ChatMessageKind.File -> {
+                    val info = fileFromBubble(message) ?: continue
+                    state.update(message.id) { it.copy(receipt = ReceiptStatus.Sending, sendError = null) }
+                    try {
+                        finishFileSend(message.id, item.storePeer, signed, info, item.caption, message.replyTo, trackingTransfer = false, rekey = true)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (state.lockGeneration == generation) markVideoFailed(message.id, userMessage(e))
+                    }
+                }
                 ChatMessageKind.Todo -> Unit
             }
         }
@@ -1474,7 +1769,7 @@ class SendPipeline(
                 val caption = when (message.kind) {
                     ChatMessageKind.Image -> if (message.text == PHOTO || message.text.isEmpty()) "" else message.text
                     ChatMessageKind.Video -> if (message.text == VIDEO || message.text.isEmpty()) "" else message.text
-                    ChatMessageKind.Text, ChatMessageKind.Voice -> message.text
+                    ChatMessageKind.Text, ChatMessageKind.Voice, ChatMessageKind.File -> message.text
                     ChatMessageKind.Todo -> continue
                 }
                 collected += Outbound(message.id, peer, caption, message.createdAt)
@@ -1670,6 +1965,7 @@ class SendPipeline(
         peerPublic: ByteArray,
         replyTo: MessageReplyReference?,
         linkPreview: LinkPreview? = null,
+        fileName: String? = null,
     ): SealedPayload {
         val safePreview = previewJpeg?.takeIf { it.size <= MediaCrypto.MAX_ENVELOPE_PREVIEW_BYTES }
         fun encode(includePreview: Boolean): ByteArray = MediaMessagePayload(
@@ -1684,6 +1980,7 @@ class SendPipeline(
             s = byteCount,
             re = replyTo,
             lp = linkPreview,
+            n = fileName,
         ).encoded()
 
         var includePreview = safePreview != null
@@ -1751,6 +2048,9 @@ class SendPipeline(
         const val POSTER_THUMB_EDGE = 320
 
         private const val COPY_CHUNK_BYTES = 64 * 1024
+
+        /** A picked file's copy into the cache reports at most every half percent. */
+        private const val PROGRESS_STEP = 0.005
 
         /** `MessageDecoder.receiptStatus(from:)` (`MessageDecoder.swift:20-24`). */
         internal fun receipt(dto: MessageDto): ReceiptStatus = when {

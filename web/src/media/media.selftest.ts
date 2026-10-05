@@ -230,5 +230,12 @@ const videoByMime = parseMediaPayload('{"t":"media","k":"YQ==","mime":"video/qui
 if (!videoByMime || !isVideoPayload(videoByMime)) throw new Error("isVideoPayload: mime sniff");
 const photoNotVideo = parseMediaPayload('{"t":"image","k":"YQ==","mime":"video/mp4"}');
 if (!photoNotVideo || isVideoPayload(photoNotVideo)) throw new Error("isVideoPayload: t=image wins");
+// A file is never sniffed: an .mp4 or audio file sent as a file stays a file (docs/file-sharing.md §1).
+const fileNotVideo = parseMediaPayload('{"t":"file","n":"clip.mp4","k":"YQ==","mime":"video/mp4","s":1}');
+if (!fileNotVideo || isVideoPayload(fileNotVideo) || isVoicePayload(fileNotVideo)) {
+  throw new Error("isVideoPayload: t=file wins");
+}
+const fileNotVoice = parseMediaPayload('{"t":"file","n":"a.m4a","k":"YQ==","mime":"audio/mp4","s":1}');
+if (!fileNotVoice || isVoicePayload(fileNotVoice)) throw new Error("isVoicePayload: t=file wins");
 
 console.log("media selftest ok");

@@ -1,7 +1,7 @@
 import type { ChatKind } from "./messaging";
 
 /** Which bubble a thread row draws. */
-export type RowBubble = "text" | "photo" | "video" | "voice";
+export type RowBubble = "text" | "photo" | "video" | "voice" | "file";
 
 /**
  * A deleted message draws the text tombstone, whatever it was. A live photo needs a key or
@@ -15,5 +15,6 @@ export function rowBubble(
   if (message.kind === "image" && (Boolean(message.mediaKey) || hasDecodedPhoto)) return "photo";
   if (message.kind === "video") return "video";
   if (message.kind === "voice") return "voice";
+  if (message.kind === "file") return "file";
   return "text";
 }

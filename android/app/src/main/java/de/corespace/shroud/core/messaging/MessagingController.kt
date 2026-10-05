@@ -12,6 +12,7 @@ import de.corespace.shroud.core.links.LinkPreviewAttachment
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.ChatDeleteOutcome
@@ -24,6 +25,7 @@ import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.core.model.PeerIdentityChangedException
 import de.corespace.shroud.core.model.ReactionFailure
 import de.corespace.shroud.core.model.ReceiptStatus
+import de.corespace.shroud.core.model.previewText
 import de.corespace.shroud.core.net.ChatMuteDto
 import de.corespace.shroud.core.net.ContactRequestDto
 import de.corespace.shroud.core.net.ContentType
@@ -280,7 +282,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         val held = state.threads.value.values.asSequence().flatten().firstOrNull { it.id == messageId }
         if (held != null) {
             if (held.deleted || ThreadMessageMerge.isFailedDecryptText(held.text)) return null
-            return held.text
+            return held.previewText
         }
         if (!keys.isUnlocked) return null
         val token = deps.session.value?.token ?: return null
@@ -304,7 +306,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
             return null
         }
         if (generation != state.lockGeneration || decoded.deleted || ThreadMessageMerge.isFailedDecryptText(decoded.text)) return null
-        return decoded.text
+        return decoded.previewText
     }
 
     /** The last Notes activity, for the pinned row (`notesLastActivity`, `:4121-4123`). */
@@ -743,8 +745,16 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         transcriptProvider: (suspend (messageId: UUID) -> String?)? = null,
     ): String? = send.sendVoice(audio, durationMs, peer, waveform, transcript, replyTo, transcriptProvider)
 
+    /**
+     * One picked file, sent as it is (docs/file-sharing.md). [file] comes from
+     * `media.fileIntake.inspect`; null when it went out or waits for the network, else the user's sentence.
+     */
+    suspend fun sendFile(file: PickedFile, peer: UUID, caption: String = "", replyTo: MessageReplyReference? = null): String? =
+        send.sendFile(file, peer, caption, replyTo)
+
     suspend fun retryFailedImage(messageId: UUID, peer: UUID): String? = send.retryFailedImage(messageId, peer)
     suspend fun retryFailedVideo(messageId: UUID, peer: UUID): String? = send.retryFailedVideo(messageId, peer)
+    suspend fun retryFailedFile(messageId: UUID, peer: UUID): String? = send.retryFailedFile(messageId, peer)
     suspend fun shareTranscript(transcript: String, voiceMessageId: UUID, peer: UUID) = send.shareTranscript(transcript, voiceMessageId, peer)
 
     // ---- Media on demand: the MediaLoader (W2-MSG-SEND) --------------------------------------------
@@ -753,6 +763,9 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     suspend fun ensureVideoLoaded(message: ChatMessage) = media.ensureVideoLoaded(message)
     suspend fun ensureVoiceLoaded(message: ChatMessage) = media.ensureVoiceLoaded(message)
     suspend fun ensureLinkImageLoaded(message: ChatMessage) = media.ensureLinkImageLoaded(message)
+
+    /** A tap on a file that is not on this phone: downloads it with the ring ([cancelMediaDownload] stops it). */
+    suspend fun ensureFileLoaded(message: ChatMessage) = media.ensureFileLoaded(message)
 
     /** The ring's X: cancels a download; uploads cannot be cancelled (`cancelMediaDownload`, `:2947-2952`). */
     fun cancelMediaDownload(messageId: UUID) = media.cancel(messageId)
@@ -899,7 +912,8 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
                     threadPeer,
                     state.username(threadPeer),
                     dto.conversationId,
-                    if (chat.deleted) null else chat.text,
+                    // A file says its caption, else its name (docs/file-sharing.md §7).
+                    if (chat.deleted) null else chat.previewText,
                     readState.isMuted(threadPeer),
                 )
             } else {

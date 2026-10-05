@@ -24,6 +24,7 @@ import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReactionFailure
 import de.corespace.shroud.core.model.canBeQuoted
+import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.core.model.presentedKind
 import de.corespace.shroud.core.net.CallModality
 import de.corespace.shroud.core.net.ConversationDeleteScope
@@ -96,6 +97,7 @@ interface ConversationBackend {
     fun cancelMediaDownload(messageId: UUID)
     suspend fun retryFailedImage(messageId: UUID, peer: UUID): String?
     suspend fun retryFailedVideo(messageId: UUID, peer: UUID): String?
+    suspend fun retryFailedFile(messageId: UUID, peer: UUID): String?
     fun toggleTodo(messageId: UUID)
 
     /** Places a call; the user-facing error, or null when it started (`startCall`, CV:821-833). */
@@ -158,6 +160,7 @@ private class ContainerConversationBackend(
     override fun cancelMediaDownload(messageId: UUID) = messaging.cancelMediaDownload(messageId)
     override suspend fun retryFailedImage(messageId: UUID, peer: UUID): String? = messaging.retryFailedImage(messageId, peer)
     override suspend fun retryFailedVideo(messageId: UUID, peer: UUID): String? = messaging.retryFailedVideo(messageId, peer)
+    override suspend fun retryFailedFile(messageId: UUID, peer: UUID): String? = messaging.retryFailedFile(messageId, peer)
     override fun toggleTodo(messageId: UUID) = messaging.toggleTodo(messageId)
 
     override suspend fun startCall(peer: UUID, username: String, modality: CallModality): String? {
@@ -209,6 +212,12 @@ interface ConversationCompose {
 
     /** The bubble's ring ✕: stops the download, which then ends without a failure toast (CV:2386-2394). */
     fun cancelDownload(message: ChatMessage)
+
+    /** The menu's "Save to Downloads" on a file (docs/file-sharing.md §7): the §6 warning first on a received one. */
+    fun saveFileToDownloads(message: ChatMessage) {}
+
+    /** The menu's "Share" on a file: the §6 warning first on a received one, then the share sheet. */
+    fun shareFile(message: ChatMessage) {}
 
     /** Nothing to compose with (previews, tests). */
     object None : ConversationCompose {
@@ -614,6 +623,8 @@ class ConversationViewModel(
                 haptic(Haptic.Success)
             }
             MessageMenuAction.Reply -> startReply(message)
+            MessageMenuAction.SaveToDownloads -> compose.saveFileToDownloads(live(message))
+            MessageMenuAction.Share -> compose.shareFile(live(message))
             MessageMenuAction.Edit, MessageMenuAction.Pin, MessageMenuAction.Forward, MessageMenuAction.Select,
             MessageMenuAction.MoreReactions,
             -> showComingSoon(action.title)
@@ -753,9 +764,10 @@ class ConversationViewModel(
 
     // ---- Row gestures (CV:921-945) ---------------------------------------------------------------------
 
-    /** A photo or video row opens (or downloads) on a single tap (CV:924-928). */
+    /** A photo, video or file row opens (or downloads) on a single tap (CV:924-928; docs/file-sharing.md §7). */
     fun opensOnTap(message: ChatMessage): Boolean =
-        message.presentedKind == ChatMessageKind.Image || message.presentedKind == ChatMessageKind.Video
+        message.presentedKind == ChatMessageKind.Image || message.presentedKind == ChatMessageKind.Video ||
+            message.presentedKind == ChatMessageKind.File
 
     /** A text row that can take a reaction answers a double tap with ❤️ (CV:929-934). */
     fun reactsOnDoubleTap(message: ChatMessage): Boolean =
@@ -775,6 +787,19 @@ class ConversationViewModel(
         compose.handleMediaTap(message)
     }
 
+    /**
+     * The menu of [message] without a hold (a tapped APK, docs/file-sharing.md §6, §7: it is never
+     * opened here, its menu offers Save to Downloads and Share). No finger is down: inner controls
+     * stay reachable.
+     */
+    fun openMessageMenuFromTap(message: ChatMessage) {
+        if (menu.isOpen) return
+        val live = live(message)
+        if (live.deleted) return
+        openMessageMenu(live, rowFrames[live.id] ?: bubbleFrames[live.id] ?: Rect.Zero)
+        heldMessageId = null
+    }
+
     /** The ring's X: stops the download; claims the tap so the row doesn't start it again (CV:2386-2394). */
     override fun onCancelDownload(message: ChatMessage) {
         tapClaim.claim()
@@ -787,6 +812,7 @@ class ConversationViewModel(
             val error = when (message.kind) {
                 ChatMessageKind.Image -> backend.retryFailedImage(message.id, peer)
                 ChatMessageKind.Video -> backend.retryFailedVideo(message.id, peer)
+                ChatMessageKind.File -> backend.retryFailedFile(message.id, peer)
                 else -> return@launch
             }
             if (error != null) failFeedback(error) else haptic(Haptic.Success)
@@ -842,13 +868,18 @@ class ConversationViewModel(
 
     /**
      * TalkBack's actions on a row, in order: "Reply" (the swipe), "Message options" (the hold),
-     * "Copy", "Copy Link", "Delete" (CV:880-883, 2243-2254; MLP:132-134; STR:236-240).
+     * "Copy", "Copy Link", a file's "Save to Downloads" and "Share", "Delete" (CV:880-883,
+     * 2243-2254; MLP:132-134; STR:236-240).
      */
     fun rowActionLabels(message: ChatMessage): List<String> = buildList {
         if (message.canBeQuoted && !menu.isOpen) add(ACTION_REPLY)
         add(ACTION_OPTIONS)
         if (MessageActions.copyableText(message) != null) add(MessageMenuAction.Copy.title)
         if (MessageActions.copyableLink(message) != null) add(MessageMenuAction.CopyLink.title)
+        if (MessageActions.hasFileActions(message)) {
+            add(MessageMenuAction.SaveToDownloads.title)
+            add(MessageMenuAction.Share.title)
+        }
         add(MessageMenuAction.Delete.title)
     }
 
@@ -861,6 +892,8 @@ class ConversationViewModel(
             }
             MessageMenuAction.Copy.title -> handleMenu(MessageMenuAction.Copy, message)
             MessageMenuAction.CopyLink.title -> handleMenu(MessageMenuAction.CopyLink, message)
+            MessageMenuAction.SaveToDownloads.title -> handleMenu(MessageMenuAction.SaveToDownloads, message)
+            MessageMenuAction.Share.title -> handleMenu(MessageMenuAction.Share, message)
             MessageMenuAction.Delete.title -> handleMenu(MessageMenuAction.Delete, message)
         }
     }

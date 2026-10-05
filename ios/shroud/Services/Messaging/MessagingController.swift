@@ -190,6 +190,8 @@ final class MessagingController {
         case image
         case voice
         case video
+        /// A shared file in its original form (`docs/file-sharing.md`); `text` is its caption.
+        case file
         /// Local Notes checklist item (never sent to the server).
         case todo
     }
@@ -247,6 +249,10 @@ final class MessagingController {
         /// Server `created_at` for this row. Nil for a message that has not come from the
         /// server yet, and for threads saved before the cursor kept it.
         var createdAtWire: String?
+        /// A file message's cleaned name (`SharedFile.cleanName`); its size is `mediaByteCount`.
+        var fileName: String?
+        /// The file's SHRF1 blob is on this device (`LocalFileStore`) — never the plaintext.
+        var fileStored: Bool
 
         init(
             id: UUID,
@@ -275,7 +281,9 @@ final class MessagingController {
             pendingSync: Bool = false,
             replyTo: MessageReplyReference? = nil,
             linkPreview: LinkPreview? = nil,
-            reactions: [MessageReaction] = []
+            reactions: [MessageReaction] = [],
+            fileName: String? = nil,
+            fileStored: Bool = false
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -304,6 +312,8 @@ final class MessagingController {
             self.linkPreview = linkPreview
             self.reactions = reactions
             self.createdAtWire = createdAtWire
+            self.fileName = fileName
+            self.fileStored = fileStored
         }
 
         /// A text message whose link preview carries a large image (Telegram's big layout).
@@ -325,8 +335,16 @@ final class MessagingController {
             switch kind {
             case .image: return imageData == nil
             case .video: return videoData == nil
+            // An unsupported type is never downloaded.
+            case .file: return !fileStored && fileType != nil
             default: return false
             }
+        }
+
+        /// The file's type by the extension of its cleaned name; nil when unsupported.
+        var fileType: SharedFile.FileType? {
+            guard kind == .file, let fileName else { return nil }
+            return SharedFile.type(forName: fileName)
         }
 
         /// Poster/preview JPEG for the bubble (full image, payload thumb, or video poster).
@@ -354,6 +372,7 @@ final class MessagingController {
             case .image: .image
             case .video: .video
             case .voice: .voice
+            case .file: .file
             case .text, .todo: .text
             }
             // Media bubbles keep a stand-in label in `text` ("Photo", "Video", "Voice message");
@@ -362,6 +381,8 @@ final class MessagingController {
             case .image: (text == "Photo" || text == "Media") ? "" : text
             case .video: (text == "Video" || text == "Media") ? "" : text
             case .voice: ""
+            // A file is quoted by its name (old builds show `x` as text, the right fallback).
+            case .file: fileName ?? ""
             case .text, .todo: text
             }
             return MessageReplyReference(
@@ -556,6 +577,7 @@ final class MessagingController {
     /// Wipes in-memory lists and on-device message caches (plaintext, media, ratchets, peer keys).
     /// Called on sign-out so a restart never resurfaces another account’s data.
     func clearLocalData() {
+        FileViewerPresenter.shared.dismissAll()
         local.clear(userID: sessionController?.userID)
         clearInMemoryState()
         peerKeys.clear()
@@ -671,6 +693,8 @@ final class MessagingController {
         cancelHistoryPaging()
         DecodedImageCache.removeAll()
         LinkPreviewImageCache.removeAll()
+        // An open file must not stay up over the lock screen; its plaintext goes with it.
+        FileViewerPresenter.shared.dismissAll()
     }
 
     /// Reacts to path changes (wired from RootView / scene phase optional).
@@ -1552,7 +1576,9 @@ final class MessagingController {
                 voiceWaveform: message.voiceWaveform,
                 transcript: message.transcript,
                 replyTo: message.replyTo,
-                linkPreview: message.linkPreview
+                linkPreview: message.linkPreview,
+                fileName: message.fileName,
+                fileStored: message.fileStored
             )
         }
         return copy
@@ -1953,6 +1979,8 @@ final class MessagingController {
         for id in messageIDs {
             // A voice note that was playing has no player left once its bubble is a tombstone.
             VoicePlaybackCoordinator.shared.stopIfActive(id)
+            // Nor does an open file: its preview or share sheet closes with it.
+            FileViewerPresenter.shared.dismiss(messageID: id)
             mediaHydrateTasks[id]?.cancel()
             mediaHydrateTasks[id] = nil
             endTransfer(id)
@@ -2937,7 +2965,7 @@ final class MessagingController {
     /// Cancels an in-flight media download (the ring's X). Uploads are not cancellable —
     /// the envelope is already committed to by the time bytes move.
     func cancelMediaDownload(messageID: UUID) {
-        guard let task = mediaHydrateTasks[messageID] else { return }
+        guard let task = mediaHydrateTasks[messageID], mediaTransfers[messageID]?.isUpload != true else { return }
         task.cancel()
         mediaHydrateTasks[messageID] = nil
         endTransfer(messageID)
@@ -3040,7 +3068,7 @@ final class MessagingController {
 
         do {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = MediaMessagePayload.parse(payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData), !payload.isFile,
                   let keyData = Data(base64Encoded: payload.k)
             else {
                 // Payload missing (e.g. race before first decrypt finished) — retry once via history.
@@ -3315,8 +3343,8 @@ final class MessagingController {
             return previewJPEG
         }()
 
-        func encode(includePreview: Bool) throws -> Data {
-            let payload = MediaMessagePayload(
+        return try sealPayload(
+            MediaMessagePayload(
                 t: kind,
                 mime: mime,
                 w: width,
@@ -3324,12 +3352,34 @@ final class MessagingController {
                 k: fileKey.base64EncodedString(),
                 c: caption,
                 d: durationMs,
-                th: includePreview ? safePreview?.base64EncodedString() : nil,
+                th: safePreview?.base64EncodedString(),
                 s: mediaByteCount,
                 re: replyTo,
                 lp: linkPreview
-            )
-            return try payload.encoded()
+            ),
+            peerUserID: peerUserID,
+            peerPub: peerPub,
+            material: material,
+            me: me
+        )
+    }
+
+    /// Seals a media payload, dropping its preview (`th`) if the envelope would exceed the
+    /// server cap.
+    private static func sealPayload(
+        _ payload: MediaMessagePayload,
+        peerUserID: UUID,
+        peerPub: Data,
+        material: IdentityKeyMaterial,
+        me: UUID
+    ) throws -> (payloadData: Data, sealed: Data, usedPreview: Data?) {
+        let safePreview: Data? = payload.previewJPEG.flatMap { preview in
+            preview.count <= MediaCrypto.maxEnvelopePreviewBytes ? preview : nil
+        }
+        func encode(includePreview: Bool) throws -> Data {
+            var copy = payload
+            copy.th = includePreview ? safePreview?.base64EncodedString() : nil
+            return try copy.encoded()
         }
 
         var includePreview = safePreview != nil
@@ -3842,7 +3892,7 @@ final class MessagingController {
 
         do {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = MediaMessagePayload.parse(payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData), !payload.isFile,
                   let keyData = Data(base64Encoded: payload.k)
             else { return }
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
@@ -3942,7 +3992,7 @@ final class MessagingController {
             // Prefer cached media payload (file key). Never re-open as recipient — that
             // advances/desyncs the Double Ratchet after the first successful decrypt.
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = MediaMessagePayload.parse(payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData), !payload.isFile,
                   let keyData = Data(base64Encoded: payload.k)
             else { return }
 
@@ -3998,7 +4048,7 @@ final class MessagingController {
         else { return }
         do {
             guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
-                  let payload = MediaMessagePayload.parse(payloadData),
+                  let payload = MediaMessagePayload.parse(payloadData), !payload.isFile,
                   let keyData = Data(base64Encoded: payload.k)
             else { return }
             let sealedFile = try await mediaService.downloadContent(mediaID: mediaID, token: token)
@@ -4010,6 +4060,505 @@ final class MessagingController {
         } catch {
             // The block keeps its placeholder; the next appearance tries again.
         }
+    }
+
+    // MARK: - Files
+
+    /// Why an opened file can't be handed to a viewer or the share sheet.
+    enum FileOpenFailure: Error, Equatable {
+        /// The blob isn't on this device (download it first).
+        case notDownloaded
+        /// The extension isn't in the §4 table.
+        case unsupported
+        /// The blob failed a check (length, header, a tag). It is dropped, so the next tap
+        /// downloads it again.
+        case damaged
+        /// Anything else: the key is gone, the disk is full, the file system refused. The blob
+        /// is kept — nothing says it is wrong.
+        case unreadable
+    }
+
+    /// A decrypted file under `tmp/shroud-file-{id}/`, until `releaseOpenedFile`.
+    struct OpenedFile: Equatable, Sendable {
+        let url: URL
+        /// The first bytes fit the extension (§4). Only Save and Share may go ahead without it.
+        let contentMatches: Bool
+    }
+
+    /// Sends one picked file: the bubble lands first, then seal → upload → envelope.
+    ///
+    /// Human: The file goes out exactly as it is — no compression, metadata kept — sealed into
+    /// SHRF1 one 64 KiB segment at a time, so a 2 GB file never sits in memory. The sealed blob
+    /// is kept (`LocalFileStore`) and its payload (key, caption, quote) is cached under the
+    /// bubble's id, so a failed or offline send retries with the very same bytes.
+    /// Agent: Deletes `file.url` (the plaintext copy) once it is sealed. RETURNS a user-facing
+    /// error or nil.
+    func sendFile(
+        _ file: PickedFile,
+        to peerUserID: UUID,
+        caption: String = "",
+        replyTo: MessageReplyReference? = nil
+    ) async -> String? {
+        defer { file.cleanup() }
+        let trimmedCaption = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = isNotesChat(peerUserID)
+
+        guard let me = sessionController?.userID ?? (notes ? Self.notesPeerID : nil) else {
+            return "Not signed in."
+        }
+        if !notes, sessionController?.bearerToken == nil || cryptoController?.material == nil {
+            return "Not signed in."
+        }
+
+        let optimisticID = UUID()
+        var list = threads[peerUserID] ?? []
+        list.append(
+            ChatMessage(
+                id: optimisticID,
+                peerUserID: peerUserID,
+                senderUserID: me,
+                text: trimmedCaption,
+                createdAt: Date(),
+                isMine: true,
+                deleted: false,
+                receipt: .sending,
+                kind: .file,
+                mediaByteCount: Int(clamping: file.byteCount),
+                pendingSync: true,
+                replyTo: replyTo,
+                fileName: file.name
+            )
+        )
+        threads[peerUserID] = list
+        beginTransfer(optimisticID, isUpload: true, phase: .preparing, totalBytes: Int(clamping: file.byteCount))
+
+        // Seal and preview off the main actor; the bubble's ring fills with the seal.
+        let store = local.fileStore
+        let key = FileBlob.makeKey()
+        let onProgress = progressSink(for: optimisticID)
+        let preview: FilePreview.Thumbnail?
+        do {
+            preview = try await Task.detached(priority: .userInitiated) {
+                let staging = store.makeStagingURL()
+                defer { try? FileManager.default.removeItem(at: staging) }
+                let sealedBytes = try FileBlob.seal(from: file.url, to: staging, key: key, onProgress: onProgress)
+                // The payload promises `s`; a file that changed while it was read can't keep it.
+                guard sealedBytes == file.byteCount else { throw FileBlob.BlobError.unreadable }
+                try store.adopt(staging, as: optimisticID)
+                return await FilePreview.thumbnail(for: file)
+            }.value
+            // Sealed: the plaintext copy has done its job.
+            file.cleanup()
+        } catch {
+            file.cleanup()
+            store.remove(messageIDs: [optimisticID])
+            let message = "Could not prepare that file."
+            markFileFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
+            return message
+        }
+
+        let payload = MediaMessagePayload(
+            t: MediaMessagePayload.kindFile,
+            mime: file.type.mime,
+            w: preview?.width ?? 0,
+            h: preview?.height ?? 0,
+            k: key.withUnsafeBytes { Data($0) }.base64EncodedString(),
+            c: trimmedCaption.isEmpty ? nil : trimmedCaption,
+            d: nil,
+            th: preview?.jpeg.base64EncodedString(),
+            s: Int(clamping: file.byteCount),
+            re: replyTo,
+            n: file.name
+        )
+        // Held under the bubble's id until the server keys it: the key, caption and quote a
+        // retry or the outbox seal again.
+        guard let payloadData = try? payload.encoded() else {
+            store.remove(messageIDs: [optimisticID])
+            markFileFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: "Could not prepare that file.")
+            return "Could not prepare that file."
+        }
+        local.saveSealedPlaintext(messageID: optimisticID, senderUserID: me, data: payloadData)
+        if var thread = threads[peerUserID], let idx = thread.firstIndex(where: { $0.id == optimisticID }) {
+            thread[idx].fileStored = true
+            thread[idx].previewData = preview?.jpeg
+            thread[idx].imageWidth = preview?.width
+            thread[idx].imageHeight = preview?.height
+            threads[peerUserID] = thread
+        }
+
+        if notes {
+            if var thread = threads[peerUserID], let idx = thread.firstIndex(where: { $0.id == optimisticID }) {
+                thread[idx].receipt = .sent
+                thread[idx].pendingSync = false
+                threads[peerUserID] = thread
+            }
+            persistThread(peerUserID)
+            if connectivity.isOnline,
+               let token = sessionController?.bearerToken,
+               let realMe = sessionController?.userID,
+               let material = cryptoController?.material
+            {
+                do {
+                    // Re-key the note to the server's id (see `sendImage`'s Notes branch).
+                    let sent = try await finishFileSend(
+                        optimisticID: optimisticID,
+                        peerUserID: realMe,
+                        me: realMe,
+                        material: material,
+                        token: token
+                    )
+                    if var notesThread = threads[peerUserID] {
+                        notesThread.removeAll { $0.id == optimisticID || $0.id == sent.id }
+                        let note = ChatMessage(
+                            id: sent.id,
+                            peerUserID: peerUserID,
+                            senderUserID: realMe,
+                            text: sent.text,
+                            createdAt: sent.createdAt,
+                            createdAtWire: sent.createdAtWire,
+                            isMine: true,
+                            deleted: false,
+                            receipt: .sent,
+                            kind: .file,
+                            mediaObjectId: sent.mediaObjectId,
+                            imageWidth: sent.imageWidth,
+                            imageHeight: sent.imageHeight,
+                            previewData: sent.previewData,
+                            mediaByteCount: sent.mediaByteCount,
+                            replyTo: sent.replyTo,
+                            fileName: sent.fileName,
+                            fileStored: sent.fileStored
+                        )
+                        notesThread.append(note)
+                        notesThread.sort { $0.createdAt < $1.createdAt }
+                        threads[peerUserID] = notesThread
+                        threads[realMe] = nil
+                        persistThread(peerUserID)
+                    }
+                } catch {
+                    // Keep the local-only file.
+                }
+            }
+            endTransfer(optimisticID)
+            return nil
+        }
+
+        guard let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else {
+            markFileFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: "Not signed in.")
+            return "Not signed in."
+        }
+
+        persistSnapshot()
+
+        if !connectivity.isOnline {
+            isOffline = true
+            markFileFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: "Waiting for connection…")
+            return nil
+        }
+
+        do {
+            try await finishFileSend(
+                optimisticID: optimisticID,
+                peerUserID: peerUserID,
+                me: me,
+                material: material,
+                token: token,
+                trackingTransfer: true
+            )
+            endTransfer(optimisticID)
+            lastError = nil
+            return nil
+        } catch {
+            let message = SessionController.userMessage(for: error)
+            markFileFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
+            lastError = message
+            persistSnapshot()
+            return message
+        }
+    }
+
+    /// Retries a failed outbound file with the sealed blob and payload it already has.
+    func retryFailedFile(messageID: UUID, peerUserID: UUID) async -> String? {
+        guard let token = sessionController?.bearerToken,
+              let me = sessionController?.userID,
+              let material = cryptoController?.material,
+              var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == messageID && $0.isMine && $0.kind == .file }),
+              local.hasFileBlob(messageID)
+        else {
+            return "Nothing to retry."
+        }
+        thread[idx].receipt = .sending
+        thread[idx].sendError = nil
+        threads[peerUserID] = thread
+
+        beginTransfer(messageID, isUpload: true, phase: .transferring, totalBytes: thread[idx].mediaByteCount)
+        do {
+            try await finishFileSend(
+                optimisticID: messageID,
+                peerUserID: peerUserID,
+                me: me,
+                material: material,
+                token: token,
+                trackingTransfer: true
+            )
+            endTransfer(messageID)
+            return nil
+        } catch {
+            let message = SessionController.userMessage(for: error)
+            markFileFailed(optimisticID: messageID, peerUserID: peerUserID, error: message)
+            return message
+        }
+    }
+
+    /// Uploads the stored blob, seals its payload into the envelope and sends it.
+    ///
+    /// Agent: READS the blob at `LocalFileStore.url(for: optimisticID)` and the payload cached
+    /// under `optimisticID`; never re-seals the file (same key, same bytes on every attempt).
+    /// WRITES the blob and the payload under the server's id.
+    @discardableResult
+    private func finishFileSend(
+        optimisticID: UUID,
+        peerUserID: UUID,
+        me: UUID,
+        material: IdentityKeyMaterial,
+        token: String,
+        trackingTransfer: Bool = false
+    ) async throws -> ChatMessage {
+        let sender = threads.values.lazy.flatMap { $0 }.first(where: { $0.id == optimisticID })?.senderUserID ?? me
+        guard local.hasFileBlob(optimisticID),
+              let cached = local.sealedPlaintext(for: optimisticID, senderUserID: sender)
+                ?? local.sealedPlaintext(for: optimisticID, senderUserID: me),
+              let payload = MediaMessagePayload.parse(cached), payload.isFile,
+              let size = payload.s, size > 0
+        else {
+            throw APIError.server(code: "VALIDATION_ERROR", message: "This file is no longer on this device.", statusCode: 400)
+        }
+
+        let blobURL = local.fileStore.url(for: optimisticID)
+        if trackingTransfer {
+            advanceTransfer(optimisticID, to: .transferring, totalBytes: size)
+        }
+        let upload = try await mediaService.createUpload(
+            sizeBytes: Int(FileBlob.sealedSize(Int64(size))),
+            contentType: "application/octet-stream",
+            token: token
+        )
+        try await mediaService.uploadContent(
+            mediaID: upload.mediaObjectId,
+            fileURL: blobURL,
+            token: token,
+            onProgress: trackingTransfer ? progressSink(for: optimisticID) : nil
+        )
+        if trackingTransfer {
+            advanceTransfer(optimisticID, to: .finishing)
+        }
+
+        let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        let (payloadData, sealed, usedPreview) = try Self.sealPayload(
+            payload,
+            peerUserID: peerUserID,
+            peerPub: peerPub,
+            material: material,
+            me: me
+        )
+        let dto = try await messagesService.send(
+            SendMessageRequest(
+                peerUserId: peerUserID,
+                clientMessageId: optimisticID,
+                contentType: "media",
+                ciphertext: sealed.base64EncodedString(),
+                mediaObjectId: upload.mediaObjectId
+            ),
+            token: token
+        )
+        local.fileStore.rekey(from: optimisticID, to: dto.id)
+        if dto.id != optimisticID {
+            local.removeCaches(messageIDs: [optimisticID])
+        }
+        let storedBlob = try cacheSentPayload(
+            dto: dto,
+            uploadedMediaObjectId: upload.mediaObjectId,
+            payload: payloadData,
+            peerUserID: peerUserID,
+            material: material
+        )
+
+        let caption = payload.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sent = ChatMessage(
+            id: dto.id,
+            peerUserID: peerUserID,
+            senderUserID: me,
+            text: caption,
+            createdAt: dto.createdAt,
+            createdAtWire: dto.createdAtWire,
+            isMine: true,
+            deleted: false,
+            receipt: receiptStatus(from: dto),
+            kind: .file,
+            mediaObjectId: storedBlob,
+            imageWidth: payload.w > 0 ? payload.w : nil,
+            imageHeight: payload.h > 0 ? payload.h : nil,
+            previewData: usedPreview,
+            mediaByteCount: size,
+            sendError: nil,
+            replyTo: payload.re,
+            fileName: SharedFile.cleanName(payload.n ?? ""),
+            fileStored: local.hasFileBlob(dto.id)
+        )
+        if var thread = threads[peerUserID],
+           let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        {
+            thread[idx] = sent
+            threads[peerUserID] = thread
+        }
+        persistSnapshot()
+        await refreshConversations(force: true)
+        return sent
+    }
+
+    private func markFileFailed(optimisticID: UUID, peerUserID: UUID, error: String) {
+        endTransfer(optimisticID)
+        guard var thread = threads[peerUserID],
+              let idx = thread.firstIndex(where: { $0.id == optimisticID })
+        else { return }
+        thread[idx].receipt = .failed
+        thread[idx].sendError = error
+        thread[idx].pendingSync = true
+        threads[peerUserID] = thread
+        persistSnapshot()
+    }
+
+    /// Downloads a file's SHRF1 blob into `LocalFileStore` (never decrypted here).
+    /// Call only from an explicit tap — never on bubble appear.
+    func ensureFileLoaded(for message: ChatMessage) async {
+        guard message.needsMediaDownload, message.kind == .file else { return }
+        if let existing = mediaHydrateTasks[message.id] {
+            await existing.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.hydrateFile(for: message)
+        }
+        mediaHydrateTasks[message.id] = task
+        await task.value
+        if mediaHydrateTasks[message.id] == task {
+            mediaHydrateTasks[message.id] = nil
+        }
+    }
+
+    private func hydrateFile(for message: ChatMessage) async {
+        guard message.needsMediaDownload,
+              let mediaID = message.mediaObjectId,
+              let token = sessionController?.bearerToken,
+              let material = cryptoController?.material
+        else { return }
+
+        beginTransfer(message.id, isUpload: false, phase: .transferring, totalBytes: message.mediaByteCount)
+        defer { endTransfer(message.id) }
+
+        do {
+            guard let payloadData = try await mediaPayloadData(for: message, token: token, material: material),
+                  let payload = MediaMessagePayload.parse(payloadData), payload.isFile,
+                  let size = payload.s, size > 0
+            else { return }
+
+            let download = try await mediaService.downloadContentToFile(
+                mediaID: mediaID,
+                token: token,
+                onProgress: progressSink(for: message.id)
+            )
+            defer { try? FileManager.default.removeItem(at: download) }
+            try Task.checkCancellation()
+
+            // Length and header now; every tag when it is opened, before any byte is shown.
+            let length = FileBlob.fileSize(at: download)
+            guard length == FileBlob.sealedSize(Int64(size)), FileBlob.hasValidHeader(at: download) else { return }
+            guard stillHoldsMedia(message.id, peerID: message.peerUserID) else { return }
+            try local.fileStore.adopt(download, as: message.id)
+            updateMessageFile(messageID: message.id, peerID: message.peerUserID, stored: true)
+        } catch {
+            // Leave the bubble on its download arrow; the host says it failed.
+        }
+    }
+
+    private func updateMessageFile(messageID: UUID, peerID: UUID, stored: Bool) {
+        let resolved = threads[peerID]?.contains(where: { $0.id == messageID }) == true
+            ? peerID
+            : (self.peerID(forMessage: messageID) ?? peerID)
+        guard var thread = threads[resolved],
+              let idx = thread.firstIndex(where: { $0.id == messageID }),
+              !thread[idx].deleted
+        else { return }
+        thread[idx].fileStored = stored
+        threads[resolved] = thread
+    }
+
+    /// Decrypts a stored file into `tmp/shroud-file-{id}/{name}` for Quick Look or the share
+    /// sheet, segment by segment, and checks its first bytes against its extension (§4).
+    ///
+    /// Human: The plaintext is written under a hidden staging name and only takes the file's
+    /// name after the last tag checked, so a tampered or truncated blob never reaches a viewer.
+    /// The bubble's ring spins while a large file decrypts.
+    /// Agent: The caller hands the URL on and calls `releaseOpenedFile` when the viewer or the
+    /// sheet closes.
+    func openFile(_ message: ChatMessage) async -> Result<OpenedFile, FileOpenFailure> {
+        guard message.kind == .file, !message.deleted, let type = message.fileType, let name = message.fileName else {
+            return .failure(.unsupported)
+        }
+        guard local.hasFileBlob(message.id) else { return .failure(.notDownloaded) }
+
+        var payloadData = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID)
+        if payloadData.flatMap(MediaMessagePayload.parse)?.isFile != true,
+           let token = sessionController?.bearerToken,
+           let material = cryptoController?.material
+        {
+            payloadData = try? await mediaPayloadData(for: message, token: token, material: material)
+        }
+        guard let payloadData,
+              let payload = MediaMessagePayload.parse(payloadData), payload.isFile,
+              let keyData = Data(base64Encoded: payload.k), keyData.count == 32,
+              let size = payload.s, size > 0
+        else { return .failure(.unreadable) }
+
+        beginTransfer(message.id, isUpload: false, phase: .finishing, totalBytes: size)
+        defer { endTransfer(message.id) }
+
+        let blob = local.fileStore.url(for: message.id)
+        let messageID = message.id
+        let result: Result<OpenedFile, FileOpenFailure> = await Task.detached(priority: .userInitiated) {
+            do {
+                let opened = try FileOpenStaging.open(
+                    blob: blob,
+                    key: SymmetricKey(data: keyData),
+                    plaintextSize: Int64(size),
+                    messageID: messageID,
+                    name: name,
+                    type: type
+                )
+                return .success(OpenedFile(url: opened.url, contentMatches: opened.contentMatches))
+            } catch {
+                return .failure(FileOpenStaging.isDamage(error) ? .damaged : .unreadable)
+            }
+        }.value
+
+        if case .failure(.damaged) = result {
+            // A blob that fails its checks is no use kept: the next tap downloads it again
+            // (our own unsent file has nothing to download, so it stays for the retry).
+            if !message.isMine || message.mediaObjectId != nil {
+                local.fileStore.remove(messageIDs: [message.id])
+                updateMessageFile(messageID: message.id, peerID: message.peerUserID, stored: false)
+            }
+        }
+        return result
+    }
+
+    /// Removes an opened file's plaintext once Quick Look or the share sheet is done with it.
+    func releaseOpenedFile(messageID: UUID) {
+        FileOpenStaging.remove(for: messageID)
     }
 
     /// Caches the payload of the row the server kept and returns that row's blob id.
@@ -4476,7 +5025,7 @@ final class MessagingController {
                     peerUserID: threadPeer,
                     username: username(for: threadPeer),
                     conversationID: dto.conversationId,
-                    text: chat.deleted ? nil : chat.text,
+                    text: chat.deleted ? nil : (chat.kind == .file ? chat.filePreviewText : chat.text),
                     muted: isMuted(threadPeer)
                 )
             }
@@ -4539,7 +5088,9 @@ final class MessagingController {
                 todoDone: message.todoDone,
                 pendingSync: message.pendingSync,
                 replyTo: message.replyTo,
-                linkPreview: message.linkPreview
+                linkPreview: message.linkPreview,
+                fileName: message.fileName,
+                fileStored: message.fileStored
             )
         }
         return message
@@ -5087,6 +5638,38 @@ final class MessagingController {
                     )
                 } catch {
                     markVoiceFailed(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        error: SessionController.userMessage(for: error)
+                    )
+                }
+            case let .file(messageID, peerID):
+                // Not one that is still sealing or uploading: a 2 GB file goes up once.
+                guard mediaTransfers[messageID] == nil,
+                      threads[peerID]?.contains(where: { $0.id == messageID }) == true,
+                      local.hasFileBlob(messageID)
+                else { continue }
+                if var list = threads[peerID],
+                   let idx = list.firstIndex(where: { $0.id == messageID })
+                {
+                    list[idx].receipt = .sending
+                    list[idx].sendError = nil
+                    threads[peerID] = list
+                    beginTransfer(messageID, isUpload: true, phase: .transferring, totalBytes: list[idx].mediaByteCount)
+                }
+                do {
+                    // The same sealed bytes and payload as the first attempt.
+                    try await finishFileSend(
+                        optimisticID: messageID,
+                        peerUserID: peerID,
+                        me: me,
+                        material: material,
+                        token: token,
+                        trackingTransfer: true
+                    )
+                    endTransfer(messageID)
+                } catch {
+                    markFileFailed(
                         optimisticID: messageID,
                         peerUserID: peerID,
                         error: SessionController.userMessage(for: error)

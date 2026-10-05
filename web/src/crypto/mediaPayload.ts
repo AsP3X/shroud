@@ -20,6 +20,11 @@ export type MediaPayload = {
    * sent as media so the image can be the (encrypted) blob. `c` is the full message text.
    */
   lp?: Record<string, unknown> | null;
+  /**
+   * File name of a `t: "file"` message (docs/file-sharing.md §1), cleaned by the sender;
+   * receivers clean it again before showing or saving it.
+   */
+  n?: string | null;
 };
 
 export function parseMediaPayload(raw: string): MediaPayload | null {
@@ -41,25 +46,34 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
       s: typeof parsed.s === "number" ? parsed.s : null,
       re: (parsed as { re?: unknown }).re as Record<string, string> | undefined ?? null,
       lp: (parsed as { lp?: unknown }).lp as Record<string, unknown> | undefined ?? null,
+      n: typeof parsed.n === "string" ? parsed.n : null,
     };
   } catch {
     return null;
   }
 }
 
+/**
+ * A shared file, whatever its `mime` says. Checked before the MIME sniffing below: a PDF, an
+ * `audio/` or `video/` file sent as a file must never read as a voice note or a clip.
+ */
+export function isFilePayload(payload: MediaPayload): boolean {
+  return payload.t === "file";
+}
+
 export function isVoicePayload(payload: MediaPayload): boolean {
   if (payload.t === "voice") return true;
-  if (payload.t === "image" || payload.t === "video" || payload.t === "link") return false;
+  if (payload.t === "image" || payload.t === "video" || payload.t === "link" || payload.t === "file") return false;
   return payload.mime.startsWith("audio/");
 }
 
 export function isVideoPayload(payload: MediaPayload): boolean {
   if (payload.t === "video") return true;
-  if (payload.t === "image" || payload.t === "voice" || payload.t === "link") return false;
+  if (payload.t === "image" || payload.t === "voice" || payload.t === "link" || payload.t === "file") return false;
   return payload.mime.startsWith("video/");
 }
 
-/** The preview of a `t: "link"` payload; null for photos, videos and voice notes. */
+/** The preview of a `t: "link"` payload; null for photos, videos, voice notes and files. */
 export function payloadLinkPreview(payload: MediaPayload): LinkPreview | null {
   return payload.t === "link" ? parseLinkPreview(payload.lp) : null;
 }

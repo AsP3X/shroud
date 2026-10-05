@@ -123,13 +123,16 @@ enum MessageDecoder {
                 {
                     merged.videoData = cached
                 }
+                if existing.kind == .file {
+                    merged.fileStored = local.hasFileBlob(dto.id)
+                }
                 // iOS 26/27 JSONDecoder used to fail the payload and stamp every media
                 // note as a photo. Re-read `t` from the sealed JSON so a voice/video
                 // bubble is restored without wiping the thread.
                 if isMedia, existing.kind == .image,
                    let plain = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId),
                    let payload = MediaMessagePayload.parse(plain),
-                   payload.isVoice || payload.isVideo || payload.isLink
+                   payload.isFile || payload.isVoice || payload.isVideo || payload.isLink
                 {
                     return await decodeMedia(
                         dto: dto,
@@ -316,9 +319,38 @@ enum MessageDecoder {
         context: Context
     ) async -> MessagingController.ChatMessage {
         let local = context.local
+        let payload = MediaMessagePayload.parse(plain)
+
+        // A file first, before any of the MIME sniffing below: its blob is SHRF1, and an
+        // `image/png` file must never reach the photo path. The name is cleaned again here —
+        // the sender's cleaning is not trusted.
+        if let payload, payload.isFile {
+            let caption = payload.c?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return MessagingController.ChatMessage(
+                id: dto.id,
+                peerUserID: peerUserID,
+                senderUserID: dto.senderUserId,
+                text: caption,
+                createdAt: dto.createdAt,
+                createdAtWire: dto.createdAtWire,
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt,
+                kind: .file,
+                mediaObjectId: dto.mediaObjectId,
+                imageWidth: payload.w > 0 ? payload.w : nil,
+                imageHeight: payload.h > 0 ? payload.h : nil,
+                previewData: payload.previewJPEG,
+                mediaByteCount: payload.s,
+                replyTo: payload.re,
+                fileName: SharedFile.cleanName(payload.n ?? ""),
+                // Whether the blob is here, never its bytes: a file is opened on demand only.
+                fileStored: local.hasFileBlob(dto.id)
+            )
+        }
+
         // Disk cache only — never await media download during thread history decode.
         let cached = local.sealedMedia(for: dto.id)
-        let payload = MediaMessagePayload.parse(plain)
 
         // A text message whose link preview has a large image: the blob is that image.
         if let payload, payload.isLink, let preview = payload.lp {

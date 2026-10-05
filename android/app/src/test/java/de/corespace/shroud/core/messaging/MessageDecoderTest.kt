@@ -324,6 +324,32 @@ class MessageDecoderTest {
     }
 
     @Test
+    fun aFilePayloadIsAFileBeforeAnyMimeSniffingAndItsNameIsCleanedAgain() = runTest { // docs/file-sharing.md §1, §5
+        for (mime in listOf("application/pdf", "image/png", "video/mp4", "audio/mp4")) {
+            val reply = MessageReplyReference(UUID.randomUUID(), me, MessageReplyReference.Kind.Text, "q")
+            val payload = MediaMessagePayload(t = "file", mime = mime, w = 0, h = 0, k = "a2V5", c = " notes ", s = 2_400_000, re = reply, n = "../../invoice\u202Efdp.exe")
+            val dto = Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(payload), mediaObjectId = UUID.randomUUID())
+            val message = decoder().decode(dto, context())
+            assertEquals(mime, ChatMessageKind.File, message.kind)
+            assertEquals("invoicefdp.exe", message.fileName)
+            assertEquals("notes", message.text)
+            assertEquals(2_400_000L, message.mediaByteCount)
+            assertEquals(reply, message.replyTo)
+            assertFalse(message.hasFullMedia)
+        }
+        val plain = MediaMessagePayload(t = "file", mime = "application/pdf", w = 0, h = 0, k = "a2V5", s = 10, n = "a.pdf")
+        val here = Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(plain), mediaObjectId = UUID.randomUUID())
+        mediaOnDevice += here.id
+        val local = decoder().decode(here, context())
+        assertEquals("", local.text)
+        assertEquals("a.pdf", local.fileName)
+        assertTrue(local.hasFullMedia)
+        // No name at all: the cleaning's stand-in, which has no supported extension.
+        val nameless = MediaMessagePayload(t = "file", mime = "application/pdf", w = 0, h = 0, k = "a2V5", s = 10)
+        assertEquals("file", decoder().decode(Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(nameless)), context()).fileName)
+    }
+
+    @Test
     fun aPhotoWithAndWithoutCaption() = runTest {
         val captioned = MediaMessagePayload(t = "image", mime = "image/jpeg", w = 4, h = 3, k = "a2V5", c = " At the lake ")
         assertEquals("At the lake", decoder().decode(Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(captioned)), context()).text)

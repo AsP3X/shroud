@@ -14,7 +14,13 @@ import de.corespace.shroud.core.links.LinkPreviewComposer
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileCopy
+import de.corespace.shroud.core.media.files.FileWarning
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.library.LibraryAccess
+import de.corespace.shroud.core.media.share.FileOpenOutcome
+import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
@@ -22,6 +28,7 @@ import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.model.canBeQuoted
+import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.core.model.needsMediaDownload
 import de.corespace.shroud.core.model.replyReference
 import de.corespace.shroud.core.net.wire.MessageReplyReference
@@ -70,8 +77,9 @@ import java.util.UUID
  * What it holds, all in memory only and dropped when the chat closes ([onLeave]) or the chats lock
  * ([onLock]; it also hears `MessageArtifactSinks.onSensitiveMemoryLocked` itself): the [draft]
  * text, the [replyTarget], the link preview ([linkComposer]), the hold-to-record [gesture], the
- * attach sheet, staged photos ([composeDraft]) and videos ([videoDraft]), the camera, the media
- * viewer ([viewingMedia]) and player ([viewingVideo]) (conversation-compose-media §22).
+ * attach sheet, staged photos ([composeDraft]), videos ([videoDraft]) and files ([fileDraft]), the
+ * camera, the media viewer ([viewingMedia]) and player ([viewingVideo]), and a file's warning
+ * ([fileWarning]) (conversation-compose-media §22; docs/file-sharing.md §6, §7).
  *
  * Sends and downloads run on the app scope, so leaving the chat never cancels an upload (iOS
  * starts them in `Task`s the view does not cancel); their toasts and haptics only reach the chat
@@ -158,6 +166,14 @@ class ComposeController internal constructor(
 
     /** Videos staged for trim, mute, caption and send (CV:53-54). */
     var videoDraft: VideoComposeDraft? by mutableStateOf(null)
+        private set
+
+    /** Files staged in the file composer sheet (docs/file-sharing.md §7). */
+    var fileDraft: FileComposeDraft? by mutableStateOf(null)
+        private set
+
+    /** A received file's §6 warning, asked before the action it guards; null when none is up. */
+    var fileWarning: FileWarningPrompt? by mutableStateOf(null)
         private set
 
     /** Photos from the same pick as videos: shown once the video compose closes (CV:55-56). */
@@ -496,6 +512,8 @@ class ComposeController internal constructor(
                     showToast(Toast.failure("Camera is not available on this device."))
                 }
             }
+            // The document picker: multiple, the §4 types (docs/file-sharing.md §7).
+            ChatAttachOption.File -> mutableEffects.tryEmit(ComposeEffect.OpenFilePicker)
             else -> {
                 showToast(Toast.info("${option.title} coming soon"))
                 playHaptic(Haptic.Light)
@@ -766,15 +784,178 @@ class ComposeController internal constructor(
         }
     }
 
+    // ---- Files (docs/file-sharing.md §6, §7) ---------------------------------------------------
+
+    /**
+     * What the document picker handed back: each refused pick says why (one toast each), the rest
+     * open the file composer — at most ten, in pick order.
+     */
+    suspend fun loadPickedFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val result = services.inspectFiles(uris)
+        if (left) return
+        result.refusals.forEach { showToast(Toast.failure(it, LONG_FAILURE_MS)) }
+        if (result.refusals.isNotEmpty()) playHaptic(Haptic.Error)
+        if (result.files.isNotEmpty()) fileDraft = FileComposeDraft(result.files)
+    }
+
+    /** The composer's Remove on a row; the last one closes the sheet. */
+    fun removeComposeFile(index: Int) {
+        val draft = fileDraft ?: return
+        if (index !in draft.files.indices) return
+        val files = draft.files.toMutableList().also { it.removeAt(index) }
+        fileDraft = if (files.isEmpty()) null else draft.copy(files = files)
+    }
+
+    /** Cancel, a swipe down, the scrim or Back. */
+    fun cancelFileCompose() {
+        fileDraft = null
+    }
+
+    /**
+     * Send from the file composer: the files go out in order, each with its own bubble and ring; the
+     * caption and the reply ride on the first only (docs/file-sharing.md §2).
+     */
+    fun sendComposedFiles(caption: String) {
+        val files = fileDraft?.files ?: return
+        val reference = outgoingReplyReference
+        clearReply()
+        fileDraft = null
+        host.pinToBottom()
+        services.sendScope.launch {
+            var firstError: String? = null
+            files.forEachIndexed { index, file ->
+                val error = services.sendFile(file, peer, if (index == 0) caption else "", if (index == 0) reference else null)
+                if (firstError == null) firstError = error
+            }
+            if (left) return@launch
+            val error = firstError
+            if (error != null) {
+                showToast(Toast.failure(error, LONG_FAILURE_MS))
+                playHaptic(Haptic.Error)
+            } else {
+                playHaptic(Haptic.Success)
+            }
+        }
+    }
+
+    /**
+     * Open, Save to Downloads or Share of a file message — or, for an APK, which is never opened
+     * here, its download followed by its message menu. A received file whose type warns asks first
+     * (§6) before Open, Save and Share, the actions that hand its plaintext to another app; each
+     * answer covers this one action. A download only fills the sealed cache, so it never asks. A
+     * file not on this phone downloads first, with its ring.
+     */
+    fun requestFileAction(message: ChatMessage, action: FileAction) {
+        // A tap is never the release of the hold that opened a menu (memory: *Hold release fires bubble controls*).
+        val tap = action == FileAction.Open || action == FileAction.Download
+        if (message.deleted || (host.isShowingMessageMenu && tap)) return
+        val type = message.fileType ?: return
+        val warning = type.warning
+        if (!message.isMine && warning != null && action != FileAction.Download) {
+            fileWarning = FileWarningPrompt(message, warning, action, peerName)
+            return
+        }
+        performFileAction(message, action)
+    }
+
+    /** The warning's Continue on [prompt] (the sheet has closed by then): the action it guarded runs. */
+    fun confirmFileWarning(prompt: FileWarningPrompt) {
+        if (fileWarning === prompt) fileWarning = null
+        if (left) return
+        performFileAction(prompt.message, prompt.action)
+    }
+
+    /** The warning's Cancel, the scrim or Back: nothing happens, nothing is remembered. */
+    fun dismissFileWarning() {
+        fileWarning = null
+    }
+
+    private fun performFileAction(message: ChatMessage, action: FileAction) {
+        // Messaging's thread, not [thread]: a download that just landed is there before the collector ran.
+        val live = services.threads.value[peer]?.firstOrNull { it.id == message.id } ?: message
+        if (live.needsMediaDownload) {
+            downloadFile(live, then = action)
+            return
+        }
+        if (!live.hasFullMedia) return
+        if (action == FileAction.Download) {
+            // An APK on this phone: its menu, never an Open (§6).
+            if (!left) host.showMessageMenu(live)
+            return
+        }
+        val name = live.fileName ?: return
+        services.sendScope.launch {
+            when (action) {
+                FileAction.Open -> when (val outcome = services.fileOpenTarget(live.id, name)) {
+                    is FileOpenOutcome.Ready -> if (!left) mutableEffects.tryEmit(ComposeEffect.OpenFile(outcome.target, outcome.extension))
+                    is FileOpenOutcome.Refused -> fileFailure(outcome.message)
+                }
+                FileAction.Share -> {
+                    val target = services.fileShareTarget(live.id, name)
+                    if (target == null) fileFailure(FileCopy.COULD_NOT_SHARE) else if (!left) mutableEffects.tryEmit(ComposeEffect.ShareFile(target))
+                }
+                FileAction.Save -> when (val outcome = services.saveFileToDownloads(live.id, name)) {
+                    SaveOutcome.Saved -> if (!left) {
+                        showToast(Toast.success(FileCopy.SAVED_TO_DOWNLOADS))
+                        playHaptic(Haptic.Success)
+                    }
+                    is SaveOutcome.Failed -> fileFailure(outcome.message)
+                }
+                FileAction.Download -> Unit
+            }
+        }
+    }
+
+    /** A file's download (tap, or before the action it was asked for); stopping it from the ring is no failure. */
+    private fun downloadFile(message: ChatMessage, then: FileAction) {
+        if (!mediaDownloadIds.add(message.id)) return
+        services.sendScope.launch {
+            try {
+                services.ensureFileLoaded(message)
+                if (cancelledDownloadIds.remove(message.id)) return@launch
+                if (left) return@launch
+                val live = services.threads.value[peer]?.firstOrNull { it.id == message.id }
+                if (live?.hasFullMedia != true) {
+                    fileFailure(FileCopy.COULD_NOT_DOWNLOAD)
+                    return@launch
+                }
+                playHaptic(Haptic.Light)
+                performFileAction(live, then)
+            } finally {
+                mediaDownloadIds.remove(message.id)
+                cancelledDownloadIds.remove(message.id)
+            }
+        }
+    }
+
+    /** `ACTION_VIEW` found no app for the file's type (§7). */
+    internal fun onNoAppForFile(extension: String) = fileFailure(FileCopy.noApp(extension))
+
+    /** The share sheet could not start. */
+    internal fun onShareFileFailed() = fileFailure(FileCopy.COULD_NOT_SHARE)
+
+    private fun fileFailure(message: String) {
+        if (left) return
+        showToast(Toast.failure(message))
+        playHaptic(Haptic.Error)
+    }
+
     // ---- Media tap, download, viewers (CV:2305-2438) ---------------------------------------------
 
     /**
-     * A tap on a photo or video bubble (`handleMediaTap`, CV:2332-2349): download what is not here
-     * yet, otherwise open the viewer or the player. A tombstone or a failed send (which only has
-     * Retry) does nothing.
+     * A tap on a photo, video or file bubble (`handleMediaTap`, CV:2332-2349): download what is not
+     * here yet, otherwise open the viewer or the player; a file downloads and then opens
+     * ([requestFileAction]). A tombstone or a failed send (which only has Retry) does nothing.
      */
     fun handleMediaTap(message: ChatMessage) {
         if (message.deleted || message.receipt == ReceiptStatus.Failed) return
+        if (message.kind == ChatMessageKind.File) {
+            // Download when needed, then open — an APK only downloads (docs/file-sharing.md §6, §7).
+            val type = message.fileType ?: return
+            requestFileAction(message, if (type.canOpen) FileAction.Open else FileAction.Download)
+            return
+        }
         if (message.needsMediaDownload) {
             downloadMedia(message)
             return
@@ -963,6 +1144,8 @@ class ComposeController internal constructor(
         pendingPhotoCompose = null
         photosAfterVideoCompose = emptyList()
         composeDraft = null
+        fileDraft = null
+        fileWarning = null
         videoDraft?.videos?.forEach { it.movie.cleanup() }
         videoDraft = null
         viewingMedia = null
@@ -987,6 +1170,11 @@ class ComposeController internal constructor(
     /** The picker's result, in the order picked (an empty list when it was closed without a pick). */
     internal fun onPicked(uris: List<Uri>) {
         scope.launch { loadPickedMedia(uris) }
+    }
+
+    /** The document picker's result, in the order picked (empty when it was closed). */
+    internal fun onFilesPicked(uris: List<Uri>) {
+        scope.launch { loadPickedFiles(uris) }
     }
 
     /** A refused permission: the design's dark toast with "Settings" (u3il8T; conversation-compose-media §4.7). */
@@ -1068,4 +1256,28 @@ internal sealed interface ComposeEffect {
     data object RequestCamera : ComposeEffect
 
     data class PlayHaptic(val haptic: Haptic) : ComposeEffect
+
+    /** The attach sheet's File: `ACTION_OPEN_DOCUMENT`, multiple (docs/file-sharing.md §7). */
+    data object OpenFilePicker : ComposeEffect
+
+    /** `ACTION_VIEW` of a checked file grant; no app → [ComposeController.onNoAppForFile] with [extension]. */
+    data class OpenFile(val target: ShareTarget, val extension: String) : ComposeEffect
+
+    /** The share sheet over a file grant. */
+    data class ShareFile(val target: ShareTarget) : ComposeEffect
+}
+
+/**
+ * What a file message's action is (docs/file-sharing.md §6, §7): open it, save it, share it, or —
+ * for an APK — download it and show its menu. Only the first three ask the §6 question.
+ */
+enum class FileAction { Open, Save, Share, Download }
+
+/** Files staged in the file composer, in pick order (at most ten). */
+data class FileComposeDraft(val files: List<PickedFile>)
+
+/** The §6 dialog for [message]: its [warning], the [action] it guards, and [sender], the contact's display name. */
+data class FileWarningPrompt(val message: ChatMessage, val warning: FileWarning, val action: FileAction, val sender: String) {
+    val title: String get() = warning.dialogTitle
+    val text: String get() = warning.dialogMessage(sender)
 }

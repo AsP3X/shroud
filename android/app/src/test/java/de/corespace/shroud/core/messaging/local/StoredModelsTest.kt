@@ -64,6 +64,35 @@ class StoredModelsTest {
         assertEquals(Instant.parse("2026-09-19T10:00:00Z"), decoded.createdAt)
     }
 
+    // ---- Files (docs/file-sharing.md) ----
+
+    @Test
+    fun aFileRowKeepsItsNameAndSizeAndAsksTheMediaCache() {
+        val id = UUID.randomUUID()
+        val message = ChatMessage(
+            id = id,
+            peerUserId = UUID.randomUUID(),
+            senderUserId = UUID.randomUUID(),
+            text = "",
+            createdAt = Instant.parse("2026-10-05T10:00:00Z"),
+            isMine = true,
+            receipt = ReceiptStatus.Failed,
+            kind = ChatMessageKind.File,
+            mediaByteCount = 2_400_000,
+            fileName = "Quarterly report 2026.pdf",
+            sendError = "Waiting for connection…",
+            pendingSync = true,
+        )
+        val data = LocalStoreJson.encodeToString(StoredMessage.serializer(), StoredMessage.from(message))
+        assertTrue(data.contains("\"kind\":\"file\""))
+        val restored = LocalStoreJson.decodeFromString(StoredMessage.serializer(), data).toChatMessage { it == id }
+        assertEquals(message.copy(hasFullMedia = true), restored)
+        // Other kinds never write the file keys.
+        val photo = StoredMessage.from(message.copy(kind = ChatMessageKind.Image))
+        assertNull(photo.fileName)
+        assertNull(photo.fileSize)
+    }
+
     // ---- Android: the row format ----
 
     @Test

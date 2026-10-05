@@ -33,6 +33,16 @@ import {
 } from "lucide-react";
 import type { CallModality } from "../api/client";
 import { clockTime, dayLabel, fullTimestamp, sameDay, MINUTE } from "../format";
+import {
+  contentMismatchText,
+  FILE_ACCEPT,
+  fileTypeOf,
+  MAX_FILES_PER_SEND,
+  openModeOf,
+  triageFiles,
+  type FileType,
+  type FileWarning,
+} from "../files";
 import { isUnsent, type ChatMessage } from "../messaging";
 import { rowBubble } from "../rowBubble";
 import { ReactionPicker, ReactionStrip } from "./Reactions";
@@ -56,7 +66,18 @@ import {
   type VideoSendDraft,
 } from "../media/prepareVideo";
 import { cancelVideoDownload, type LoadedVideo } from "../media/videos";
+import {
+  cancelFileDownload,
+  fileOnDevice,
+  isCancelled,
+  isDamaged,
+  openedFileUrl,
+  peekOpenedFile,
+  type OpenedFile,
+} from "../media/fileTransfer";
 import { Avatar } from "./Avatar";
+import { FileBubble } from "./FileBubble";
+import { FileWarningDialog } from "./FileWarningDialog";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
 import { LinkBar } from "./LinkBar";
@@ -64,6 +85,7 @@ import { LinkedText } from "./LinkedText";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 import { detectLinks, isOpenableUrl } from "../links";
 import type { LinkPreviewComposerApi } from "../linkPreview/useLinkPreviewComposer";
+import { ContextMenu, type MenuAnchor } from "./ContextMenu";
 import {
   DeleteMessageDialog,
   MessageMenu,
@@ -88,8 +110,15 @@ const ImageComposer = lazy(() => import("./ImageComposer").then((m) => ({ defaul
 const ImageViewer = lazy(() => import("./ImageViewer").then((m) => ({ default: m.ImageViewer })));
 const VideoComposer = lazy(() => import("./VideoComposer").then((m) => ({ default: m.VideoComposer })));
 const VideoViewer = lazy(() => import("./VideoViewer").then((m) => ({ default: m.VideoViewer })));
+const FileComposer = lazy(() => import("./FileComposer").then((m) => ({ default: m.FileComposer })));
+const TextFileViewer = lazy(() => import("./TextFileViewer").then((m) => ({ default: m.TextFileViewer })));
 
 const MEDIA_ACCEPT = `${PHOTO_ACCEPT},${VIDEO_ACCEPT}`;
+/** Shown when the new tab for a PDF, photo or video was blocked; the file is in memory by then. */
+const TAB_BLOCKED = "The browser blocked the new tab — click the file again to open it.";
+const FILE_DOWNLOAD_FAILED = "This file couldn’t be downloaded. Try again.";
+/** A blob that failed a tag or its size: trying again fetches the same bytes. */
+const FILE_DAMAGED = "This file is damaged, so Shroud won’t open it.";
 
 /** Messages from the same sender inside this window render as one visual block. */
 const GROUP_WINDOW = 5 * MINUTE;
@@ -155,6 +184,8 @@ function MessageRow({
   onJump,
   onOpenPhoto,
   onOpenVideo,
+  onOpenFile,
+  onRetryFile,
   onLoadImage,
   onLoadVideo,
   onLoadVoice,
@@ -185,6 +216,8 @@ function MessageRow({
   onJump: (id: string) => void;
   onOpenPhoto: (message: ChatMessage) => void;
   onOpenVideo: (message: ChatMessage) => void;
+  onOpenFile: (message: ChatMessage) => void;
+  onRetryFile?: (message: ChatMessage) => void;
   onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
   onLoadVideo: (message: ChatMessage) => Promise<LoadedVideo | null>;
   onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
@@ -205,6 +238,7 @@ function MessageRow({
   const voice = face === "voice";
   const photo = face === "photo";
   const video = face === "video";
+  const file = face === "file";
   const reacted = !message.deleted && (message.reactions ?? []).some((r) => r.emojis.length > 0);
   /* What the message already wore when its row appeared (opening a chat isn't news); chips
      added after that pop in. */
@@ -283,6 +317,20 @@ function MessageRow({
         onCancelDownload={cancelVideoDownload}
         quote={quote}
         footer={strip()}
+      />
+    );
+  } else if (file) {
+    bubble = (
+      <FileBubble
+        className={bubbleClass}
+        message={message}
+        query={query}
+        quote={quote}
+        meta={reacted ? null : meta}
+        footer={strip(meta)}
+        onOpen={onOpenFile}
+        onCancelDownload={cancelFileDownload}
+        onRetry={onRetryFile}
       />
     );
   } else if (voice) {
@@ -467,6 +515,7 @@ function copyableText(message: ChatMessage): string {
       return message.text;
     case "image":
     case "video":
+    case "file":
       return message.caption?.trim() ?? "";
     case "voice":
       return message.transcript?.trim() ?? "";
@@ -499,6 +548,23 @@ function hasFiles(event: DragEvent): boolean {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
 
+/** Every file on a paste: some browsers fill `items` and leave `files` empty. */
+function clipboardFiles(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const fromFiles = Array.from(data.files ?? []);
+  if (fromFiles.length) return fromFiles;
+  return Array.from(data.items ?? []).flatMap((item) => {
+    const file = item.kind === "file" ? item.getAsFile() : null;
+    return file ? [file] : [];
+  });
+}
+
+/** A file "Download" can save: a supported type whose bytes are in reach. */
+function canDownloadFile(message: ChatMessage): boolean {
+  if (message.kind !== "file" || message.deleted || !fileTypeOf(message.fileName ?? "")) return false;
+  return fileOnDevice(message.id) || Boolean(message.mediaObjectId && message.mediaKey && message.mediaBytes != null);
+}
+
 export function Thread({
   peer,
   presence,
@@ -520,11 +586,14 @@ export function Thread({
   onRecordingChange,
   onSendImages,
   onSendVideos,
+  onSendFiles,
+  onRetryFile,
   onBack,
   onShowInfo,
   onLoadVoice,
   onLoadImage,
   onLoadVideo,
+  onLoadFile,
   replyTo,
   onReply,
   onCancelReply,
@@ -563,10 +632,16 @@ export function Thread({
   onSendImages: (images: PreparedImage[], caption: string) => void;
   /** Clips from the send sheet; encoding starts after the bubbles land. */
   onSendVideos: (drafts: VideoSendDraft[], caption: string) => void;
+  /** Files from the file sheet, sent as they are; the caption belongs to the first. */
+  onSendFiles: (files: File[], caption: string) => void;
+  /** Sends a file that failed again (the bubble's retry glyph). */
+  onRetryFile?: (message: ChatMessage) => void;
   onBack: () => void;
   onLoadVoice: (message: ChatMessage) => Promise<Uint8Array | null>;
   onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
   onLoadVideo: (message: ChatMessage) => Promise<LoadedVideo | null>;
+  /** Downloads (or reads our own original), decrypts and checks a file; rejects on failure. */
+  onLoadFile: (message: ChatMessage) => Promise<OpenedFile>;
   onShowInfo: () => void;
   /** Message being answered; its quote sits above the composer until it is sent. */
   replyTo: ChatMessage | null;
@@ -618,6 +693,17 @@ export function Thread({
   const [attachingVideos, setAttachingVideos] = useState<File[] | null>(null);
   /** Photos from a mixed pick, shown after the video sheet closes. */
   const [photosAfterVideos, setPhotosAfterVideos] = useState<File[] | null>(null);
+  const filePicker = useRef<HTMLInputElement>(null);
+  /** Files in the file sheet; null while it is closed. */
+  const [attachingFiles, setAttachingFiles] = useState<File[] | null>(null);
+  /** Files from a mixed drop or paste, shown once the photo and video sheets close. */
+  const [filesAfterMedia, setFilesAfterMedia] = useState<File[] | null>(null);
+  /** A received file's §6 question, and what Continue does. */
+  const [fileWarning, setFileWarning] = useState<{ warning: FileWarning; run: () => void } | null>(null);
+  /** A text file open in the in-app viewer. */
+  const [textViewing, setTextViewing] = useState<{ message: ChatMessage; blob: Blob } | null>(null);
+  /** The phone layout's "+" menu: photos and videos, or a file (the paperclip is hidden there). */
+  const [attachMenu, setAttachMenu] = useState<{ anchor: MenuAnchor; trigger: HTMLElement } | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   /** Row flashing after a jump from a reply header. */
   const [flashing, setFlashing] = useState<string | null>(null);
@@ -876,16 +962,46 @@ export function Thread({
     if (finePointer()) field.current?.focus();
   }
 
-  function openQueuedPhotos(queued: File[] | null) {
-    if (queued?.length) setAttaching(queued);
-    else if (finePointer()) field.current?.focus();
+  /** The file sheet, once the photo and video sheets before it have closed. */
+  function openQueuedFiles(): boolean {
+    if (!filesAfterMedia?.length) return false;
+    setAttachingFiles(filesAfterMedia);
+    setFilesAfterMedia(null);
+    return true;
   }
 
-  /** Opens the send sheet with these photos and videos, or adds them to one already open. */
+  function openQueuedPhotos(queued: File[] | null) {
+    if (queued?.length) setAttaching(queued);
+    else if (!openQueuedFiles() && finePointer()) field.current?.focus();
+  }
+
+  /**
+   * Opens the file sheet with these files, or adds them to one already open; what can't be sent
+   * (§2, §4) is refused with one notice for the pick. `afterMedia`: a photo or video sheet is
+   * opening for the same pick, so the files wait for it.
+   */
+  function attachFiles(picked: File[], afterMedia = false) {
+    if (!canSend || picked.length === 0) return;
+    const waiting = afterMedia || attaching !== null || attachingVideos !== null;
+    const already = (attachingFiles ?? (waiting ? filesAfterMedia : null) ?? []).length;
+    const { accepted, refusal } = triageFiles(picked, MAX_FILES_PER_SEND - already);
+    if (refusal) showNotice(refusal, 3200);
+    if (accepted.length === 0) return;
+    if (attachingFiles) setAttachingFiles((open) => [...(open ?? []), ...accepted]);
+    else if (waiting) setFilesAfterMedia((queued) => [...(queued ?? []), ...accepted]);
+    else setAttachingFiles(accepted);
+  }
+
+  /**
+   * A drop, a paste or the photo picker: photos and videos keep their own sheets, any other
+   * supported file goes to the file sheet, and the rest is refused (§7).
+   */
   function attach(picked: File[]) {
     if (!canSend) return;
     const videos = videoFiles(picked);
     const photos = imageFiles(picked);
+    const others = picked.filter((file) => !videos.includes(file) && !photos.includes(file));
+    attachFiles(others, videos.length > 0 || photos.length > 0);
     if (videos.length === 0 && photos.length === 0) return;
 
     if (attachingVideos) {
@@ -911,16 +1027,30 @@ export function Thread({
 
   const closeAttach = useCallback(() => {
     setAttaching(null);
-    if (finePointer()) field.current?.focus();
-  }, []);
+    if (!openQueuedFiles() && finePointer()) field.current?.focus();
+  }, [filesAfterMedia]);
 
   const sendAttached = useCallback(
     (images: PreparedImage[], caption: string) => {
       setAttaching(null);
       onSendImages(images, caption);
+      if (!openQueuedFiles() && finePointer()) field.current?.focus();
+    },
+    [onSendImages, filesAfterMedia],
+  );
+
+  const closeFileAttach = useCallback(() => {
+    setAttachingFiles(null);
+    if (finePointer()) field.current?.focus();
+  }, []);
+
+  const sendAttachedFiles = useCallback(
+    (files: File[], caption: string) => {
+      setAttachingFiles(null);
+      onSendFiles(files, caption);
       if (finePointer()) field.current?.focus();
     },
-    [onSendImages],
+    [onSendFiles],
   );
 
   const closeVideoAttach = useCallback(() => {
@@ -944,9 +1074,12 @@ export function Thread({
   function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
     const photos = clipboardImages(event.clipboardData);
     const videos = clipboardVideos(event.clipboardData);
-    if (photos.length === 0 && videos.length === 0) return;
+    const files = clipboardFiles(event.clipboardData).filter(
+      (file) => !photos.includes(file) && !videos.includes(file),
+    );
+    if (photos.length === 0 && videos.length === 0 && files.length === 0) return;
     event.preventDefault();
-    attach([...photos, ...videos]);
+    attach([...photos, ...videos, ...files]);
   }
 
   /* Photos dragged anywhere over the chat can be dropped to send. Enter and leave fire
@@ -1078,6 +1211,7 @@ export function Thread({
     if (link) actions.push("openLink", "copyLink");
     if (canQuote(message)) actions.push("reply");
     if (selection || copyableText(message)) actions.push("copy");
+    if (canDownloadFile(message)) actions.push("download");
     actions.push("delete");
     return actions;
   }
@@ -1111,12 +1245,94 @@ export function Thread({
     else if (action === "copyLink" && link) void copyLink(link);
     else if (action === "reply") onReply(message);
     else if (action === "copy") void copyToClipboard(selection || copyableText(message));
+    else if (action === "download") downloadFile(message);
     else setConfirmDelete(message);
+  }
+
+  /* ------------------------------------------------------------ files (docs/file-sharing.md) */
+
+  /** A received file with a §6 warning waits for its dialog; anything else goes at once. */
+  function afterWarning(message: ChatMessage, run: () => void) {
+    const warning = fileTypeOf(message.fileName ?? "")?.warning;
+    if (!message.isMine && warning) setFileWarning({ warning, run });
+    else run();
+  }
+
+  /** Saves through the browser's download, under the cleaned name. */
+  function saveFile(message: ChatMessage, blob: Blob) {
+    // The opened file's URL lives until the next file opens or the chat locks; a file that
+    // was replaced meanwhile gets a URL of its own for the download.
+    const kept = openedFileUrl(message.id);
+    const url = kept ?? URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = message.fileName || "file";
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    if (!kept) window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  function fileFailed(err: unknown) {
+    if (isCancelled(err)) return;
+    showNotice(isDamaged(err) ? FILE_DAMAGED : FILE_DOWNLOAD_FAILED, 2800);
+  }
+
+  /** Hands an opened file to its viewer (§7), once its first bytes fit its type (§4). */
+  function presentFile(message: ChatMessage, type: FileType, file: OpenedFile) {
+    if (!file.matches) {
+      showNotice(contentMismatchText(type.ext), 3600);
+      return;
+    }
+    const mode = openModeOf(type);
+    if (mode === "text") {
+      setTextViewing({ message, blob: file.blob });
+      return;
+    }
+    if (mode === "download") {
+      afterWarning(message, () => saveFile(message, file.blob));
+      return;
+    }
+    // PDFs, photos and videos: a new tab on a blob typed by the table, never by the sender.
+    const url = openedFileUrl(message.id);
+    if (!url) return;
+    const tab = window.open(url, "_blank");
+    if (tab) tab.opener = null;
+    else showNotice(TAB_BLOCKED, 3200);
+  }
+
+  /** The bubble's tap: download when needed, then open. */
+  function openFile(message: ChatMessage) {
+    const type = fileTypeOf(message.fileName ?? "");
+    if (!type || message.deleted) return;
+    // Already decrypted: open inside this click, so the new tab isn't blocked.
+    const ready = peekOpenedFile(message.id);
+    if (ready) {
+      presentFile(message, type, ready);
+      return;
+    }
+    onLoadFile(message).then((file) => presentFile(message, type, file), fileFailed);
+  }
+
+  /** The menu's Download: always the whole file to disk, after the warning (no content check). */
+  function downloadFile(message: ChatMessage) {
+    afterWarning(message, () => {
+      const ready = peekOpenedFile(message.id);
+      if (ready) saveFile(message, ready.blob);
+      else onLoadFile(message).then((file) => saveFile(message, file.blob), fileFailed);
+    });
   }
 
   /* Escape drops the reply, the way it closes search — but search, an open message menu or the
      delete dialog each take that Escape first. */
-  const escapeTaken = searchOpen || menu !== null || confirmDelete !== null;
+  const escapeTaken =
+    searchOpen ||
+    menu !== null ||
+    confirmDelete !== null ||
+    attachMenu !== null ||
+    fileWarning !== null ||
+    textViewing !== null;
   useEffect(() => {
     if (!replyTo) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -1137,7 +1353,8 @@ export function Thread({
   useEffect(() => {
     if (viewing && messages.some((m) => m.id === viewing && m.deleted)) setViewing(null);
     if (watching && messages.some((m) => m.id === watching && m.deleted)) setWatching(null);
-  }, [messages, viewing, watching]);
+    if (textViewing && messages.some((m) => m.id === textViewing.message.id && m.deleted)) setTextViewing(null);
+  }, [messages, viewing, watching, textViewing]);
 
   return (
     <section
@@ -1291,6 +1508,8 @@ export function Thread({
                     onJump={jumpTo}
                     onOpenPhoto={(opened) => setViewing(opened.id)}
                     onOpenVideo={(opened) => setWatching(opened.id)}
+                    onOpenFile={openFile}
+                    onRetryFile={onRetryFile}
                     onLoadImage={onLoadImage}
                     onLoadVideo={onLoadVideo}
                     onLoadVoice={onLoadVoice}
@@ -1378,10 +1597,16 @@ export function Thread({
             <button
               className="icon-btn compose-plus"
               type="button"
-              aria-label="Send photos or videos"
-              title="Send photos or videos"
+              aria-label="Attach"
+              title="Attach"
+              aria-haspopup="menu"
+              aria-expanded={attachMenu !== null}
               disabled={!canSend}
-              onClick={() => photoPicker.current?.click()}
+              onClick={(event) => {
+                const trigger = event.currentTarget;
+                const box = trigger.getBoundingClientRect();
+                setAttachMenu((open) => (open ? null : { anchor: { x: box.left, y: box.top }, trigger }));
+              }}
             >
               <Plus size={20} />
             </button>
@@ -1389,8 +1614,9 @@ export function Thread({
               className="icon-btn compose-wide"
               type="button"
               aria-label="Attach a file"
-              title="Files are coming to the web client soon"
-              disabled
+              title="Attach a file"
+              disabled={!canSend}
+              onClick={() => filePicker.current?.click()}
             >
               <Paperclip size={18} />
             </button>
@@ -1448,6 +1674,18 @@ export function Thread({
               event.target.value = "";
             }}
           />
+          {/* Files go out as they are, photos and videos included: the explicit "original" path. */}
+          <input
+            ref={filePicker}
+            type="file"
+            accept={FILE_ACCEPT}
+            multiple
+            hidden
+            onChange={(event) => {
+              attachFiles(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
           <VoiceDroplet voice={voice} />
         </div>
       </div>
@@ -1457,7 +1695,7 @@ export function Thread({
           <div className="drop-card">
             <ImagePlus size={30} />
             <strong>Drop to send</strong>
-            <span>Photos and videos are end-to-end encrypted</span>
+            <span>Photos, videos and files are end-to-end encrypted</span>
           </div>
         </div>
       ) : null}
@@ -1493,6 +1731,37 @@ export function Thread({
         />
       ) : null}
 
+      {attachMenu ? (
+        <ContextMenu
+          anchor={attachMenu.anchor}
+          trigger={attachMenu.trigger}
+          label="Attach"
+          items={[
+            { id: "media", label: "Photo or Video", Icon: Image },
+            { id: "file", label: "File", Icon: Paperclip },
+          ]}
+          onSelect={(choice) => {
+            setAttachMenu(null);
+            if (choice === "file") filePicker.current?.click();
+            else photoPicker.current?.click();
+          }}
+          onClose={() => setAttachMenu(null)}
+        />
+      ) : null}
+
+      {fileWarning ? (
+        <FileWarningDialog
+          warning={fileWarning.warning}
+          sender={peer.username}
+          onCancel={() => setFileWarning(null)}
+          onContinue={() => {
+            const { run } = fileWarning;
+            setFileWarning(null);
+            run();
+          }}
+        />
+      ) : null}
+
       {confirmDelete ? (
         <DeleteMessageDialog
           message={confirmDelete}
@@ -1525,6 +1794,25 @@ export function Thread({
             onFilesChange={setAttachingVideos}
             onClose={closeVideoAttach}
             onSend={sendAttachedVideos}
+          />
+        ) : null}
+
+        {attachingFiles ? (
+          <FileComposer
+            files={attachingFiles}
+            peerName={peer.username}
+            onFilesChange={setAttachingFiles}
+            onClose={closeFileAttach}
+            onSend={sendAttachedFiles}
+          />
+        ) : null}
+
+        {textViewing ? (
+          <TextFileViewer
+            name={textViewing.message.fileName || "file"}
+            blob={textViewing.blob}
+            onDownload={() => afterWarning(textViewing.message, () => saveFile(textViewing.message, textViewing.blob))}
+            onClose={() => setTextViewing(null)}
           />
         ) : null}
 

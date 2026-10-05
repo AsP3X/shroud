@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.conversation.composer
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -28,7 +29,9 @@ import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.conversation.attach.ChatAttachSheet
+import de.corespace.shroud.ui.conversation.pickers.rememberFilePicker
 import de.corespace.shroud.ui.conversation.pickers.rememberMediaPicker
+import de.corespace.shroud.ui.media.viewer.MediaShareIntents
 import de.corespace.shroud.ui.permissions.openAppSettings
 import de.corespace.shroud.ui.permissions.rememberPermissionRequest
 import de.corespace.shroud.ui.theme.perform
@@ -61,14 +64,22 @@ interface ComposeHost {
      * W3-THREAD-LIST, which owns `DeleteMessageSheet`).
      */
     fun requestDelete(message: ChatMessage) {}
+
+    /**
+     * A tapped APK (docs/file-sharing.md §6, §7): Android never opens one, so its message menu comes
+     * up instead — Save to Downloads and Share — once it is on this phone. Added for file sharing
+     * (K14); the default does nothing.
+     */
+    fun showMessageMenu(message: ChatMessage) {}
 }
 
 /**
  * The composer bar and everything that hangs off it (iOS `ConversationView`'s bottom bar and its
  * compose layers; conversation-compose-media §3–§8, §19, §20): the Notes "Todo" bar, the reply and
  * link strips, the field, the hold-to-record mic and recording bars, the attach sheet with its
- * Recents strip, the system photo picker, the camera, and the full-screen photo compose, video
- * compose, photo viewer, video player and "Sending media…" card.
+ * Recents strip, the system photo and document pickers, the file composer sheet and a received
+ * file's warning, the camera, and the full-screen photo compose, video compose, photo viewer, video
+ * player and "Sending media…" card.
  *
  * Place it at the bottom of the conversation's root `Box` (`modifier = Modifier.align(BottomCenter)`),
  * outside any inset padding: it rides the keyboard frame by frame itself
@@ -108,9 +119,11 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
         if (granted) controller.presentCamera() else controller.showPermissionToast(CAMERA_OFF) { openAppSettings(context) }
     }
     val picker = rememberMediaPicker { uris -> controller.onPicked(uris) }
+    val filePicker = rememberFilePicker { uris -> controller.onFilesPicked(uris) }
     val currentAskMicrophone by rememberUpdatedState(askMicrophone)
     val currentAskCamera by rememberUpdatedState(askCamera)
     val currentPicker by rememberUpdatedState(picker)
+    val currentFilePicker by rememberUpdatedState(filePicker)
 
     LaunchedEffect(controller) {
         controller.effects.collect { effect ->
@@ -119,6 +132,18 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
                 ComposeEffect.RequestMicrophone -> currentAskMicrophone()
                 ComposeEffect.RequestCamera -> currentAskCamera()
                 is ComposeEffect.PlayHaptic -> view.perform(effect.haptic)
+                ComposeEffect.OpenFilePicker -> currentFilePicker.open()
+                // The app the system picks reads the grant; none → "No app on this phone can open .{ext} files."
+                is ComposeEffect.OpenFile -> try {
+                    context.startActivity(MediaShareIntents.view(effect.target))
+                } catch (_: ActivityNotFoundException) {
+                    controller.onNoAppForFile(effect.extension)
+                }
+                is ComposeEffect.ShareFile -> try {
+                    context.startActivity(MediaShareIntents.chooser(MediaShareIntents.send(effect.target)))
+                } catch (_: ActivityNotFoundException) {
+                    controller.onShareFileFailed()
+                }
             }
         }
     }
@@ -177,6 +202,18 @@ fun ConversationComposeHost(controller: ComposeController, onComposerHeightChang
         loadRecents = controller::loadRecentPhotos,
         accessRequested = controller::photoAccessRequested,
         markAccessRequested = controller::markPhotoAccessRequested,
+    )
+
+    FileComposeSheet(
+        draft = controller.fileDraft,
+        onSend = controller::sendComposedFiles,
+        onRemove = controller::removeComposeFile,
+        onDismiss = controller::cancelFileCompose,
+    )
+    FileWarningSheet(
+        prompt = controller.fileWarning,
+        onContinue = controller::confirmFileWarning,
+        onDismiss = controller::dismissFileWarning,
     )
 
     ComposeMediaLayers(controller)

@@ -2,6 +2,7 @@ package de.corespace.shroud.core.messaging
 
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.model.previewText
 import de.corespace.shroud.core.net.PresenceDto
 import java.time.Instant
 import java.time.ZoneId
@@ -34,6 +35,8 @@ object ChatListFormatting {
                 ChatMessageKind.Voice -> last.transcript?.takeIf { it.isNotEmpty() } ?: VOICE_MESSAGE
                 ChatMessageKind.Todo -> (if (last.todoDone == true) "✓ " else "○ ") + last.text
                 ChatMessageKind.Text -> last.text
+                // The caption, else the file name (docs/file-sharing.md §7).
+                ChatMessageKind.File -> last.previewText
             }
         }
         return if (isNotes) EMPTY_NOTES else EMPTY_CHAT

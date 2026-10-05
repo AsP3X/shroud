@@ -44,6 +44,8 @@ class MessagingModule(container: AppContainer) : AppModule(container) {
             // Purges stop the deleted voice note, locks stop playback and drop a take, re-keys move
             // the played mark (W2-VOICE; iOS tears the thread's player down, `ConversationView.swift:363-379`).
             controller.registerArtifactSink(container.voice.artifactSink)
+            // Purged media loses its share and file grants (docs/file-sharing.md §8).
+            controller.registerArtifactSink(container.media.shareArtifactSink)
         }
     }
 

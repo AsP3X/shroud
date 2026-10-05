@@ -17,6 +17,8 @@ enum ChatListFormatting {
             case .voice:
                 if let t = last.transcript, !t.isEmpty { return t }
                 return "Voice message"
+            case .file:
+                return last.filePreviewText
             case .todo:
                 let mark = (last.todoDone == true) ? "✓ " : "○ "
                 return mark + last.text
@@ -69,5 +71,14 @@ enum ChatListFormatting {
     static func clockTimeLabel(for date: Date?) -> String {
         guard let date else { return "" }
         return date.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+extension MessagingController.ChatMessage {
+    /// Chat list and notification line for a file: the caption, else the file name.
+    var filePreviewText: String {
+        let caption = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !caption.isEmpty { return caption }
+        return fileName ?? "File"
     }
 }

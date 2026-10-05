@@ -6,6 +6,7 @@ High-level structure for the E2E encrypted messenger.
 | --- | --- |
 | **[server-plan.md](./server-plan.md)** | Server decisions, milestones, locked Auth API |
 | [thought-collection.md](../thought-collection.md) | Calls, WebRTC, Compose scaling notes |
+| [file-sharing.md](./file-sharing.md) | Files: the `t:"file"` payload, SHRF1 blobs, supported types, name rules, warnings, UI |
 | **[android-plan.md](./android-plan.md)** | Android client: open decisions and workstreams (design in `design/Android-App.pen`; foundation, sign-up and log-in in `android/`) |
 
 ## Components
@@ -64,6 +65,7 @@ envelope. What the two clients agree on *inside* that envelope:
 | Text with link preview | `{"t":"text","c":<body>,"lp":{…}}` (plus `re` when it is also a reply) | iOS `MessageTextPayload` (read by `web/src/reply.ts`) |
 | Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (read by `web/src/crypto/mediaPayload.ts`) |
 | Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
+| File | `MediaMessagePayload` with `t:"file"`, the cleaned name `n`, size `s` and the key of an SHRF1 blob; read before any MIME sniffing | [file-sharing.md](./file-sharing.md) |
 | Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
 | Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>, …]}` (the person's whole set, oldest first), always a tagged v2 envelope | `MessageReaction.swift` / `web/src/reactions.ts` |
 
@@ -343,6 +345,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Notes multi-device | **done** — Saved Messages via `peer_user_id = self`; excluded from chats list |
 | Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
+| Files | **done** — text, PDF, Word/Excel/PowerPoint, image and video files as they are, APKs; streamed SHRF1 blobs up to 2 GiB; warnings for APKs and macro-capable Office files ([file-sharing.md](./file-sharing.md)) |
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
 | Replies | **done** — swipe left (or the context menu) to quote; the quote is sealed **inside** the plaintext, never server metadata |
 | Links & link previews | **done** — links are tappable (in-app browser), Telegram-style preview block; the sender builds the preview (the iPhone directly, the browser through the link relay) and seals it, recipients never contact the site; toggle in Privacy & Security |

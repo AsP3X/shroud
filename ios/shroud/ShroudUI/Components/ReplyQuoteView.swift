@@ -107,6 +107,15 @@ extension ReplyQuoteContent {
                 thumbnail: nil,
                 symbolName: "waveform"
             )
+        case .file:
+            // A file is quoted by its name, as the sealed snippet (`x`) carries it.
+            return ReplyQuoteContent(
+                author: author,
+                text: original.fileName ?? "File",
+                isStandIn: original.fileName == nil,
+                thumbnail: nil,
+                symbolName: "doc.fill"
+            )
         case .text, .todo:
             return ReplyQuoteContent(
                 author: author,
@@ -124,6 +133,7 @@ extension ReplyQuoteContent {
         case .image: "photo"
         case .video: "video.fill"
         case .voice: "waveform"
+        case .file: "doc.fill"
         }
     }
 }

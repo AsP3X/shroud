@@ -17,6 +17,8 @@ nonisolated struct MessageReplyReference: Codable, Equatable, Hashable, Sendable
         case image
         case video
         case voice
+        /// A shared file; `x` carries its name, which old builds show as text.
+        case file
 
         /// Label shown in the quote when there is no text of its own.
         var mediaLabel: String? {
@@ -25,6 +27,7 @@ nonisolated struct MessageReplyReference: Codable, Equatable, Hashable, Sendable
             case .image: "Photo"
             case .video: "Video"
             case .voice: "Voice message"
+            case .file: "File"
             }
         }
     }

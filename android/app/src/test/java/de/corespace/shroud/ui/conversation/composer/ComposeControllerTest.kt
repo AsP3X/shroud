@@ -388,14 +388,14 @@ class ComposeControllerTest {
     @Test
     fun `the other options are coming soon (CV 1735-1736, 1931-1934)`() = runTest(main.dispatcher) {
         val env = env()
-        for (option in listOf(ChatAttachOption.File, ChatAttachOption.Location, ChatAttachOption.Contact, ChatAttachOption.Music, ChatAttachOption.Gift, ChatAttachOption.Stickers)) {
+        for (option in listOf(ChatAttachOption.Location, ChatAttachOption.Contact, ChatAttachOption.Music, ChatAttachOption.Gift, ChatAttachOption.Stickers)) {
             env.controller.handleAttach(option)
         }
         assertEquals(
-            listOf("File", "Location", "Contact", "Music", "Gift", "Stickers").map { Toast.info("$it coming soon") },
+            listOf("Location", "Contact", "Music", "Gift", "Stickers").map { Toast.info("$it coming soon") },
             env.host.toasts,
         )
-        assertEquals(List(6) { Haptic.Light }, env.effects.haptics())
+        assertEquals(List(5) { Haptic.Light }, env.effects.haptics())
     }
 
     @Test
@@ -753,13 +753,13 @@ class ComposeControllerTest {
         assertNull(env.controller.composeDraft)
         assertTrue(env.services.sinks.isEmpty())
         // Work finishing after the chat closed stays silent.
-        env.controller.handleAttach(ChatAttachOption.File)
+        env.controller.handleAttach(ChatAttachOption.Location)
         assertTrue(env.effects.haptics().isEmpty())
 
         // Drawn again: it hears locks and speaks up again.
         env.controller.onShown()
         assertEquals(1, env.services.sinks.size)
-        env.controller.handleAttach(ChatAttachOption.File)
+        env.controller.handleAttach(ChatAttachOption.Location)
         assertEquals(listOf(Haptic.Light), env.effects.haptics())
     }
 

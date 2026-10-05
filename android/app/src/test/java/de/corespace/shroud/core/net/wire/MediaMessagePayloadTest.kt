@@ -236,4 +236,41 @@ class MediaMessagePayloadTest {
         assertFalse(text.contains("c2VjcmV0LWtleQ=="))
         assertFalse(text.contains("private caption"))
     }
+
+    // ---- Files (docs/file-sharing.md §1) ----
+
+    @Test
+    fun aFilePayloadIsAFileWhateverItsMimeSays() {
+        for (mime in listOf("application/pdf", "image/png", "video/mp4", "audio/mp4")) {
+            val payload = parse("""{"t":"file","n":"Quarterly report 2026.pdf","mime":"$mime","k":"a2V5","s":2400000,"w":0,"h":0}""")!!
+            assertTrue(mime, payload.isFile)
+            assertFalse(mime, payload.isImage)
+            assertFalse(mime, payload.isVideo)
+            assertFalse(mime, payload.isVoice)
+            assertFalse(mime, payload.isLink)
+            assertEquals("Quarterly report 2026.pdf", payload.n)
+            assertEquals(2_400_000L, payload.s)
+        }
+    }
+
+    @Test
+    fun aFilePayloadEncodesItsNameAndRoundTrips() {
+        val reply = MessageReplyReference(UUID.fromString("3b241101-e2bb-4255-8caf-4136c566a962"), UUID.fromString("0f8fad5b-d9cb-469f-a165-70867728950e"), MessageReplyReference.Kind.Text, "hi")
+        val payload = MediaMessagePayload(t = MediaMessagePayload.KIND_FILE, mime = "application/pdf", w = 0, h = 0, k = "a2V5", c = "for you", s = 37, re = reply, n = "a.pdf")
+        val json = Json.parseToJsonElement(payload.encoded().decodeToString()).jsonObject
+        assertEquals("\"file\"", json["t"].toString())
+        assertEquals("\"a.pdf\"", json["n"].toString())
+        assertEquals("37", json["s"].toString())
+        assertEquals(payload, MediaMessagePayload.parse(payload.encoded()))
+        assertFalse("never prints the name", payload.toString().contains("a.pdf"))
+    }
+
+    @Test
+    fun oldPayloadsStillSniffTheirMimeAndCarryNoName() {
+        val photo = parse("""{"t":"thumb","mime":"image/jpeg","k":"a2V5"}""")!!
+        assertTrue(photo.isImage)
+        assertFalse(photo.isFile)
+        assertNull(photo.n)
+        assertFalse(String(MediaMessagePayload(t = "image", mime = "image/jpeg", w = 1, h = 1, k = "a2V5").encoded()).contains("\"n\""))
+    }
 }

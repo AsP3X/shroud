@@ -24,6 +24,7 @@ import de.corespace.shroud.core.media.SealedMediaWriter
 import de.corespace.shroud.core.media.UploadedBlob
 import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.Shrf1
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
@@ -504,6 +505,59 @@ class SendFakeMediaTransfers(private val media: SendFakeMediaStore) : MediaTrans
         val plain = MediaCrypto.openFile(sealed, key)
         onProgress?.invoke(1.0)
         media.save(targetMessageId, plain)
+    }
+
+    /** SHRF1 uploads (docs/file-sharing.md §3), sealed for real with [Shrf1]. */
+    val fileUploads = mutableListOf<PlainSource>()
+    var fileDownloads = 0
+
+    override suspend fun uploadFile(source: PlainSource, token: String, onProgress: ((Double) -> Unit)?): UploadedBlob {
+        fileUploads += source
+        uploadGate?.await()
+        if (failUploads > 0) {
+            failUploads--
+            throw ApiError.Transport("The network connection was lost.")
+        }
+        val plain = when (source) {
+            is PlainSource.InMemory -> source.data
+            is PlainSource.LocalMedia -> media.files[source.messageId] ?: throw IOException("not cached")
+            is PlainSource.TempFile -> source.file.readBytes()
+        }
+        val key = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val prefix = ByteArray(Shrf1.NONCE_PREFIX_BYTES).also { java.security.SecureRandom().nextBytes(it) }
+        val out = ByteArrayOutputStream()
+        Shrf1.seal(plain.inputStream(), plain.size.toLong(), out, key, prefix)
+        val id = UUID.randomUUID()
+        blobs[id] = out.toByteArray()
+        onProgress?.invoke(0.5)
+        onProgress?.invoke(1.0)
+        return UploadedBlob(id, B64.encode(key), plain.size.toLong(), blobs.getValue(id).size.toLong())
+    }
+
+    override suspend fun downloadFileInto(
+        mediaObjectId: UUID,
+        keyBase64: String,
+        plainSize: Long,
+        token: String,
+        targetMessageId: UUID,
+        onProgress: ((Double) -> Unit)?,
+    ) {
+        fileDownloads++
+        gate?.await()
+        val sealed = blobs[mediaObjectId] ?: throw ApiError.Server("NOT_FOUND", "Media content not found.", 404)
+        val key = B64.decodeStrict(keyBase64) ?: throw CryptoError.OpenFailed
+        if (sealed.size.toLong() != Shrf1.sealedSize(plainSize)) throw MediaCrypto.MediaError.DecryptFailed
+        val out = ByteArrayOutputStream()
+        Shrf1.open(sealed.inputStream(), plainSize, out, key)
+        onProgress?.invoke(1.0)
+        media.save(targetMessageId, out.toByteArray())
+    }
+
+    /** A SHRF1 blob the server holds, opened with [keyBase64]. */
+    fun openFile(mediaObjectId: UUID, keyBase64: String, plainSize: Long): ByteArray {
+        val out = ByteArrayOutputStream()
+        Shrf1.open(blobs.getValue(mediaObjectId).inputStream(), plainSize, out, B64.decodeStrict(keyBase64)!!)
+        return out.toByteArray()
     }
 
     /** What the server holds for [mediaObjectId], opened with [keyBase64]. */

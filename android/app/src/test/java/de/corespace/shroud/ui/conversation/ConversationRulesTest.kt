@@ -126,7 +126,7 @@ class ConversationRulesTest {
     @Test
     fun menuActionTitlesAreTheDesignsCopy() {
         assertEquals(
-            listOf("Reply", "Copy", "Copy Link", "Edit", "Pin", "Forward", "Select", "Delete", "More"),
+            listOf("Reply", "Copy", "Copy Link", "Save to Downloads", "Share", "Edit", "Pin", "Forward", "Select", "Delete", "More"),
             MessageMenuAction.entries.map { it.title },
         )
         assertEquals(listOf(MessageMenuAction.Delete), MessageMenuAction.entries.filter { it.isDestructive })

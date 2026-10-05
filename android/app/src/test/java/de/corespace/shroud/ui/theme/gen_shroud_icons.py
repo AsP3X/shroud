@@ -50,10 +50,11 @@ LUCIDE = [
 ]
 PHOSPHOR = [
     # fill
-    "arrow-bend-up-left-fill", "battery-warning-fill", "bell-fill", "bell-ringing-fill", "bell-slash-fill",
+    "android-logo-fill", "arrow-bend-up-left-fill", "battery-warning-fill", "bell-fill", "bell-ringing-fill", "bell-slash-fill",
     "bookmark-simple-fill", "camera-fill", "camera-rotate-fill", "chats-circle-fill",
     "chats-teardrop-fill", "check-circle-fill", "circle-half-fill",
-    "desktop-fill", "device-mobile-fill", "device-tablet-fill", "file-fill", "folder-simple-fill",
+    "desktop-fill", "device-mobile-fill", "device-tablet-fill", "file-doc-fill", "file-fill", "file-image-fill",
+    "file-pdf-fill", "file-ppt-fill", "file-text-fill", "file-video-fill", "file-xls-fill", "folder-simple-fill",
     "gear-six-fill", "gift-fill", "hard-drive-fill", "hard-drives-fill", "heart-fill",
     "image-fill", "info-fill", "key-fill", "laptop-fill", "lock-fill", "lock-simple-fill",
     "lock-simple-open-fill", "map-pin-fill", "microphone-fill", "microphone-slash-fill",
@@ -68,7 +69,7 @@ PHOSPHOR = [
     "arrow-up-bold", "arrow-up-right-bold", "caret-down-bold", "caret-left-bold",
     "caret-right-bold", "caret-up-bold", "cell-signal-slash-bold", "check-bold",
     "dots-three-bold", "export-bold", "identification-card-bold", "magnifying-glass-bold",
-    "plus-bold", "x-bold",
+    "plus-bold", "question-bold", "x-bold",
     # regular
     "arrow-bend-up-left", "arrow-bend-up-right", "arrow-u-up-left", "bell", "bell-slash",
     "caret-left", "caret-right", "caret-up-down", "chat-circle-dots", "check", "circle", "copy",

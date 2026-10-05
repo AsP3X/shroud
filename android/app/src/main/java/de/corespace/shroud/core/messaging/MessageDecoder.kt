@@ -5,6 +5,7 @@ import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.OpenAs
 import de.corespace.shroud.core.crypto.PeerLocks
+import de.corespace.shroud.core.media.files.FileNames
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
@@ -201,13 +202,13 @@ class MessageDecoder(
         }
         // `:97-116`: the bytes reached the media cache meanwhile.
         val holdsMedia = existing.kind == ChatMessageKind.Image || existing.kind == ChatMessageKind.Voice ||
-            existing.kind == ChatMessageKind.Video || existing.hasLargeLinkImage
+            existing.kind == ChatMessageKind.Video || existing.kind == ChatMessageKind.File || existing.hasLargeLinkImage
         if (!merged.hasFullMedia && holdsMedia && hasMedia(dto.id)) merged = merged.copy(hasFullMedia = true)
         // `:117-133`: iOS 26/27's JSONDecoder failed the payload and stamped every media note a photo.
         if (isMedia && existing.kind == ChatMessageKind.Image) {
             val plain = withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
             val payload = plain?.let(MediaMessagePayload::parse)
-            if (plain != null && payload != null && (payload.isVoice || payload.isVideo || payload.isLink)) {
+            if (plain != null && payload != null && (payload.isFile || payload.isVoice || payload.isVideo || payload.isLink)) {
                 return decodeMedia(base, plain)
             }
         }
@@ -261,9 +262,9 @@ class MessageDecoder(
 
     /**
      * A media bubble from its payload and the local cache only (`decodeMedia`,
-     * `MessageDecoder.swift:301-434`): a large link image (a text bubble), a voice note, a video, or a
-     * photo; "Media" when neither a payload nor bytes exist. A video shows its poster only once the
-     * video itself is on the device (`:382-383`).
+     * `MessageDecoder.swift:301-434`): a file, a large link image (a text bubble), a voice note, a
+     * video, or a photo; "Media" when neither a payload nor bytes exist. A video shows its poster
+     * only once the video itself is on the device (`:382-383`).
      */
     private fun decodeMedia(base: Base, plain: ByteArray): ChatMessage {
         val dto = base.dto
@@ -271,6 +272,22 @@ class MessageDecoder(
         val payload = MediaMessagePayload.parse(plain)
         val preview = payload?.previewJpeg?.let(Bytes::adopt)
 
+        if (payload != null && payload.isFile) {
+            // Before the MIME sniffing below (docs/file-sharing.md §1): a PDF or an `image/*` file
+            // is a file. The name is cleaned again here; its type comes from that name, never `mime`.
+            return base.message(
+                text = payload.c?.let(WireText::trimWhitespacesAndNewlines).orEmpty(),
+                kind = ChatMessageKind.File,
+                mediaObjectId = dto.mediaObjectId,
+                imageWidth = payload.w.takeIf { it > 0 },
+                imageHeight = payload.h.takeIf { it > 0 },
+                hasFullMedia = cached,
+                previewJpeg = preview,
+                mediaByteCount = payload.s,
+                replyTo = payload.re,
+                fileName = FileNames.clean(payload.n.orEmpty()),
+            )
+        }
         if (payload != null && payload.isLink) {
             // `:314-337`.
             return base.message(
@@ -354,6 +371,7 @@ class MessageDecoder(
             transcript: String? = null,
             replyTo: MessageReplyReference? = null,
             linkPreview: LinkPreview? = null,
+            fileName: String? = null,
         ) = ChatMessage(
             id = dto.id,
             peerUserId = peer,
@@ -377,6 +395,7 @@ class MessageDecoder(
             transcript = transcript,
             replyTo = replyTo,
             linkPreview = linkPreview,
+            fileName = fileName,
         )
     }
 

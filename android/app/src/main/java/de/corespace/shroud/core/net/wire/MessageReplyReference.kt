@@ -33,6 +33,9 @@ data class MessageReplyReference private constructor(
         Image("image"),
         Video("video"),
         Voice("voice"),
+
+        /** A file (docs/file-sharing.md §1): `x` is its name; old builds read the unknown kind as text and show `x`. */
+        File("file"),
         ;
 
         /** Label shown in the quote when there is no text of its own; none for text. */
@@ -42,6 +45,7 @@ data class MessageReplyReference private constructor(
                 Image -> "Photo"
                 Video -> "Video"
                 Voice -> "Voice message"
+                File -> "File"
             }
 
         companion object {

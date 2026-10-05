@@ -124,20 +124,26 @@ data class StoredMessage(
     val reactions: List<StoredReaction>? = null,
     /** Server `created_at` as sent; absent on rows written before history cursors. */
     val createdAtWire: String? = null,
+    /**
+     * A file message's cleaned name and size (docs/file-sharing.md): kept in the row because a file
+     * still waiting to be sent has no payload to re-attach them from. Absent for every other kind.
+     */
+    val fileName: String? = null,
+    val fileSize: Long? = null,
 ) {
     override fun toString(): String = "StoredMessage(id=$id, kind=$kind, deleted=$deleted, receipt=$receipt)"
 
     /**
      * The bubble this row stores (`toChatMessage`, `LocalMessageStore.swift:139-188`).
      * [hasFullMedia] answers whether the media cache holds the decrypted bytes of a message id; it
-     * is asked only for kinds that carry media: photos, voice, video, and a text message whose link
-     * preview has a large image (`:145-160`).
+     * is asked only for kinds that carry media: photos, voice, video, files, and a text message whose
+     * link preview has a large image (`:145-160`).
      */
     fun toChatMessage(hasFullMedia: (UUID) -> Boolean): ChatMessage {
         val kind = ChatMessageKind.fromStorageKey(kind) ?: ChatMessageKind.Text
         val preview = linkPreview?.let(LinkPreview::parse)
         val media = when (kind) {
-            ChatMessageKind.Image, ChatMessageKind.Voice, ChatMessageKind.Video -> hasFullMedia(id)
+            ChatMessageKind.Image, ChatMessageKind.Voice, ChatMessageKind.Video, ChatMessageKind.File -> hasFullMedia(id)
             // A link preview's large image is stored like a photo.
             ChatMessageKind.Text -> preview != null && mediaObjectId != null && hasFullMedia(id)
             ChatMessageKind.Todo -> false
@@ -166,6 +172,8 @@ data class StoredMessage(
             replyTo = replyTo?.let(MessageReplyReference::parse),
             linkPreview = preview,
             reactions = reactions.orEmpty().map { MessageReaction(it.userId, it.emojis, it.seq) },
+            mediaByteCount = if (kind == ChatMessageKind.File) fileSize else null,
+            fileName = if (kind == ChatMessageKind.File) fileName else null,
         )
     }
 
@@ -198,6 +206,8 @@ data class StoredMessage(
             linkPreview = message.linkPreview?.wire(),
             reactions = message.reactions.takeIf { it.isNotEmpty() }?.map { StoredReaction(it.userId, it.emojis, it.seq) },
             createdAtWire = message.createdAtWire,
+            fileName = if (message.kind == ChatMessageKind.File) message.fileName else null,
+            fileSize = if (message.kind == ChatMessageKind.File) message.mediaByteCount else null,
         )
 
         /** A stored waveform outside 0…255 (iOS would refuse the row) is dropped, the message kept. */

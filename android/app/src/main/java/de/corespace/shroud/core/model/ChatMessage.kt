@@ -1,6 +1,9 @@
 package de.corespace.shroud.core.model
 
 import androidx.compose.runtime.Immutable
+import de.corespace.shroud.core.media.files.FileCopy
+import de.corespace.shroud.core.media.files.FileType
+import de.corespace.shroud.core.media.files.FileTypes
 import de.corespace.shroud.core.net.wire.LinkPreview
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import java.time.Instant
@@ -16,6 +19,9 @@ enum class ChatMessageKind(val storageKey: String) {
     Voice("voice"),
     Video("video"),
     Todo("todo"),
+
+    /** A document sent as it is (docs/file-sharing.md): `t: "file"`, its name in [ChatMessage.fileName]. */
+    File("file"),
     ;
 
     companion object {
@@ -62,7 +68,8 @@ data class ChatMessage(
     val senderUserId: UUID,
     /**
      * Body, caption or stand-in label: "Photo", "Video", "Voice message", the transcript of a voice
-     * message, "Message deleted", "[Unable to decrypt]", "Media", "[Binary message]".
+     * message, "Message deleted", "[Unable to decrypt]", "Media", "[Binary message]". A file's is its
+     * caption only ("" without one): the bubble names it by [fileName].
      */
     val text: String,
     /** Server time (local time while optimistic). */
@@ -85,8 +92,10 @@ data class ChatMessage(
     val posterJpeg: Bytes? = null,
     /** Envelope `th` JPEG or blurred link placeholder, ≤ 6 KiB (iOS `previewData`). */
     val previewJpeg: Bytes? = null,
-    /** Plaintext size from the payload `s`, for the download chip. */
+    /** Plaintext size from the payload `s`, for the download chip (a file's size, required on the wire). */
     val mediaByteCount: Long? = null,
+    /** A file's name, cleaned (docs/file-sharing.md §5); null for every other kind. */
+    val fileName: String? = null,
     /** Voice and video duration (iOS `voiceDurationMs`). */
     val durationMs: Int? = null,
     /** 0…255 per bar. */
@@ -123,15 +132,31 @@ val ChatMessage.hasLargeLinkImage: Boolean
 val ChatMessage.needsLinkImageDownload: Boolean
     get() = hasLargeLinkImage && !hasFullMedia && !deleted
 
-/** A photo or video whose full bytes are not on this device: preview + download (`MessagingController.swift:323-330`). */
+/**
+ * A photo, video or file whose full bytes are not on this device: preview + download
+ * (`MessagingController.swift:323-330`). A file of an unsupported type is never downloaded
+ * (docs/file-sharing.md §4).
+ */
 val ChatMessage.needsMediaDownload: Boolean
     get() {
         if (mediaObjectId == null || deleted) return false
         return when (kind) {
             ChatMessageKind.Image, ChatMessageKind.Video -> !hasFullMedia
+            ChatMessageKind.File -> !hasFullMedia && fileType != null
             else -> false
         }
     }
+
+/** A file message's type from its cleaned name (docs/file-sharing.md §4); null for other kinds and unsupported files. */
+val ChatMessage.fileType: FileType?
+    get() = if (kind == ChatMessageKind.File) fileName?.let(FileTypes::forName) else null
+
+/**
+ * What the chat list and a notification say for this message (docs/file-sharing.md §7
+ * "Elsewhere"): a file's caption, else its name; every other kind's [ChatMessage.text].
+ */
+val ChatMessage.previewText: String
+    get() = if (kind == ChatMessageKind.File) text.trim().ifEmpty { fileName ?: FileCopy.FILE } else text
 
 /**
  * The small JPEG a bubble can draw at once (`displayPreviewData`, `MessagingController.swift:333-336`):
@@ -162,12 +187,15 @@ val ChatMessage.replyReference: MessageReplyReference?
             ChatMessageKind.Image -> MessageReplyReference.Kind.Image
             ChatMessageKind.Video -> MessageReplyReference.Kind.Video
             ChatMessageKind.Voice -> MessageReplyReference.Kind.Voice
+            ChatMessageKind.File -> MessageReplyReference.Kind.File
             ChatMessageKind.Text, ChatMessageKind.Todo -> MessageReplyReference.Kind.Text
         }
         val snippet = when (kind) {
             ChatMessageKind.Image -> if (text == "Photo" || text == "Media") "" else text
             ChatMessageKind.Video -> if (text == "Video" || text == "Media") "" else text
             ChatMessageKind.Voice -> ""
+            // `x` = the file name (docs/file-sharing.md §1): old builds show it as a text quote.
+            ChatMessageKind.File -> fileName.orEmpty()
             ChatMessageKind.Text, ChatMessageKind.Todo -> text
         }
         return MessageReplyReference(messageId = id, senderUserId = senderUserId, kind = quotedKind, snippet = snippet)

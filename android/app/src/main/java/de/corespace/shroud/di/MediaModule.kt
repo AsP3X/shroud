@@ -18,8 +18,11 @@ import de.corespace.shroud.core.media.capture.CameraXSession
 import de.corespace.shroud.core.media.capture.ShroudCameraCapture
 import de.corespace.shroud.core.media.library.MediaStorePhotoLibrary
 import de.corespace.shroud.core.media.library.PhotoLibrary
+import de.corespace.shroud.core.media.files.FileIntake
+import de.corespace.shroud.core.media.share.FileSharing
 import de.corespace.shroud.core.media.share.MediaSharing
 import de.corespace.shroud.core.media.share.MemoryMediaSharing
+import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import java.io.File
 import java.util.UUID
 
@@ -34,7 +37,8 @@ import java.util.UUID
  * - [dataSourceFactory] / [metadataSource] — players and retrievers read media without
  *   decrypted files (`SealedMediaDataSource`, `SealedMediaDataSourceMdr`).
  * - [sharing] — in-memory share grants and MediaStore saves. [sharingIfBuilt] is null until the
- *   first read, so a wipe or a lock does not build it just to revoke.
+ *   first read, so a wipe or a lock does not build it just to revoke. [fileSharing] is the same
+ *   object's file half; [fileIntake] reads picked files.
  * - [camera] — CameraX capture into `cacheDir/shroud-*` (never MediaStore).
  * - `EnvelopePreview.chatPreviewJpeg`, `ByteCountLabel.format` and `MediaEnvelopeBudget` are
  *   stateless objects; [chatPreviewJpeg] is here for packages that take it as a function.
@@ -71,14 +75,35 @@ class MediaModule(container: AppContainer) : AppModule(container) {
             context = container.appContext,
             load = { id -> localMedia.readAll(id) },
             clock = container.clock,
+            openReader = { id -> localMedia.openReader(id) },
         )
     }
 
     /** Decrypted bytes for the share sheet, and Save to Gallery. */
     val sharing: MediaSharing by sharingLazy
 
+    /**
+     * Open, share and Save to Downloads of files (docs/file-sharing.md §7, §8): the same grants as
+     * [sharing], so [MediaSharing.revokeAll] on a lock or a wipe drops these too.
+     */
+    val fileSharing: FileSharing get() = sharingLazy.value
+
+    /** What the file picker handed back, named, sized and checked (docs/file-sharing.md §2, §4, §5). */
+    val fileIntake: FileIntake by lazy { FileIntake(container.appContext.contentResolver) }
+
     /** [sharing] when something already built it. A lock or a wipe must not construct it just to revoke. */
     val sharingIfBuilt: MediaSharing? get() = if (sharingLazy.isInitialized()) sharing else null
+
+    /**
+     * For `MessagingController.registerArtifactSink`: a purged message (deleted for me or for
+     * everyone, its chat deleted, a tombstone) loses its share and file grants at once, open
+     * descriptors included (docs/file-sharing.md §8). Never builds [sharing] just to revoke.
+     */
+    val shareArtifactSink: MessageArtifactSinks = object : MessageArtifactSinks {
+        override fun onPurged(messageIds: Collection<UUID>) {
+            sharingIfBuilt?.revoke(messageIds)
+        }
+    }
 
     /** Photo and video capture into [de.corespace.shroud.core.storage.SensitiveTempFiles]. */
     val camera: CameraCapture by lazy {

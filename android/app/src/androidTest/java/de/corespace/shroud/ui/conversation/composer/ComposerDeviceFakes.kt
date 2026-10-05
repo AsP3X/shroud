@@ -8,8 +8,13 @@ import de.corespace.shroud.core.links.LinkPreviewException
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileIntake
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.library.LibraryAccess
 import de.corespace.shroud.core.media.library.LibraryItem
+import de.corespace.shroud.core.media.share.FileOpenOutcome
+import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import de.corespace.shroud.core.media.video.VideoProbe
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
@@ -90,6 +95,12 @@ internal class DeviceComposeServices(override val sendScope: CoroutineScope) : C
     override suspend fun ensureImageLoaded(message: ChatMessage) = Unit
     override suspend fun ensureVideoLoaded(message: ChatMessage) = Unit
     override fun cancelMediaDownload(messageId: UUID) = Unit
+    override suspend fun inspectFiles(uris: List<Uri>): FileIntake.Result = FileIntake.Result(emptyList(), emptyList())
+    override suspend fun sendFile(file: PickedFile, peer: UUID, caption: String, replyTo: MessageReplyReference?): String? = null
+    override suspend fun ensureFileLoaded(message: ChatMessage) = Unit
+    override suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome = FileOpenOutcome.Refused("")
+    override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? = null
+    override suspend fun saveFileToDownloads(messageId: UUID, fileName: String): SaveOutcome = SaveOutcome.Failed("")
     override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable = AutoCloseable {}
     override fun contactUsernames(): List<String> = emptyList()
 

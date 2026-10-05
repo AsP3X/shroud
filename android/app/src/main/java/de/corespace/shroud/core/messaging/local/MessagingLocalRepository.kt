@@ -456,10 +456,11 @@ class MessagingLocalRepository(
 
     /**
      * Fills the preview and byte count from the cached media payload (`attachEnvelopePreview`,
-     * `:87-103`) for photos, videos and large link images; a video keeps the preview as its poster.
+     * `:87-103`) for photos, videos, files and large link images; a video keeps the preview as its poster.
      */
     private fun attachEnvelopePreview(message: ChatMessage): ChatMessage {
-        val carries = message.kind == ChatMessageKind.Image || message.kind == ChatMessageKind.Video || message.hasLargeLinkImage
+        val carries = message.kind == ChatMessageKind.Image || message.kind == ChatMessageKind.Video ||
+            message.kind == ChatMessageKind.File || message.hasLargeLinkImage
         if (!carries) return message
         val plain = plaintextCache.data(message.id, message.senderUserId) ?: return message
         val payload = try {

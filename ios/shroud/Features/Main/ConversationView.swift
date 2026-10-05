@@ -60,6 +60,13 @@ struct ConversationView: View {
     /// True when the picker was opened from compose, so its results append instead of replace.
     @State private var pickerAppendsToDraft = false
     @State private var showCamera = false
+    /// The document picker behind the attach sheet's File row.
+    @State private var showFileImporter = false
+    /// Files copied in from the picker, waiting in the file composer (plaintext in `tmp/`).
+    @State private var stagedFiles: [PickedFile] = []
+    @State private var showFileComposer = false
+    /// A received file's open or share, waiting on its warning (§6 of docs/file-sharing.md).
+    @State private var pendingFileAction: PendingFileAction?
     @State private var isSendingMedia = false
     /// Message IDs currently downloading full media (Telegram-style manual download).
     @State private var mediaDownloadIDs: Set<UUID> = []
@@ -212,7 +219,7 @@ struct ConversationView: View {
     }
 
     var body: some View {
-        chatSurface
+        chatSurfaceWithFiles
             .overlay(alignment: .bottomTrailing) { jumpToLatestLayer }
             .overlay {
                 if let focusedMenu {
@@ -227,7 +234,7 @@ struct ConversationView: View {
             .overlay { videoPlayerLayer }
             .overlay { sendingMediaLayer }
             .confirmationDialog(
-                "Delete message?",
+                pendingDelete?.message.kind == .file ? "Delete this file?" : "Delete message?",
                 isPresented: deleteDialogBinding,
                 titleVisibility: .visible,
                 presenting: pendingDelete
@@ -275,6 +282,62 @@ struct ConversationView: View {
         Binding(
             get: { pendingDelete != nil },
             set: { if !$0 { pendingDelete = nil } }
+        )
+    }
+
+    /// File sharing's presentations: the document picker, the file composer and the warning
+    /// a received app or macro file asks before it is opened or shared.
+    private var chatSurfaceWithFiles: some View {
+        chatSurface
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: SharedFile.pickerTypes,
+                allowsMultipleSelection: true
+            ) { result in
+                Task { await loadPickedFiles(result) }
+            }
+            .sheet(isPresented: $showFileComposer, onDismiss: discardStagedFiles) {
+                FileComposeSheet(
+                    files: stagedFiles,
+                    onRemove: { file in
+                        file.cleanup()
+                        stagedFiles.removeAll { $0.id == file.id }
+                        if stagedFiles.isEmpty { showFileComposer = false }
+                    },
+                    onCancel: { showFileComposer = false },
+                    onSend: { caption in
+                        let files = stagedFiles
+                        // Handed to the sends: the dismissal must not delete them.
+                        stagedFiles = []
+                        showFileComposer = false
+                        let reference = outgoingReplyReference
+                        clearReply()
+                        pinToBottomToken &+= 1
+                        Task { await sendPickedFiles(files, caption: caption, replyTo: reference) }
+                    }
+                )
+            }
+            // An alert, not a confirmation dialog: iOS 26 draws no Cancel in the anchored one.
+            .alert(
+                pendingFileAction?.warning.dialogTitle ?? "",
+                isPresented: fileWarningBinding,
+                presenting: pendingFileAction
+            ) { pending in
+                Button("Cancel", role: .cancel) { pendingFileAction = nil }
+                    .keyboardShortcut(.defaultAction)
+                Button("Continue", role: .destructive) {
+                    pendingFileAction = nil
+                    performFileAction(pending.kind, for: pending.message)
+                }
+            } message: { pending in
+                Text(pending.warning.dialogMessage(sender: peerUsername))
+            }
+    }
+
+    private var fileWarningBinding: Binding<Bool> {
+        Binding(
+            get: { pendingFileAction != nil },
+            set: { if !$0 { pendingFileAction = nil } }
         )
     }
 
@@ -926,6 +989,10 @@ struct ConversationView: View {
                                     onTap: (message.presentedKind == .image || message.presentedKind == .video)
                                         ? {
                                             handleMediaTap(message)
+                                        }
+                                        : message.presentedKind == .file
+                                        ? {
+                                            handleFileRowTap(message)
                                         }
                                         : nil,
                                     // Quick reaction on text only: other bubbles have controls
@@ -1640,6 +1707,28 @@ struct ConversationView: View {
                 reactions: reactionChips(for: message),
                 onReactionTap: onReactionTap
             )
+        case .file:
+            FileMessageBubble(
+                message: message,
+                time: messaging.clockTimeLabel(for: message.createdAt),
+                transfer: key.transfer,
+                onTap: {
+                    fileAction(.open, for: message)
+                },
+                onCancelDownload: {
+                    cancelDownload(message)
+                },
+                onRetry: {
+                    retryFile(message)
+                },
+                frameReportID: message.id,
+                reply: reply,
+                onReplyTap: message.replyTo.map { reference in
+                    { jumpToQuoted(reference.messageID) }
+                },
+                reactions: reactionChips(for: message),
+                onReactionTap: onReactionTap
+            )
         case .text:
             MessageBubbleView(
                 text: message.text,
@@ -1734,7 +1823,9 @@ struct ConversationView: View {
             } else {
                 toast = .failure("Camera is not available on this device.")
             }
-        case .file, .location, .contact, .music, .gift, .stickers:
+        case .file:
+            showFileImporter = true
+        case .location, .contact, .music, .gift, .stickers:
             showComingSoon(option.title)
         }
     }
@@ -2040,7 +2131,8 @@ struct ConversationView: View {
         let actions = MessageMenuAction.primary(
             canReply: live.canBeQuoted,
             canCopy: copyableText(live) != nil,
-            hasLink: copyableLink(in: message) != nil
+            hasLink: copyableLink(in: message) != nil,
+            canShare: canShareFile(live)
         )
         return MessageMenuOverlay(
             sourceGlobalFrame: session.sourceGlobalFrame,
@@ -2217,6 +2309,13 @@ struct ConversationView: View {
             Haptics.notification(.success)
         case .reply:
             startReply(to: message)
+        case .share:
+            // Once the lifted bubble is back in its slot, so the sheet doesn't rise over it.
+            let settle = reduceMotion ? Motion.reducedDuration : Motion.menuDropDuration
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(settle + 0.03))
+                fileAction(.share, for: message)
+            }
         case .edit, .pin, .forward, .select, .moreReactions:
             showComingSoon(action.title)
         case .delete:
@@ -2238,6 +2337,8 @@ struct ConversationView: View {
         case .image: (m.text == "Photo" || m.text == "Media") ? "" : m.text
         case .video: (m.text == "Video" || m.text == "Media") ? "" : m.text
         case .voice: m.transcript ?? ""
+        // A file's `text` is its caption alone; the name is not what Copy is for.
+        case .file: m.text
         }
         return raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : raw
     }
@@ -2251,6 +2352,9 @@ struct ConversationView: View {
         }
         if copyableLink(in: message) != nil {
             Button("Copy Link") { handleMenu(.copyLink, message: message) }
+        }
+        if canShareFile(message) {
+            Button("Share") { fileAction(.share, for: message) }
         }
         Button("Delete") { handleMenu(.delete, message: message) }
     }
@@ -2425,6 +2529,194 @@ struct ConversationView: View {
                 )
             }
         }
+    }
+
+    // MARK: - Files
+
+    /// A received file's open or share, held while its warning is up.
+    private struct PendingFileAction: Identifiable {
+        enum Kind {
+            /// Quick Look (after the content check).
+            case open
+            /// The share sheet (Save to Files lives there; no content check needed).
+            case share
+        }
+
+        let id = UUID()
+        let message: MessagingController.ChatMessage
+        let kind: Kind
+        let warning: SharedFile.Warning
+    }
+
+    /// The document picker's picks: checked, copied in, then the file composer.
+    ///
+    /// Human: One toast per pick, for the first file that can't go (or for an eleventh one);
+    /// the rest still reach the composer.
+    private func loadPickedFiles(_ result: Result<[URL], any Error>) async {
+        guard case let .success(urls) = result, !urls.isEmpty else { return }
+        var refusal = urls.count > SharedFile.maxFilesPerSend ? SharedFile.tooManyRefusal : nil
+        let kept = Array(urls.prefix(SharedFile.maxFilesPerSend))
+        // Copying can mean a provider download; never on the main actor.
+        let outcomes = await Task.detached(priority: .userInitiated) {
+            kept.map(PickedFile.copyIn)
+        }.value
+
+        var picked: [PickedFile] = []
+        for outcome in outcomes {
+            switch outcome {
+            case let .success(file):
+                picked.append(file)
+            case let .failure(reason):
+                if refusal == nil { refusal = reason.message }
+            }
+        }
+        if let refusal {
+            toast = .failure(refusal, duration: .seconds(4))
+            Haptics.notification(.error)
+        }
+        guard !picked.isEmpty else { return }
+        stagedFiles = picked
+        showFileComposer = true
+    }
+
+    /// The composer closed without sending: its copies go.
+    private func discardStagedFiles() {
+        stagedFiles.forEach { $0.cleanup() }
+        stagedFiles = []
+    }
+
+    /// Sends the composed files in order; the caption and the quote go on the first only.
+    /// Each bubble carries its own ring, so there is no modal spinner.
+    private func sendPickedFiles(
+        _ files: [PickedFile],
+        caption: String,
+        replyTo: MessageReplyReference?
+    ) async {
+        guard !files.isEmpty else { return }
+        defer { files.forEach { $0.cleanup() } }
+        var firstError: String?
+        for (index, file) in files.enumerated() {
+            let error = await messaging.sendFile(
+                file,
+                to: peerUserID,
+                caption: index == 0 ? caption : "",
+                replyTo: index == 0 ? replyTo : nil
+            )
+            if let error, firstError == nil { firstError = error }
+        }
+        if let firstError {
+            toast = .failure(firstError, duration: .seconds(4))
+            Haptics.notification(.error)
+        } else {
+            Haptics.notification(.success)
+        }
+    }
+
+    private func retryFile(_ message: MessagingController.ChatMessage) {
+        Task {
+            let error = await messaging.retryFailedFile(messageID: message.id, peerUserID: peerUserID)
+            if let error {
+                toast = .failure(error)
+                Haptics.notification(.error)
+            } else {
+                Haptics.notification(.success)
+            }
+        }
+    }
+
+    /// A tap that reached the row beside a file bubble: what a tap on the bubble would do.
+    private func handleFileRowTap(_ message: MessagingController.ChatMessage) {
+        let live = liveMessage(message)
+        guard !live.deleted, live.fileType != nil else { return }
+        if let transfer = messaging.mediaTransfers[live.id] {
+            if !transfer.isUpload { cancelDownload(live) }
+            return
+        }
+        if live.isMine, live.receipt == .failed {
+            retryFile(live)
+            return
+        }
+        fileAction(.open, for: live)
+    }
+
+    /// Share is offered for a file Shroud can open and that is, or can get, on this device.
+    private func canShareFile(_ message: MessagingController.ChatMessage) -> Bool {
+        message.kind == .file && !message.deleted && message.fileType != nil
+            && (message.fileStored || message.mediaObjectId != nil)
+    }
+
+    /// Opens or shares a file — after the warning when it is a received app or macro file.
+    private func fileAction(_ kind: PendingFileAction.Kind, for message: MessagingController.ChatMessage) {
+        // Backstop for the release of a hold that opened the message menu.
+        if kind == .open, isShowingMessageMenu { return }
+        let live = liveMessage(message)
+        guard !live.deleted, let type = live.fileType else { return }
+        if !live.isMine, let warning = type.warning {
+            pendingFileAction = PendingFileAction(message: live, kind: kind, warning: warning)
+            return
+        }
+        performFileAction(kind, for: live)
+    }
+
+    /// Downloads when needed, decrypts into `tmp/`, then Quick Look or the share sheet.
+    private func performFileAction(_ kind: PendingFileAction.Kind, for message: MessagingController.ChatMessage) {
+        Task {
+            var live = liveMessage(message)
+            if live.needsMediaDownload {
+                guard await downloadFile(live) else { return }
+                live = liveMessage(message)
+            }
+            // The reader left the chat while it downloaded: don't open over another screen.
+            guard messaging.activePeerID == peerUserID else { return }
+            let id = live.id
+            switch await messaging.openFile(live) {
+            case .failure(.unsupported):
+                return
+            case .failure(.notDownloaded):
+                toast = .failure("Could not download that file.")
+                Haptics.notification(.error)
+            case .failure(.damaged), .failure(.unreadable):
+                toast = .failure("Could not open that file.")
+                Haptics.notification(.error)
+            case let .success(opened):
+                switch kind {
+                case .open:
+                    // Saving and sharing stay possible; only a viewer is refused.
+                    guard opened.contentMatches else {
+                        messaging.releaseOpenedFile(messageID: id)
+                        if let type = live.fileType {
+                            toast = .failure(SharedFile.contentMismatch(type), duration: .seconds(4))
+                        }
+                        Haptics.notification(.error)
+                        return
+                    }
+                    FileViewerPresenter.shared.preview(opened.url, messageID: id) { [messaging] in
+                        messaging.releaseOpenedFile(messageID: id)
+                    }
+                case .share:
+                    FileViewerPresenter.shared.share(opened.url, messageID: id, from: bubbleFrames.frames[id]) { [messaging] in
+                        messaging.releaseOpenedFile(messageID: id)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fetches a file's sealed blob. RETURNS whether it is on this device now.
+    private func downloadFile(_ message: MessagingController.ChatMessage) async -> Bool {
+        guard !mediaDownloadIDs.contains(message.id) else { return false }
+        mediaDownloadIDs.insert(message.id)
+        defer { mediaDownloadIDs.remove(message.id) }
+        await messaging.ensureFileLoaded(for: message)
+        // Stopped from the ring: nothing went wrong.
+        if cancelledDownloadIDs.remove(message.id) != nil { return false }
+        guard liveMessage(message).fileStored else {
+            toast = .failure("Could not download that file.")
+            Haptics.notification(.error)
+            return false
+        }
+        Haptics.impact(.light)
+        return true
     }
 
     /// Built once: the viewer's list formats every photo in the thread on each pass.

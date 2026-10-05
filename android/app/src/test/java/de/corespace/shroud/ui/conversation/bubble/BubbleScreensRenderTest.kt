@@ -527,6 +527,39 @@ class BubbleScreensRenderTest {
         )
     }
 
+    // ---- 11 files (docs/file-sharing.md §7) ----
+
+    @Test
+    fun files() {
+        fun file(name: String, mine: Boolean, minute: Int, full: Boolean = true, caption: String = "", receipt: ReceiptStatus? = null, sendError: String? = null) =
+            message(
+                caption,
+                mine = mine,
+                time = at(12, minute),
+                kind = ChatMessageKind.File,
+                mediaObjectId = UUID.randomUUID(),
+                hasFullMedia = full,
+                mediaByteCount = 2_400_000,
+                receipt = receipt ?: if (mine) ReceiptStatus.Read else ReceiptStatus.Sent,
+                sendError = sendError,
+            ).copy(fileName = name)
+        val quoted = ReplyQuoteContent(PEER_NAME, "Can you send the numbers?", isStandIn = false, thumbnail = null, symbol = null)
+        val reference = MessageReplyReference(UUID.randomUUID(), PEER, MessageReplyReference.Kind.Text, "x")
+        both("11-files") {
+            listOf(
+                bubble(row(file("Quarterly report 2026 with a very long name that truncates.pdf", mine = false, minute = 1, full = false))),
+                bubble(row(file("Quarterly report 2026.pdf", mine = false, minute = 2, full = false), transfer = MediaTransfer(MediaTransfer.Phase.Transferring, isUpload = false, fraction = 0.4, totalBytes = 2_400_000))),
+                bubble(row(file("Budget.xlsm", mine = false, minute = 3, caption = "Q3 numbers"))),
+                bubble(row(file("app-release.apk", mine = false, minute = 4))),
+                bubble(row(file("Notes.docx", mine = true, minute = 5, caption = "Here you go").copy(replyTo = reference), quote = quoted)),
+                bubble(row(file("Slides.pptx", mine = true, minute = 6, receipt = ReceiptStatus.Sending), transfer = MediaTransfer(MediaTransfer.Phase.Transferring, isUpload = true, fraction = 0.7, totalBytes = 2_400_000))),
+                bubble(row(file("Old.doc", mine = true, minute = 7, receipt = ReceiptStatus.Failed, sendError = "Waiting for connection…"))),
+                bubble(row(file("script.sh", mine = false, minute = 8, full = false))),
+                bubble(row(file("photo.HEIC", mine = true, minute = 9).copy(reactions = listOf(reaction(PEER, "❤️", seq = 1))))),
+            )
+        }
+    }
+
     private companion object {
         const val RENDER_ENV = "SHROUD_RENDER_SCREENS"
         const val SETTLE_REAL_MS = 30L

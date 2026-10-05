@@ -2,10 +2,12 @@ package de.corespace.shroud.ui.conversation.menu
 
 import androidx.compose.ui.graphics.vector.ImageVector
 import de.corespace.shroud.core.links.LinkDetector
+import de.corespace.shroud.core.media.files.FileCopy
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.model.canBeQuoted
+import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.ui.theme.ShroudIcons
 
 /**
@@ -16,6 +18,8 @@ enum class MessageMenuAction(val title: String, val isDestructive: Boolean = fal
     Reply("Reply"),
     Copy("Copy"),
     CopyLink("Copy Link"),
+    SaveToDownloads(FileCopy.SAVE_TO_DOWNLOADS),
+    Share(FileCopy.SHARE),
     Edit("Edit"),
     Pin("Pin"),
     Forward("Forward"),
@@ -30,6 +34,8 @@ enum class MessageMenuAction(val title: String, val isDestructive: Boolean = fal
             Reply -> ShroudIcons.Reply
             Copy -> ShroudIcons.Copy
             CopyLink -> ShroudIcons.Link
+            SaveToDownloads -> ShroudIcons.Download
+            Share -> ShroudIcons.Share2
             Edit -> ShroudIcons.Pencil
             Pin -> ShroudIcons.Pin
             Forward -> ShroudIcons.Forward
@@ -43,13 +49,15 @@ enum class MessageMenuAction(val title: String, val isDestructive: Boolean = fal
          * The card's actions above "Select", in the design's order, leaving out what the message
          * can't do: "Reply" on one that can't be quoted (sending, failed, deleted), "Copy" when it
          * has no real text (a photo's "Photo" stand-in), "Copy Link" when it has no link
-         * (`MessageActionMenu.swift:821-830`). The card always appends [Select].
+         * (`MessageActionMenu.swift:821-830`). A file message adds "Save to Downloads" and "Share"
+         * ([fileActions], docs/file-sharing.md §7). The card always appends [Select].
          */
-        fun primary(canReply: Boolean = true, canCopy: Boolean = true, hasLink: Boolean = false): List<MessageMenuAction> {
-            val actions = ArrayList<MessageMenuAction>(6)
+        fun primary(canReply: Boolean = true, canCopy: Boolean = true, hasLink: Boolean = false, fileActions: Boolean = false): List<MessageMenuAction> {
+            val actions = ArrayList<MessageMenuAction>(8)
             if (canReply) actions += Reply
             if (canCopy) actions += Copy
             if (hasLink) actions += CopyLink
+            if (fileActions) actions += listOf(SaveToDownloads, Share)
             actions += listOf(Pin, Forward, Delete)
             return actions
         }
@@ -75,6 +83,8 @@ object MessageActions {
             ChatMessageKind.Image -> if (message.text == PHOTO || message.text == MEDIA) "" else message.text
             ChatMessageKind.Video -> if (message.text == VIDEO || message.text == MEDIA) "" else message.text
             ChatMessageKind.Voice -> message.transcript.orEmpty()
+            // A file's text is its caption (docs/file-sharing.md §7 "Copy copies the caption").
+            ChatMessageKind.File -> message.text
         }
         return if (raw.isBlank()) null else raw
     }
@@ -111,7 +121,16 @@ object MessageActions {
             canReply = live.canBeQuoted,
             canCopy = copyableText(live) != null,
             hasLink = hasLink,
+            fileActions = hasFileActions(live),
         )
+
+    /**
+     * "Save to Downloads" and "Share" for a file of a supported type that is not a tombstone or a
+     * failed send; one not on this phone yet downloads first (docs/file-sharing.md §6, §7).
+     */
+    fun hasFileActions(message: ChatMessage): Boolean =
+        message.kind == ChatMessageKind.File && !message.deleted && message.fileType != null &&
+            (message.hasFullMedia || message.mediaObjectId != null) && message.receipt != ReceiptStatus.Failed
 
     /** Stand-in texts the decoder writes (`MessagingController.swift`; messaging-core §9). */
     const val UNABLE_TO_DECRYPT = "[Unable to decrypt]"

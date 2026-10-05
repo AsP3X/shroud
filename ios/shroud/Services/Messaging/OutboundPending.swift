@@ -6,6 +6,8 @@ enum OutboundPendingItem: Equatable, Sendable {
     case image(messageID: UUID, peerID: UUID, caption: String)
     case video(messageID: UUID, peerID: UUID, caption: String)
     case voice(messageID: UUID, peerID: UUID)
+    /// The sealed blob and its payload (caption, quote, key) are already on disk.
+    case file(messageID: UUID, peerID: UUID)
 }
 
 /// Pure extraction of offline outbound work from in-memory threads.
@@ -47,6 +49,8 @@ enum OutboundPending {
                     )
                 case .voice:
                     item = .voice(messageID: message.id, peerID: peerID)
+                case .file:
+                    item = .file(messageID: message.id, peerID: peerID)
                 case .todo:
                     item = nil
                 }

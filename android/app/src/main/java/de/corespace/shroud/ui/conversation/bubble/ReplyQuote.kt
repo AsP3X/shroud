@@ -131,6 +131,11 @@ data class ReplyQuoteContent(
                         symbol = if (thumbnail != null) null else if (original.kind == ChatMessageKind.Image) ShroudIcons.Image else ShroudIcons.Video,
                     )
                 }
+                // A file is quoted by its name (docs/file-sharing.md §1); the label "File" stands in without one.
+                ChatMessageKind.File -> {
+                    val name = original.fileName.orEmpty()
+                    ReplyQuoteContent(author, name.ifEmpty { "File" }, isStandIn = name.isEmpty(), thumbnail = null, symbol = ShroudIcons.FileFill)
+                }
                 // Telegram quotes a voice note by name, not by its transcript (`:101-109`).
                 ChatMessageKind.Voice -> ReplyQuoteContent(author, "Voice message", isStandIn = true, thumbnail = null, symbol = ShroudIcons.Waveform)
                 // Pasted tables and runs of blank lines read as one line of prose (`:110-117`).
@@ -146,6 +151,7 @@ data class ReplyQuoteContent(
             MessageReplyReference.Kind.Image -> ShroudIcons.Image
             MessageReplyReference.Kind.Video -> ShroudIcons.Video
             MessageReplyReference.Kind.Voice -> ShroudIcons.Waveform
+            MessageReplyReference.Kind.File -> ShroudIcons.FileFill
         }
     }
 }

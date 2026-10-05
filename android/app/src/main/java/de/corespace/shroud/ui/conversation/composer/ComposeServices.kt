@@ -9,9 +9,14 @@ import de.corespace.shroud.core.links.LinkPreviewComposer
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileIntake
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.library.LibraryAccess
 import de.corespace.shroud.core.media.library.LibraryItem
 import de.corespace.shroud.core.media.library.PhotoLibrary
+import de.corespace.shroud.core.media.share.FileOpenOutcome
+import de.corespace.shroud.core.media.share.SaveOutcome
+import de.corespace.shroud.core.media.share.ShareTarget
 import de.corespace.shroud.core.media.video.VideoProbe
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
@@ -31,7 +36,8 @@ import java.util.UUID
  * port so [ComposeController] is tested with a fake. The production implementation is
  * [ContainerComposeServices]: messaging (W2-MSG-CORE), the recorder and the voice player (W2-VOICE),
  * transcription (W3-TRANSCRIPTION), link previews (W2-LINKS), photo decoding (W2-MEDIA-IMAGE),
- * video probing (W2-VIDEO) and contacts (W2-CONTACTS). Main-confined unless a member says otherwise.
+ * video probing (W2-VIDEO), contacts (W2-CONTACTS) and file sharing (K14: intake, send, download,
+ * open / share / Save to Downloads grants). Main-confined unless a member says otherwise.
  */
 internal interface ComposeServices {
     /**
@@ -67,6 +73,26 @@ internal interface ComposeServices {
     suspend fun ensureImageLoaded(message: ChatMessage)
     suspend fun ensureVideoLoaded(message: ChatMessage)
     fun cancelMediaDownload(messageId: UUID)
+
+    // ---- Files (docs/file-sharing.md; contract K14) ----
+
+    /** What the document picker handed back, named, sized and checked (`media.fileIntake.inspect`, off main). */
+    suspend fun inspectFiles(uris: List<Uri>): FileIntake.Result
+
+    /** One staged file (`messaging.sendFile`). */
+    suspend fun sendFile(file: PickedFile, peer: UUID, caption: String, replyTo: MessageReplyReference?): String?
+
+    /** A tapped file not on this phone (`messaging.ensureFileLoaded`). */
+    suspend fun ensureFileLoaded(message: ChatMessage)
+
+    /** A grant for `ACTION_VIEW` after the content check (`media.fileSharing.openTarget`). */
+    suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome
+
+    /** A grant for the share sheet (`media.fileSharing.fileShareTarget`). */
+    suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget?
+
+    /** Save to Downloads (`media.fileSharing.saveToDownloads`). */
+    suspend fun saveFileToDownloads(messageId: UUID, fileName: String): SaveOutcome
 
     /** Purges, locks and re-keys (`MessagingController.registerArtifactSink`). */
     fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable
@@ -183,6 +209,18 @@ internal class ContainerComposeServices(private val container: AppContainer) : C
     override suspend fun ensureImageLoaded(message: ChatMessage) = messaging.ensureImageLoaded(message)
     override suspend fun ensureVideoLoaded(message: ChatMessage) = messaging.ensureVideoLoaded(message)
     override fun cancelMediaDownload(messageId: UUID) = messaging.cancelMediaDownload(messageId)
+
+    override suspend fun inspectFiles(uris: List<Uri>): FileIntake.Result = container.media.fileIntake.inspect(uris)
+    override suspend fun sendFile(file: PickedFile, peer: UUID, caption: String, replyTo: MessageReplyReference?): String? =
+        messaging.sendFile(file, peer, caption, replyTo)
+    override suspend fun ensureFileLoaded(message: ChatMessage) = messaging.ensureFileLoaded(message)
+    override suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome =
+        container.media.fileSharing.openTarget(messageId, fileName)
+    override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? =
+        container.media.fileSharing.fileShareTarget(messageId, fileName)
+    override suspend fun saveFileToDownloads(messageId: UUID, fileName: String): SaveOutcome =
+        container.media.fileSharing.saveToDownloads(messageId, fileName)
+
     override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable = messaging.registerArtifactSink(sink)
     override fun contactUsernames(): List<String> = container.contacts.controller.contacts.value.map { it.username }
 

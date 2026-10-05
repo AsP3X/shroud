@@ -4,6 +4,7 @@ import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.links.LinkPreviewAttachment
 import de.corespace.shroud.core.media.MediaComposeQuality
 import de.corespace.shroud.core.media.MediaImageSource
+import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.edit.MediaEdits
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.model.ChatMessage
@@ -223,8 +224,18 @@ interface SendEngine {
         transcriptProvider: (suspend (messageId: UUID) -> String?)?,
     ): String?
 
+    /**
+     * One file sent as it is (docs/file-sharing.md): the bubble lands at once, the picked bytes stream
+     * into the sealed media cache, then up as SHRF1 with progress. The caption and the reply go on
+     * the first file of a send only — the caller's choice. A refusal or failure is the returned text.
+     */
+    suspend fun sendFile(file: PickedFile, storePeer: UUID, caption: String, replyTo: MessageReplyReference?): String?
+
     suspend fun retryFailedImage(messageId: UUID, storePeer: UUID): String?
     suspend fun retryFailedVideo(messageId: UUID, storePeer: UUID): String?
+
+    /** Re-sends a failed file from the sealed cache (a fresh key and prefix, the same bytes). */
+    suspend fun retryFailedFile(messageId: UUID, storePeer: UUID): String?
     suspend fun shareTranscript(transcript: String, voiceMessageId: UUID, storePeer: UUID)
 
     /** Sends whatever waited for the network. */
@@ -297,6 +308,9 @@ interface MediaLoader {
     suspend fun ensureVideoLoaded(message: ChatMessage)
     suspend fun ensureVoiceLoaded(message: ChatMessage)
     suspend fun ensureLinkImageLoaded(message: ChatMessage)
+
+    /** Downloads a supported file's SHRF1 blob into the sealed cache; only from an explicit tap. Cancellable through [cancel]. */
+    suspend fun ensureFileLoaded(message: ChatMessage)
 
     /** Cancels a download and ends its transfer; uploads cannot be cancelled. */
     fun cancel(messageId: UUID)

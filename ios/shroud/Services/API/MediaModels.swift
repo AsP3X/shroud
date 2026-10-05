@@ -43,7 +43,7 @@ struct MediaDownloadResponse: Decodable, Equatable, Sendable {
 /// preview (`th`) rides in this payload so the bubble can show something Telegram-style
 /// without fetching megabytes.
 nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
-    /// `"image"` / `"voice"` / `"video"`.
+    /// `"image"` / `"voice"` / `"video"` / `"link"` / `"file"`.
     var t: String
     var mime: String
     /// Image/video width, or `0` for voice.
@@ -68,6 +68,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var re: MessageReplyReference?
     /// Link preview metadata of a `t: "link"` message (the blob is its large image).
     var lp: LinkPreview? = nil
+    /// File name of a `t: "file"` message, cleaned by the sender; receivers clean it again.
+    var n: String? = nil
 
     static let kindImage = "image"
     static let kindVoice = "voice"
@@ -80,22 +82,31 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     /// previews reads `mime` and shows the picture as a photo with the text as its caption,
     /// which is the graceful fallback.
     static let kindLink = "link"
+    /// A document, PDF, Office file, original image or video, or APK (`docs/file-sharing.md`).
+    ///
+    /// Human: The blob is SHRF1, not one AES-GCM box, so nothing that reads a photo or a video
+    /// may ever get it. `t` is checked before the MIME sniffing old payloads rely on: an
+    /// `image/png` file is a file, whatever its `mime` says.
+    static let kindFile = "file"
+
+    /// A shared file (see `kindFile`).
+    var isFile: Bool { t == Self.kindFile }
 
     var isVoice: Bool {
         if t == Self.kindVoice { return true }
-        if t == Self.kindImage || t == Self.kindVideo || t == Self.kindLink { return false }
+        if t == Self.kindImage || t == Self.kindVideo || t == Self.kindLink || isFile { return false }
         return mime.hasPrefix("audio/")
     }
 
     var isImage: Bool {
         if t == Self.kindImage { return true }
-        if t == Self.kindVoice || t == Self.kindVideo || t == Self.kindLink { return false }
+        if t == Self.kindVoice || t == Self.kindVideo || t == Self.kindLink || isFile { return false }
         return mime.hasPrefix("image/")
     }
 
     var isVideo: Bool {
         if t == Self.kindVideo { return true }
-        if t == Self.kindImage || t == Self.kindVoice || t == Self.kindLink { return false }
+        if t == Self.kindImage || t == Self.kindVoice || t == Self.kindLink || isFile { return false }
         return mime.hasPrefix("video/")
     }
 
@@ -150,7 +161,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             th: string(object["th"]),
             s: int(object["s"]),
             re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:)),
-            lp: (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:))
+            lp: (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:)),
+            n: rawString(object["n"])
         )
     }
 
@@ -170,6 +182,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         if let s { object["s"] = s }
         if let re { object["re"] = re.wireObject }
         if let lp { object["lp"] = lp.wireObject }
+        if let n { object["n"] = n }
         return try JSONSerialization.data(withJSONObject: object)
     }
 
@@ -180,6 +193,12 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             return trimmed.isEmpty ? nil : trimmed
         }
         return nil
+    }
+
+    /// A string kept as sent: a file name's spaces are the name's own (cleaning trims them).
+    private static func rawString(_ value: Any?) -> String? {
+        guard let string = value as? String, !string.isEmpty else { return nil }
+        return string
     }
 
     private static func int(_ value: Any?) -> Int? {

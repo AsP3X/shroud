@@ -33,6 +33,7 @@ import { SettingsPane } from "../components/SettingsPane";
 import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
+import type { IdentityMaterial } from "../crypto/identity";
 import { loadIdentity } from "../crypto/store";
 import { displayContactName, placeholderName, syncContactNames } from "../contactNames";
 import {
@@ -65,6 +66,7 @@ import {
   replyRefFor,
   rewritePreview,
   tombstone,
+  sendFile,
   sendImage,
   sendLinkWithImage,
   sendText,
@@ -73,7 +75,18 @@ import {
   shareTranscript,
   type ChatMessage,
   type HistoryCursor,
+  type SealedFile,
 } from "../messaging";
+import { fileTypeOf, sanitizeFileName } from "../files";
+import type { ReplyRef } from "../reply";
+import {
+  adoptSentFile,
+  ensureFile,
+  forgetFiles,
+  rekeySentFile,
+  releaseFile,
+  sealForUpload,
+} from "../media/fileTransfer";
 import { saveMediaBlob } from "../crypto/mediaCache";
 import { loadPreview, redactPreviewsFor, replacePreview } from "../crypto/plaintextCache";
 import { adoptImage, ensureImage, forgetImages, rekeyImage, releaseImage } from "../media/images";
@@ -123,6 +136,20 @@ import {
 } from "../notifications/push";
 
 type PeerRef = { id: string; username: string };
+
+/** One file on its way out: kept whole across a retry, so the same sealed bytes go again. */
+type FileSend = {
+  file: File;
+  /** Cleaned (docs/file-sharing.md §5). */
+  name: string;
+  clientId: string;
+  localId: string;
+  peerId: string;
+  caption: string;
+  replyTo: ReplyRef | null;
+  /** Null until sealed; then reused by every retry. */
+  sealed: SealedFile | null;
+};
 
 /** Rounds a reaction save may lose to our other device writing first before its set stands. */
 const MAX_REACTION_REBASES = 3;
@@ -252,6 +279,8 @@ export function AppShell({ session }: { session: Session }) {
   const droppedSends = useRef(new Set<string>());
   /** Server id for an optimistic bubble, once the send has been accepted. */
   const confirmedSends = useRef(new Map<string, string>());
+  /** Files whose send failed, by bubble id: a retry uploads the same sealed bytes again. */
+  const failedFiles = useRef(new Map<string, FileSend>());
   /**
    * Highest reaction seq applied to the open chat. Starts at the newest page's snapshot: every
    * message loaded after that carries its own reactions, and changes to ones already on screen
@@ -291,6 +320,8 @@ export function AppShell({ session }: { session: Session }) {
     releaseImage(messageId);
     releaseVideo(messageId);
     releaseVoice(messageId);
+    releaseFile(messageId);
+    failedFiles.current.delete(messageId);
     forgetMessageLocally(messageId);
   }
 
@@ -1702,6 +1733,11 @@ export function AppShell({ session }: { session: Session }) {
     [session.token],
   );
 
+  const loadFile = useCallback(
+    (message: ChatMessage) => ensureFile(message, session.token),
+    [session.token],
+  );
+
   useEffect(() => () => stopVoice(), []);
   // Decrypted photos, videos and transcripts live only as long as the unlocked shell does.
   useEffect(
@@ -1709,6 +1745,7 @@ export function AppShell({ session }: { session: Session }) {
       forgetDecryptedState();
       forgetImages();
       forgetVideos();
+      forgetFiles();
       resetVideoWorker();
     },
     [],
@@ -2168,6 +2205,123 @@ export function AppShell({ session }: { session: Session }) {
     }
   }
 
+  /** Files from the file sheet: each its own message, sent as it is, the caption on the first. */
+  async function submitFiles(files: File[], caption: string) {
+    if (!selected || !identity || files.length === 0) return;
+    typingSender.stop();
+    recordingSender.stop();
+    const peerId = selected.id;
+    const material = identity;
+    const start = Date.now();
+    const reference = replyTo ? replyRefFor(replyTo) : null;
+    setReplyTo(null);
+    const jobs = files.map((file, index): { job: FileSend; optimistic: ChatMessage } => {
+      const clientId = crypto.randomUUID();
+      const localId = `pending:${clientId}`;
+      const name = sanitizeFileName(file.name);
+      const text = index === 0 ? caption.trim() : "";
+      // Opening our own bubble reads the picked file, never the network.
+      adoptSentFile(localId, file);
+      const optimistic: ChatMessage = {
+        id: localId,
+        senderUserId: session.user.id,
+        text: text || name,
+        caption: text || null,
+        fileName: name,
+        createdAt: new Date(start + index).toISOString(),
+        isMine: true,
+        deleted: false,
+        failed: false,
+        kind: "file",
+        mime: fileTypeOf(name)?.mime ?? null,
+        mediaBytes: file.size,
+        pending: true,
+        replyTo: index === 0 ? reference : null,
+      };
+      return {
+        job: { file, name, clientId, localId, peerId, caption: text, replyTo: optimistic.replyTo ?? null, sealed: null },
+        optimistic,
+      };
+    });
+    setThread((prev) => [...prev, ...jobs.map(({ optimistic }) => optimistic)]);
+    setSendingPeer(peerId);
+    setThreadError(null);
+    for (const { job } of jobs) await runFileSend(job, material);
+    setSendingPeer((current) => (current === peerId ? null : current));
+    try {
+      await refresh();
+    } catch (err) {
+      if (!alive.current) return;
+      setThreadError(err instanceof ApiError ? err.message : "Could not refresh chats.");
+    }
+  }
+
+  /** Seals (once), uploads and sends one file; a failure keeps it for `retryFile`. */
+  async function runFileSend(job: FileSend, material: IdentityMaterial) {
+    const { localId, peerId } = job;
+    try {
+      setTransfer(localId, { direction: "up", phase: "preparing", loaded: 0, total: job.file.size });
+      job.sealed ??= await sealForUpload(job.file, (loaded, total) =>
+        setTransfer(localId, { direction: "up", phase: "preparing", loaded, total }),
+      );
+      const msg = await sendFile({
+        token: session.token,
+        me: session.user.id,
+        peerUserId: peerId,
+        material,
+        sealed: job.sealed,
+        name: job.name,
+        size: job.file.size,
+        caption: job.caption,
+        replyTo: job.replyTo,
+        clientMessageId: job.clientId,
+        onProgress: (loaded, total) => setTransfer(localId, { direction: "up", phase: "transferring", loaded, total }),
+        onUploaded: () => setTransfer(localId, { direction: "up", phase: "finishing", loaded: 0, total: null }),
+      });
+      failedFiles.current.delete(localId);
+      rekeySentFile(localId, msg.id);
+      confirmedSends.current.set(localId, msg.id);
+      if (await consumeDroppedSend(localId, msg, peerId)) return;
+      if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+        setThread((prev) =>
+          droppedSends.current.has(localId)
+            ? prev.filter((m) => m.id !== localId)
+            : mergeMessages(prev.filter((m) => m.id !== localId), [msg]),
+        );
+        setPreviewRev((n) => n + 1);
+      }
+    } catch (err) {
+      if (droppedSends.current.delete(localId)) {
+        discardMessage(localId);
+        return;
+      }
+      failedFiles.current.set(localId, job);
+      if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+        setThread((prev) => prev.map((m) => (m.id === localId ? { ...m, pending: false, failed: true } : m)));
+        setThreadError(err instanceof ApiError || err instanceof Error ? err.message : "Could not send the file.");
+      }
+    } finally {
+      setTransfer(localId, null);
+    }
+  }
+
+  /** The failed bubble's retry: the same sealed bytes and the same client id, so it can't land twice. */
+  async function retryFile(message: ChatMessage) {
+    const job = failedFiles.current.get(message.id);
+    if (!job || !identity) return;
+    failedFiles.current.delete(message.id);
+    setThread((prev) => prev.map((m) => (m.id === message.id ? { ...m, pending: true, failed: false } : m)));
+    setThreadError(null);
+    setSendingPeer(job.peerId);
+    await runFileSend(job, identity);
+    setSendingPeer((current) => (current === job.peerId ? null : current));
+    try {
+      await refresh();
+    } catch {
+      /* the next poll refreshes */
+    }
+  }
+
   /**
    * Deletes one message here and — unless it never reached the server — there too.
    *
@@ -2434,11 +2588,14 @@ export function AppShell({ session }: { session: Session }) {
                 }}
                 onSendImages={(images, caption) => void submitImages(images, caption)}
                 onSendVideos={(drafts, caption) => void submitVideos(drafts, caption)}
+                onSendFiles={(files, caption) => void submitFiles(files, caption)}
+                onRetryFile={(message) => void retryFile(message)}
                 onBack={() => setSelected(null)}
                 onShowInfo={() => setShowInfo(true)}
                 onLoadVoice={loadVoice}
                 onLoadImage={loadImage}
                 onLoadVideo={loadVideo}
+                onLoadFile={loadFile}
                 replyTo={replyTo}
                 onReply={(message) => setReplyTo(message)}
                 onCancelReply={() => setReplyTo(null)}

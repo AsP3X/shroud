@@ -17,7 +17,7 @@ import kotlinx.serialization.json.JsonPrimitive
  * [toString] never prints the blob key, caption, preview or waveform.
  */
 data class MediaMessagePayload(
-    /** [KIND_IMAGE], [KIND_VOICE], [KIND_VIDEO] or [KIND_LINK]. */
+    /** [KIND_IMAGE], [KIND_VOICE], [KIND_VIDEO], [KIND_LINK] or [KIND_FILE]. */
     val t: String,
     val mime: String,
     /** Image/video width, `0` for voice. */
@@ -40,12 +40,20 @@ data class MediaMessagePayload(
     val re: MessageReplyReference? = null,
     /** Link preview of a [KIND_LINK] message (the blob is its large image). */
     val lp: LinkPreview? = null,
+    /** A [KIND_FILE] message's name, cleaned by the sender (docs/file-sharing.md §1, §5); receivers clean it again. */
+    val n: String? = null,
 ) {
+    /**
+     * `t == file` (docs/file-sharing.md §1): a file whatever its `mime` says. Every reader asks this
+     * **before** [isVoice] / [isImage] / [isVideo], which sniff the MIME type of unknown kinds.
+     */
+    val isFile: Boolean get() = t == KIND_FILE
+
     /** `t == voice`, or an unknown `t` with an `audio/` MIME type (`:84-88`). */
     val isVoice: Boolean
         get() = when (t) {
             KIND_VOICE -> true
-            KIND_IMAGE, KIND_VIDEO, KIND_LINK -> false
+            KIND_IMAGE, KIND_VIDEO, KIND_LINK, KIND_FILE -> false
             else -> mime.startsWith("audio/")
         }
 
@@ -53,7 +61,7 @@ data class MediaMessagePayload(
     val isImage: Boolean
         get() = when (t) {
             KIND_IMAGE -> true
-            KIND_VOICE, KIND_VIDEO, KIND_LINK -> false
+            KIND_VOICE, KIND_VIDEO, KIND_LINK, KIND_FILE -> false
             else -> mime.startsWith("image/")
         }
 
@@ -61,7 +69,7 @@ data class MediaMessagePayload(
     val isVideo: Boolean
         get() = when (t) {
             KIND_VIDEO -> true
-            KIND_IMAGE, KIND_VOICE, KIND_LINK -> false
+            KIND_IMAGE, KIND_VOICE, KIND_LINK, KIND_FILE -> false
             else -> mime.startsWith("video/")
         }
 
@@ -94,12 +102,13 @@ data class MediaMessagePayload(
         s?.let { fields["s"] = JsonPrimitive(it) }
         re?.let { fields["re"] = it.wireObject() }
         lp?.let { fields["lp"] = it.wire() }
+        n?.let { fields["n"] = JsonPrimitive(it) }
         return LenientJson.encodeToBytes(JsonObject(fields))
     }
 
     override fun toString(): String =
         "MediaMessagePayload(t=$t, mime=$mime, w=$w, h=$h, d=$d, s=$s, caption=${c != null}, preview=${th != null}, " +
-            "waveform=${wf != null}, reply=${re != null}, link=${lp != null})"
+            "waveform=${wf != null}, reply=${re != null}, link=${lp != null}, name=${n != null})"
 
     companion object {
         const val KIND_IMAGE = "image"
@@ -112,6 +121,12 @@ data class MediaMessagePayload(
          * whole text, `lp` the preview. A build without link previews shows a photo with a caption.
          */
         const val KIND_LINK = "link"
+
+        /**
+         * A document sent as it is (docs/file-sharing.md §1): the blob is SHRF1, `n` its name, `s`
+         * its size (required), `mime` the canonical type of the name's extension.
+         */
+        const val KIND_FILE = "file"
 
         private const val DEFAULT_MIME = "application/octet-stream"
 
@@ -156,6 +171,7 @@ data class MediaMessagePayload(
                 s = LenientJson.long(obj["s"]),
                 re = (obj["re"] as? JsonObject)?.let(MessageReplyReference::parse),
                 lp = (obj["lp"] as? JsonObject)?.let(LinkPreview::parse),
+                n = LenientJson.trimmedString(obj["n"]),
             )
         }
     }

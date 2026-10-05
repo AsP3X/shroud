@@ -1,10 +1,10 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Copy, ExternalLink, Link, Reply, Trash2 } from "lucide-react";
+import { Copy, Download, ExternalLink, Link, Reply, Trash2 } from "lucide-react";
 import { isUnsent, type ChatMessage } from "../messaging";
 import { ContextMenu, type MenuAnchor, type MenuItem } from "./ContextMenu";
 export { suppressClickAfterLongPress } from "./ContextMenu";
 
-export type MessageMenuAction = "openLink" | "copyLink" | "reply" | "copy" | "delete";
+export type MessageMenuAction = "openLink" | "copyLink" | "reply" | "copy" | "download" | "delete";
 
 /** Where the menu should appear: the pointer, or the bubble when opened from the keyboard. */
 export type MessageMenuAnchor = MenuAnchor;
@@ -54,6 +54,8 @@ export function MessageMenu({
       Icon: Copy,
       separatorBefore: afterLinks && firstMessageAction === "copy",
     },
+    // Files only: saves the whole file, after the §6 warning when it has one.
+    download: { id: "download", label: "Download", Icon: Download },
     // Set apart, and red, like every destructive menu action.
     delete: { id: "delete", label: "Delete", Icon: Trash2, danger: true, separatorBefore: actions.length > 1 },
   };
@@ -74,6 +76,8 @@ export function MessageMenu({
 
 /** How the dialog names the message: its words (trimmed), or what kind of message it is. */
 function describe(message: ChatMessage, preview: string): string {
+  // A file is named as one, whatever its caption says (docs/file-sharing.md §7).
+  if (message.kind === "file" && !message.deleted) return "This file";
   const words = preview.replace(/\s+/g, " ").trim();
   if (words) return `“${words.length > 60 ? `${words.slice(0, 59).trimEnd()}…` : words}”`;
   switch (message.kind) {

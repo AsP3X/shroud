@@ -107,6 +107,9 @@ struct LocalMessageStore: Sendable {
         var reactions: [MessageReaction]?
         /// Server `created_at`. Optional so threads saved before history cursors kept it still decode.
         var createdAtWire: String? = nil
+        /// A file message's cleaned name. Optional like `replyTo`; the blob itself lives in
+        /// `LocalFileStore` and is never read here.
+        var fileName: String? = nil
 
         @MainActor
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
@@ -132,16 +135,22 @@ struct LocalMessageStore: Sendable {
                 replyTo: message.replyTo,
                 linkPreview: message.linkPreview,
                 reactions: message.reactions.isEmpty ? nil : message.reactions,
-                createdAtWire: message.createdAtWire
+                createdAtWire: message.createdAtWire,
+                fileName: message.fileName
             )
         }
 
         @MainActor
-        func toChatMessage(media: LocalMediaCache, historyKey: SymmetricKey) -> MessagingController.ChatMessage {
+        func toChatMessage(
+            media: LocalMediaCache,
+            files: LocalFileStore = LocalFileStore(),
+            historyKey: SymmetricKey
+        ) -> MessagingController.ChatMessage {
             let kind = MessagingController.ChatMessageKind(storageKey: kind) ?? .text
             var imageData: Data?
             var voiceData: Data?
             var videoData: Data?
+            var fileStored = false
             switch kind {
             case .image:
                 imageData = media.data(for: id, historyKey: historyKey)
@@ -155,6 +164,9 @@ struct LocalMessageStore: Sendable {
                 if linkPreview != nil, mediaObjectId != nil {
                     imageData = media.data(for: id, historyKey: historyKey)
                 }
+            case .file:
+                // Only whether the blob is here: a file is never loaded into memory.
+                fileStored = files.hasBlob(id)
             case .todo:
                 break
             }
@@ -183,7 +195,9 @@ struct LocalMessageStore: Sendable {
                 pendingSync: pendingSync == true,
                 replyTo: replyTo,
                 linkPreview: linkPreview,
-                reactions: reactions ?? []
+                reactions: reactions ?? [],
+                fileName: fileName,
+                fileStored: fileStored
             )
         }
     }
@@ -549,6 +563,7 @@ extension MessagingController.ChatMessageKind {
         case .image: "image"
         case .voice: "voice"
         case .video: "video"
+        case .file: "file"
         case .todo: "todo"
         }
     }
@@ -559,6 +574,7 @@ extension MessagingController.ChatMessageKind {
         case "image": self = .image
         case "voice": self = .voice
         case "video": self = .video
+        case "file": self = .file
         case "todo": self = .todo
         default: return nil
         }

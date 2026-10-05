@@ -47,6 +47,7 @@ GRADLE="${GRADLE:-./gradlew}"
 # One method at a time, with the rate-limit windows cleared before each: the stack allows 10 auth
 # requests a minute for every local client together, and the class signs up a dozen accounts.
 METHODS=(theEnginesExchangeEveryKindWithTheWebPeer
+    filesTravelBothWaysWithTheWebPeer
     aSecondDeviceSharesReadsMutesNotesAndDeletesConflictsAReactionAndRevokesThisPhone
     chatDeletesFollowThePeersConsent
     contactsComeByShareCodeLinkAndNameWithPresenceBlocksAndKeyChanges

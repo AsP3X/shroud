@@ -236,4 +236,16 @@ class MessageReplyReferenceTest {
         assertFalse(reference(snippet = "secret plans").toString().contains("secret"))
         assertFalse(MessageTextPayload.parse("secret plans").toString().contains("secret"))
     }
+
+    // docs/file-sharing.md §1: a quoted file is `k: "file"` with its name as `x`; old builds read the kind as text.
+    @Test
+    fun aFileQuoteIsKindFileWithItsNameAndTheLabelFile() {
+        val id = UUID.fromString("3b241101-e2bb-4255-8caf-4136c566a962")
+        val user = UUID.fromString("0f8fad5b-d9cb-469f-a165-70867728950e")
+        val quote = MessageReplyReference(id, user, MessageReplyReference.Kind.File, "report.pdf")
+        assertEquals("file", quote.wireObject()["k"]?.let { (it as JsonPrimitive).content })
+        assertEquals("report.pdf", quote.wireObject()["x"]?.let { (it as JsonPrimitive).content })
+        assertEquals(MessageReplyReference.Kind.File, MessageReplyReference.parse(quote.wireObject())!!.kind)
+        assertEquals("File", MessageReplyReference.Kind.File.mediaLabel)
+    }
 }

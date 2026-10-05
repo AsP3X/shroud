@@ -339,4 +339,22 @@ class ThreadMessageMergeTest {
         val merged = ThreadMessageMerge.applySharedTranscripts(mapOf(deleted.id to "gone", text.id to "not a voice note"), thread)
         assertEquals(thread, merged)
     }
+
+    // docs/file-sharing.md: a file keeps its name and kind through reloads and as a tombstone.
+    @Test
+    fun aFileKeepsItsNameAndKindAgainstAPlaceholderDecodeAndAsATombstone() {
+        val file = chatMessage("for you", isMine = true).copy(kind = ChatMessageKind.File, fileName = "a.pdf", mediaObjectId = UUID.randomUUID(), hasFullMedia = true)
+        val placeholder = file.copy(kind = ChatMessageKind.Image, text = "Media", fileName = null, hasFullMedia = false)
+        val merged = ThreadMessageMerge.preferReadable(placeholder, file)
+        assertEquals(ChatMessageKind.File, merged.kind)
+        assertEquals("a.pdf", merged.fileName)
+        assertEquals("for you", merged.text)
+        assertTrue(merged.hasFullMedia)
+        assertEquals("a.pdf", ThreadMessageMerge.preferReadable(file.copy(fileName = null), file).fileName)
+
+        val tombstone = ThreadMessageMerge.tombstone(file)
+        assertEquals(ChatMessageKind.File, tombstone.kind)
+        assertNull(tombstone.fileName)
+        assertEquals(ChatMessageKind.Text, tombstone.presentedKind)
+    }
 }

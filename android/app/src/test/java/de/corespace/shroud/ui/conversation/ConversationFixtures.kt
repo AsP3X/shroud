@@ -135,6 +135,11 @@ internal class FakeConversationBackend(override val myUserId: UUID? = Conversati
         return null
     }
 
+    override suspend fun retryFailedFile(messageId: UUID, peer: UUID): String? {
+        log += "retryFile"
+        return null
+    }
+
     override fun toggleTodo(messageId: UUID) {
         log += "toggleTodo"
     }
@@ -194,5 +199,13 @@ internal class FakeConversationCompose : ConversationCompose {
 
     override fun cancelDownload(message: ChatMessage) {
         log += "cancelDownload"
+    }
+
+    override fun saveFileToDownloads(message: ChatMessage) {
+        log += "saveFile"
+    }
+
+    override fun shareFile(message: ChatMessage) {
+        log += "shareFile"
     }
 }

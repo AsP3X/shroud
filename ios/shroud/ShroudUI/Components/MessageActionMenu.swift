@@ -784,7 +784,7 @@ struct MessageMenuOverlay<Hero: View, Card: View>: View {
 }
 
 enum MessageMenuAction: String, Identifiable {
-    case reply, copy, copyLink, edit, pin, forward, select, delete, moreReactions
+    case reply, copy, copyLink, share, edit, pin, forward, select, delete, moreReactions
 
     var id: String { rawValue }
 
@@ -793,6 +793,7 @@ enum MessageMenuAction: String, Identifiable {
         case .reply: "Reply"
         case .copy: "Copy"
         case .copyLink: "Copy Link"
+        case .share: "Share"
         case .edit: "Edit"
         case .pin: "Pin"
         case .forward: "Forward"
@@ -807,6 +808,7 @@ enum MessageMenuAction: String, Identifiable {
         case .reply: "arrowshape.turn.up.left"
         case .copy: "doc.on.doc"
         case .copyLink: "link"
+        case .share: "square.and.arrow.up"
         case .edit: "pencil"
         case .pin: "pin"
         case .forward: "arrowshape.turn.up.right"
@@ -820,12 +822,19 @@ enum MessageMenuAction: String, Identifiable {
 
     /// The card's actions above "Select", in the design's order, leaving out what the message
     /// can't do: "Reply" on one that can't be quoted (sending, failed, deleted), "Copy" when it
-    /// has no real text (a photo's "Photo" stand-in), "Copy Link" when it has no link.
-    static func primary(canReply: Bool = true, canCopy: Bool = true, hasLink: Bool = false) -> [MessageMenuAction] {
+    /// has no real text (a photo's "Photo" stand-in), "Copy Link" when it has no link, "Share"
+    /// unless it is a file Shroud can open.
+    static func primary(
+        canReply: Bool = true,
+        canCopy: Bool = true,
+        hasLink: Bool = false,
+        canShare: Bool = false
+    ) -> [MessageMenuAction] {
         var actions: [MessageMenuAction] = []
         if canReply { actions.append(.reply) }
         if canCopy { actions.append(.copy) }
         if hasLink { actions.append(.copyLink) }
+        if canShare { actions.append(.share) }
         return actions + [.pin, .forward, .delete]
     }
 }
@@ -944,6 +953,14 @@ struct MessageMenuHeroContent: View {
                 time: timeLabel,
                 inTranscriptTail: inTranscriptTail,
                 revealsArrival: false,
+                reply: reply,
+                reactions: reactions
+            )
+        case .file:
+            FileMessageBubble(
+                message: message,
+                time: timeLabel,
+                isRowEmbedded: false,
                 reply: reply,
                 reactions: reactions
             )
