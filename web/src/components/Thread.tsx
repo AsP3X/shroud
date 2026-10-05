@@ -113,9 +113,11 @@ const VideoComposer = lazy(() => import("./VideoComposer").then((m) => ({ defaul
 const VideoViewer = lazy(() => import("./VideoViewer").then((m) => ({ default: m.VideoViewer })));
 const FileComposer = lazy(() => import("./FileComposer").then((m) => ({ default: m.FileComposer })));
 const TextFileViewer = lazy(() => import("./TextFileViewer").then((m) => ({ default: m.TextFileViewer })));
+/* pdf.js comes with it: never part of the chat's first download. */
+const PdfViewer = lazy(() => import("./PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
 const MEDIA_ACCEPT = `${PHOTO_ACCEPT},${VIDEO_ACCEPT}`;
-/** Shown when the new tab for a PDF, photo or video was blocked; the file is in memory by then. */
+/** Shown when the new tab for a photo or video was blocked; the file is in memory by then. */
 const TAB_BLOCKED = "The browser blocked the new tab — click the file again to open it.";
 const FILE_DOWNLOAD_FAILED = "This file couldn’t be downloaded. Try again.";
 /** A blob that failed a tag or its size: trying again fetches the same bytes. */
@@ -703,6 +705,8 @@ export function Thread({
   const [fileWarning, setFileWarning] = useState<{ warning: FileWarning; run: () => void } | null>(null);
   /** A text file open in the in-app viewer. */
   const [textViewing, setTextViewing] = useState<{ message: ChatMessage; blob: Blob } | null>(null);
+  /** A PDF open in Shroud's own viewer (docs/file-sharing.md §10.2). */
+  const [pdfViewing, setPdfViewing] = useState<{ message: ChatMessage; blob: Blob } | null>(null);
   /** The phone layout's "+" menu: photos and videos, or a file (the paperclip is hidden there). */
   const [attachMenu, setAttachMenu] = useState<{ anchor: MenuAnchor; trigger: HTMLElement } | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
@@ -1302,11 +1306,15 @@ export function Thread({
       setTextViewing({ message, blob: file.blob });
       return;
     }
+    if (mode === "pdf") {
+      setPdfViewing({ message, blob: file.blob });
+      return;
+    }
     if (mode === "download") {
       afterWarning(message, () => saveFile(message, file.blob));
       return;
     }
-    // PDFs, photos and videos: a new tab on a blob typed by the table, never by the sender.
+    // Photos and videos: a new tab on a blob typed by the table, never by the sender.
     const url = openedFileUrl(message.id);
     if (!url) return;
     const tab = window.open(url, "_blank");
@@ -1344,7 +1352,8 @@ export function Thread({
     confirmDelete !== null ||
     attachMenu !== null ||
     fileWarning !== null ||
-    textViewing !== null;
+    textViewing !== null ||
+    pdfViewing !== null;
   useEffect(() => {
     if (!replyTo) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -1366,7 +1375,8 @@ export function Thread({
     if (viewing && messages.some((m) => m.id === viewing && m.deleted)) setViewing(null);
     if (watching && messages.some((m) => m.id === watching && m.deleted)) setWatching(null);
     if (textViewing && messages.some((m) => m.id === textViewing.message.id && m.deleted)) setTextViewing(null);
-  }, [messages, viewing, watching, textViewing]);
+    if (pdfViewing && messages.some((m) => m.id === pdfViewing.message.id && m.deleted)) setPdfViewing(null);
+  }, [messages, viewing, watching, textViewing, pdfViewing]);
 
   return (
     <section
@@ -1825,6 +1835,17 @@ export function Thread({
             blob={textViewing.blob}
             onDownload={() => afterWarning(textViewing.message, () => saveFile(textViewing.message, textViewing.blob))}
             onClose={() => setTextViewing(null)}
+          />
+        ) : null}
+
+        {pdfViewing ? (
+          <PdfViewer
+            messageId={pdfViewing.message.id}
+            name={pdfViewing.message.fileName || "file"}
+            blob={pdfViewing.blob}
+            onDownload={() => afterWarning(pdfViewing.message, () => saveFile(pdfViewing.message, pdfViewing.blob))}
+            onOpenLink={openLink}
+            onClose={() => setPdfViewing(null)}
           />
         ) : null}
 

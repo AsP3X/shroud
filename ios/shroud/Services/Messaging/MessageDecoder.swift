@@ -345,7 +345,8 @@ enum MessageDecoder {
                 replyTo: payload.re,
                 fileName: SharedFile.cleanName(payload.n ?? ""),
                 // Whether the blob is here, never its bytes: a file is opened on demand only.
-                fileStored: local.hasFileBlob(dto.id)
+                fileStored: local.hasFileBlob(dto.id),
+                filePageCount: payload.pg
             )
         }
 

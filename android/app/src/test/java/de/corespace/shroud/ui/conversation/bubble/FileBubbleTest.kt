@@ -1,17 +1,20 @@
 package de.corespace.shroud.ui.conversation.bubble
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.view.ViewGroup
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.media.files.FileTypes
+import de.corespace.shroud.core.media.pdf.PdfCardRender
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.ui.components.ComposeHarness
+import de.corespace.shroud.ui.conversation.PdfCardCache
 import de.corespace.shroud.ui.conversation.bubble.BubbleRenderFixtures.ME
 import de.corespace.shroud.ui.conversation.bubble.BubbleRenderFixtures.at
 import de.corespace.shroud.ui.conversation.bubble.BubbleRenderFixtures.message
@@ -50,6 +53,7 @@ class FileBubbleTest {
             host.idle()
         }
         BubbleRenderFixtures.flushSnapshotWrites()
+        PdfCardCache.clear()
     }
 
     private val pdf = FileTypes.forExtension("pdf")!!
@@ -78,6 +82,50 @@ class FileBubbleTest {
         assertEquals("2.4 MB · PDF", FileBubbleMath.metaLine(pdf, false, transfer.copy(phase = MediaTransfer.Phase.Finishing), 2_400_000))
         assertEquals("Not sent", FileBubbleMath.metaLine(pdf, failed = true, transfer = null, byteCount = 2_400_000))
         assertEquals("Unsupported file", FileBubbleMath.metaLine(null, failed = false, transfer = null, byteCount = 2_400_000))
+    }
+
+    @Test
+    fun aPdfWhosePageCountIsKnownLeadsWithIt() {
+        assertEquals("12 pages · 2.4 MB · PDF", FileBubbleMath.metaLine(pdf, failed = false, transfer = null, byteCount = 2_400_000, pages = 12))
+        assertEquals("1 page · 2.4 MB · PDF", FileBubbleMath.metaLine(pdf, failed = false, transfer = null, byteCount = 2_400_000, pages = 1))
+        assertEquals("3 pages · PDF", FileBubbleMath.metaLine(pdf, failed = false, transfer = null, byteCount = null, pages = 3))
+        // A transfer, a failure and other types keep their lines.
+        assertEquals("1.2 MB of 2.4 MB", FileBubbleMath.metaLine(pdf, false, transfer, 2_400_000, pages = 12))
+        assertEquals("Not sent", FileBubbleMath.metaLine(pdf, failed = true, transfer = null, byteCount = 2_400_000, pages = 12))
+        assertEquals("2.4 MB · DOCX", FileBubbleMath.metaLine(FileTypes.forExtension("docx"), false, null, 2_400_000, pages = 12))
+        val label = FileBubbleMath.accessibilityLabel(
+            isMine = false, replyAuthor = null, replyText = null, name = "report.pdf", type = pdf,
+            byteCount = 2_400_000, caption = null, failed = false, sendError = null, transfer = null, needsDownload = false,
+            chipsSummary = null, time = "12:04", receipt = ReceiptStatus.Sent, pages = 12,
+        )
+        assertEquals("Them, File, report.pdf, 12 pages, 2.4 MB, 12:04", label)
+    }
+
+    @Test
+    fun aPdfOnThisPhoneDrawsItsCardAndReadsItsPageCountFromTheFile() {
+        val file = message("", mine = false, time = at(12, 4), kind = ChatMessageKind.File, mediaObjectId = UUID.randomUUID(), hasFullMedia = true, mediaByteCount = 2_400_000)
+            .copy(fileName = "report.pdf")
+        val base = RenderBubbleServices(RuntimeEnvironment.getApplication(), scope)
+        val asked = ArrayList<Int>()
+        val services = object : BubbleServices by base {
+            override suspend fun pdfCard(messageId: UUID, widthPx: Int): PdfCardRender {
+                asked += widthPx
+                return PdfCardRender(Bitmap.createBitmap(widthPx, widthPx / 2, Bitmap.Config.ARGB_8888), 7)
+            }
+        }
+        val host = ComposeHarness {
+            CompositionLocalProvider(LocalBubbleServices provides services, LocalChatRowWidth provides 380.dp) { MessageBubble(row(file), RecordingBubbleContext()) }
+        }
+        hosts += host
+        host.idle()
+        Thread.sleep(150)
+        host.idle()
+        // The card is the bubble's width less 4 dp each side, at xhdpi: (300 − 8) × 2 px.
+        assertEquals(listOf(584), asked)
+        host.labelled("File, report.pdf, 7 pages, 2.4 MB")
+        assertEquals(7, PdfCardCache.pageCount(file.id))
+        // The card itself is not a TalkBack node.
+        assertEquals(1, host.nodes().count { node -> node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.any { it.contains("report.pdf") } == true })
     }
 
     @Test

@@ -1,7 +1,8 @@
 import QuickLook
+import SwiftUI
 import UIKit
 
-/// Hands an opened file to Quick Look or the share sheet, and takes it back.
+/// Hands an opened file to Shroud's PDF viewer, Quick Look or the share sheet, and takes it back.
 ///
 /// Human: The plaintext under `tmp/shroud-file-{id}/` exists only while one of these has it:
 /// the close callback removes it the moment the preview or the sheet goes away. Locking the
@@ -17,6 +18,7 @@ final class FileViewerPresenter: NSObject {
     /// The message whose file is open.
     private var messageID: UUID?
     private weak var preview: QLPreviewController?
+    private weak var pdfViewer: UIViewController?
     private weak var activity: UIActivityViewController?
     /// The open thing's cleanup, run exactly once.
     private var onClose: (() -> Void)?
@@ -38,6 +40,34 @@ final class FileViewerPresenter: NSObject {
         controller.dataSource = self
         controller.delegate = self
         preview = controller
+        presenter.present(controller, animated: true)
+    }
+
+    /// Shroud's own PDF viewer on `url` (`docs/file-sharing.md` §10.2); `onClose` runs once it
+    /// is gone.
+    ///
+    /// Human: The plaintext is removed only after the viewer has slid away, so PDFKit never
+    /// loses the file under a page it is still drawing.
+    func pdf(_ url: URL, messageID: UUID, title: String, onClose: @escaping () -> Void) {
+        dismissAll()
+        self.messageID = messageID
+        guard let presenter = Self.topViewController() else {
+            onClose()
+            return
+        }
+        generation += 1
+        let presentation = generation
+        self.onClose = onClose
+        let model = PDFViewerModel(url: url, messageID: messageID, title: title)
+        let controller = UIHostingController(rootView: PDFViewerScreen(model: model) { [weak self] in
+            guard let self, self.generation == presentation, let viewer = self.pdfViewer else { return }
+            viewer.dismiss(animated: true) { [weak self] in
+                guard let self, self.generation == presentation else { return }
+                self.finish()
+            }
+        })
+        controller.modalPresentationStyle = .fullScreen
+        pdfViewer = controller
         presenter.present(controller, animated: true)
     }
 
@@ -83,6 +113,9 @@ final class FileViewerPresenter: NSObject {
         if let activity, activity.presentingViewController != nil {
             activity.dismiss(animated: false)
         }
+        if let pdfViewer, pdfViewer.presentingViewController != nil {
+            pdfViewer.dismiss(animated: false)
+        }
         finish()
     }
 
@@ -99,6 +132,7 @@ final class FileViewerPresenter: NSObject {
         onClose = nil
         previewURL = nil
         preview = nil
+        pdfViewer = nil
         activity = nil
         close?()
     }

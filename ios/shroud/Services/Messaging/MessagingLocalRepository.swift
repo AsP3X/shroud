@@ -106,6 +106,9 @@ final class MessagingLocalRepository {
         if message.kind == .file, message.fileName == nil, let name = payload.n {
             message.fileName = SharedFile.cleanName(name)
         }
+        if message.kind == .file, message.filePageCount == nil {
+            message.filePageCount = payload.pg
+        }
         // Video: keep a poster even when full file is already cached.
         if message.kind == .video, message.imageData == nil, let preview = message.previewData {
             message.imageData = preview

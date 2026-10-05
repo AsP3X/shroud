@@ -110,6 +110,8 @@ struct LocalMessageStore: Sendable {
         /// A file message's cleaned name. Optional like `replyTo`; the blob itself lives in
         /// `LocalFileStore` and is never read here.
         var fileName: String? = nil
+        /// A PDF's page count (`pg`). Optional like `fileName`.
+        var filePageCount: Int? = nil
 
         @MainActor
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
@@ -136,7 +138,8 @@ struct LocalMessageStore: Sendable {
                 linkPreview: message.linkPreview,
                 reactions: message.reactions.isEmpty ? nil : message.reactions,
                 createdAtWire: message.createdAtWire,
-                fileName: message.fileName
+                fileName: message.fileName,
+                filePageCount: message.filePageCount
             )
         }
 
@@ -197,7 +200,8 @@ struct LocalMessageStore: Sendable {
                 linkPreview: linkPreview,
                 reactions: reactions ?? [],
                 fileName: fileName,
-                fileStored: fileStored
+                fileStored: fileStored,
+                filePageCount: filePageCount
             )
         }
     }

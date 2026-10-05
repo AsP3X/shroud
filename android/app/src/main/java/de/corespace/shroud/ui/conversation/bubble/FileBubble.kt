@@ -2,6 +2,9 @@ package de.corespace.shroud.ui.conversation.bubble
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -13,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,16 +24,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -57,6 +68,7 @@ import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.pressable
 import de.corespace.shroud.ui.conversation.BubbleContext
+import de.corespace.shroud.ui.conversation.PdfCardCache
 import de.corespace.shroud.ui.conversation.reactions.reactionAccessibilityActions
 import de.corespace.shroud.ui.conversation.reactions.spokenSummary
 import de.corespace.shroud.ui.theme.Motion
@@ -88,13 +100,19 @@ internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modif
     val failed = isMine && message.receipt == ReceiptStatus.Failed
     val handlers = parts.handlers
     val state = FileBubbleMath.tileState(type, failed, transfer, message.needsMediaDownload)
-    val meta = FileBubbleMath.metaLine(type, failed, transfer, message.mediaByteCount)
+    val width = FileBubbleMath.width(parts.maxBubbleWidth)
+    val preview = rememberFilePreview(message)
+    // A PDF's card (docs/file-sharing.md §10.1): the local render once the file is here, else `th`.
+    val isPdf = type?.category == FileCategory.Pdf
+    val reply = parts.row.replyQuote
+    val cardWidth = width - PdfCardMetrics.Inset * 2
+    val localRender = if (isPdf) rememberPdfLocalRender(message, cardWidth) else PdfLocalRender.None
+    val showsCard = isPdf && state != FileTileState.Unsupported && (preview != null || localRender.image != null)
+    val pages = message.pageCount ?: localRender.pageCount
+    val meta = FileBubbleMath.metaLine(type, failed, transfer, message.mediaByteCount, pages)
     val name = message.fileName ?: FileCopy.FILE
     val caption = message.text.trim().takeIf { it.isNotEmpty() }
     val hasReactions = parts.chips.isNotEmpty()
-    val reply = parts.row.replyQuote
-    val width = FileBubbleMath.width(parts.maxBubbleWidth)
-    val preview = rememberFilePreview(message)
 
     val retry: () -> Unit = { handlers.run { context.onRetry(message) } }
     val tileTap: (() -> Unit)? = when {
@@ -120,6 +138,7 @@ internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modif
         chipsSummary = parts.chips.spokenSummary(),
         time = parts.time,
         receipt = message.receipt,
+        pages = pages,
     )
     val quoteTap = handlers.quoteTap(message)
     val rowActions = LocalMessageRowActions.current
@@ -187,12 +206,25 @@ internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modif
                         modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 6.dp),
                     )
                 }
+                if (showsCard) {
+                    PdfPreviewCard(
+                        thumbnail = preview,
+                        local = localRender.image,
+                        onTap = tileTap?.takeIf { state != FileTileState.Retry },
+                        modifier = Modifier.padding(
+                            start = PdfCardMetrics.Inset,
+                            end = PdfCardMetrics.Inset,
+                            top = if (reply != null) PdfCardMetrics.InsetBelowQuote else PdfCardMetrics.Inset,
+                        ),
+                    )
+                }
                 Row(
                     Modifier.fillMaxWidth().padding(start = 10.dp, end = 12.dp, top = 10.dp, bottom = if (caption == null && !hasReactions) 4.dp else 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(FileBubbleMetrics.TileGap),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    FileTile(state, type, isMine, transfer, preview, tileTap)
+                    // With the card above, the tile shows no `th`: just its state glyph on its fill (§10.1).
+                    FileTile(state, type, isMine, transfer, if (showsCard) null else preview, tileTap)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         ShroudText(name, inter(15f, FontWeight.Medium), textColor, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                         ShroudText(meta, inter(13f, tabularDigits = true), secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -301,6 +333,90 @@ private fun rememberFilePreview(message: ChatMessage): ImageBitmap? {
     return remember(message.id, bytes) { bytes?.toByteArray()?.let(BubbleImages::decodeSmall) }
 }
 
+/**
+ * The PDF preview card (docs/file-sharing.md §10.1): the top of page 1 in a 2:1 frame, inset 4 dp
+ * (6 dp under a reply quote), corner radius 12, white under the picture, aspect fill pinned to the
+ * top edge, a 0.5 dp hairline of black at 10 % inside the edge. The local render cross-fades over
+ * `th` (150 ms) when it arrives. TalkBack skips it: the bubble's one node says the page count. A
+ * tap is the bubble's ([onTap]: download, open, or stop a download).
+ */
+@Composable
+private fun PdfPreviewCard(thumbnail: ImageBitmap?, local: ImageBitmap?, onTap: (() -> Unit)?, modifier: Modifier) {
+    val shape = RoundedCornerShape(PdfCardMetrics.Radius)
+    val reduceMotion = ShroudTheme.reduceMotion
+    val localAlpha by animateFloatAsState(
+        targetValue = if (local != null) 1f else 0f,
+        animationSpec = if (reduceMotion) snap() else tween(PdfCardMetrics.CROSSFADE_MS),
+        label = "pdfCardRender",
+    )
+    Box(
+        modifier
+            .fillMaxWidth()
+            .aspectRatio(2f)
+            .clip(shape)
+            .background(Color.White)
+            .then(if (onTap != null) Modifier.pressable(scale = 1f, haptic = Haptic.Light, onClick = onTap) else Modifier)
+            .clearAndSetSemantics { },
+    ) {
+        if (thumbnail != null && localAlpha < 1f) {
+            Image(thumbnail, contentDescription = null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
+        }
+        if (local != null) {
+            Image(
+                local,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = localAlpha },
+            )
+        }
+        Box(Modifier.matchParentSize().border(PdfCardMetrics.Hairline, Color.Black.copy(alpha = 0.1f), shape))
+    }
+}
+
+/** A PDF's local card render and the page count it read (both null until there is one). */
+private class PdfLocalRender(val image: ImageBitmap?, val pageCount: Int?) {
+    companion object {
+        val None = PdfLocalRender(null, null)
+    }
+}
+
+/**
+ * The card's local render (§10.1) once the PDF is on this phone: from [PdfCardCache] when it is
+ * held, else drawn once through [BubbleServices.pdfCard] at the card's pixel width and kept there
+ * (memory only). A PDF that does not render is remembered and keeps `th`.
+ */
+@Composable
+private fun rememberPdfLocalRender(message: ChatMessage, cardWidth: Dp): PdfLocalRender {
+    val services = rememberBubbleServices()
+    val widthPx = with(LocalDensity.current) { cardWidth.roundToPx() }
+    val id = message.id
+    var image by remember(id, widthPx) { mutableStateOf(PdfCardCache.image(id, widthPx)) }
+    var pages by remember(id) { mutableStateOf(PdfCardCache.pageCount(id)) }
+    LaunchedEffect(id, widthPx, message.hasFullMedia) {
+        if (!message.hasFullMedia || image != null || PdfCardCache.hasFailed(id) || widthPx <= 0) return@LaunchedEffect
+        val render = services.pdfCard(id, widthPx)
+        if (render == null) {
+            PdfCardCache.markFailed(id)
+            return@LaunchedEffect
+        }
+        val bitmap = render.bitmap.asImageBitmap()
+        PdfCardCache.store(id, widthPx, bitmap, render.pageCount)
+        image = bitmap
+        pages = render.pageCount
+    }
+    return PdfLocalRender(image, pages)
+}
+
+/** The card's sizes (§10.1). */
+internal object PdfCardMetrics {
+    val Inset = 4.dp
+    val InsetBelowQuote = 6.dp
+    val Radius = 12.dp
+    val Hairline = 0.5.dp
+    const val CROSSFADE_MS = 150
+}
+
 /** What the tile shows (§7). */
 enum class FileTileState { Download, Transferring, Ready, Retry, Unsupported }
 
@@ -350,7 +466,7 @@ object FileBubbleMath {
      * `Unsupported file`, `Not sent`, `{done} of {total}` while bytes move, else `{size} · {TYPE}`
      * (just the type when the size is unknown).
      */
-    fun metaLine(type: FileType?, failed: Boolean, transfer: MediaTransfer?, byteCount: Long?): String {
+    fun metaLine(type: FileType?, failed: Boolean, transfer: MediaTransfer?, byteCount: Long?, pages: Int? = null): String {
         if (type == null) return FileCopy.UNSUPPORTED
         if (failed) return FileCopy.NOT_SENT
         val total = transfer?.totalBytes?.takeIf { it > 0 } ?: byteCount?.takeIf { it > 0 }
@@ -358,8 +474,9 @@ object FileBubbleMath {
             val done = transfer.movedBytes ?: 0L
             return FileCopy.progress(ByteCountLabel.format(done), ByteCountLabel.format(total))
         }
-        val size = byteCount?.takeIf { it > 0 } ?: return type.label
-        return FileCopy.meta(ByteCountLabel.format(size), type.label)
+        val count = pages?.takeIf { it >= 1 && type.category == FileCategory.Pdf }
+        val size = byteCount?.takeIf { it > 0 } ?: return (count?.let { FileCopy.pageCount(it) + " · " } ?: "") + type.label
+        return FileCopy.meta(ByteCountLabel.format(size), type.label, count)
     }
 
     /** 240–300 dp, never wider than the row's budget. */
@@ -381,11 +498,17 @@ object FileBubbleMath {
         chipsSummary: String?,
         time: String,
         receipt: ReceiptStatus,
+        pages: Int? = null,
     ): String {
         val parts = mutableListOf(if (isMine) "You" else "Them")
         if (replyAuthor != null && replyText != null) parts += "Reply to $replyAuthor: $replyText"
         val size = byteCount?.takeIf { it > 0 }?.let { ByteCountLabel.format(it) }
-        parts += if (size != null) FileCopy.accessibilityLabel(name, size, type?.warning) else "File, $name" + (type?.warning?.accessibilitySuffix ?: "")
+        val count = pages?.takeIf { it >= 1 && type?.category == FileCategory.Pdf }
+        parts += if (size != null) {
+            FileCopy.accessibilityLabel(name, size, type?.warning, count)
+        } else {
+            "File, $name" + (count?.let { ", " + FileCopy.pageCount(it) } ?: "") + (type?.warning?.accessibilitySuffix ?: "")
+        }
         if (caption != null) parts += caption
         when {
             type == null -> parts += FileCopy.UNSUPPORTED

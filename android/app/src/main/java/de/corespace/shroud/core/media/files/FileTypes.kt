@@ -304,15 +304,19 @@ object FileCopy {
     /** §7: `ACTION_VIEW` found no app. */
     fun noApp(extension: String): String = "No app on this phone can open .$extension files."
 
-    /** The meta line `{size} · {TYPE}`. */
-    fun meta(size: String, type: String): String = "$size · $type"
+    /** The meta line `{size} · {TYPE}`; a PDF whose page count is known leads with it: `12 pages · 2.4 MB · PDF` (§7). */
+    fun meta(size: String, type: String, pages: Int? = null): String =
+        (pages?.let { pageCount(it) + " · " } ?: "") + "$size · $type"
+
+    /** `1 page` / `{n} pages` (§7, §10). */
+    fun pageCount(pages: Int): String = if (pages == 1) "1 page" else "$pages pages"
 
     /** While transferring: `{done} of {total}`. */
     fun progress(done: String, total: String): String = "$done of $total"
 
-    /** `File, {name}, {size}` plus the warning's suffix (§7). */
-    fun accessibilityLabel(name: String, size: String, warning: FileWarning?): String =
-        "File, $name, $size" + (warning?.accessibilitySuffix ?: "")
+    /** `File, {name}, {size}` plus the warning's suffix (§7); a known page count goes before the size: `File, {name}, {n} pages, {size}` (§10.1). */
+    fun accessibilityLabel(name: String, size: String, warning: FileWarning?, pages: Int? = null): String =
+        "File, $name, " + (pages?.let { pageCount(it) + ", " } ?: "") + size + (warning?.accessibilitySuffix ?: "")
 }
 
 /** The send limits of §2. */

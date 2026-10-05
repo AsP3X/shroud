@@ -286,6 +286,7 @@ class MessageDecoder(
                 mediaByteCount = payload.s,
                 replyTo = payload.re,
                 fileName = FileNames.clean(payload.n.orEmpty()),
+                pageCount = payload.pg,
             )
         }
         if (payload != null && payload.isLink) {
@@ -372,6 +373,7 @@ class MessageDecoder(
             replyTo: MessageReplyReference? = null,
             linkPreview: LinkPreview? = null,
             fileName: String? = null,
+            pageCount: Int? = null,
         ) = ChatMessage(
             id = dto.id,
             peerUserId = peer,
@@ -396,6 +398,7 @@ class MessageDecoder(
             replyTo = replyTo,
             linkPreview = linkPreview,
             fileName = fileName,
+            pageCount = pageCount,
         )
     }
 

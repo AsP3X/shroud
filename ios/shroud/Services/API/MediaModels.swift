@@ -70,6 +70,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var lp: LinkPreview? = nil
     /// File name of a `t: "file"` message, cleaned by the sender; receivers clean it again.
     var n: String? = nil
+    /// Page count of a PDF file message, when the sender could read it (`docs/file-sharing.md` §10).
+    var pg: Int? = nil
 
     static let kindImage = "image"
     static let kindVoice = "voice"
@@ -162,7 +164,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             s: int(object["s"]),
             re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:)),
             lp: (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:)),
-            n: rawString(object["n"])
+            n: rawString(object["n"]),
+            pg: int(object["pg"]).flatMap { $0 >= 1 ? $0 : nil }
         )
     }
 
@@ -183,6 +186,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         if let re { object["re"] = re.wireObject }
         if let lp { object["lp"] = lp.wireObject }
         if let n { object["n"] = n }
+        if let pg { object["pg"] = pg }
         return try JSONSerialization.data(withJSONObject: object)
     }
 

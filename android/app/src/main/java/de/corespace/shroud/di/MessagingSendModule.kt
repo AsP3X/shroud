@@ -14,6 +14,7 @@ import de.corespace.shroud.core.messaging.MediaHydrator
 import de.corespace.shroud.core.messaging.MediaLoader
 import de.corespace.shroud.core.messaging.MessagingController
 import de.corespace.shroud.core.messaging.MessagingStore
+import de.corespace.shroud.core.messaging.PdfPreviewSource
 import de.corespace.shroud.core.messaging.ReactionsEngine
 import de.corespace.shroud.core.messaging.SendApi
 import de.corespace.shroud.core.messaging.SendDependencies
@@ -99,6 +100,12 @@ class MessagingSendModule(container: AppContainer) : AppModule(container) {
         scope = container.appScope,
         notifier = { notifier() },
         videoTooLarge = { videoTooLarge(it) },
+        pdfPreview = { source ->
+            when (source) {
+                is PdfPreviewSource.Picked -> container.media.pdf.envelopePreview { source.file.openDescriptor() }
+                is PdfPreviewSource.Cached -> container.media.pdf.envelopePreview(source.messageId)
+            }
+        },
     )
 }
 

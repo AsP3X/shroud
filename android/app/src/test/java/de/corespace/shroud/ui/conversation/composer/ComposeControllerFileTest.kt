@@ -306,6 +306,59 @@ class ComposeControllerFileTest {
     }
 
     @Test
+    fun `a PDF opens in Shroud's own viewer after the content check, never ACTION_VIEW`() = runTest(main.dispatcher) {
+        val pdf = file("report.pdf")
+        val env = env {
+            threads.value = mapOf(PEER to listOf(pdf))
+            openOutcome = FileOpenOutcome.Ready(target, "pdf")
+        }
+        env.controller.handleMediaTap(pdf)
+        advanceUntilIdle()
+        assertEquals(listOf("check:report.pdf"), env.services.fileActions)
+        assertEquals(ComposeController.ViewingPdf(pdf.id, "report.pdf"), env.controller.viewingPdf)
+        assertTrue(env.controller.coversComposer)
+        assertTrue(env.effects.filterIsInstance<ComposeEffect.OpenFile>().isEmpty())
+
+        // Its More menu's Open in Another App is the ACTION_VIEW path.
+        env.controller.pdfViewerAction(pdf.id, FileAction.OpenInAnotherApp)
+        advanceUntilIdle()
+        assertEquals(listOf(ComposeEffect.OpenFile(target, "pdf")), env.effects.filterIsInstance<ComposeEffect.OpenFile>())
+
+        env.controller.closePdfViewer()
+        assertNull(env.controller.viewingPdf)
+    }
+
+    @Test
+    fun `a PDF that fails the content check says so and stays closed`() = runTest(main.dispatcher) {
+        val pdf = file("fake.pdf")
+        val env = env {
+            threads.value = mapOf(PEER to listOf(pdf))
+            openRefusal = FileCopy.mismatch("pdf")
+        }
+        env.controller.handleMediaTap(pdf)
+        advanceUntilIdle()
+        assertNull(env.controller.viewingPdf)
+        assertEquals(listOf(Toast.failure("This file doesn't match its .pdf type, so Shroud won't open it.")), env.host.toasts)
+    }
+
+    @Test
+    fun `deleting the PDF or locking the chats closes its viewer`() = runTest(main.dispatcher) {
+        val pdf = file("report.pdf")
+        val env = env { threads.value = mapOf(PEER to listOf(pdf)) }
+        env.controller.handleMediaTap(pdf)
+        advanceUntilIdle()
+        assertNotNull(env.controller.viewingPdf)
+        env.services.sinks.toList().forEach { it.onPurged(listOf(pdf.id)) }
+        assertNull(env.controller.viewingPdf)
+
+        env.controller.handleMediaTap(pdf)
+        advanceUntilIdle()
+        assertNotNull(env.controller.viewingPdf)
+        env.controller.onLock()
+        assertNull(env.controller.viewingPdf)
+    }
+
+    @Test
     fun `no app for the type says so`() = runTest(main.dispatcher) {
         val env = env()
         env.controller.onNoAppForFile("xlsb")

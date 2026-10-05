@@ -2739,7 +2739,8 @@ struct ConversationView: View {
         performFileAction(kind, for: live)
     }
 
-    /// Downloads when needed, decrypts into `tmp/`, then Quick Look or the share sheet.
+    /// Downloads when needed, decrypts into `tmp/`, then the PDF viewer, Quick Look or the share
+    /// sheet.
     private func performFileAction(_ kind: PendingFileAction.Kind, for message: MessagingController.ChatMessage) {
         Task {
             var live = liveMessage(message)
@@ -2771,8 +2772,14 @@ struct ConversationView: View {
                         Haptics.notification(.error)
                         return
                     }
-                    FileViewerPresenter.shared.preview(opened.url, messageID: id) { [messaging] in
-                        messaging.releaseOpenedFile(messageID: id)
+                    if live.fileType?.category == .pdf {
+                        FileViewerPresenter.shared.pdf(opened.url, messageID: id, title: live.fileName ?? "PDF") { [messaging] in
+                            messaging.releaseOpenedFile(messageID: id)
+                        }
+                    } else {
+                        FileViewerPresenter.shared.preview(opened.url, messageID: id) { [messaging] in
+                            messaging.releaseOpenedFile(messageID: id)
+                        }
                     }
                 case .share:
                     FileViewerPresenter.shared.share(opened.url, messageID: id, from: bubbleFrames.frames[id]) { [messaging] in

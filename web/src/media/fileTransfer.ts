@@ -8,6 +8,7 @@ import { blobMimeOf, CONTENT_CHECK_BYTES, contentMatches, fileTypeOf } from "../
 import type { ChatMessage, SealedFile } from "../messaging";
 import { FileJobError, runFileJob, type FileJob } from "./fileJobs";
 import type { FileWorkerReply } from "./fileWorker";
+import { forgetPdfMemory, rekeyPdfMemory, releasePdfMemory } from "./pdfMemory";
 import { setTransfer } from "./transfers";
 
 /**
@@ -219,6 +220,7 @@ export function adoptSentFile(id: string, file: File): void {
 
 /** The server re-keys sent messages; the original moves along with the bubble. */
 export function rekeySentFile(fromId: string, toId: string): void {
+  rekeyPdfMemory(fromId, toId);
   const file = sentFiles.get(key(fromId));
   if (!file) return;
   sentFiles.delete(key(fromId));
@@ -233,6 +235,7 @@ export function releaseFile(messageId: string): void {
   loads.get(id)?.abort.abort();
   loads.delete(id);
   sentFiles.delete(id);
+  releasePdfMemory(id);
   if (opened?.id === id) replaceOpened(null);
   else emit();
 }
@@ -243,5 +246,7 @@ export function forgetFiles(): void {
   for (const { abort } of loads.values()) abort.abort();
   loads.clear();
   sentFiles.clear();
+  // The PDF renders and pages (docs/file-sharing.md §10) go with the files they came from.
+  forgetPdfMemory();
   replaceOpened(null);
 }

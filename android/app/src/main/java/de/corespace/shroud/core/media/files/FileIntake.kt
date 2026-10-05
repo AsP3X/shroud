@@ -3,6 +3,7 @@ package de.corespace.shroud.core.media.files
 import android.content.ContentResolver
 import android.content.res.AssetFileDescriptor
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -23,10 +24,18 @@ class PickedFile(
     val sizeBytes: Long,
     val type: FileType,
     val uri: Uri? = null,
+    private val descriptorOpener: (() -> ParcelFileDescriptor?)? = null,
     private val opener: () -> InputStream?,
 ) {
     /** A fresh stream over the file's bytes; the caller closes it. */
     fun open(): InputStream = opener() ?: throw FileNotFoundException("picked file is gone")
+
+    /**
+     * The provider's own descriptor (`ContentResolver.openFileDescriptor`), for a PDF's `th`
+     * (docs/file-sharing.md §10.1); null when there is none. It may be a pipe, which `PdfRenderer`
+     * refuses. The caller closes it.
+     */
+    fun openDescriptor(): ParcelFileDescriptor? = descriptorOpener?.invoke()
 
     override fun toString(): String = "PickedFile(type=${type.extension}, size=$sizeBytes)"
 
@@ -47,7 +56,13 @@ class FileIntake(private val resolver: ContentResolver, private val io: Coroutin
     data class Result(val files: List<PickedFile>, val refusals: List<String>)
 
     /** One pick as the provider described it. */
-    class Candidate(val displayName: String?, val sizeBytes: Long, val uri: Uri? = null, val opener: () -> InputStream?)
+    class Candidate(
+        val displayName: String?,
+        val sizeBytes: Long,
+        val uri: Uri? = null,
+        val descriptorOpener: (() -> ParcelFileDescriptor?)? = null,
+        val opener: () -> InputStream?,
+    )
 
     /** Describes and checks [uris] off the main thread. */
     suspend fun inspect(uris: List<Uri>): Result = withContext(io) { evaluate(uris.map(::describe)) }
@@ -70,7 +85,7 @@ class FileIntake(private val resolver: ContentResolver, private val io: Coroutin
             // A provider that refuses the query: the name falls back to the URI, the size to the descriptor.
         }
         if (size < 0) size = descriptorLength(uri)
-        return Candidate(name ?: uri.lastPathSegment, size, uri) { resolver.openInputStream(uri) }
+        return Candidate(name ?: uri.lastPathSegment, size, uri, { resolver.openFileDescriptor(uri, "r") }) { resolver.openInputStream(uri) }
     }
 
     private fun descriptorLength(uri: Uri): Long = try {
@@ -101,7 +116,7 @@ class FileIntake(private val resolver: ContentResolver, private val io: Coroutin
                     candidate.sizeBytes == 0L -> refusals += FileCopy.empty(name)
                     candidate.sizeBytes > FileLimits.MAX_PLAINTEXT_BYTES -> refusals += FileCopy.tooLarge(name)
                     files.size >= FileLimits.MAX_FILES_PER_SEND -> dropped = true
-                    else -> files += PickedFile(name, candidate.sizeBytes, type, candidate.uri, candidate.opener)
+                    else -> files += PickedFile(name, candidate.sizeBytes, type, candidate.uri, candidate.descriptorOpener, candidate.opener)
                 }
             }
             if (dropped) refusals += FileCopy.TOO_MANY

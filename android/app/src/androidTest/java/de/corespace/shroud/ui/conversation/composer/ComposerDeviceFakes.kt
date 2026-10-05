@@ -99,6 +99,7 @@ internal class DeviceComposeServices(override val sendScope: CoroutineScope) : C
     override suspend fun sendFile(file: PickedFile, peer: UUID, caption: String, replyTo: MessageReplyReference?): String? = null
     override suspend fun ensureFileLoaded(message: ChatMessage) = Unit
     override suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome = FileOpenOutcome.Refused("")
+    override suspend fun fileOpenRefusal(messageId: UUID, fileName: String): String? = ""
     override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? = null
     override suspend fun saveFileToDownloads(messageId: UUID, fileName: String): SaveOutcome = SaveOutcome.Failed("")
     override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable = AutoCloseable {}

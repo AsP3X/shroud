@@ -86,18 +86,27 @@ nonisolated struct PickedFile: Identifiable, Equatable, Sendable {
 /// The optional `th` of a file message: a tiny JPEG for images, videos and PDFs.
 ///
 /// Human: Only when it is cheap — Quick Look's thumbnailer reads what it needs (an embedded
-/// thumbnail, the first frame, the first page) rather than the whole file. Anything it can't
-/// do quickly is sent without a preview.
+/// thumbnail, the first frame) rather than the whole file. A PDF's is the top of its first
+/// page in the bubble's 2:1 card, with the page count (`PDFPagePreview`). Anything that can't
+/// be done quickly is sent without a preview.
 nonisolated enum FilePreview {
     struct Thumbnail: Sendable {
         let jpeg: Data
         /// Pixel size of what `jpeg` shows (`w` / `h` in the payload).
         let width: Int
         let height: Int
+        /// A PDF's page count (`pg`).
+        var pageCount: Int? = nil
     }
 
     static func thumbnail(for file: PickedFile) async -> Thumbnail? {
-        guard [.image, .video, .pdf].contains(file.type.category) else { return nil }
+        if file.type.category == .pdf {
+            guard let preview = await PDFPagePreview.senderPreview(for: file.url) else { return nil }
+            var thumbnail = preview.thumbnail
+            thumbnail.pageCount = preview.pageCount
+            return thumbnail
+        }
+        guard [.image, .video].contains(file.type.category) else { return nil }
         let request = QLThumbnailGenerator.Request(
             fileAt: file.url,
             size: CGSize(width: 160, height: 160),

@@ -75,9 +75,11 @@ import {
   shareTranscript,
   type ChatMessage,
   type HistoryCursor,
+  type PdfSendPreview,
   type SealedFile,
 } from "../messaging";
 import { fileTypeOf, sanitizeFileName } from "../files";
+import { bytesToB64 } from "../crypto/bytes";
 import type { ReplyRef } from "../reply";
 import {
   adoptSentFile,
@@ -149,6 +151,8 @@ type FileSend = {
   replyTo: ReplyRef | null;
   /** Null until sealed; then reused by every retry. */
   sealed: SealedFile | null;
+  /** A PDF's `th` and `pg` (docs/file-sharing.md §10.1), read once and reused by every retry. */
+  pdf: Promise<PdfSendPreview | null> | null;
 };
 
 /** Rounds a reaction save may lose to our other device writing first before its set stands. */
@@ -2239,7 +2243,17 @@ export function AppShell({ session }: { session: Session }) {
         replyTo: index === 0 ? reference : null,
       };
       return {
-        job: { file, name, clientId, localId, peerId, caption: text, replyTo: optimistic.replyTo ?? null, sealed: null },
+        job: {
+          file,
+          name,
+          clientId,
+          localId,
+          peerId,
+          caption: text,
+          replyTo: optimistic.replyTo ?? null,
+          sealed: null,
+          pdf: null,
+        },
         optimistic,
       };
     });
@@ -2259,6 +2273,29 @@ export function AppShell({ session }: { session: Session }) {
   /** Seals (once), uploads and sends one file; a failure keeps it for `retryFile`. */
   async function runFileSend(job: FileSend, material: IdentityMaterial) {
     const { localId, peerId } = job;
+    // A PDF's preview is read while the file is sealed; pdf.js loads only now, on first use.
+    if (fileTypeOf(job.name)?.ext === "pdf" && !job.pdf) {
+      job.pdf = import("../media/pdfPreview")
+        .then((m) => m.pdfSendPreview(job.file))
+        .catch(() => null);
+      void job.pdf.then((pdf) => {
+        if (!pdf || !alive.current) return;
+        const thumbnail = pdf.thumb ? bytesToB64(pdf.thumb) : null;
+        setThread((prev) =>
+          prev.map((m) =>
+            m.id === localId
+              ? {
+                  ...m,
+                  pageCount: pdf.pages,
+                  thumbnail: thumbnail ?? m.thumbnail,
+                  imageWidth: thumbnail ? pdf.width : m.imageWidth,
+                  imageHeight: thumbnail ? pdf.height : m.imageHeight,
+                }
+              : m,
+          ),
+        );
+      });
+    }
     try {
       setTransfer(localId, { direction: "up", phase: "preparing", loaded: 0, total: job.file.size });
       job.sealed ??= await sealForUpload(job.file, (loaded, total) =>
@@ -2273,6 +2310,7 @@ export function AppShell({ session }: { session: Session }) {
         name: job.name,
         size: job.file.size,
         caption: job.caption,
+        pdf: job.pdf,
         replyTo: job.replyTo,
         clientMessageId: job.clientId,
         onProgress: (loaded, total) => setTransfer(localId, { direction: "up", phase: "transferring", loaded, total }),

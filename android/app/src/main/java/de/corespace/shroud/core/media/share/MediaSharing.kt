@@ -137,15 +137,26 @@ internal class MemoryMediaSharing(
         val name = FileNames.clean(fileName)
         val extension = FileNames.extension(name)
         val type = FileTypes.forExtension(extension)
-        if (type == null || extension == null || !type.canOpen) return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
-        val head = readHead(messageId) ?: return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
-        try {
-            if (!FileContentCheck.matches(type, head.first, head.second)) return@withContext FileOpenOutcome.Refused(FileCopy.mismatch(extension))
+        refusal(messageId, name)?.let { return@withContext FileOpenOutcome.Refused(it) }
+        if (type == null || extension == null) return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
+        val target = grantFile(messageId, name, type.mime) ?: return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
+        FileOpenOutcome.Ready(target, extension)
+    }
+
+    override suspend fun checkBeforeOpening(messageId: UUID, fileName: String): String? =
+        withContext(Dispatchers.IO) { refusal(messageId, FileNames.clean(fileName)) }
+
+    /** Why the cleaned [name] may not be opened: not openable here, not on this phone, or §4's mismatch; null when it may. */
+    private fun refusal(messageId: UUID, name: String): String? {
+        val extension = FileNames.extension(name)
+        val type = FileTypes.forExtension(extension)
+        if (type == null || extension == null || !type.canOpen) return FileCopy.COULD_NOT_OPEN
+        val head = readHead(messageId) ?: return FileCopy.COULD_NOT_OPEN
+        return try {
+            if (FileContentCheck.matches(type, head.first, head.second)) null else FileCopy.mismatch(extension)
         } finally {
             head.first.fill(0)
         }
-        val target = grantFile(messageId, name, type.mime) ?: return@withContext FileOpenOutcome.Refused(FileCopy.COULD_NOT_OPEN)
-        FileOpenOutcome.Ready(target, extension)
     }
 
     override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? = withContext(Dispatchers.IO) {

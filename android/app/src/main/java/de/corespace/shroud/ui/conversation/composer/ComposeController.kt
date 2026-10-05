@@ -205,6 +205,10 @@ class ComposeController internal constructor(
     var viewingVideo: ViewingVideo? by mutableStateOf(null)
         private set
 
+    /** The PDF Shroud's own viewer shows (docs/file-sharing.md §10.2). */
+    var viewingPdf: ViewingPdf? by mutableStateOf(null)
+        private set
+
     /** Messages whose full media is downloading (CV:64-65). */
     private val mediaDownloadIds = HashSet<UUID>()
 
@@ -216,7 +220,7 @@ class ComposeController internal constructor(
      * edge and hides the jump-to-latest control. The camera counts too (iOS presents it full screen).
      */
     val coversComposer: Boolean
-        get() = viewingMedia != null || viewingVideo != null || composeDraft != null || videoDraft != null || showsCamera
+        get() = viewingMedia != null || viewingVideo != null || viewingPdf != null || composeDraft != null || videoDraft != null || showsCamera
 
     /**
      * Toasts raised while a full-screen layer covers the composer: [ComposeMediaLayers] draws them on
@@ -239,6 +243,7 @@ class ComposeController internal constructor(
         override fun onPurged(messageIds: Collection<UUID>) {
             if (viewingMedia in messageIds) viewingMedia = null
             if (viewingVideo?.id in messageIds) viewingVideo = null
+            if (viewingPdf?.id in messageIds) viewingPdf = null
         }
 
         override fun onSensitiveMemoryLocked() = onLock()
@@ -246,6 +251,7 @@ class ComposeController internal constructor(
         override fun onMessageRekeyed(from: UUID, to: UUID) {
             if (viewingMedia == from) viewingMedia = to
             viewingVideo?.let { if (it.id == from) viewingVideo = it.copy(id = to) }
+            viewingPdf?.let { if (it.id == from) viewingPdf = it.copy(id = to) }
         }
     }
     private var sinkRegistration: AutoCloseable? = services.registerArtifactSink(artifactSink)
@@ -948,10 +954,17 @@ class ComposeController internal constructor(
         val name = live.fileName ?: return
         services.sendScope.launch {
             when (action) {
-                FileAction.Open -> when (val outcome = services.fileOpenTarget(live.id, name)) {
-                    is FileOpenOutcome.Ready -> if (!left) mutableEffects.tryEmit(ComposeEffect.OpenFile(outcome.target, outcome.extension))
-                    is FileOpenOutcome.Refused -> fileFailure(outcome.message)
+                // A PDF opens in Shroud's own viewer after §4's check (docs/file-sharing.md §10.2).
+                FileAction.Open -> if (live.fileType?.category == FileCategory.Pdf) {
+                    val refusal = services.fileOpenRefusal(live.id, name)
+                    when {
+                        refusal != null -> fileFailure(refusal)
+                        !left && !host.isShowingMessageMenu -> viewingPdf = ViewingPdf(live.id, name)
+                    }
+                } else {
+                    openInAnotherApp(live.id, name)
                 }
+                FileAction.OpenInAnotherApp -> openInAnotherApp(live.id, name)
                 FileAction.Share -> {
                     val target = services.fileShareTarget(live.id, name)
                     if (target == null) fileFailure(FileCopy.COULD_NOT_SHARE) else if (!left) mutableEffects.tryEmit(ComposeEffect.ShareFile(target))
@@ -966,6 +979,28 @@ class ComposeController internal constructor(
                 FileAction.Download -> Unit
             }
         }
+    }
+
+    /** `ACTION_VIEW` of a checked grant (§7): the bubble's Open of every type but PDF, and the PDF viewer's Open in Another App. */
+    private suspend fun openInAnotherApp(id: UUID, name: String) {
+        when (val outcome = services.fileOpenTarget(id, name)) {
+            is FileOpenOutcome.Ready -> if (!left) mutableEffects.tryEmit(ComposeEffect.OpenFile(outcome.target, outcome.extension))
+            is FileOpenOutcome.Refused -> fileFailure(outcome.message)
+        }
+    }
+
+    /**
+     * The PDF viewer's More menu: Share, Save to Downloads or Open in Another App of the PDF it shows,
+     * through the same paths as the bubble's (grants, toasts, haptics).
+     */
+    fun pdfViewerAction(id: UUID, action: FileAction) {
+        val message = thread.firstOrNull { it.id == id } ?: return
+        requestFileAction(message, action)
+    }
+
+    /** The PDF viewer's Close, Back or predictive back. */
+    fun closePdfViewer() {
+        viewingPdf = null
     }
 
     /** A file's download (tap, or before the action it was asked for); stopping it from the ring is no failure. */
@@ -1125,6 +1160,7 @@ class ComposeController internal constructor(
         // The open photo or clip was deleted for everyone (or left the thread): its viewer goes with it (CV:182-187, 265-271).
         viewingMedia?.let { id -> if (messages.isGone(id)) viewingMedia = null }
         viewingVideo?.let { video -> if (messages.isGone(video.id)) viewingVideo = null }
+        viewingPdf?.let { pdf -> if (messages.isGone(pdf.id)) viewingPdf = null }
         viewerDeleteId?.let { id ->
             if (messages.isGone(id)) {
                 viewerDeleteId = null
@@ -1214,6 +1250,7 @@ class ComposeController internal constructor(
         videoDraft = null
         viewingMedia = null
         viewingVideo = null
+        viewingPdf = null
         viewerDeleteId = null
         coveredToasts.dismiss()
     }
@@ -1261,6 +1298,9 @@ class ComposeController internal constructor(
 
     /** The full-screen video the player shows (CV:641-647); the bytes stay sealed (plan C7). */
     data class ViewingVideo(val id: UUID, val title: String, val dateLine: String)
+
+    /** The PDF viewer's message and its cleaned file name (its title). */
+    data class ViewingPdf(val id: UUID, val name: String)
 
     companion object {
         private const val YOU = "You"
@@ -1335,7 +1375,15 @@ internal sealed interface ComposeEffect {
  * What a file message's action is (docs/file-sharing.md §6, §7): open it, save it, share it, or —
  * for an APK — download it and show its menu. Only the first three ask the §6 question.
  */
-enum class FileAction { Open, Save, Share, Download }
+enum class FileAction {
+    Open,
+    Save,
+    Share,
+    Download,
+
+    /** `ACTION_VIEW` even for a PDF: the PDF viewer's **Open in Another App** (docs/file-sharing.md §10.2). */
+    OpenInAnotherApp,
+}
 
 /** Files staged in the file composer, in pick order (at most ten). */
 data class FileComposeDraft(val files: List<PickedFile>)

@@ -103,6 +103,8 @@ export type ChatMessage = {
    * decides the type. `mime` is then the type table's, never the sender's.
    */
   fileName?: string | null;
+  /** A PDF's page count from its payload's `pg` (docs/file-sharing.md §10); null when unknown. */
+  pageCount?: number | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
   /** Set on `kind === "annotation"`; null when it could not be read. */
@@ -355,6 +357,7 @@ export function messageFromMediaPayload(
       imageHeight: payload.h > 0 ? payload.h : null,
       thumbnail: payload.th?.trim() || null,
       mediaBytes: payload.s ?? null,
+      pageCount: payload.pg ?? null,
     };
   }
   const linkPreview = payloadLinkPreview(payload);
@@ -1083,6 +1086,9 @@ export async function sendVideo(opts: {
 /** A file already sealed as SHRF1 under its own key: what a retry uploads again, unchanged. */
 export type SealedFile = { blob: Blob; key: Uint8Array };
 
+/** What a PDF's sender read from it (docs/file-sharing.md §10.1): the `th` JPEG and its size, and `pg`. */
+export type PdfSendPreview = { thumb: Uint8Array | null; width: number; height: number; pages: number };
+
 /**
  * Uploads one sealed file and sends it as a `t: "file"` media message (docs/file-sharing.md
  * §1). `name` is already cleaned; the MIME sealed is the type table's, and the upload itself is
@@ -1099,6 +1105,11 @@ export async function sendFile(opts: {
   /** Plaintext size, sealed as `s`; the receiver checks the blob against it. */
   size: number;
   caption?: string | null;
+  /**
+   * A PDF's sealed preview (`th`, `w`, `h`) and page count (`pg`), docs/file-sharing.md §10.1;
+   * still being read while the file uploads, so it may come as a promise.
+   */
+  pdf?: PdfSendPreview | Promise<PdfSendPreview | null> | null;
   /** Quote sealed with the file (first of a batch only). */
   replyTo?: ReplyRef | null;
   /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
@@ -1115,16 +1126,22 @@ export async function sendFile(opts: {
   await api.putMediaContent(opts.token, upload.media_object_id, opts.sealed.blob, opts.onProgress);
   opts.onUploaded?.();
 
+  const pdf = type.ext === "pdf" ? await Promise.resolve(opts.pdf ?? null).catch(() => null) : null;
+  const thumb = pdf?.thumb && pdf.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(pdf.thumb) : null;
+  const pages = pdf && Number.isInteger(pdf.pages) && pdf.pages >= 1 ? pdf.pages : null;
+
   const payload: MediaPayload = withReply(
     {
       t: "file",
       n: opts.name,
       mime: type.mime,
-      w: 0,
-      h: 0,
+      w: thumb ? pdf!.width : 0,
+      h: thumb ? pdf!.height : 0,
       k: bytesToB64(opts.sealed.key),
       s: opts.size,
       ...(caption ? { c: caption } : {}),
+      ...(thumb ? { th: thumb } : {}),
+      ...(pages ? { pg: pages } : {}),
     },
     opts.replyTo,
   );
@@ -1340,6 +1357,7 @@ export function tombstone(message: ChatMessage): ChatMessage {
     transcript: null,
     thumbnail: null,
     fileName: null,
+    pageCount: null,
     mediaKey: null,
     mediaObjectId: null,
     replyTo: null,

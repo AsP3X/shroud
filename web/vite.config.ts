@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { bundleLicenses } from "./bundleLicenses";
+import { pdfjsAssets } from "./pdfjsAssets";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
@@ -23,6 +24,8 @@ export default defineConfig({
         webBuild ? [{ tag: "meta", attrs: { name: "shroud-build", content: webBuild }, injectTo: "head" }] : [],
     },
     licenses.page,
+    // The PDF viewer's CMaps, fonts and decoders, on this origin (src/media/pdfjs.ts).
+    pdfjsAssets(root),
   ],
   define: {
     "import.meta.env.VITE_WEB_VERSION": JSON.stringify(webVersion),

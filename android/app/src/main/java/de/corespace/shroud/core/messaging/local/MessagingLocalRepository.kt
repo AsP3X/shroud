@@ -471,6 +471,7 @@ class MessagingLocalRepository(
         var result = message
         if (result.previewJpeg == null) payload.previewJpeg?.let { result = result.copy(previewJpeg = Bytes.adopt(it)) }
         if (result.mediaByteCount == null && payload.s != null) result = result.copy(mediaByteCount = payload.s)
+        if (result.kind == ChatMessageKind.File && result.pageCount == null && payload.pg != null) result = result.copy(pageCount = payload.pg)
         if (result.kind == ChatMessageKind.Video && result.posterJpeg == null && result.previewJpeg != null) {
             result = result.copy(posterJpeg = result.previewJpeg)
         }

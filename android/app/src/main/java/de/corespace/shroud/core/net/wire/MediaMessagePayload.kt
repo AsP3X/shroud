@@ -42,6 +42,8 @@ data class MediaMessagePayload(
     val lp: LinkPreview? = null,
     /** A [KIND_FILE] message's name, cleaned by the sender (docs/file-sharing.md §1, §5); receivers clean it again. */
     val n: String? = null,
+    /** A PDF [KIND_FILE]'s page count (docs/file-sharing.md §1, §10), when the sender could read it; ≥ 1. */
+    val pg: Int? = null,
 ) {
     /**
      * `t == file` (docs/file-sharing.md §1): a file whatever its `mime` says. Every reader asks this
@@ -103,12 +105,13 @@ data class MediaMessagePayload(
         re?.let { fields["re"] = it.wireObject() }
         lp?.let { fields["lp"] = it.wire() }
         n?.let { fields["n"] = JsonPrimitive(it) }
+        pg?.let { fields["pg"] = JsonPrimitive(it) }
         return LenientJson.encodeToBytes(JsonObject(fields))
     }
 
     override fun toString(): String =
         "MediaMessagePayload(t=$t, mime=$mime, w=$w, h=$h, d=$d, s=$s, caption=${c != null}, preview=${th != null}, " +
-            "waveform=${wf != null}, reply=${re != null}, link=${lp != null}, name=${n != null})"
+            "waveform=${wf != null}, reply=${re != null}, link=${lp != null}, name=${n != null}, pages=$pg)"
 
     companion object {
         const val KIND_IMAGE = "image"
@@ -152,7 +155,7 @@ data class MediaMessagePayload(
          * The payload in a parsed object (`:137-155`): null unless `t` and `k` are non-empty strings
          * after trimming. Strings are trimmed (blank → absent), `null` counts as absent, numbers may be
          * doubles (`1500.0` → 1500) or numeric strings, `mime` defaults to `application/octet-stream`,
-         * `w`/`h` to 0; `re`/`lp` are read only when they are objects and dropped when broken; unknown
+         * `w`/`h` to 0, a `pg` below 1 to absent; `re`/`lp` are read only when they are objects and dropped when broken; unknown
          * keys are ignored.
          */
         fun parse(obj: JsonObject): MediaMessagePayload? {
@@ -172,6 +175,8 @@ data class MediaMessagePayload(
                 re = (obj["re"] as? JsonObject)?.let(MessageReplyReference::parse),
                 lp = (obj["lp"] as? JsonObject)?.let(LinkPreview::parse),
                 n = LenientJson.trimmedString(obj["n"]),
+                // Like `th`: read leniently, and anything but a positive count is absent.
+                pg = LenientJson.int(obj["pg"])?.takeIf { it >= 1 },
             )
         }
     }

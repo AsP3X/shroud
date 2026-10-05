@@ -127,12 +127,56 @@ nonisolated enum FileBlob {
         guard plaintextSize >= 0, length == sealedSize(plaintextSize) else { throw BlobError.wrongLength }
         let reader = try FileHandle(forReadingFrom: input)
         defer { try? reader.close() }
-
         let header = try reader.read(upToCount: headerSize) ?? Data()
         let noncePrefix = try parseHeader(header)
         let writer = try createOutput(output)
         defer { try? writer.close() }
+        try openSegments(
+            reader,
+            header: header,
+            noncePrefix: noncePrefix,
+            key: key,
+            plaintextSize: plaintextSize,
+            onProgress: onProgress
+        ) { try writer.write(contentsOf: $0) }
+    }
 
+    /// Opens the blob at `input` into memory, with every check of `open(from:to:)`.
+    ///
+    /// Agent: For small files only (the PDF preview card caps it at 64 MB): the whole plaintext
+    /// is returned, and only after the last tag checked.
+    static func openIntoMemory(from input: URL, key: SymmetricKey, plaintextSize: Int64) throws -> Data {
+        guard key.bitCount == 256 else { throw BlobError.invalidKey }
+        let length = fileSize(at: input)
+        guard plaintextSize >= 0, plaintextSize <= Int64(Int.max / 2), length == sealedSize(plaintextSize) else {
+            throw BlobError.wrongLength
+        }
+        let reader = try FileHandle(forReadingFrom: input)
+        defer { try? reader.close() }
+        let header = try reader.read(upToCount: headerSize) ?? Data()
+        let noncePrefix = try parseHeader(header)
+        var plaintext = Data(capacity: Int(plaintextSize))
+        try openSegments(
+            reader,
+            header: header,
+            noncePrefix: noncePrefix,
+            key: key,
+            plaintextSize: plaintextSize,
+            onProgress: nil
+        ) { plaintext.append($0) }
+        return plaintext
+    }
+
+    /// Reads, checks and hands on every segment after the header, then refuses trailing bytes.
+    private static func openSegments(
+        _ reader: FileHandle,
+        header: Data,
+        noncePrefix: Data,
+        key: SymmetricKey,
+        plaintextSize: Int64,
+        onProgress: ((Double) -> Void)?,
+        sink: (Data) throws -> Void
+    ) throws {
         let count = segmentCount(plaintextSize)
         for i in 0 ..< count {
             try Task.checkCancellation()
@@ -143,7 +187,7 @@ nonisolated enum FileBlob {
                       chunk.count == plainLength + tagSize
                 else { throw BlobError.unreadable }
                 let plain = try openSegment(chunk, index: UInt32(i), last: last, key: key, noncePrefix: noncePrefix, header: header)
-                try writer.write(contentsOf: plain)
+                try sink(plain)
             }
             if let onProgress, i % Int64(progressStride) == 0 || last {
                 onProgress(Double(i + 1) / Double(count))

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ArrowDown,
   BookOpen,
@@ -28,6 +28,7 @@ import {
 } from "../files";
 import type { ChatMessage } from "../messaging";
 import { useFileOnDevice } from "../media/fileTransfer";
+import { usePdfCard, usePdfPageCount, type PdfCardRender } from "../media/pdfMemory";
 import { ringFraction, useTransfer } from "../media/transfers";
 import { LinkedText } from "./LinkedText";
 import { ProgressRing } from "./ProgressRing";
@@ -58,6 +59,32 @@ export function FileName({ name }: { name: string }) {
       {head ? <span className="file-name-head">{head}</span> : null}
       <span className="file-name-tail">{tail}</span>
     </span>
+  );
+}
+
+/**
+ * A PDF's preview card (docs/file-sharing.md §10.1): the top of page 1, aspect fill pinned to the
+ * top edge, on white with a hairline. The viewer's local render cross-fades over `th` when it is
+ * ready (150 ms). Hidden from assistive tech: the row's label says what the file is.
+ */
+function PdfCard({ thumb, local, onTap }: { thumb: string | null; local: PdfCardRender | null; onTap?: () => void }) {
+  /* A render already in memory when the bubble mounts shows at once; one that arrives fades in. */
+  const [instant] = useState(() => Boolean(local));
+  const [painted, setPainted] = useState(false);
+  return (
+    <div className={`file-pdf-card${onTap ? " is-tappable" : ""}`} aria-hidden="true" onClick={onTap}>
+      {thumb && !(local && painted) ? <img className="file-pdf-card-img" src={thumb} alt="" draggable={false} /> : null}
+      {local ? (
+        <img
+          key={local.url}
+          className={`file-pdf-card-img is-local${painted || instant ? " is-painted" : ""}${instant ? " is-instant" : ""}`}
+          src={local.url}
+          alt=""
+          draggable={false}
+          onLoad={() => setPainted(true)}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -97,7 +124,14 @@ export function FileBubble({
   const type = fileTypeOf(name);
   const size = message.mediaBytes ?? null;
   const caption = message.caption?.trim() || "";
-  const thumb = type ? thumbnailUrl(message) : null;
+  const isPdf = type?.ext === "pdf";
+  const localCard = usePdfCard(message.id);
+  const localPages = usePdfPageCount(message.id);
+  const pages = isPdf ? (message.pageCount ?? localPages ?? null) : null;
+  const sealedThumb = type ? thumbnailUrl(message) : null;
+  /* §10.1: a PDF with a picture gets the card above the row, and its tile then shows no `th`. */
+  const card = isPdf && !message.deleted && (localCard || sealedThumb) ? { thumb: sealedThumb, local: localCard } : null;
+  const thumb = card ? null : sealedThumb;
 
   const notSent = message.isMine && message.failed;
   const uploading = message.isMine && (message.pending || transfer?.direction === "up");
@@ -132,7 +166,7 @@ export function FileBubble({
     metaLine = `${formatBytes(Math.min(total, moved))} of ${formatBytes(total)}`;
   } else {
     glyph = onDevice ? <FileCategoryIcon category={type.category} /> : <ArrowDown size={20} aria-hidden="true" />;
-    metaLine = fileMetaLine(size, name);
+    metaLine = fileMetaLine(size, name, pages);
   }
 
   const tileClass = [
@@ -163,24 +197,26 @@ export function FileBubble({
     </>
   );
 
+  const label = fileAccessibilityLabel(name, size, pages);
+  const tap = () => {
+    if (notSent) onRetry?.(message);
+    else if (downloading) onCancelDownload(message.id);
+    else onOpen(message);
+  };
+
+  const classes = [className, "file-msg", caption ? "has-caption" : "", card ? "has-pdf-card" : "", quote ? "has-quote" : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <div className={`${className} file-msg${caption ? " has-caption" : ""}`}>
+    <div className={classes}>
       {quote}
+      {card ? <PdfCard thumb={card.thumb} local={card.local} onTap={canTap ? tap : undefined} /> : null}
       {canTap ? (
-        <button
-          type="button"
-          className="file-row"
-          aria-label={fileAccessibilityLabel(name, size)}
-          onClick={() => {
-            if (notSent) onRetry?.(message);
-            else if (downloading) onCancelDownload(message.id);
-            else onOpen(message);
-          }}
-        >
+        <button type="button" className="file-row" aria-label={label} onClick={tap}>
           {body}
         </button>
       ) : (
-        <div className="file-row" role="group" aria-label={fileAccessibilityLabel(name, size)}>
+        <div className="file-row" role="group" aria-label={label}>
           {body}
         </div>
       )}

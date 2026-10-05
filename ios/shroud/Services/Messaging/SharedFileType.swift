@@ -300,7 +300,17 @@ nonisolated enum SharedFile {
     static let unsupportedLabel = "Unsupported file"
 
     /// `{size} · {TYPE}`, the bubble's and the composer's meta line.
-    static func metaLine(byteCount: Int64, type: FileType) -> String {
-        "\(MediaCrypto.byteCountLabel(Int(clamping: byteCount))) · \(type.label)"
+    /// `{size} · {TYPE}`, led by a PDF's page count when it is known: `12 pages · 2.4 MB · PDF`.
+    static func metaLine(byteCount: Int64?, type: FileType, pageCount: Int? = nil) -> String {
+        var parts: [String] = []
+        if let pageCount, pageCount > 0 { parts.append(pageCountLabel(pageCount)) }
+        if let byteCount, byteCount > 0 { parts.append(MediaCrypto.byteCountLabel(Int(clamping: byteCount))) }
+        parts.append(type.label)
+        return parts.joined(separator: " · ")
+    }
+
+    /// `1 page` / `12 pages`.
+    static func pageCountLabel(_ count: Int) -> String {
+        count == 1 ? "1 page" : "\(count) pages"
     }
 }

@@ -25,7 +25,17 @@ export type MediaPayload = {
    * receivers clean it again before showing or saving it.
    */
   n?: string | null;
+  /**
+   * Page count of a PDF sent as a file (docs/file-sharing.md §1, §10), when the sender could read
+   * it: an integer ≥ 1. Absent on other types and on payloads from before §10.
+   */
+  pg?: number | null;
 };
+
+/** `pg` as sealed, or null when it is missing or not a page count. */
+function pageCountOf(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 ? raw : null;
+}
 
 export function parseMediaPayload(raw: string): MediaPayload | null {
   const trimmed = raw.trim();
@@ -47,6 +57,7 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
       re: (parsed as { re?: unknown }).re as Record<string, string> | undefined ?? null,
       lp: (parsed as { lp?: unknown }).lp as Record<string, unknown> | undefined ?? null,
       n: typeof parsed.n === "string" ? parsed.n : null,
+      pg: pageCountOf((parsed as { pg?: unknown }).pg),
     };
   } catch {
     return null;

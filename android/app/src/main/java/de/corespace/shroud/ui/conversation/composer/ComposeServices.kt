@@ -88,6 +88,9 @@ internal interface ComposeServices {
     /** A grant for `ACTION_VIEW` after the content check (`media.fileSharing.openTarget`). */
     suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome
 
+    /** §4's check before Shroud's own PDF viewer (`media.fileSharing.checkBeforeOpening`): null = may open. */
+    suspend fun fileOpenRefusal(messageId: UUID, fileName: String): String?
+
     /** A grant for the share sheet (`media.fileSharing.fileShareTarget`). */
     suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget?
 
@@ -216,6 +219,8 @@ internal class ContainerComposeServices(private val container: AppContainer) : C
     override suspend fun ensureFileLoaded(message: ChatMessage) = messaging.ensureFileLoaded(message)
     override suspend fun fileOpenTarget(messageId: UUID, fileName: String): FileOpenOutcome =
         container.media.fileSharing.openTarget(messageId, fileName)
+    override suspend fun fileOpenRefusal(messageId: UUID, fileName: String): String? =
+        container.media.fileSharing.checkBeforeOpening(messageId, fileName)
     override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? =
         container.media.fileSharing.fileShareTarget(messageId, fileName)
     override suspend fun saveFileToDownloads(messageId: UUID, fileName: String): SaveOutcome =

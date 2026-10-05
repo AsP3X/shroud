@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
-import android.os.ProxyFileDescriptorCallback
 import android.os.storage.StorageManager
 import android.provider.OpenableColumns
 import android.system.ErrnoException
@@ -147,11 +146,7 @@ class DecryptedMediaProvider : ContentProvider() {
     /** Null when the platform cannot make a proxy descriptor (Robolectric, a device without AppFuse). */
     private fun proxy(file: SharedMediaRegistry.SealedFile, reader: SealedMediaReader): ParcelFileDescriptor? {
         val storage = context?.getSystemService(StorageManager::class.java) ?: return null
-        return try {
-            storage.openProxyFileDescriptor(ParcelFileDescriptor.MODE_READ_ONLY, ReaderCallback(file, reader), proxyHandler)
-        } catch (_: Exception) {
-            null
-        }
+        return SealedReaderProxy.open(storage, reader, proxyHandler) { file.release(reader) }
     }
 
     /** The reader streamed into a pipe, one segment at a time, on [SHARE_THREAD] (synchronously into a file-backed pipe). */
@@ -189,30 +184,6 @@ class DecryptedMediaProvider : ContentProvider() {
             Thread(copy, SHARE_THREAD).apply { isDaemon = true }.start()
         }
         return pipe[0]
-    }
-
-    /** Serves the proxy descriptor's reads from the SHRM1 reader; a segment that does not open is `EIO`. */
-    private class ReaderCallback(
-        private val file: SharedMediaRegistry.SealedFile,
-        private val reader: SealedMediaReader,
-    ) : ProxyFileDescriptorCallback() {
-        override fun onGetSize(): Long = reader.length
-
-        override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
-            var done = 0
-            try {
-                while (done < size) {
-                    val read = reader.read(offset + done, data, done, size - done)
-                    if (read <= 0) break
-                    done += read
-                }
-            } catch (_: IOException) {
-                throw ErrnoException("onRead", OsConstants.EIO)
-            }
-            return done
-        }
-
-        override fun onRelease() = file.release(reader)
     }
 
     private fun writeAll(writeEnd: ParcelFileDescriptor, bytes: ByteArray, offset: Int) {

@@ -266,6 +266,23 @@ class MediaMessagePayloadTest {
     }
 
     @Test
+    fun aPdfPageCountIsReadLenientlyAndWrittenWhenSet() {
+        assertEquals(12, parse("""{"t":"file","n":"a.pdf","k":"a2V5","s":1,"pg":12}""")!!.pg)
+        assertEquals(12, parse("""{"t":"file","n":"a.pdf","k":"a2V5","s":1,"pg":12.0}""")!!.pg)
+        assertEquals(12, parse("""{"t":"file","n":"a.pdf","k":"a2V5","s":1,"pg":"12"}""")!!.pg)
+        for (bad in listOf("0", "-3", "null", "\"x\"", "[]")) {
+            assertNull(bad, parse("""{"t":"file","n":"a.pdf","k":"a2V5","s":1,"pg":$bad}""")!!.pg)
+        }
+        // Absent on payloads from before §10, and never written then.
+        val old = MediaMessagePayload(t = MediaMessagePayload.KIND_FILE, mime = "application/pdf", w = 0, h = 0, k = "a2V5", s = 1, n = "a.pdf")
+        assertNull(old.pg)
+        assertFalse(Json.parseToJsonElement(old.encoded().decodeToString()).jsonObject.containsKey("pg"))
+        val pdf = old.copy(pg = 3, th = "AAAA", w = 480, h = 240)
+        assertEquals("3", Json.parseToJsonElement(pdf.encoded().decodeToString()).jsonObject["pg"].toString())
+        assertEquals(pdf, MediaMessagePayload.parse(pdf.encoded()))
+    }
+
+    @Test
     fun oldPayloadsStillSniffTheirMimeAndCarryNoName() {
         val photo = parse("""{"t":"thumb","mime":"image/jpeg","k":"a2V5"}""")!!
         assertTrue(photo.isImage)

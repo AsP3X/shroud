@@ -70,6 +70,10 @@ data class ShroudColors(
     val sheetScrim: Color,
     /** Dim over the screen underneath during predictive back (design Predictive Back `Dim`). */
     val dimPredictiveBack: Color,
+    /** The PDF viewer's canvas behind the white pages (docs/file-sharing.md §10.2). */
+    val pdfCanvas: Color,
+    /** The PDF viewer's pages sidebar and drawer behind the thumbnails (§10.2). */
+    val pdfSidebar: Color,
     val isDark: Boolean,
 )
 
@@ -115,6 +119,8 @@ val LightColors = ShroudColors(
     menuScrimOpaque = Color(0x590B0B12),
     sheetScrim = Color(0x470B0B12),
     dimPredictiveBack = Color(0x330B0B12),
+    pdfCanvas = Color(0xFFECECF0),
+    pdfSidebar = Color(0xFFF7F7F9),
     isDark = false,
 )
 
@@ -160,6 +166,8 @@ val DarkColors = ShroudColors(
     menuScrimOpaque = Color(0x590B0B12),
     sheetScrim = Color(0x470B0B12),
     dimPredictiveBack = Color(0x330B0B12),
+    pdfCanvas = Color(0xFF111113),
+    pdfSidebar = Color(0xFF1A1A1D),
     isDark = true,
 )
 

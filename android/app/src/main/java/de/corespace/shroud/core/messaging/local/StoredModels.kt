@@ -130,6 +130,8 @@ data class StoredMessage(
      */
     val fileName: String? = null,
     val fileSize: Long? = null,
+    /** A PDF file's page count (docs/file-sharing.md §10), for the same reason; absent when unknown. */
+    val filePages: Int? = null,
 ) {
     override fun toString(): String = "StoredMessage(id=$id, kind=$kind, deleted=$deleted, receipt=$receipt)"
 
@@ -174,6 +176,7 @@ data class StoredMessage(
             reactions = reactions.orEmpty().map { MessageReaction(it.userId, it.emojis, it.seq) },
             mediaByteCount = if (kind == ChatMessageKind.File) fileSize else null,
             fileName = if (kind == ChatMessageKind.File) fileName else null,
+            pageCount = if (kind == ChatMessageKind.File) filePages?.takeIf { it >= 1 } else null,
         )
     }
 
@@ -208,6 +211,7 @@ data class StoredMessage(
             createdAtWire = message.createdAtWire,
             fileName = if (message.kind == ChatMessageKind.File) message.fileName else null,
             fileSize = if (message.kind == ChatMessageKind.File) message.mediaByteCount else null,
+            filePages = if (message.kind == ChatMessageKind.File) message.pageCount else null,
         )
 
         /** A stored waveform outside 0…255 (iOS would refuse the row) is dropped, the message kept. */

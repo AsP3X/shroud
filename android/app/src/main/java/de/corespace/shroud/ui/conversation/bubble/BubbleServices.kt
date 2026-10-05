@@ -8,6 +8,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.emoji2.bundled.BundledEmojiCompatConfig
 import androidx.emoji2.text.EmojiCompat
 import de.corespace.shroud.AppContainer
+import de.corespace.shroud.core.media.pdf.PdfCardRender
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.transcription.VoiceTranscription
@@ -16,6 +17,8 @@ import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.conversation.DecodedImageCache
 import de.corespace.shroud.ui.conversation.LinkPreviewImageCache
+import de.corespace.shroud.ui.conversation.PdfCardCache
+import de.corespace.shroud.ui.media.pdf.PdfReadingMemory
 import de.corespace.shroud.ui.conversation.links.MessageLinkText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -84,6 +87,12 @@ interface BubbleServices {
      * nil without a word then, and the bubble folds back).
      */
     suspend fun transcribe(message: ChatMessage, peerName: String): String
+
+    /**
+     * A PDF card's local render (docs/file-sharing.md §10.1): page 1 at [widthPx], its top 2:1, and
+     * the page count; null when the file is not here or does not render (the card keeps `th`).
+     */
+    suspend fun pdfCard(messageId: UUID, widthPx: Int): PdfCardRender? = null
 
     /** Purges, locks and re-keys reach the bubble caches through this ([BubbleMemory]). */
     fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable
@@ -175,6 +184,7 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
             text
         }.await()
 
+    override suspend fun pdfCard(messageId: UUID, widthPx: Int): PdfCardRender? = container.media.pdf.cardRender(messageId, widthPx)
     override fun registerArtifactSink(sink: MessageArtifactSinks): AutoCloseable = messaging.registerArtifactSink(sink)
     override val context: Context get() = container.appContext
 
@@ -202,6 +212,8 @@ object BubbleMemory {
         override fun onPurged(messageIds: Collection<UUID>) {
             DecodedImageCache.remove(messageIds)
             LinkPreviewImageCache.remove(messageIds)
+            PdfCardCache.remove(messageIds)
+            PdfReadingMemory.forget(messageIds)
             runOnMain { VoiceTranscriptDisclosure.forget(messageIds) }
         }
 
@@ -211,6 +223,8 @@ object BubbleMemory {
 
         override fun onMessageRekeyed(from: UUID, to: UUID) {
             DecodedImageCache.rekey(from, to)
+            PdfCardCache.rekey(from, to)
+            PdfReadingMemory.rekey(from, to)
             runOnMain { VoiceTranscriptDisclosure.handOff(from, to) }
         }
     }
@@ -219,6 +233,8 @@ object BubbleMemory {
     fun clearAll() {
         DecodedImageCache.clear()
         LinkPreviewImageCache.clear()
+        PdfCardCache.clear()
+        PdfReadingMemory.clear()
         MessageLinkText.clearCache()
     }
 

@@ -96,6 +96,11 @@ data class ChatMessage(
     val mediaByteCount: Long? = null,
     /** A file's name, cleaned (docs/file-sharing.md §5); null for every other kind. */
     val fileName: String? = null,
+    /**
+     * A PDF file's page count: the payload's `pg`, or what this phone read from the PDF itself when it
+     * made the sender's `th` (docs/file-sharing.md §10). Null for every other kind and when unknown.
+     */
+    val pageCount: Int? = null,
     /** Voice and video duration (iOS `voiceDurationMs`). */
     val durationMs: Int? = null,
     /** 0…255 per bar. */

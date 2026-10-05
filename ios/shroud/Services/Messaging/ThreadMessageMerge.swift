@@ -66,6 +66,7 @@ enum ThreadMessageMerge {
         if merged.videoData == nil { merged.videoData = prior.videoData }
         if merged.transcript == nil { merged.transcript = prior.transcript }
         if merged.fileName == nil { merged.fileName = prior.fileName }
+        if merged.filePageCount == nil { merged.filePageCount = prior.filePageCount }
         // Reactions live only on this device's copy until a page reconciles them (never on a
         // fresh decode), so the held ones carry over — unless the message is gone.
         merged.reactions = merged.deleted ? [] : prior.reactions

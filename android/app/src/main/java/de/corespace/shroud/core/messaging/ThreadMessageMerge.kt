@@ -61,6 +61,7 @@ object ThreadMessageMerge {
                 replyTo = prior.replyTo ?: decoded.replyTo,
                 linkPreview = prior.linkPreview ?: decoded.linkPreview,
                 fileName = prior.fileName ?: decoded.fileName,
+                pageCount = prior.pageCount ?: decoded.pageCount,
             )
         }
 
@@ -76,6 +77,7 @@ object ThreadMessageMerge {
             // A cache written before replies existed has no quote: keep the shown one (`:71-73`).
             replyTo = decoded.replyTo ?: prior.replyTo,
             fileName = decoded.fileName ?: prior.fileName,
+            pageCount = decoded.pageCount ?: prior.pageCount,
         )
         // Same for a link preview: a cache written before previews existed has none (`:74-75`).
         if (merged.linkPreview == null && merged.kind == ChatMessageKind.Text) merged = merged.copy(linkPreview = prior.linkPreview)

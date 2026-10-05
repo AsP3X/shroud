@@ -18,12 +18,14 @@ import de.corespace.shroud.core.media.PlainSource
 import de.corespace.shroud.core.media.UploadedBlob
 import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.FileCategory
 import de.corespace.shroud.core.media.files.FileCopy
 import de.corespace.shroud.core.media.files.FileLimits
 import de.corespace.shroud.core.media.files.FileNames
 import de.corespace.shroud.core.media.files.FileType
 import de.corespace.shroud.core.media.files.FileTypes
 import de.corespace.shroud.core.media.files.PickedFile
+import de.corespace.shroud.core.media.pdf.PdfEnvelopePreview
 import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.media.video.VideoUploadQuality
 import de.corespace.shroud.core.model.AppClock
@@ -188,6 +190,15 @@ interface SendKeyring {
     }
 }
 
+/** Where a PDF's `th` is made from (docs/file-sharing.md §10.1). */
+sealed interface PdfPreviewSource {
+    /** The picked document: `PdfRenderer` on its `ContentResolver` descriptor. */
+    class Picked(val file: PickedFile) : PdfPreviewSource
+
+    /** The sealed copy of a queued or failed send whose `th` was not kept. */
+    class Cached(val messageId: UUID) : PdfPreviewSource
+}
+
 /**
  * Everything the engines of this package use, built by `MessagingSendModule`. Ports of packages of
  * the same wave are providers, resolved at use: W2-INT points them at their owners' modules.
@@ -217,6 +228,8 @@ class SendDependencies(
     val io: CoroutineContext = Dispatchers.IO,
     val notifier: () -> MessageNotifier? = { null },
     val videoTooLarge: (Throwable) -> Boolean = { false },
+    /** A PDF's `th` and `pg` (docs/file-sharing.md §10.1; `media.pdf`); never throws, null when there is none. */
+    val pdfPreview: suspend (PdfPreviewSource) -> PdfEnvelopePreview? = { null },
 ) {
     /**
      * Seals [plaintext] for [apiPeer] (`MessageCrypto.seal`, MC:4834-4841): v3 when a session exists
@@ -1193,12 +1206,16 @@ class SendPipeline(
             )
         }
         beginTransfer(optimisticId, MediaTransfer.Phase.Preparing, knownSize)
+        // A PDF's `th` and `pg` are made beside the copy, from the picked descriptor (§10.1).
+        val pdfJob = if (type.category == FileCategory.Pdf) deps.scope.async { pdfPreviewOrNull(PdfPreviewSource.Picked(file)) } else null
 
         val size = try {
             storeFile(optimisticId, file, knownSize)
         } catch (e: CancellationException) {
+            pdfJob?.cancel()
             throw e
         } catch (e: FileRefused) {
+            pdfJob?.cancel()
             // Too large or empty after all (the provider's size was missing or wrong): a refusal, not a send.
             if (state.lockGeneration == generation) {
                 state.transfers.end(optimisticId)
@@ -1207,12 +1224,14 @@ class SendPipeline(
             }
             return if (e.empty) FileCopy.empty(name) else FileCopy.tooLarge(name)
         } catch (_: Exception) {
+            pdfJob?.cancel()
             if (state.lockGeneration == generation) markVideoFailed(optimisticId, FileCopy.COULD_NOT_READ)
             return FileCopy.COULD_NOT_READ
         }
+        val pdf = pdfJob?.await()
         if (state.lockGeneration != generation) return null
-        state.update(optimisticId) { it.copy(hasFullMedia = true, mediaByteCount = size) }
-        val info = FileInfo(name, type, size)
+        state.update(optimisticId) { it.withPdfPreview(pdf).copy(hasFullMedia = true, mediaByteCount = size) }
+        val info = FileInfo(name, type, size, pdf)
 
         if (notes) {
             sendNotesFile(optimisticId, storePeer, trimmedCaption, info, replyTo, generation)
@@ -1328,18 +1347,20 @@ class SendPipeline(
             kind = MediaMessagePayload.KIND_FILE,
             // The canonical type of the extension, never the provider's (docs/file-sharing.md §1).
             mime = file.type.mime,
-            width = 0,
-            height = 0,
+            width = file.pdf?.width ?: 0,
+            height = file.pdf?.height ?: 0,
             key = blob.keyBase64,
             caption = trimmedCaption.ifEmpty { null },
             durationMs = null,
-            previewJpeg = null,
+            previewJpeg = file.pdf?.jpeg,
             byteCount = file.sizeBytes,
             apiPeer = apiPeer,
             me = signed.me,
             peerPublic = peerPublic,
             replyTo = replyTo,
             fileName = file.name,
+            pageCount = file.pdf?.pageCount,
+            sizeIsPreview = true,
         )
         val dto = deps.api.sendMessage(
             signed.token,
@@ -1363,7 +1384,7 @@ class SendPipeline(
             fileName = file.name,
             sendError = null,
             replyTo = replyTo,
-        )
+        ).withPdfPreview(file.pdf)
         if (state.lockGeneration == generation) {
             if (rekey) reKey(storePeer, optimisticId, sent, appendIfMissing = false)
             state.persistSnapshot()
@@ -1418,14 +1439,50 @@ class SendPipeline(
         }
     }
 
-    private class FileInfo(val name: String, val type: FileType, val sizeBytes: Long)
+    /** [pdf]: a PDF's `th` and `pg`, when it could be made (docs/file-sharing.md §10.1). */
+    private class FileInfo(val name: String, val type: FileType, val sizeBytes: Long, val pdf: PdfEnvelopePreview? = null)
 
-    /** A queued or failed file rebuilt from its bubble and the cache; null when it cannot go out. */
+    /**
+     * A queued or failed file rebuilt from its bubble and the cache; null when it cannot go out. A
+     * PDF keeps the `th` its bubble holds, or makes it again from the sealed copy.
+     */
     private suspend fun fileFromBubble(message: ChatMessage): FileInfo? {
         val name = message.fileName?.let(FileNames::clean) ?: return null
         val type = FileTypes.forExtension(FileNames.extension(name)) ?: return null
         val size = cachedLength(message.id)?.takeIf { it > 0 } ?: return null
-        return FileInfo(name, type, size)
+        val pdf = if (type.category != FileCategory.Pdf) {
+            null
+        } else {
+            val kept = message.previewJpeg
+            val pages = message.pageCount
+            if (kept != null && pages != null) {
+                PdfEnvelopePreview(kept.toByteArray(), message.imageWidth ?: 0, message.imageHeight ?: 0, pages)
+            } else {
+                pdfPreviewOrNull(PdfPreviewSource.Cached(message.id))
+            }
+        }
+        if (pdf != null) state.update(message.id) { it.withPdfPreview(pdf) }
+        return FileInfo(name, type, size, pdf)
+    }
+
+    private suspend fun pdfPreviewOrNull(source: PdfPreviewSource): PdfEnvelopePreview? = try {
+        deps.pdfPreview(source)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+    /** The bubble with [pdf]'s `th` (its pixel size) and page count; unchanged without one. */
+    private fun ChatMessage.withPdfPreview(pdf: PdfEnvelopePreview?): ChatMessage {
+        if (pdf == null) return this
+        val jpeg = pdf.jpeg
+        return copy(
+            previewJpeg = jpeg?.let(Bytes::of) ?: previewJpeg,
+            imageWidth = if (jpeg != null) pdf.width else imageWidth,
+            imageHeight = if (jpeg != null) pdf.height else imageHeight,
+            pageCount = pdf.pageCount,
+        )
     }
 
     // ---- voice ----
@@ -1966,13 +2023,16 @@ class SendPipeline(
         replyTo: MessageReplyReference?,
         linkPreview: LinkPreview? = null,
         fileName: String? = null,
+        pageCount: Int? = null,
+        sizeIsPreview: Boolean = false,
     ): SealedPayload {
         val safePreview = previewJpeg?.takeIf { it.size <= MediaCrypto.MAX_ENVELOPE_PREVIEW_BYTES }
+        // A file's `w`/`h` are its `th`'s pixel size, so they leave with it (docs/file-sharing.md §1).
         fun encode(includePreview: Boolean): ByteArray = MediaMessagePayload(
             t = kind,
             mime = mime,
-            w = width,
-            h = height,
+            w = if (sizeIsPreview && !includePreview) 0 else width,
+            h = if (sizeIsPreview && !includePreview) 0 else height,
             k = key,
             c = caption,
             d = durationMs,
@@ -1981,6 +2041,7 @@ class SendPipeline(
             re = replyTo,
             lp = linkPreview,
             n = fileName,
+            pg = pageCount?.takeIf { it >= 1 },
         ).encoded()
 
         var includePreview = safePreview != null

@@ -243,12 +243,13 @@ export function contentMatches(ext: string, head: Uint8Array): boolean {
 
 /* ---------------------------------------------------------------------------- opening (§7) */
 
-/** How the web opens a file: a new tab, the in-app text viewer, or a download. */
-export type OpenMode = "tab" | "text" | "download";
+/** How the web opens a file: Shroud's PDF viewer (§10.2), a new tab, the text viewer, or a download. */
+export type OpenMode = "pdf" | "tab" | "text" | "download";
 
 export function openModeOf(type: FileType): OpenMode {
   switch (type.category) {
     case "pdf":
+      return "pdf";
     case "image":
     case "video":
       return "tab";
@@ -293,6 +294,21 @@ export const NOT_SENT = "Not sent";
 export const COMPOSER_NOTE = "Files are sent as they are, without compression, and keep their metadata.";
 export const TEXT_VIEWER_CUT = "Showing the first 1 MB.";
 
+/* The PDF viewer (§10.2). */
+export const PDF_LOADING = "Loading…";
+export const PDF_SEARCH_PLACEHOLDER = "Search in PDF";
+export const PDF_NO_RESULTS = "No results";
+export const PDF_PROTECTED_TITLE = "This PDF is protected";
+export const PDF_PROTECTED_MESSAGE = "Enter its password to open it.";
+export const PDF_WRONG_PASSWORD = "Wrong password. Try again.";
+export const PDF_DAMAGED_TITLE = "Shroud can't show this PDF.";
+export const PDF_DAMAGED_MESSAGE = "It may be damaged or use features Shroud can't display.";
+
+/** The viewer's subtitle: `Page 3 of 12`, `1 page` for a single page. */
+export function pdfPageSubtitle(page: number, count: number): string {
+  return count === 1 ? "1 page" : `Page ${page} of ${count}`;
+}
+
 /** The bubble's warning line. */
 export function warningLine(warning: FileWarning): string {
   return warning === "app" ? "Installs an app" : "May contain macros";
@@ -311,17 +327,36 @@ export function warningDialog(warning: FileWarning, sender: string): { title: st
       };
 }
 
-/** `2.4 MB · PDF` — `TYPE` is the extension upper-cased. */
-export function fileMetaLine(size: number | null | undefined, cleanedName: string): string {
+/** `12 pages`, `1 page` (docs/file-sharing.md §7, §10). */
+export function pageCountLabel(pages: number): string {
+  return pages === 1 ? "1 page" : `${pages} pages`;
+}
+
+/** A page count worth showing: a PDF's, an integer ≥ 1. */
+function shownPages(cleanedName: string, pages: number | null | undefined): number | null {
+  if (pages == null || !Number.isInteger(pages) || pages < 1) return null;
+  return fileTypeOf(cleanedName)?.ext === "pdf" ? pages : null;
+}
+
+/** `2.4 MB · PDF` — `TYPE` is the extension upper-cased; a PDF's known page count leads (§7). */
+export function fileMetaLine(size: number | null | undefined, cleanedName: string, pages?: number | null): string {
   const ext = fileExtension(cleanedName).toUpperCase();
-  const parts = [size != null ? formatBytes(size) : null, ext || null].filter(Boolean);
+  const counted = shownPages(cleanedName, pages);
+  const parts = [counted ? pageCountLabel(counted) : null, size != null ? formatBytes(size) : null, ext || null].filter(
+    Boolean,
+  );
   return parts.join(" · ");
 }
 
-/** `File, Report.pdf, 2.4 MB, may contain macros`. */
-export function fileAccessibilityLabel(cleanedName: string, size: number | null | undefined): string {
+/** `File, Report.pdf, 12 pages, 2.4 MB, may contain macros`. */
+export function fileAccessibilityLabel(
+  cleanedName: string,
+  size: number | null | undefined,
+  pages?: number | null,
+): string {
   const type = fileTypeOf(cleanedName);
-  let label = `File, ${cleanedName}${size != null ? `, ${formatBytes(size)}` : ""}`;
+  const counted = shownPages(cleanedName, pages);
+  let label = `File, ${cleanedName}${counted ? `, ${pageCountLabel(counted)}` : ""}${size != null ? `, ${formatBytes(size)}` : ""}`;
   if (type?.warning === "app") label += ", installs an app";
   else if (type?.warning === "macros") label += ", may contain macros";
   return label;

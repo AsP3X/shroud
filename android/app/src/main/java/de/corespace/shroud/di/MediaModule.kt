@@ -19,6 +19,7 @@ import de.corespace.shroud.core.media.capture.ShroudCameraCapture
 import de.corespace.shroud.core.media.library.MediaStorePhotoLibrary
 import de.corespace.shroud.core.media.library.PhotoLibrary
 import de.corespace.shroud.core.media.files.FileIntake
+import de.corespace.shroud.core.media.pdf.PdfFiles
 import de.corespace.shroud.core.media.share.FileSharing
 import de.corespace.shroud.core.media.share.MediaSharing
 import de.corespace.shroud.core.media.share.MemoryMediaSharing
@@ -87,6 +88,12 @@ class MediaModule(container: AppContainer) : AppModule(container) {
      * [sharing], so [MediaSharing.revokeAll] on a lock or a wipe drops these too.
      */
     val fileSharing: FileSharing get() = sharingLazy.value
+
+    /**
+     * PDFs (docs/file-sharing.md §10): the sender's `th`, the bubble card's local render and the
+     * viewer's document, read through a proxy descriptor over the SHRM1 cache (no plaintext file).
+     */
+    val pdf: PdfFiles by lazy { PdfFiles(container.appContext) { id -> localMedia.openReader(id) } }
 
     /** What the file picker handed back, named, sized and checked (docs/file-sharing.md §2, §4, §5). */
     val fileIntake: FileIntake by lazy { FileIntake(container.appContext.contentResolver) }

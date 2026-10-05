@@ -253,6 +253,8 @@ final class MessagingController {
         var fileName: String?
         /// The file's SHRF1 blob is on this device (`LocalFileStore`) — never the plaintext.
         var fileStored: Bool
+        /// A PDF's page count from its payload (`pg`), when the sender sent one.
+        var filePageCount: Int?
 
         init(
             id: UUID,
@@ -283,7 +285,8 @@ final class MessagingController {
             linkPreview: LinkPreview? = nil,
             reactions: [MessageReaction] = [],
             fileName: String? = nil,
-            fileStored: Bool = false
+            fileStored: Bool = false,
+            filePageCount: Int? = nil
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -314,6 +317,7 @@ final class MessagingController {
             self.createdAtWire = createdAtWire
             self.fileName = fileName
             self.fileStored = fileStored
+            self.filePageCount = filePageCount
         }
 
         /// A text message whose link preview carries a large image (Telegram's big layout).
@@ -578,6 +582,8 @@ final class MessagingController {
     /// Called on sign-out so a restart never resurfaces another account’s data.
     func clearLocalData() {
         FileViewerPresenter.shared.dismissAll()
+        PDFCardPreviewStore.shared.removeAll()
+        PDFViewerSession.forgetAll()
         local.clear(userID: sessionController?.userID)
         clearInMemoryState()
         peerKeys.clear()
@@ -693,6 +699,8 @@ final class MessagingController {
         cancelHistoryPaging()
         DecodedImageCache.removeAll()
         LinkPreviewImageCache.removeAll()
+        PDFCardPreviewStore.shared.removeAll()
+        PDFViewerSession.forgetAll()
         // An open file must not stay up over the lock screen; its plaintext goes with it.
         FileViewerPresenter.shared.dismissAll()
     }
@@ -1578,7 +1586,8 @@ final class MessagingController {
                 replyTo: message.replyTo,
                 linkPreview: message.linkPreview,
                 fileName: message.fileName,
-                fileStored: message.fileStored
+                fileStored: message.fileStored,
+                filePageCount: message.filePageCount
             )
         }
         return copy
@@ -1976,6 +1985,7 @@ final class MessagingController {
         local.removeCaches(messageIDs: messageIDs)
         DecodedImageCache.remove(ids: messageIDs)
         LinkPreviewImageCache.remove(ids: messageIDs)
+        PDFCardPreviewStore.shared.remove(ids: messageIDs)
         for id in messageIDs {
             // A voice note that was playing has no player left once its bubble is a tombstone.
             VoicePlaybackCoordinator.shared.stopIfActive(id)
@@ -4168,7 +4178,8 @@ final class MessagingController {
             th: preview?.jpeg.base64EncodedString(),
             s: Int(clamping: file.byteCount),
             re: replyTo,
-            n: file.name
+            n: file.name,
+            pg: preview?.pageCount
         )
         // Held under the bubble's id until the server keys it: the key, caption and quote a
         // retry or the outbox seal again.
@@ -4183,6 +4194,7 @@ final class MessagingController {
             thread[idx].previewData = preview?.jpeg
             thread[idx].imageWidth = preview?.width
             thread[idx].imageHeight = preview?.height
+            thread[idx].filePageCount = preview?.pageCount
             threads[peerUserID] = thread
         }
 
@@ -4227,7 +4239,8 @@ final class MessagingController {
                             mediaByteCount: sent.mediaByteCount,
                             replyTo: sent.replyTo,
                             fileName: sent.fileName,
-                            fileStored: sent.fileStored
+                            fileStored: sent.fileStored,
+                            filePageCount: sent.filePageCount
                         )
                         notesThread.append(note)
                         notesThread.sort { $0.createdAt < $1.createdAt }
@@ -4406,7 +4419,8 @@ final class MessagingController {
             sendError: nil,
             replyTo: payload.re,
             fileName: SharedFile.cleanName(payload.n ?? ""),
-            fileStored: local.hasFileBlob(dto.id)
+            fileStored: local.hasFileBlob(dto.id),
+            filePageCount: payload.pg
         )
         if var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
@@ -4556,9 +4570,41 @@ final class MessagingController {
         return result
     }
 
-    /// Removes an opened file's plaintext once Quick Look or the share sheet is done with it.
+    /// Removes an opened file's plaintext once Quick Look, the PDF viewer or the share sheet
+    /// is done with it.
     func releaseOpenedFile(messageID: UUID) {
         FileOpenStaging.remove(for: messageID)
+    }
+
+    /// Draws a stored PDF's preview card from the file itself (`docs/file-sharing.md` §10.1),
+    /// `pixelWidth` px wide, into `PDFCardPreviewStore`.
+    ///
+    /// Human: The blob is opened into memory only — never to disk — and only for files up to
+    /// 64 MB; the plaintext is gone as soon as page 1 is drawn. Only the payload cache is
+    /// asked for the key: a card is never worth a network round trip.
+    func requestPDFCard(for message: ChatMessage, pixelWidth: Int) {
+        guard message.kind == .file, !message.deleted, message.fileStored,
+              message.fileType?.category == .pdf,
+              let size = message.mediaByteCount, size > 0, size <= PDFPagePreview.localRenderMaxBytes,
+              PDFCardPreviewStore.shared.needsRender(message.id, pixelWidth: pixelWidth),
+              let payloadData = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
+              let payload = MediaMessagePayload.parse(payloadData), payload.isFile,
+              let keyData = Data(base64Encoded: payload.k), keyData.count == 32,
+              payload.s == size
+        else { return }
+        let blob = local.fileStore.url(for: message.id)
+        PDFCardPreviewStore.shared.render(message.id, pixelWidth: pixelWidth) {
+            await Task.detached(priority: .utility) {
+                guard let data = try? FileBlob.openIntoMemory(
+                    from: blob,
+                    key: SymmetricKey(data: keyData),
+                    plaintextSize: Int64(size)
+                ),
+                    let card = PDFPagePreview.card(from: data, pixelWidth: pixelWidth)
+                else { return nil }
+                return PDFCardPreviewStore.Card(image: card.image, pageCount: card.pageCount, pixelWidth: pixelWidth)
+            }.value
+        }
     }
 
     /// Caches the payload of the row the server kept and returns that row's blob id.
@@ -5090,7 +5136,8 @@ final class MessagingController {
                 replyTo: message.replyTo,
                 linkPreview: message.linkPreview,
                 fileName: message.fileName,
-                fileStored: message.fileStored
+                fileStored: message.fileStored,
+                filePageCount: message.filePageCount
             )
         }
         return message

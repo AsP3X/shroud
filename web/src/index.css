@@ -62,6 +62,9 @@
   --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.6);
   --skeleton: rgba(255, 255, 255, 0.07);
   --skeleton-shine: rgba(255, 255, 255, 0.13);
+  /* The PDF viewer's canvas behind the white pages (docs/file-sharing.md §10.2). */
+  --pdf-canvas: #111113;
+  --pdf-sidebar: #1a1a1d;
 }
 
 @media (prefers-color-scheme: light) {
@@ -98,6 +101,8 @@
     --shadow-md: 0 14px 40px rgba(15, 15, 30, 0.16);
     --skeleton: rgba(10, 10, 25, 0.07);
     --skeleton-shine: rgba(10, 10, 25, 0.03);
+    --pdf-canvas: #ececf0;
+    --pdf-sidebar: #f7f7f9;
   }
 }
 
@@ -134,6 +139,8 @@
   --shadow-md: 0 14px 40px rgba(15, 15, 30, 0.16);
   --skeleton: rgba(10, 10, 25, 0.07);
   --skeleton-shine: rgba(10, 10, 25, 0.03);
+  --pdf-canvas: #ececf0;
+  --pdf-sidebar: #f7f7f9;
 }
 
 /* ------------------------------------------------------------------ base -- */
@@ -2951,6 +2958,43 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .bubble.out .file-warning { color: #f5d9a6; }
 .file-caption { padding-top: 2px; }
 
+/* A PDF's preview card (docs/file-sharing.md §10.1): 4 from the bubble's top and sides (6 under a
+   reply quote), radius 12, 2:1, the top of page 1 on white under a 0.5 px hairline. With the card
+   the bubble takes its full width cap. */
+.bubble.file-msg.has-pdf-card { width: min(300px, 74%); }
+.file-pdf-card {
+  position: relative; flex: none;
+  aspect-ratio: 2 / 1;
+  margin: -4px -6px 2px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: #ffffff;
+  -webkit-tap-highlight-color: transparent;
+}
+.bubble.file-msg.has-quote .file-pdf-card { margin-top: 2px; }
+.file-pdf-card.is-tappable { cursor: pointer; }
+.file-pdf-card::after {
+  content: ""; position: absolute; inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+}
+.file-pdf-card-img {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: top;
+  user-select: none; -webkit-user-select: none; -webkit-user-drag: none;
+}
+.file-pdf-card-img.is-local { opacity: 0; transition: opacity 150ms ease; }
+.file-pdf-card-img.is-local.is-painted { opacity: 1; }
+.file-pdf-card-img.is-instant { transition: none; }
+@media (hover: hover) {
+  .file-pdf-card.is-tappable:hover { filter: brightness(0.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-pdf-card-img.is-local { transition: none; }
+}
+
 /* The file sheet: one row per file, the note, then caption + Send. */
 .file-compose-list {
   list-style: none; margin: 0; padding: 0;
@@ -3002,6 +3046,268 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 }
 .text-viewer-body:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .modal p.text-viewer-cut { font-size: var(--fs-xs); }
+
+/* ------------------------------------------------------------ PDF viewer --
+   Shroud's own PDF viewer (docs/file-sharing.md §10.2): the modal header —
+   Close, Pages, the name and "Page 3 of 12", then Search, zoom and
+   Download — over the pages sidebar and a canvas of white pages (radius 2, soft shadow, 12 apart,
+   fit to width with 12 margin, at most 920 wide). Full window below 900px.
+   pdf.js draws the pages; these rules dress them.
+   -------------------------------------------------------------------------- */
+.pdf-viewer-scrim {
+  position: fixed; inset: 0; z-index: 80;
+  display: grid; place-items: stretch center;
+  padding: 20px;
+  background: var(--scrim);
+  animation: fade-in 0.15s ease;
+}
+.pdf-viewer {
+  width: min(1240px, 100%); height: 100%; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  animation: modal-in 0.2s var(--ease);
+}
+.pdf-viewer-head {
+  flex: none;
+  display: flex; align-items: center; gap: 10px;
+  min-height: 60px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--separator);
+}
+.pdf-viewer-title { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pdf-viewer-title h2 { margin: 0; min-width: 0; font-size: var(--fs-lg); font-weight: 600; line-height: 1.25; }
+.pdf-viewer-title .file-name { font-size: inherit; font-weight: inherit; line-height: inherit; }
+.pdf-viewer-subtitle {
+  font-size: var(--fs-sm); color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pdf-head-actions { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.pdf-viewer-head .icon-btn.is-on, .pdf-viewer-head .icon-btn.is-on:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-text); }
+.pdf-zoom {
+  display: inline-flex; align-items: center;
+  margin: 0 4px; padding: 0 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+}
+.pdf-zoom .icon-btn { width: 32px; height: 32px; }
+.pdf-zoom-value {
+  min-width: 46px; text-align: center;
+  font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.pdf-download { margin-left: 4px; }
+.pdf-download svg { flex: none; }
+
+/* Search: the field takes the title's place. */
+.pdf-search {
+  flex: 1 1 auto; min-width: 0;
+  height: 38px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--separator);
+  background: var(--surface-1);
+  color: var(--text-tertiary);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.pdf-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pdf-search input {
+  flex: 1 1 auto; min-width: 0;
+  border: 0; outline: none; background: none;
+  /* 16 px: iOS zooms the page into anything smaller when it takes focus. */
+  color: var(--text-primary); font: inherit; font-size: 16px;
+}
+.pdf-search input::placeholder { color: var(--text-tertiary); }
+.pdf-search input::-webkit-search-cancel-button { display: none; }
+.pdf-search-count {
+  flex: none;
+  font-size: var(--fs-sm); color: var(--text-secondary);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.pdf-search-done {
+  height: 32px; padding: 0 12px; margin-left: 2px;
+  border: 0; border-radius: var(--r-full);
+  background: var(--accent-soft); color: var(--accent-text);
+  font-size: var(--fs-sm); font-weight: 600;
+}
+.pdf-search-done:hover { background: color-mix(in srgb, var(--accent) 22%, var(--accent-soft)); }
+
+.pdf-viewer-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+.pdf-viewer-stage { position: relative; flex: 1 1 auto; min-width: 0; background: var(--pdf-canvas); }
+/* pdf.js requires an absolutely positioned scroll container. */
+.pdf-viewer-scroll {
+  position: absolute; inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  outline: none;
+}
+.pdf-viewer-scroll.is-hidden { visibility: hidden; }
+/* pdf.js lays its layers out for content-box sizing, which the app's global rule replaces. */
+.pdf-viewer-scroll .pdfViewer, .pdf-viewer-scroll .pdfViewer * { box-sizing: content-box; }
+.pdf-viewer-scroll .pdfViewer { padding: 12px 0 0; }
+.pdf-viewer-scroll .pdfViewer .page {
+  margin: 0 auto 12px;
+  border: 0;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+.pdf-viewer-scroll .pdfViewer .page .canvasWrapper { border-radius: 2px; }
+/* The viewer's own loading gif is replaced by the spinner below. */
+.pdf-viewer-scroll .pdfViewer .page.loadingIcon::after { display: none; }
+/* Search: every match at accent 30 %, the current one at 60 %. */
+.pdf-viewer-scroll .textLayer .highlight {
+  --highlight-bg-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  --highlight-selected-bg-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.pdf-viewer-scroll .annotationLayer .linkAnnotation > a:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* Loading: white A4 placeholders at fit width and a spinner, until the first page is drawn. */
+.pdf-placeholders {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 12px; overflow: hidden;
+  pointer-events: none;
+}
+.pdf-placeholder {
+  flex: none;
+  width: min(920px, 100%);
+  aspect-ratio: 210 / 297;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+.pdf-spinner {
+  position: absolute; left: 50%; top: 50%;
+  width: 32px; height: 32px; margin: -16px 0 0 -16px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.12);
+  border-top-color: var(--accent);
+  animation: voice-spin 0.8s linear infinite;
+  pointer-events: none;
+}
+
+/* Password and damaged: a card on the canvas. */
+.pdf-state {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(360px, calc(100% - 32px));
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 24px 22px 22px;
+  border-radius: var(--r-xl);
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+  animation: modal-in 0.2s var(--ease);
+}
+.pdf-state-glyph {
+  width: 52px; height: 52px; margin-bottom: 4px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-text);
+}
+.pdf-state h3 { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.pdf-state p { margin: 0; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary); }
+.pdf-state p.err { color: var(--danger); text-align: center; }
+.pdf-state .field { margin-top: 6px; font-size: 16px; }
+.pdf-state .btn { height: 44px; gap: 8px; font-size: var(--fs-base); margin-top: 4px; }
+
+/* Pages (§10.2): one column of thumbnails — a sidebar 200 wide from 900px (the stage shrinks
+   beside it), a drawer from the left below. Rows are absolutely placed from the page sizes, so
+   only those near the visible part exist. */
+.pdf-sidebar {
+  position: relative; flex: none;
+  width: 0; overflow: hidden;
+  transition: width 220ms var(--ease);
+}
+.pdf-sidebar.is-open { width: 200px; }
+.pdf-sidebar-inner {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 200px;
+  display: flex; flex-direction: column;
+  background: var(--pdf-sidebar);
+  border-right: 1px solid var(--separator);
+}
+.pdf-pages-scroll {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.pdf-pages-list { position: relative; width: 100%; }
+.pdf-page-row {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; justify-content: center;
+}
+.pdf-page-thumb {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 0; border: 0; background: none; color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.pdf-page-frame {
+  position: relative; display: block; flex: none;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  transition: box-shadow 0.15s ease;
+}
+.pdf-page-frame img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pdf-page-number {
+  font-size: var(--fs-xs); line-height: 16px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.pdf-page-thumb.is-current .pdf-page-frame { outline: 2px solid var(--accent); outline-offset: 3px; }
+.pdf-page-thumb.is-current .pdf-page-number { color: var(--accent-text); font-weight: 600; }
+.pdf-page-thumb:focus-visible { outline: none; }
+.pdf-page-thumb:focus-visible .pdf-page-frame { outline: 2px solid var(--accent-text); outline-offset: 3px; }
+@media (hover: hover) {
+  .pdf-page-thumb:hover .pdf-page-frame { box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.14), 0 3px 12px rgba(0, 0, 0, 0.18); }
+}
+/* The drawer: over a 30 % black scrim, with a shadow in place of the separator. */
+.pdf-drawer-scrim {
+  position: absolute; inset: 0; z-index: 3;
+  background: rgba(0, 0, 0, 0.3);
+  animation: fade-in 220ms ease;
+}
+.pdf-drawer {
+  position: absolute; top: 0; bottom: 0; left: 0; z-index: 4;
+  width: min(280px, 80%);
+  display: flex; flex-direction: column;
+  background: var(--pdf-sidebar);
+  box-shadow: 0 0 32px rgba(0, 0, 0, 0.28);
+  touch-action: pan-y;
+  animation: pdf-drawer-in 220ms var(--ease);
+  transition: transform 220ms var(--ease);
+}
+.pdf-drawer.is-dragging { transition: none; }
+@keyframes pdf-drawer-in { from { transform: translateX(-100%); } }
+
+@media (max-width: 899px) {
+  .pdf-viewer-scrim { padding: 0; }
+  .pdf-viewer { width: 100%; border: 0; border-radius: 0; box-shadow: none; animation: sheet-up 280ms var(--ease); }
+  .pdf-viewer-head { gap: 6px; padding: calc(8px + env(safe-area-inset-top)) 8px 8px; min-height: 56px; }
+  .pdf-download { width: 36px; padding: 0; justify-content: center; margin-left: 0; }
+  .pdf-download span { display: none; }
+}
+@media (max-width: 640px) {
+  /* No room for the zoom buttons: pinch zooms, Ctrl/⌘ + − 0 still work. */
+  .pdf-zoom { display: none; }
+  .pdf-head-actions { gap: 2px; }
+  .pdf-search { padding: 0 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pdf-viewer, .pdf-viewer-scrim, .pdf-state, .pdf-drawer, .pdf-drawer-scrim { animation: none; }
+  .pdf-sidebar, .pdf-drawer { transition: none; }
+  .pdf-spinner { animation-duration: 2.4s; }
+}
 
 .ring { display: block; overflow: visible; }
 .ring-track { fill: none; stroke: rgba(255, 255, 255, 0.26); }

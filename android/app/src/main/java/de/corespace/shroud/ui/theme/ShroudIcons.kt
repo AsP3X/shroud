@@ -185,6 +185,22 @@ object ShroudIcons {
         "M4.0,12.0a1.0,1.0 0 1,0 2.0,0a1.0,1.0 0 1,0 -2.0,0")
     }
 
+    /** Lucide `ellipsis-vertical`. */
+    val EllipsisVertical: ImageVector by lazy {
+        icon("EllipsisVertical", 24f, true,
+        "M11.0,12.0a1.0,1.0 0 1,0 2.0,0a1.0,1.0 0 1,0 -2.0,0",
+        "M11.0,5.0a1.0,1.0 0 1,0 2.0,0a1.0,1.0 0 1,0 -2.0,0",
+        "M11.0,19.0a1.0,1.0 0 1,0 2.0,0a1.0,1.0 0 1,0 -2.0,0")
+    }
+
+    /** Lucide `external-link`. */
+    val ExternalLink: ImageVector by lazy {
+        icon("ExternalLink", 24f, true,
+        "M15 3h6v6",
+        "M10 14 21 3",
+        "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6")
+    }
+
     /** Lucide `eye`. */
     val Eye: ImageVector by lazy {
         icon("Eye", 24f, true,
@@ -373,6 +389,13 @@ object ShroudIcons {
         "M10 19v-3.96 3.15",
         "M7 19h5",
         "M18.0,12.0h2.0a2.0,2.0 0 0 1 2.0,2.0v6.0a2.0,2.0 0 0 1 -2.0,2.0h-2.0a2.0,2.0 0 0 1 -2.0,-2.0v-6.0a2.0,2.0 0 0 1 2.0,-2.0z")
+    }
+
+    /** Lucide `panel-left`. */
+    val PanelLeft: ImageVector by lazy {
+        icon("PanelLeft", 24f, true,
+        "M5.0,3.0h14.0a2.0,2.0 0 0 1 2.0,2.0v14.0a2.0,2.0 0 0 1 -2.0,2.0h-14.0a2.0,2.0 0 0 1 -2.0,-2.0v-14.0a2.0,2.0 0 0 1 2.0,-2.0z",
+        "M9 3v18")
     }
 
     /** Lucide `pencil`. */

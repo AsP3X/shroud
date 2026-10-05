@@ -7,9 +7,11 @@ import UIKit
 /// ring with a stop glyph while it moves (a tap stops a download), the category glyph once it
 /// is here, a retry arrow on a failed send, a question mark for a type Shroud doesn't open. The
 /// name stays on one line, truncated in the middle, so the extension is always visible
-/// (`docs/file-sharing.md` §7).
-/// Agent: Pure presentation; the host decides what a tap does (`onTap` = download if needed,
-/// then open). Every tap claims `MessageTapClaim`, like the photo bubble.
+/// (`docs/file-sharing.md` §7). A PDF with a preview gets the card of §10.1 above the row: the
+/// top of its first page, sharp once the file is on this device.
+/// Agent: Presentation, plus asking `MessagingController` (when it is in the environment) to draw
+/// a stored PDF's card. The host decides what a tap does (`onTap` = download if needed, then
+/// open). Every tap claims `MessageTapClaim`, like the photo bubble.
 struct FileMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
@@ -28,12 +30,17 @@ struct FileMessageBubble: View {
 
     @Environment(\.chatRowWidth) private var chatRowWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
+    @Environment(MessagingController.self) private var messaging: MessagingController?
 
     static let tileSide: CGFloat = 44
     static let tileRadius: CGFloat = 12
     static let tileSpacing: CGFloat = 10
     static let minWidth: CGFloat = 240
     static let maxWidth: CGFloat = 300
+    /// The PDF card's inset from the bubble's top and sides, and its corner radius (§10.1).
+    static let cardInset: CGFloat = 4
+    static let cardRadius: CGFloat = 12
 
     private var isMine: Bool { message.isMine }
     private var isFailed: Bool { isMine && message.receipt == .failed }
@@ -42,6 +49,24 @@ struct FileMessageBubble: View {
     private var caption: String { message.text.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var hasCaption: Bool { !caption.isEmpty }
     private var hasReactions: Bool { !reactions.isEmpty && !message.deleted }
+    private var isPDF: Bool { type?.category == .pdf }
+    /// The sharp card drawn from the file, once it is on this device.
+    private var localCard: PDFCardPreviewStore.Card? {
+        isPDF ? PDFCardPreviewStore.shared.card(for: message.id) : nil
+    }
+    /// The envelope's `th` (soft; a full page from older senders).
+    private var envelopePreview: UIImage? {
+        guard state != .unsupported else { return nil }
+        return DecodedImageCache.image(forMessage: message.id, data: message.previewData)
+    }
+    private var showsCard: Bool {
+        isPDF && state != .unsupported && (localCard != nil || envelopePreview != nil)
+    }
+    private var pageCount: Int? { message.filePageCount ?? localCard?.pageCount }
+    /// The card's width in pixels: the bubble's width minus the insets, at the screen's scale.
+    private var cardPixelWidth: Int {
+        Int(((bubbleWidthCap - Self.cardInset * 2) * displayScale).rounded(.up))
+    }
 
     /// What the tile shows, in the spec's order of precedence.
     private enum TileState: Equatable {
@@ -113,7 +138,7 @@ struct FileMessageBubble: View {
         VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
             // Hugs the widest row between 240 and 300 pt (`LinkBubbleLayout`, as link bubbles do):
             // a short name keeps the minimum, a long one truncates at the cap.
-            LinkBubbleLayout(maxWidth: bubbleWidthCap, fillsWidth: false) {
+            LinkBubbleLayout(maxWidth: bubbleWidthCap, fillsWidth: showsCard) {
                 Color.clear
                     .frame(width: Self.minWidth, height: 0)
                     .layoutValue(key: LinkBubbleRole.self, value: .ideal)
@@ -129,10 +154,17 @@ struct FileMessageBubble: View {
                     .layoutValue(key: LinkBubbleRole.self, value: .ideal)
                 }
 
+                if showsCard {
+                    PDFPreviewCard(envelope: envelopePreview, sharp: localCard?.image, reduceMotion: reduceMotion)
+                        .padding(.horizontal, Self.cardInset)
+                        .padding(.top, reply == nil ? Self.cardInset : 6)
+                        .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+                }
+
                 fileRow
                     .padding(.leading, 10)
                     .padding(.trailing, 12)
-                    .padding(.top, reply == nil ? 10 : 8)
+                    .padding(.top, showsCard ? 8 : (reply == nil ? 10 : 8))
                     .layoutValue(key: LinkBubbleRole.self, value: .ideal)
 
                 if hasCaption {
@@ -180,6 +212,15 @@ struct FileMessageBubble: View {
             }
         }
         .animation(Motion.snappy, value: state)
+        .task(id: cardRequestKey) {
+            guard isPDF, message.fileStored, !message.deleted else { return }
+            messaging?.requestPDFCard(for: message, pixelWidth: cardPixelWidth)
+        }
+    }
+
+    /// Asks again when the file lands, or the bubble gets wider (rotation, iPad split).
+    private var cardRequestKey: String {
+        "\(message.id)-\(message.fileStored)-\(cardPixelWidth)"
     }
 
     // MARK: - Tile + text
@@ -220,8 +261,10 @@ struct FileMessageBubble: View {
             return "\(MediaCrypto.byteCountLabel(moved)) of \(MediaCrypto.byteCountLabel(total))"
         }
         if isFailed { return "Not sent" }
-        guard let bytes = message.mediaByteCount, bytes > 0 else { return type.label }
-        return SharedFile.metaLine(byteCount: Int64(bytes), type: type)
+        guard let bytes = message.mediaByteCount, bytes > 0 else {
+            return SharedFile.metaLine(byteCount: nil, type: type, pageCount: pageCount)
+        }
+        return SharedFile.metaLine(byteCount: Int64(bytes), type: type, pageCount: pageCount)
     }
 
     private var tileFill: Color {
@@ -229,9 +272,9 @@ struct FileMessageBubble: View {
         return isMine ? Color.white.opacity(0.22) : Theme.accent
     }
 
+    /// The tile's own `th` — not when the card above already shows it.
     private var previewImage: UIImage? {
-        guard state != .unsupported else { return nil }
-        return DecodedImageCache.image(forMessage: message.id, data: message.previewData)
+        showsCard ? nil : envelopePreview
     }
 
     private var tile: some View {
@@ -381,6 +424,9 @@ struct FileMessageBubble: View {
     /// `File, {name}, {size}` plus the warning (§7).
     private var accessibilityLabel: String {
         var parts = ["File", name]
+        if let pageCount {
+            parts.append(SharedFile.pageCountLabel(pageCount))
+        }
         if let bytes = message.mediaByteCount, bytes > 0 {
             parts.append(MediaCrypto.byteCountLabel(bytes))
         }
@@ -419,6 +465,46 @@ struct FileMessageBubble: View {
             parts.append(message.receipt.spokenLabel)
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// The top of a PDF's first page, 2:1, pinned to the page's top edge (§10.1).
+///
+/// Human: White under the image, so a page with a transparent background or a strip shorter
+/// than the card still reads as paper; a hairline keeps the white page off a white bubble.
+private struct PDFPreviewCard: View {
+    let envelope: UIImage?
+    let sharp: UIImage?
+    let reduceMotion: Bool
+
+    var body: some View {
+        Color.white
+            .aspectRatio(PDFPagePreview.cardAspect, contentMode: .fit)
+            .overlay(alignment: .top) {
+                ZStack(alignment: .top) {
+                    if let envelope {
+                        page(envelope)
+                    }
+                    if let sharp {
+                        page(sharp)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: sharp != nil)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: FileMessageBubble.cardRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: FileMessageBubble.cardRadius, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.1), lineWidth: 0.5)
+            }
+            .accessibilityHidden(true)
+    }
+
+    private func page(_ image: UIImage) -> some View {
+        Image(uiImage: image)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFill()
     }
 }
 

@@ -44,6 +44,8 @@ import de.corespace.shroud.ui.media.VideoComposeDraft
 import de.corespace.shroud.ui.media.compose.MediaComposeScreen
 import de.corespace.shroud.ui.media.video.VideoComposeScreen
 import de.corespace.shroud.ui.media.video.VideoPlayerOverlay
+import de.corespace.shroud.ui.media.pdf.PdfFileAction
+import de.corespace.shroud.ui.media.pdf.PdfViewer
 import de.corespace.shroud.ui.media.viewer.MediaImageViewer
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
@@ -76,6 +78,7 @@ internal fun ComposeMediaLayers(controller: ComposeController) {
 
     val viewer = rememberOverlayTransition(controller.viewingMedia != null)
     val player = rememberOverlayTransition(controller.viewingVideo != null)
+    val pdf = rememberOverlayTransition(controller.viewingPdf != null)
     val photoCompose = rememberOverlayTransition(controller.composeDraft != null)
     val videoCompose = rememberOverlayTransition(controller.videoDraft != null)
     val camera = rememberOverlayTransition(controller.showsCamera)
@@ -83,14 +86,16 @@ internal fun ComposeMediaLayers(controller: ComposeController) {
     // What a leaving layer keeps drawing while it animates out.
     var lastViewing by remember { mutableStateOf<UUID?>(null) }
     var lastVideo by remember { mutableStateOf<ComposeController.ViewingVideo?>(null) }
+    var lastPdf by remember { mutableStateOf<ComposeController.ViewingPdf?>(null) }
     var lastDraft by remember { mutableStateOf<ComposeDraft?>(null) }
     var lastVideoDraft by remember { mutableStateOf<VideoComposeDraft?>(null) }
     controller.viewingMedia?.let { lastViewing = it }
     controller.viewingVideo?.let { lastVideo = it }
+    controller.viewingPdf?.let { lastPdf = it }
     controller.composeDraft?.let { lastDraft = it }
     controller.videoDraft?.let { lastVideoDraft = it }
 
-    val anyUp = viewer.isOverlayUp || player.isOverlayUp || photoCompose.isOverlayUp || videoCompose.isOverlayUp || camera.isOverlayUp
+    val anyUp = viewer.isOverlayUp || pdf.isOverlayUp || player.isOverlayUp || photoCompose.isOverlayUp || videoCompose.isOverlayUp || camera.isOverlayUp
     OverlayLayer(active = anyUp) {
         Box(Modifier.fillMaxSize()) {
             MediaLayer(viewer, MediaLayerMotion.viewer(reduce)) {
@@ -105,6 +110,27 @@ internal fun ComposeMediaLayers(controller: ComposeController) {
                         // Only downloaded photos are listed: the viewer never fetches one itself (CV:2305-2310).
                         onLoad = null,
                         onDelete = controller::requestDeleteFromViewer,
+                    )
+                }
+            }
+            // Shroud's own PDF viewer (docs/file-sharing.md §10.2): in the app's theme, growing in like the photo viewer.
+            MediaLayer(pdf, MediaLayerMotion.viewer(reduce)) {
+                lastPdf?.let { shown ->
+                    BackHandler(enabled = controller.viewingPdf != null) { controller.closePdfViewer() }
+                    PdfViewer(
+                        messageId = shown.id,
+                        name = shown.name,
+                        onClose = controller::closePdfViewer,
+                        onAction = { action ->
+                            controller.pdfViewerAction(
+                                shown.id,
+                                when (action) {
+                                    PdfFileAction.Share -> FileAction.Share
+                                    PdfFileAction.SaveToDownloads -> FileAction.Save
+                                    PdfFileAction.OpenInAnotherApp -> FileAction.OpenInAnotherApp
+                                },
+                            )
+                        },
                     )
                 }
             }

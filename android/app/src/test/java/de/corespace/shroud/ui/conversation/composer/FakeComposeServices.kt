@@ -159,6 +159,14 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
         return openOutcome
     }
 
+    /** What §4's check says before the PDF viewer opens; null = it may open. */
+    var openRefusal: String? = null
+
+    override suspend fun fileOpenRefusal(messageId: UUID, fileName: String): String? {
+        fileActions += "check:$fileName"
+        return openRefusal
+    }
+
     override suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget? {
         fileActions += "share:$fileName"
         return shareTarget

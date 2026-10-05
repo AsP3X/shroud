@@ -3,6 +3,7 @@ package de.corespace.shroud.core.messaging
 import de.corespace.shroud.core.media.PlainSource
 import de.corespace.shroud.core.media.files.FileTypes
 import de.corespace.shroud.core.media.files.PickedFile
+import de.corespace.shroud.core.media.pdf.PdfEnvelopePreview
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.NOTES_PEER_ID
@@ -90,6 +91,37 @@ class SendPipelineFileTest {
         assertTrue(w.state.transfers.transfers.value.isEmpty())
         // Reloads decode from the cached payload (it holds the blob key).
         assertEquals(MediaMessagePayload.KIND_FILE, MediaMessagePayload.parse(w.store.plaintexts.getValue(dto.id))!!.t)
+    }
+
+    @Test
+    fun aPdfCarriesTheTopOfItsFirstPageAndItsPageCount() = runTest(main.dispatcher) {
+        val w = world()
+        val thumb = ByteArray(4_000) { 7 }
+        w.pdfPreview = { PdfEnvelopePreview(thumb, 480, 240, 12) }
+        assertNull(w.pipeline().sendFile(picked("Quarterly report 2026.pdf"), w.peer, "", null))
+
+        assertTrue(w.pdfPreviewSources.single() is PdfPreviewSource.Picked)
+        val payload = MediaMessagePayload.parse(w.openAsPeer(w.server.lastRequest()))!!
+        assertArrayEquals(thumb, payload.previewJpeg)
+        assertEquals(480, payload.w)
+        assertEquals(240, payload.h)
+        assertEquals(12, payload.pg)
+        val sent = w.state.messages(w.peer)!!.single()
+        assertEquals(12, sent.pageCount)
+        assertArrayEquals(thumb, sent.previewJpeg!!.toByteArray())
+    }
+
+    @Test
+    fun aPdfThatDoesNotRenderStillGoesWithoutThOrPg() = runTest(main.dispatcher) {
+        val w = world()
+        w.pipeline().sendFile(picked("locked.pdf"), w.peer, "", null)
+        val payload = MediaMessagePayload.parse(w.openAsPeer(w.server.lastRequest()))!!
+        assertNull(payload.th)
+        assertNull(payload.pg)
+        assertEquals(0, payload.w)
+        // Other types never ask for one.
+        w.pipeline().sendFile(picked("notes.txt", "hi".toByteArray()), w.peer, "", null)
+        assertEquals(1, w.pdfPreviewSources.size)
     }
 
     @Test

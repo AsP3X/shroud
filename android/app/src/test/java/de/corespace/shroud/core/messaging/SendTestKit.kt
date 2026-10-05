@@ -743,6 +743,10 @@ class SendWorld(
     val notifier = SendFakeNotifier()
     val clock = FakeAppClock()
     var online = true
+
+    /** A PDF's `th` and `pg` (docs/file-sharing.md §10.1); the sources asked, in order. */
+    var pdfPreview: (PdfPreviewSource) -> de.corespace.shroud.core.media.pdf.PdfEnvelopePreview? = { null }
+    val pdfPreviewSources = ArrayList<PdfPreviewSource>()
     val crypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
     val peerCrypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
 
@@ -764,6 +768,10 @@ class SendWorld(
         io = dispatcher,
         notifier = { notifier },
         videoTooLarge = { it is SendFakeVideoTooLarge },
+        pdfPreview = { source ->
+            pdfPreviewSources += source
+            pdfPreview(source)
+        },
     )
 
     fun pipeline() = SendPipeline(state, { host }, deps)

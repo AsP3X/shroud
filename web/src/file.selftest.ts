@@ -20,6 +20,7 @@ import {
   MAX_FILE_BYTES,
   middleTruncationParts,
   openModeOf,
+  pdfPageSubtitle,
   sanitizeFileName,
   TOO_MANY_FILES,
   tooLargeRefusal,
@@ -241,7 +242,7 @@ for (const name of ["a.svg", "a.html", "a.htm", "a.exe", "a.zip", "a.js", "archi
   check(fileTypeOf(name) === null, `${name} is unsupported`);
 }
 check(fileExtension("archive.tar.gz") === "gz" && fileExtension("weird.ext-with-dash") === "", "fileExtension");
-check(openModeOf(fileTypeOf("a.pdf")!) === "tab" && openModeOf(fileTypeOf("a.png")!) === "tab", "pdf/image open in a tab");
+check(openModeOf(fileTypeOf("a.pdf")!) === "pdf" && openModeOf(fileTypeOf("a.png")!) === "tab", "pdf in the viewer, image in a tab");
 check(openModeOf(fileTypeOf("a.mp4")!) === "tab" && openModeOf(fileTypeOf("a.csv")!) === "text", "video tab, csv viewer");
 check(openModeOf(fileTypeOf("a.docx")!) === "download" && openModeOf(fileTypeOf("a.apk")!) === "download", "the rest downloads");
 
@@ -291,6 +292,13 @@ check(fileMetaLine(2.4 * 1024 * 1024, "Quarterly report 2026.pdf") === "2.4 MB �
 check(fileAccessibilityLabel("report.pdf", 2048) === "File, report.pdf, 2 KB", "a11y label");
 check(fileAccessibilityLabel("m.xlsm", 2048) === "File, m.xlsm, 2 KB, may contain macros", "a11y macros");
 check(fileAccessibilityLabel("a.apk", 2048) === "File, a.apk, 2 KB, installs an app", "a11y app");
+check(fileMetaLine(2.4 * 1024 * 1024, "Quarterly report 2026.pdf", 12) === "12 pages · 2.4 MB · PDF", "meta line with pages");
+check(fileMetaLine(2048, "one.pdf", 1) === "1 page · 2 KB · PDF", "one page");
+check(fileMetaLine(2048, "one.docx", 3) === "2 KB · DOCX", "pages only for PDFs");
+check(fileMetaLine(2048, "one.pdf", 0) === "2 KB · PDF", "no bogus page count");
+check(fileAccessibilityLabel("report.pdf", 2048, 12) === "File, report.pdf, 12 pages, 2 KB", "a11y label with pages");
+check(fileAccessibilityLabel("report.pdf", 2048, 1) === "File, report.pdf, 1 page, 2 KB", "a11y one page");
+check(pdfPageSubtitle(3, 12) === "Page 3 of 12" && pdfPageSubtitle(1, 1) === "1 page", "viewer subtitle");
 {
   const long = "Quarterly report for the whole year 2026.pdf";
   const { head, tail } = middleTruncationParts(long);
@@ -336,6 +344,13 @@ const fake = (name: string, size: number) => new FakeFile(name, size) as unknown
     check(!isVideoPayload(payload!) && !isVoicePayload(payload!), `t=file is never sniffed as ${mime}`);
     check(payload!.n === "report.pdf" && payload!.s === 5, "n and s survive");
   }
+  const paged = parseMediaPayload(JSON.stringify({ t: "file", n: "r.pdf", mime: "application/pdf", k: "a2V5", s: 5, w: 0, h: 0, pg: 12 }));
+  check(paged?.pg === 12, "pg parses");
+  for (const bad of [0, -1, 2.5, "12", null]) {
+    const odd = parseMediaPayload(JSON.stringify({ t: "file", n: "r.pdf", mime: "application/pdf", k: "a2V5", s: 5, w: 0, h: 0, pg: bad }));
+    check(odd?.pg === null, `pg ${JSON.stringify(bad)} is ignored`);
+  }
+  check(parseMediaPayload(JSON.stringify({ t: "file", n: "r.pdf", mime: "application/pdf", k: "a2V5", s: 5, w: 0, h: 0 }))?.pg === null, "no pg");
   const legacy = parseMediaPayload('{"t":"image","mime":"image/jpeg","w":4,"h":3,"k":"a2V5"}');
   check(legacy != null && !isFilePayload(legacy) && legacy.n === null, "photos are not files");
 
@@ -382,6 +397,9 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   const odd = messageFromMediaPayload(base, { ...payload, n: "page.html" }, null);
   check(odd.kind === "file" && odd.mime === null, "an unsupported file stays a file, with no type");
   check(tombstone(msg).fileName === null && tombstone(msg).mediaKey === null, "tombstone forgets the file");
+  const pdfMsg = messageFromMediaPayload(base, { ...payload, n: "r.pdf", pg: 7 }, null);
+  check(pdfMsg.pageCount === 7 && tombstone(pdfMsg).pageCount === null, "pg reaches the message, tombstone drops it");
+  check(messageFromMediaPayload(base, payload, null).pageCount === null, "no pg, no page count");
 }
 
 console.log("file selftest ok");

@@ -14,6 +14,10 @@ enum Theme {
     static let background = Color("Background")
     static let backgroundGrouped = Color("BackgroundGrouped")
     static let backgroundChat = Color("BackgroundChat")
+    /// Behind the pages of the PDF viewer: #ECECF0 light, #111113 dark (`docs/file-sharing.md` §10.2).
+    static let pdfCanvas = Color("PDFCanvas")
+    /// The PDF viewer's pages sidebar and drawer: #F7F7F9 light, #1A1A1D dark.
+    static let pdfSidebar = Color("PDFSidebar")
     static let bubbleIncoming = Color("BubbleIncoming")
     static let textPrimary = Color("TextPrimary")
     static let textSecondary = Color("TextSecondary")

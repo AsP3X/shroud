@@ -29,6 +29,12 @@ interface FileSharing {
      */
     suspend fun openTarget(messageId: UUID, fileName: String): FileOpenOutcome
 
+    /**
+     * §4's check alone, for Shroud's own PDF viewer (§10.2), which reads the file without a grant:
+     * null when it may open, else the sentence [openTarget] would refuse with.
+     */
+    suspend fun checkBeforeOpening(messageId: UUID, fileName: String): String?
+
     /** A grant for the share sheet (no content check: sharing stays possible, §4); null when the file is not on this phone. */
     suspend fun fileShareTarget(messageId: UUID, fileName: String): ShareTarget?
 
