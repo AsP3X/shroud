@@ -3,9 +3,12 @@
  */
 import {
   languageFromTokenId,
+  languageProbabilities,
   languageTokensFromMap,
   lastGeneratedId,
   maskToLanguage,
+  OUTSIDE_CANDIDATE_ODDS,
+  pickSpokenLanguage,
 } from "./detect";
 
 function check(cond: boolean, message: string): void {
@@ -44,5 +47,47 @@ const none = maskToLanguage(new Float32Array(vocab).fill(Number.NEGATIVE_INFINIT
   { code: "en", id: 3 },
 ]);
 check(none === null, "no finite language score is not a detection");
+
+const odds = (entries: [string, number][]) => new Map(entries);
+check(
+  pickSpokenLanguage(odds([["nl", 0.45], ["de", 0.35], ["en", 0.1], ["af", 0.1]]), ["de", "en"]) === "de",
+  "a close neighbour of a candidate does not win",
+);
+check(
+  pickSpokenLanguage(odds([["es", 0.92], ["pt", 0.04], ["de", 0.02], ["en", 0.02]]), ["de", "en"]) === "es",
+  "a clear other language still wins",
+);
+check(
+  pickSpokenLanguage(odds([["fr", 0.5], ["de", 0.5 / OUTSIDE_CANDIDATE_ODDS - 0.001]]), ["de"]) === "fr",
+  "an outsider wins once it is more than the odds likelier",
+);
+check(
+  pickSpokenLanguage(odds([["nl", 0.6], ["de", 0.3]]), []) === "nl",
+  "without candidates the most likely language wins",
+);
+check(
+  pickSpokenLanguage(odds([["da", 0.5], ["no", 0.4]]), ["nb", "en"]) === "no",
+  "Norwegian hints (nb) match Whisper's no",
+);
+check(pickSpokenLanguage(odds([]), ["de"]) === null, "no probabilities, no language");
+
+const logits = new Float32Array([0, 2, 0, 1]);
+const probabilities = languageProbabilities(logits, 0, 4, [
+  { code: "de", id: 1 },
+  { code: "en", id: 3 },
+  { code: "xx", id: 9 },
+]);
+check(probabilities.size === 2, "only tokens inside the vocabulary are scored");
+check(Math.abs((probabilities.get("de") ?? 0) - 1 / (1 + Math.exp(-1))) < 1e-9, "scores become softmax probabilities");
+
+const close = new Float32Array(vocab);
+close[3] = 2; // en
+close[5] = 1; // de: about 2.7 times less likely than English
+const restricted = maskToLanguage(close, vocab, [
+  { code: "en", id: 3 },
+  { code: "de", id: 5 },
+  { code: "nl", id: 6 },
+], ["de"]);
+check(restricted === 5, "a candidate beats a likelier outsider within the odds");
 
 console.log("language detect selftest ok");

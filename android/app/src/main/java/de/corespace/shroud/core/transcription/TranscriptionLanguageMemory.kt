@@ -18,7 +18,7 @@ import kotlin.math.min
 
 /**
  * Which language was actually spoken, per conversation and overall (iOS `TranscriptionLanguageMemory`,
- * `TranscriptionLanguage.swift:210-382`). Language is stable per chat, and a two-second note cannot
+ * `TranscriptionLanguage.swift:216-388`). Language is stable per chat, and a two-second note cannot
  * decide it, so decisive notes teach a prior that later short notes lean on.
  *
  * Sealed at `noBackupFilesDir/shroud/voice/language-stats.sealed` with history-key context
@@ -42,7 +42,7 @@ class TranscriptionLanguageMemory(
         if (state.isUnlocked) reload()
     }
 
-    /** Learned likelihood of [languageCode], 0…1. **0.5 means no opinion** (`prior`, `:318-347`). */
+    /** Learned likelihood of [languageCode], 0…1. **0.5 means no opinion** (`prior`, `:324-353`). */
     fun prior(languageCode: String, conversationId: UUID?): Double {
         val all = snapshot()
         val peer = if (conversationId == null) emptyMap() else all[conversationId.toString()] ?: emptyMap()
@@ -63,7 +63,7 @@ class TranscriptionLanguageMemory(
     }
 
     /**
-     * The language this scope most expects, if it has a real opinion (`expectedLanguage`, `:350-356`).
+     * The language this scope most expects, if it has a real opinion (`expectedLanguage`, `:356-362`).
      * A conversation with its own entry does not fall through to the global habit.
      */
     fun expectedLanguage(conversationId: UUID?): String? {
@@ -78,7 +78,7 @@ class TranscriptionLanguageMemory(
     }
 
     /**
-     * Records one decisive observation (`record`, `:360-374`). [weight] ≤ 0 is ignored. While
+     * Records one decisive observation (`record`, `:366-380`). [weight] ≤ 0 is ignored. While
      * locked or sealed, the call does nothing and does not throw — a transcription must not fail
      * because the stats could not be saved.
      */
@@ -205,7 +205,7 @@ class TranscriptionLanguageMemory(
             null
         }
 
-        /** Decay every weight, add [weight] to [languageCode], drop noise under [MIN_WEIGHT] (`:360-373`). */
+        /** Decay every weight, add [weight] to [languageCode], drop noise under [MIN_WEIGHT] (`:366-379`). */
         private fun updated(
             stats: Map<String, Map<String, Double>>,
             languageCode: String,

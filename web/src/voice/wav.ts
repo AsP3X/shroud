@@ -1,16 +1,56 @@
 /** 16-bit mono PCM WAV. iOS AVAudioPlayer and HTMLAudioElement both play this. */
 
+/** Sinc zero crossings on each side of an output sample. */
+const ZERO_CROSSINGS = 16;
+/** Cutoff as a share of the lower Nyquist rate, so the filter has stopped before it. */
+const CUTOFF = 0.9;
+/** Kernel table steps per zero crossing; read with linear interpolation. */
+const TABLE_STEPS = 128;
+
+/** Blackman-windowed sinc over [0, ZERO_CROSSINGS], one entry per step and one spare. */
+const KERNEL = (() => {
+  const table = new Float32Array(ZERO_CROSSINGS * TABLE_STEPS + 2);
+  for (let i = 0; i <= ZERO_CROSSINGS * TABLE_STEPS; i++) {
+    const x = i / TABLE_STEPS;
+    const sinc = i === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+    const u = x / ZERO_CROSSINGS;
+    table[i] = sinc * (0.42 + 0.5 * Math.cos(Math.PI * u) + 0.08 * Math.cos(2 * Math.PI * u));
+  }
+  return table;
+})();
+
+/**
+ * Band-limited resampling with a windowed-sinc filter. Plain interpolation from
+ * 48 kHz to 16 kHz folds everything above 8 kHz (the hiss of s, sh, f) back into
+ * the band Whisper hears; this filter removes it first (80 dB down). Each output is
+ * divided by its weight sum, so the edges keep their level. Android runs the same
+ * filter (`AudioPcmDecoder.resample`); iOS converts with AVAudioConverter.
+ */
 export function resample(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate || input.length === 0) return input;
-  const ratio = fromRate / toRate;
-  const outLen = Math.max(1, Math.floor(input.length / ratio));
+  const step = fromRate / toRate;
+  const outLen = Math.max(1, Math.floor(input.length / step));
   const out = new Float32Array(outLen);
+  // Kernel units per input sample: below one when downsampling, which widens the
+  // kernel and lowers its cutoff to the output's Nyquist rate.
+  const scale = Math.min(1, toRate / fromRate) * CUTOFF;
+  const reach = ZERO_CROSSINGS / scale;
+  const last = input.length - 1;
   for (let i = 0; i < outLen; i++) {
-    const x = i * ratio;
-    const i0 = Math.min(Math.floor(x), input.length - 1);
-    const i1 = Math.min(i0 + 1, input.length - 1);
-    const t = x - i0;
-    out[i] = input[i0] * (1 - t) + input[i1] * t;
+    // Upsampling ends up to one input sample past the last one; hold it there.
+    const center = Math.min(i * step, last);
+    const from = Math.max(0, Math.ceil(center - reach));
+    const to = Math.min(last, Math.floor(center + reach));
+    let acc = 0;
+    let weights = 0;
+    for (let k = from; k <= to; k++) {
+      const at = Math.abs(k - center) * scale * TABLE_STEPS;
+      const j = Math.floor(at);
+      const weight = KERNEL[j] + (KERNEL[j + 1] - KERNEL[j]) * (at - j);
+      acc += input[k] * weight;
+      weights += weight;
+    }
+    out[i] = weights !== 0 ? acc / weights : 0;
   }
   return out;
 }

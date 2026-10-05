@@ -17,6 +17,7 @@ import {
   choose,
   cleaned,
   decodeHints,
+  detectionCandidates,
   learningWeight,
   override,
   prior,
@@ -86,8 +87,9 @@ async function decodeVoiceNote(
   audioSeconds: number,
 ): Promise<Candidate> {
   const hints = decodeHints(peerId);
+  const candidates = detectionCandidates(hints);
   const run = (language: string | null) =>
-    transcriptionSession.transcribe(samples, sampleRate, { language });
+    transcriptionSession.transcribe(samples, sampleRate, { language, candidates });
 
   if (override() && hints[0]) {
     const out = await run(hints[0]);

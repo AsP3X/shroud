@@ -3,7 +3,13 @@ import { WHISPER_MODELS } from "./types";
 
 type WorkerIn =
   | { type: "prepare"; modelId: string }
-  | { type: "transcribe"; audio: ArrayBuffer; language: string | null };
+  | {
+      type: "transcribe";
+      audio: ArrayBuffer;
+      sampleRate: number;
+      language: string | null;
+      candidates: readonly string[];
+    };
 
 type WorkerResult = { text: string; language: string | null };
 
@@ -106,12 +112,18 @@ export class WhisperEngine implements TranscriptionEngine {
 
   async transcribe(
     samples: Float32Array,
-    _sampleRate: number,
+    sampleRate: number,
     request: TranscriptionRequest,
   ): Promise<TranscriptionOutput> {
     const copy = new Float32Array(samples);
     const sent = await this.send(
-      { type: "transcribe", audio: copy.buffer, language: request.language ?? null },
+      {
+        type: "transcribe",
+        audio: copy.buffer,
+        sampleRate,
+        language: request.language ?? null,
+        candidates: request.candidates ?? [],
+      },
       [copy.buffer],
     );
     if (!sent) return { text: "", language: request.language ?? null };

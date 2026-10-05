@@ -100,6 +100,12 @@ nonisolated enum TranscriptionLanguage {
         return ordered
     }
 
+    /// Languages detection should prefer (`SpokenLanguagePick`): the hints, and English, which
+    /// Whisper is best at and many people mix in. No hints, no preference.
+    static func detectionCandidates(hints: [String]) -> [String] {
+        hints.isEmpty || hints.contains("en") ? hints : hints + ["en"]
+    }
+
     /// Second pass when detection landed on English or failed. Nil means one pass is enough.
     /// A French or German detection is the language of the note. English is Whisper's biased
     /// default, so a hint may challenge that and nothing else. The hint itself is never English.

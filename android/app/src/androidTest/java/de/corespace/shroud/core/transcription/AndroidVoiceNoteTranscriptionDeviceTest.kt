@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.corespace.shroud.ShroudApplication
 import de.corespace.shroud.core.voice.AacM4aWriter
+import de.corespace.shroud.core.voice.AudioPcmDecoder
 import de.corespace.shroud.core.voice.VoiceFormat
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
@@ -47,7 +48,7 @@ class AndroidVoiceNoteTranscriptionDeviceTest {
     /** PCM from the clip, then the production AAC-LC writer. The temp file does not outlive the call. */
     private fun androidNote(wav: ByteArray): ByteArray {
         val pcm16k = Pcm16k.fromWav(wav)
-        val atRecorderRate = Pcm16k.resample(pcm16k, Pcm16k.SAMPLE_RATE.toDouble(), VoiceFormat.SAMPLE_RATE.toDouble())
+        val atRecorderRate = AudioPcmDecoder.resample(pcm16k, Pcm16k.SAMPLE_RATE.toDouble(), VoiceFormat.SAMPLE_RATE.toDouble())
         val pcm = ShortArray(atRecorderRate.size) { index ->
             (atRecorderRate[index].coerceIn(-1f, 1f) * 32767f).roundToInt().toShort()
         }

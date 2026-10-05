@@ -204,6 +204,40 @@ struct TranscriptionEngineTests {
         #expect(TranscriptionModelID.small.whisperKitName == "small")
         #expect(Set(TranscriptionModelID.allCases.map(\.rawValue)) == ["base", "small", "medium"])
     }
+
+    /// Whisper confuses close languages on short notes; the person's own languages win unless
+    /// another one is far likelier. Same vectors as the web and Android tests.
+    @Test
+    func detectionPrefersThePersonsLanguagesUnlessAnotherIsFarLikelier() {
+        let germanHeardAsDutch = ["nl": 0.45, "de": 0.35, "en": 0.1, "af": 0.1]
+        #expect(SpokenLanguagePick.pick(probabilities: germanHeardAsDutch, candidates: ["de", "en"]) == "de")
+        #expect(SpokenLanguagePick.pick(probabilities: germanHeardAsDutch, candidates: []) == "nl")
+        let spanish = ["es": 0.92, "pt": 0.04, "de": 0.02, "en": 0.02]
+        #expect(SpokenLanguagePick.pick(probabilities: spanish, candidates: ["de", "en"]) == "es")
+        let justOver = ["fr": 0.5, "de": 0.5 / SpokenLanguagePick.outsideCandidateOdds - 0.001]
+        #expect(SpokenLanguagePick.pick(probabilities: justOver, candidates: ["de"]) == "fr")
+        #expect(SpokenLanguagePick.pick(probabilities: ["da": 0.5, "no": 0.4], candidates: ["nb", "en"]) == "no")
+        #expect(SpokenLanguagePick.pick(probabilities: ["fr": 0.3, "de": 0.3], candidates: []) == "de")
+        #expect(SpokenLanguagePick.pick(probabilities: [:], candidates: ["de"]) == nil)
+    }
+
+    @Test
+    func languageScoresBecomeProbabilities() {
+        let probabilities = SpokenLanguageSampler.probabilities(["de": 2, "en": 1, "fr": -.infinity])
+        #expect(probabilities.count == 2)
+        #expect(abs((probabilities["de"] ?? 0) - 1 / (1 + exp(-1.0))) < 1e-9)
+        #expect(SpokenLanguageSampler.probabilities(["de": -.infinity]).isEmpty)
+    }
+
+    @Test
+    func detectionCandidatesAreTheHintsAndEnglish() {
+        #expect(TranscriptionLanguage.detectionCandidates(hints: ["de"]) == ["de", "en"])
+        #expect(TranscriptionLanguage.detectionCandidates(hints: ["en", "de"]) == ["en", "de"])
+        #expect(TranscriptionLanguage.detectionCandidates(hints: []).isEmpty)
+        let request = TranscriptionRequest.voiceNote(candidateLanguages: ["de", "en"])
+        #expect(request.candidateLanguages == ["de", "en"])
+        #expect(TranscriptionRequest.liveCall().candidateLanguages.isEmpty)
+    }
 }
 
 final class FakeTranscriptionEngine: TranscriptionEngine, @unchecked Sendable {

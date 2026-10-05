@@ -43,8 +43,8 @@ internal object WhisperNative {
     /** `whisper_free`. Never while a call on the same context runs. */
     external fun freeContext(ctx: Long)
 
-    /** Best language over `pcm[0 .. 30 s]` as `[code, probability]` (probability as "%.6f"), or null. */
-    external fun detectLanguage(ctx: Long, pcm: FloatArray, threads: Int): Array<String>?
+    /** Every language's probability over `pcm[0 .. 30 s]`, indexed by whisper language id, or null. */
+    external fun languageProbabilities(ctx: Long, pcm: FloatArray, threads: Int): FloatArray?
 
     /**
      * `whisper_full` with greedy sampling over 16 kHz mono [pcm]: the segments, or null when whisper
@@ -112,7 +112,7 @@ class WhisperAbortedException : CancellationException("the whisper run was abort
  * Decode parameters of one `whisper_full` run, mapped as media §9.9 lists them for a voice note.
  *
  * @property language two-letter code to force; null lets whisper detect it on each window (iOS
- *   detects first and forces, `WhisperKitEngine.swift:77-100` — the engine's job).
+ *   detects first and forces, `WhisperKitEngine.swift:81-106` — the engine's job).
  * @property offsetMs where the audio to process starts; [WhisperContext] cuts the samples there.
  * @property durationMs audio to process from [offsetMs]; 0 = to the end. Whisper hears nothing past it.
  * @property entropyThold whisper.cpp's analogue of WhisperKit's compression-ratio threshold.
@@ -140,7 +140,7 @@ data class WhisperDecodeOptions(
 
         /**
          * The language probe: the first 8 s without timestamps (`TranscriptionRequest.detectLanguage`,
-         * `TranscriptionTypes.swift:70-72`; `WhisperDecodePlan`, `:84-98`).
+         * `TranscriptionTypes.swift:82-84`; `WhisperDecodePlan`, `:127-141`).
          */
         fun languageProbe(threads: Int = WhisperContext.defaultThreads()) =
             WhisperDecodeOptions(language = null, threads = threads, noTimestamps = true, offsetMs = 0, durationMs = 8_000)
@@ -157,17 +157,17 @@ data class WhisperLanguage(val code: String, val probability: Double)
 data class WhisperTimings(val sampleMs: Float, val encodeMs: Float, val decodeMs: Float, val batchdMs: Float, val promptMs: Float)
 
 /**
- * The result of one run: segments plus what the engine reports (`WhisperKitEngine.swift:197-218`).
+ * The result of one run: segments plus what the engine reports (`WhisperKitEngine.swift:206-227`).
  *
  * @property language the run's language code (forced or detected), null without segments.
  */
 class WhisperRun(val segments: List<NativeSegment>, val language: String?) {
-    /** All segments joined (as bytes, then decoded) and trimmed: `mergeTranscriptionResults(…).text` (`:202-203`). */
+    /** All segments joined (as bytes, then decoded) and trimmed: `mergeTranscriptionResults(…).text` (`:211-212`). */
     val text: String by lazy { joinedText(segments) }
 
     /**
      * `exp(mean of the segments' mean token log probability)`, clamped to 0…1; without scored
-     * segments 0.7 when there is text, else 0 (`WhisperKitEngine.swift:209-216`; media §9.9).
+     * segments 0.7 when there is text, else 0 (`WhisperKitEngine.swift:218-225`; media §9.9).
      */
     val confidence: Double by lazy { confidence(segments, text) }
 
@@ -242,14 +242,23 @@ class WhisperContext private constructor(private var handle: Long) : Closeable {
     private var closed = false
 
     /**
-     * Best language over the opening 30 s of 16 kHz mono [pcm16k], or null (empty audio, failure).
-     * One encoder pass plus one decoder step (as long as a 30 s window's encode); not abortable.
+     * Each language's probability over the opening 30 s of 16 kHz mono [pcm16k], keyed by its
+     * two-letter code, or null (empty audio, failure). One encoder pass plus one decoder step (as
+     * long as a 30 s window's encode); not abortable.
      */
-    fun detectLanguage(pcm16k: FloatArray, threads: Int = defaultThreads()): WhisperLanguage? = synchronized(lock) {
-        val found = WhisperNative.detectLanguage(live(), pcm16k, threads) ?: return null
-        val probability = found.getOrNull(1)?.toDoubleOrNull() ?: return null
-        WhisperLanguage(found[0], probability)
-    }
+    fun languageProbabilities(pcm16k: FloatArray, threads: Int = defaultThreads()): Map<String, Double>? =
+        synchronized(lock) {
+            val probabilities = WhisperNative.languageProbabilities(live(), pcm16k, threads) ?: return null
+            buildMap {
+                probabilities.forEachIndexed { id, probability ->
+                    WhisperNative.languageCode(id)?.let { put(it, probability.toDouble()) }
+                }
+            }
+        }
+
+    /** The most likely language over the opening 30 s of [pcm16k], or null ([languageProbabilities]). */
+    fun detectLanguage(pcm16k: FloatArray, threads: Int = defaultThreads()): WhisperLanguage? =
+        languageProbabilities(pcm16k, threads)?.maxByOrNull { it.value }?.let { WhisperLanguage(it.key, it.value) }
 
     /**
      * Transcribes 16 kHz mono [pcm16k] with [options].
@@ -275,7 +284,7 @@ class WhisperContext private constructor(private var handle: Long) : Closeable {
             // whisper.cpp's own offset_ms/duration_ms only bound its seek loop: the encoder still
             // reads a whole 30 s window, so an 8 s probe would decode words past 8 s. The clip is
             // cut from the samples instead (whisper pads it with silence), as WhisperKit's
-            // clipTimestamps do (`WhisperKitEngine.swift:118-121`), and the times shifted back.
+            // clipTimestamps do (`WhisperKitEngine.swift:127-130`), and the times shifted back.
             val clip = clip(pcm16k, options.offsetMs, options.durationMs)
             val segments = WhisperNative.transcribe(
                 ctx, clip, options.language, options.threads.coerceAtLeast(1),

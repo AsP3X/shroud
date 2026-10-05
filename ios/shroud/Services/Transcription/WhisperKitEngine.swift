@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreML
 import Foundation
 import WhisperKit
@@ -40,7 +41,7 @@ actor WhisperKitEngine: TranscriptionEngine {
 
     func transcribe(fileURL: URL, request: TranscriptionRequest) async throws -> TranscriptionOutput {
         let request = await applyingDetection(request) {
-            await self.detectSpokenLanguage(fileURL: fileURL)
+            await self.detectSpokenLanguage(fileURL: fileURL, candidates: request.candidateLanguages)
         }
         let (kit, options) = try prepared(for: request)
         do {
@@ -60,10 +61,13 @@ actor WhisperKitEngine: TranscriptionEngine {
         if abs(sampleRate - 16_000) < 1 {
             pcm = samples
         } else {
-            pcm = Self.resample(samples, from: sampleRate, to: 16_000)
+            guard let resampled = Self.resample(samples, from: sampleRate, to: 16_000) else {
+                throw TranscriptionEngineError.failed("Couldn't convert the audio for transcription.")
+            }
+            pcm = resampled
         }
         let request = await applyingDetection(request) {
-            await self.detectSpokenLanguage(samples: pcm)
+            await self.detectSpokenLanguage(samples: pcm, candidates: request.candidateLanguages)
         }
         let (kit, options) = try prepared(for: request)
         do {
@@ -75,7 +79,8 @@ actor WhisperKitEngine: TranscriptionEngine {
     }
 
     /// Whisper's decoder is prefilled with English before its own detector runs, and each
-    /// later window detects again. A fresh check on the opening of the note avoids both.
+    /// later window detects again. A fresh check on the opening of the note avoids both, and
+    /// lets the request's candidate languages weigh in (`SpokenLanguagePick`).
     private func applyingDetection(
         _ request: TranscriptionRequest,
         detect: () async -> String?
@@ -87,17 +92,21 @@ actor WhisperKitEngine: TranscriptionEngine {
         return copy
     }
 
-    private func detectSpokenLanguage(fileURL: URL) async -> String? {
-        guard let kit else { return nil }
-        guard let found = try? await kit.detectLanguage(audioPath: fileURL.path) else { return nil }
-        return WhisperReportedLanguage.code(found.language)
+    private func detectSpokenLanguage(fileURL: URL, candidates: [String]) async -> String? {
+        guard let kit,
+              let opening = try? AudioProcessor.loadAudio(fromPath: fileURL.path, endTime: Self.detectionSeconds)
+        else { return nil }
+        let samples = AudioProcessor.convertBufferToArray(buffer: opening)
+        return WhisperReportedLanguage.code(try? await kit.spokenLanguage(samples: samples, candidates: candidates))
     }
 
-    private func detectSpokenLanguage(samples: [Float]) async -> String? {
-        guard let kit, !samples.isEmpty else { return nil }
-        guard let found = try? await kit.detectLangauge(audioArray: samples) else { return nil }
-        return WhisperReportedLanguage.code(found.language)
+    private func detectSpokenLanguage(samples: [Float], candidates: [String]) async -> String? {
+        guard let kit else { return nil }
+        return WhisperReportedLanguage.code(try? await kit.spokenLanguage(samples: samples, candidates: candidates))
     }
+
+    /// Whisper detects the language from one 30-second window.
+    nonisolated private static let detectionSeconds = 30.0
 
     private func prepared(for request: TranscriptionRequest) throws -> (WhisperKit, DecodingOptions) {
         let kit = try readyKit()
@@ -233,19 +242,99 @@ actor WhisperKitEngine: TranscriptionEngine {
         return WhisperLanguageToken.firstCode(in: texts)
     }
 
-    nonisolated private static func resample(_ samples: [Float], from: Double, to: Double) -> [Float] {
+    /// Band-limited conversion through `AVAudioConverter`, the same path WhisperKit reads files
+    /// with. Interpolating samples directly would fold everything above 8 kHz into speech.
+    nonisolated private static func resample(_ samples: [Float], from: Double, to: Double) -> [Float]? {
         if samples.isEmpty || from == to { return samples }
-        let ratio = from / to
-        let count = max(1, Int(Double(samples.count) / ratio))
-        var out = [Float](repeating: 0, count: count)
-        for i in 0..<count {
-            let x = Double(i) * ratio
-            let i0 = min(Int(x), samples.count - 1)
-            let i1 = min(i0 + 1, samples.count - 1)
-            let t = Float(x - Double(i0))
-            out[i] = samples[i0] * (1 - t) + samples[i1] * t
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: from, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = buffer.floatChannelData?[0]
+        else { return nil }
+        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        guard let converted = AudioProcessor.resampleAudio(fromBuffer: buffer, toSampleRate: to, channelCount: 1)
+        else { return nil }
+        return AudioProcessor.convertBufferToArray(buffer: converted)
+    }
+}
+
+extension WhisperKit {
+    /// `detectLangauge(audioArray:)` with `SpokenLanguageSampler` in place of the greedy sampler,
+    /// which reports only the winning token. Nil for an English-only model.
+    nonisolated func spokenLanguage(samples: [Float], candidates: [String]) async throws -> String? {
+        guard textDecoder.isModelMultilingual, let tokenizer, !samples.isEmpty else { return nil }
+        guard let window = audioProcessor.padOrTrim(
+            fromArray: samples,
+            startAt: 0,
+            toLength: featureExtractor.windowSamples ?? Constants.defaultWindowSamples
+        ),
+            let mel = try await featureExtractor.logMelSpectrogram(fromAudio: window),
+            let encoded = try await audioEncoder.encodeFeatures(mel)
+        else { return nil }
+        let inputs = try textDecoder.prepareDecoderInputs(
+            withPrompt: [tokenizer.specialTokens.startOfTranscriptToken]
+        )
+        let sampler = SpokenLanguageSampler(
+            languages: Dictionary(uniqueKeysWithValues: tokenizer.allLanguageTokens.compactMap { token in
+                tokenizer.convertIdToToken(token)
+                    .flatMap(WhisperLanguageToken.code(from:))
+                    .map { (token, $0) }
+            }),
+            candidates: candidates
+        )
+        let result = try await textDecoder.detectLanguage(
+            from: encoded,
+            using: inputs,
+            sampler: sampler,
+            options: DecodingOptions(),
+            temperature: 0
+        )
+        // Without a sampled language token WhisperKit reports English; that is not a detection.
+        return result.languageProbs.isEmpty ? nil : result.language
+    }
+}
+
+/// Samples the language token after Whisper's single detection step. The logits arrive with
+/// every non-language token masked; this turns the language scores into probabilities and lets
+/// `SpokenLanguagePick` choose.
+nonisolated struct SpokenLanguageSampler: TokenSampling {
+    /// Token id → two-letter code.
+    let languages: [Int: String]
+    let candidates: [String]
+
+    func update(tokens: [Int], logits: MLMultiArray, logProbs: [Float]) -> SamplingResult {
+        let probabilities = Self.probabilities(scores(in: logits))
+        guard let code = SpokenLanguagePick.pick(probabilities: probabilities, candidates: candidates),
+              let token = languages.first(where: { $0.value == code })?.key,
+              let probability = probabilities[code]
+        else { return SamplingResult(tokens: tokens, logProbs: logProbs, completed: true) }
+        return SamplingResult(
+            tokens: tokens + [token],
+            logProbs: logProbs + [Float(log(probability))],
+            completed: true
+        )
+    }
+
+    func finalize(tokens: [Int], logProbs: [Float]) -> SamplingResult {
+        SamplingResult(tokens: tokens, logProbs: logProbs, completed: true)
+    }
+
+    /// Each language's logit, keyed by its code.
+    private func scores(in logits: MLMultiArray) -> [String: Double] {
+        var scores: [String: Double] = [:]
+        for (token, code) in languages where token < logits.count {
+            scores[code] = logits[token].doubleValue
         }
-        return out
+        return scores
+    }
+
+    /// Softmax over the finite scores.
+    static func probabilities(_ scores: [String: Double]) -> [String: Double] {
+        let finite = scores.filter { $0.value.isFinite }
+        guard let top = finite.values.max() else { return [:] }
+        let weights = finite.mapValues { exp($0 - top) }
+        let total = weights.values.reduce(0, +)
+        return weights.mapValues { $0 / total }
     }
 }
 

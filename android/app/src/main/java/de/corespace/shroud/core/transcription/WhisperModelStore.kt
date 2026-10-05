@@ -62,7 +62,7 @@ class WhisperModelException(message: String, cause: Throwable? = null) : IOExcep
  * Whisper weights on disk: `noBackupFilesDir/whisper/<file>` (00-plan §1.5). Public weights, so not
  * sealed and **kept** across Log Out and removal (iOS keeps them too, `DeviceDataWipe.swift:225-232`;
  * the wipe's keep list, W2-AUTH-WIPE, must name the directory). The Android port of WhisperKit's download and
- * model folder (`WhisperKitEngine.swift:16-39, :145-173`).
+ * model folder (`WhisperKitEngine.swift:17-40, :145-173`).
  *
  * Downloads come from the pinned revision of `huggingface.co/ggerganov/whisper.cpp` over HTTPS with
  * a client of their own: no Shroud token, no cookies, redirects only within HTTPS (Hugging Face sends

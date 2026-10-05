@@ -234,8 +234,13 @@ enum VoiceTranscriber {
         conversationID: UUID?,
         duration: Double
     ) async throws -> TranscriptionOutput {
+        let candidates = TranscriptionLanguage.detectionCandidates(hints: hints)
         func run(language: String?) async throws -> TranscriptionOutput {
-            let request = TranscriptionRequest.voiceNote(language: language, hints: contextualStrings)
+            let request = TranscriptionRequest.voiceNote(
+                language: language,
+                hints: contextualStrings,
+                candidateLanguages: candidates
+            )
             return try await TranscriptionSession.shared.transcribe(fileURL: fileURL, request: request)
         }
 

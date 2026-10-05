@@ -183,6 +183,19 @@ class VoiceTranscriberTests {
     }
 
     @Test
+    fun detectionIsAskedToPreferTheDevicesLanguagesAndEnglish() = runTest {
+        val rig = rig()
+        rig.language.preferredLanguageTagsOverride = listOf("de-DE")
+        rig.language.currentLocaleOverride = Locale.GERMANY
+        rig.voice.transcribe(byteArrayOf(1), "audio/mp4")
+        assertNull(rig.engine.languages.first())
+        assertEquals(listOf("de", "en"), rig.engine.candidates.first())
+        assertEquals(listOf("de", "en"), TranscriptionLanguage.detectionCandidates(listOf("de")))
+        assertEquals(listOf("en", "de"), TranscriptionLanguage.detectionCandidates(listOf("en", "de")))
+        assertEquals(emptyList<String>(), TranscriptionLanguage.detectionCandidates(emptyList()))
+    }
+
+    @Test
     fun transcribeWorksWhileLanguageMemoryIsLocked() = runTest {
         val rig = rig(unlock = false)
         val chat = UUID.randomUUID()
@@ -279,6 +292,7 @@ class VoiceTranscriberTests {
         var failPrepare: Exception? = null
         val languages = mutableListOf<String?>()
         val hints = mutableListOf<List<String>>()
+        val candidates = mutableListOf<List<String>>()
         val phases = mutableListOf<TranscriptionInstallState.Phase>()
         var duringDownload: TranscriptionInstallState? = null
         var duringTranscribe: TranscriptionInstallState? = null
@@ -303,6 +317,7 @@ class VoiceTranscriberTests {
         override suspend fun transcribe(pcm16k: FloatArray, request: TranscriptionRequest): TranscriptionOutput {
             languages += request.language
             hints += request.hints
+            candidates += request.candidateLanguages
             duringTranscribe = install()
             onTranscribe?.invoke()
             return outputFor(request)

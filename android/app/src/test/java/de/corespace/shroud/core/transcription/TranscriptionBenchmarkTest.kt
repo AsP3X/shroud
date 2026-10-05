@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.transcription
 
+import de.corespace.shroud.core.voice.AudioPcmDecoder
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,8 +14,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * The benchmark's JVM-testable parts: WAV → 16 kHz mono (`WhisperKitEngine.swift:236-249`), the
- * memory readings, and the P7 gate (00-plan §3). The run itself is `TranscriptionBenchmarkDeviceTest`
+ * The benchmark's JVM-testable parts: WAV → 16 kHz mono, the memory readings, and the P7 gate (00-plan §3). The run itself is `TranscriptionBenchmarkDeviceTest`
  * (androidTest).
  */
 class TranscriptionBenchmarkTest {
@@ -34,18 +34,14 @@ class TranscriptionBenchmarkTest {
         assertArrayEquals(floatArrayOf(0.25f, -0.5f), pcm, 0f)
     }
 
-    /** iOS/web: `count = max(1, Int(n / ratio))`, linear interpolation between neighbours. */
+    /** Another rate goes through the app's resampler ([AudioPcmDecoder.resample]). */
     @Test
-    fun otherRatesAreResampledLikeIosAndTheWeb() {
-        val ramp = FloatArray(441) { it / 441f }
-
-        val out = Pcm16k.resample(ramp, 44_100.0, 16_000.0)
-
-        assertEquals(160, out.size)
-        assertEquals(0f, out[0], 0f)
-        // x = 1 · 2.75625 → between samples 2 and 3.
-        assertEquals(ramp[2] * 0.24375f + ramp[3] * 0.75625f, out[1], 1e-6f)
-        assertArrayEquals(floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f, 1f, 1f, 1f), Pcm16k.resample(floatArrayOf(0f, 1f), 4_000.0, 16_000.0), 1e-6f)
+    fun otherRatesAreResampledLikeAVoiceNote() {
+        val samples = ShortArray(441) { (it * 30).toShort() }
+        val pcm = Pcm16k.fromWav(wav(format = 1, channels = 1, rate = 44_100, bits = 16, data = shorts(samples)))
+        val expected = AudioPcmDecoder.resample(FloatArray(441) { samples[it] / 32768f }, 44_100.0, 16_000.0)
+        assertEquals(160, pcm.size)
+        assertArrayEquals(expected, pcm, 0f)
     }
 
     /** G.711 μ-law: 0xFF and 0x7F are silence, 0x80 / 0x00 the extremes (±32124). */

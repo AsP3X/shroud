@@ -55,12 +55,24 @@ nonisolated struct TranscriptionRequest: Sendable {
     var language: String?
     /// Contact names and other terms to bias toward. Engines may ignore this.
     var hints: [String]
+    /// Languages this person uses. Detection prefers them (`SpokenLanguagePick`).
+    var candidateLanguages: [String] = []
     var profile: TranscriptionProfile
     /// Optional clip in seconds, e.g. `0...8` for language detection.
     var clipSeconds: ClosedRange<Double>?
 
-    static func voiceNote(language: String? = nil, hints: [String] = []) -> TranscriptionRequest {
-        TranscriptionRequest(language: language, hints: hints, profile: .voiceNote, clipSeconds: nil)
+    static func voiceNote(
+        language: String? = nil,
+        hints: [String] = [],
+        candidateLanguages: [String] = []
+    ) -> TranscriptionRequest {
+        TranscriptionRequest(
+            language: language,
+            hints: hints,
+            candidateLanguages: candidateLanguages,
+            profile: .voiceNote,
+            clipSeconds: nil
+        )
     }
 
     static func liveCall(language: String? = nil) -> TranscriptionRequest {
@@ -69,6 +81,37 @@ nonisolated struct TranscriptionRequest: Sendable {
 
     static func detectLanguage(clipSeconds: Double = 8) -> TranscriptionRequest {
         TranscriptionRequest(language: nil, hints: [], profile: .voiceNote, clipSeconds: 0...clipSeconds)
+    }
+}
+
+/// The spoken language from Whisper's language probabilities.
+///
+/// Whisper picks from about a hundred languages and confuses close ones on short notes
+/// (German heard as Dutch or Afrikaans). The candidates are the languages this person is
+/// known to use. A language outside them wins only when it is `outsideCandidateOdds` times
+/// likelier than the best candidate, so a note that really is in another language still gets
+/// it. With no candidates the most likely language wins. Same rule as the web
+/// (`pickSpokenLanguage`) and Android.
+nonisolated enum SpokenLanguagePick {
+    static let outsideCandidateOdds = 5.0
+
+    /// Whisper's code where it differs from the ISO code the hints use.
+    private static let whisperCode = ["nb": "no"]
+
+    static func pick(probabilities: [String: Double], candidates: [String]) -> String? {
+        let allowed = Set(candidates.map { whisperCode[$0] ?? $0 })
+        func score(_ code: String, _ probability: Double) -> Double {
+            allowed.isEmpty || allowed.contains(code) ? probability : probability / outsideCandidateOdds
+        }
+        // Ties go to the smaller code, so the pick never depends on dictionary order.
+        return probabilities
+            .filter { $0.value.isFinite }
+            .max { lhs, rhs in
+                let left = score(lhs.key, lhs.value)
+                let right = score(rhs.key, rhs.value)
+                return left == right ? lhs.key > rhs.key : left < right
+            }?
+            .key
     }
 }
 

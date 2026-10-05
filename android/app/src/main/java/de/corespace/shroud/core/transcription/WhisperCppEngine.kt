@@ -19,16 +19,16 @@ import kotlin.coroutines.coroutineContext
  * One context is used by one thread at a time — [abort][WhisperContext.abort] may run elsewhere.
  */
 internal interface WhisperRunner : Closeable {
-    fun detectLanguage(pcm16k: FloatArray, threads: Int): WhisperLanguage?
+    fun languageProbabilities(pcm16k: FloatArray, threads: Int): Map<String, Double>?
     fun transcribe(pcm16k: FloatArray, options: WhisperDecodeOptions, cancellation: WhisperCancellation?): WhisperRun
 }
 
 /**
  * whisper.cpp behind [TranscriptionEngine] (iOS `WhisperKitEngine.swift`; media §9.4, §9.9).
  * Thin on purpose: download and verify stay in [WhisperModelStore], the JNI stays in
- * [WhisperContext]. This class picks the model, detects the language once and forces it for the
- * decode (later windows must not detect again), and frees the weights when memory is tight or
- * chats lock.
+ * [WhisperContext]. This class picks the model, detects the language once (preferring the
+ * request's candidate languages, [SpokenLanguagePick]) and forces it for the decode (later windows
+ * must not detect again), and frees the weights when memory is tight or chats lock.
  *
  * [TranscriptionRequest.hints] are not an initial prompt. whisper.cpp leaves that null
  * (`whisper_jni.cpp`); language bias is [TranscriptionLanguage.decodeHints].
@@ -94,7 +94,9 @@ class WhisperCppEngine internal constructor(
                 val live = runner()
                 val requested = WhisperReportedLanguage.code(request.language)
                 val detected = if (requested == null) {
-                    live.detectLanguage(pcm16k, WhisperContext.defaultThreads())?.code?.let(WhisperReportedLanguage::code)
+                    live.languageProbabilities(pcm16k, WhisperContext.defaultThreads())
+                        ?.let { SpokenLanguagePick.pick(it, request.candidateLanguages) }
+                        ?.let(WhisperReportedLanguage::code)
                 } else {
                     null
                 }
@@ -143,7 +145,8 @@ class WhisperCppEngine internal constructor(
     }
 
     private class LoadedContext(private val context: WhisperContext) : WhisperRunner {
-        override fun detectLanguage(pcm16k: FloatArray, threads: Int): WhisperLanguage? = context.detectLanguage(pcm16k, threads)
+        override fun languageProbabilities(pcm16k: FloatArray, threads: Int): Map<String, Double>? =
+            context.languageProbabilities(pcm16k, threads)
 
         override fun transcribe(pcm16k: FloatArray, options: WhisperDecodeOptions, cancellation: WhisperCancellation?): WhisperRun =
             context.transcribe(pcm16k, options, cancellation)

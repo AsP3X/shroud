@@ -7,7 +7,7 @@ package de.corespace.shroud.core.transcription
  *
  * `VoiceNoteSeek` is not ported: whisper.cpp resumes after an early stop when timestamps are on
  * (§9.2). Contextual [TranscriptionRequest.hints] are carried for the caller; whisper.cpp is not
- * given an initial prompt (iOS ignores them, `WhisperKitEngine.swift:114-143`).
+ * given an initial prompt (iOS ignores them, `WhisperKitEngine.swift:123-152`).
  */
 enum class TranscriptionModelId(val raw: String, val displayName: String) {
     Base("base", "Base"),
@@ -35,34 +35,39 @@ data class TranscriptionProfile(
     }
 }
 
-/** Inclusive clip of the note, in seconds. Null means the whole input (`TranscriptionTypes.swift:59-60`). */
+/** Inclusive clip of the note, in seconds. Null means the whole input (`TranscriptionTypes.swift:61-62`). */
 data class ClipSeconds(val start: Double, val endInclusive: Double)
 
 /**
- * One decode (`TranscriptionTypes.swift:53-73`). [language] null means detect. [hints] are chat
- * words; the whisper.cpp engine does not prompt with them.
+ * One decode (`TranscriptionRequest`, `TranscriptionTypes.swift`). [language] null means detect.
+ * [hints] are chat words; the whisper.cpp engine does not prompt with them. [candidateLanguages]
+ * are the languages this person uses; detection prefers them ([SpokenLanguagePick]).
  */
 data class TranscriptionRequest(
     val language: String?,
     val hints: List<String>,
     val profile: TranscriptionProfile,
     val clipSeconds: ClipSeconds?,
+    val candidateLanguages: List<String> = emptyList(),
 ) {
     companion object {
-        fun voiceNote(language: String? = null, hints: List<String> = emptyList()) =
-            TranscriptionRequest(language, hints, TranscriptionProfile.voiceNote, null)
+        fun voiceNote(
+            language: String? = null,
+            hints: List<String> = emptyList(),
+            candidateLanguages: List<String> = emptyList(),
+        ) = TranscriptionRequest(language, hints, TranscriptionProfile.voiceNote, null, candidateLanguages)
 
         fun liveCall(language: String? = null) =
             TranscriptionRequest(language, emptyList(), TranscriptionProfile.liveCall, null)
 
-        /** The opening [clipSeconds] seconds, timestamps off (`TranscriptionTypes.swift:70-72`). */
+        /** The opening [clipSeconds] seconds, timestamps off (`TranscriptionTypes.swift:82-84`). */
         fun detectLanguage(clipSeconds: Double = 8.0) =
             TranscriptionRequest(null, emptyList(), TranscriptionProfile.voiceNote, ClipSeconds(0.0, clipSeconds))
     }
 }
 
 /**
- * How a request is handed to Whisper (`WhisperDecodePlan`, `TranscriptionTypes.swift:78-99`).
+ * How a request is handed to Whisper (`WhisperDecodePlan`, `TranscriptionTypes.swift:121-142`).
  * A finished voice note keeps timestamps and does not clip the tail, so a pause does not end it.
  */
 data class WhisperDecodePlan(
@@ -86,7 +91,7 @@ data class WhisperDecodePlan(
     }
 }
 
-/** The language token from the opening of a note (`WhisperLanguageToken`, `TranscriptionTypes.swift:165-184`). */
+/** The language token from the opening of a note (`WhisperLanguageToken`, `TranscriptionTypes.swift:208-227`). */
 object WhisperLanguageToken {
     fun code(tokenText: String): String? {
         val trimmed = tokenText.trim()
@@ -106,7 +111,36 @@ object WhisperLanguageToken {
 }
 
 /**
- * Which language a finished note reports (`WhisperReportedLanguage`, `TranscriptionTypes.swift:191-205`).
+ * The spoken language from Whisper's language probabilities (`SpokenLanguagePick`,
+ * `TranscriptionTypes.swift`; web `pickSpokenLanguage`).
+ *
+ * Whisper picks from about a hundred languages and confuses close ones on short notes (German
+ * heard as Dutch or Afrikaans). The candidates are the languages this person is known to use. A
+ * language outside them wins only when it is [OUTSIDE_CANDIDATE_ODDS] times likelier than the best
+ * candidate, so a note that really is in another language still gets it. With no candidates the
+ * most likely language wins.
+ */
+object SpokenLanguagePick {
+    const val OUTSIDE_CANDIDATE_ODDS = 5.0
+
+    /** Whisper's code where it differs from the ISO code the hints use. */
+    private val WHISPER_CODE = mapOf("nb" to "no")
+
+    fun pick(probabilities: Map<String, Double>, candidates: List<String>): String? {
+        val allowed = candidates.map { WHISPER_CODE[it] ?: it }.toSet()
+        fun score(code: String, probability: Double) =
+            if (allowed.isEmpty() || code in allowed) probability else probability / OUTSIDE_CANDIDATE_ODDS
+        // Ties go to the smaller code, so the pick never depends on map order.
+        return probabilities.entries
+            .filter { it.value.isFinite() }
+            .sortedBy { it.key }
+            .maxByOrNull { score(it.key, it.value) }
+            ?.key
+    }
+}
+
+/**
+ * Which language a finished note reports (`WhisperReportedLanguage`, `TranscriptionTypes.swift:234-248`).
  * A language the caller asked for wins, then the opening token, then the engine's label.
  */
 object WhisperReportedLanguage {
@@ -122,14 +156,14 @@ object WhisperReportedLanguage {
 }
 
 /**
- * One transcription (`TranscriptionTypes.swift:207-211`). [toString] omits [text]: a log must not
+ * One transcription (`TranscriptionTypes.swift:250-254`). [toString] omits [text]: a log must not
  * record a transcript.
  */
 class TranscriptionOutput(val text: String, val language: String?, val confidence: Double) {
     override fun toString(): String = "TranscriptionOutput(language=$language, confidence=$confidence, chars=${text.length})"
 }
 
-/** The engine could not run. [message] is the sentence shown to the user (`TranscriptionTypes.swift:213-228`). */
+/** The engine could not run. [message] is the sentence shown to the user (`TranscriptionTypes.swift:256-271`). */
 sealed class TranscriptionEngineError(message: String) : Exception(message) {
     class Unavailable : TranscriptionEngineError(UNAVAILABLE)
     class ModelUnavailable : TranscriptionEngineError(MODEL_UNAVAILABLE)

@@ -13,7 +13,6 @@
 
 #include <atomic>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -36,7 +35,6 @@ struct Handle {
 
 jclass g_segment_class = nullptr;   // NativeSegment (global ref)
 jmethodID g_segment_init = nullptr; // NativeSegment(byte[] textUtf8, long t0Ms, long t1Ms, float avgTokenLogprob, int textTokens, int langId)
-jclass g_string_class = nullptr;    // java.lang.String (global ref)
 
 std::once_flag g_backend_once;
 std::string g_cpu_backend;          // loaded CPU backend library name, empty when none loaded
@@ -142,9 +140,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM * vm, void * /*reserved*/) {
     if (segment == nullptr) return JNI_ERR;
     g_segment_class = static_cast<jclass>(env->NewGlobalRef(segment));
     g_segment_init = env->GetMethodID(segment, "<init>", "([BJJFII)V");
-    jclass string = env->FindClass("java/lang/String");
-    if (string == nullptr || g_segment_init == nullptr) return JNI_ERR;
-    g_string_class = static_cast<jclass>(env->NewGlobalRef(string));
+    if (g_segment_init == nullptr) return JNI_ERR;
     return JNI_VERSION_1_6;
 }
 
@@ -193,9 +189,9 @@ Java_de_corespace_shroud_core_transcription_WhisperNative_resetAbort(JNIEnv *, j
     if (handle != nullptr) handle->abort.store(false, std::memory_order_relaxed);
 }
 
-// [code, probability] of the most likely language over the first 30 s, or null.
-JNIEXPORT jobjectArray JNICALL
-Java_de_corespace_shroud_core_transcription_WhisperNative_detectLanguage(
+// Every language's probability over the first 30 s, indexed by whisper language id, or null.
+JNIEXPORT jfloatArray JNICALL
+Java_de_corespace_shroud_core_transcription_WhisperNative_languageProbabilities(
         JNIEnv * env, jobject, jlong value, jfloatArray pcm_array, jint threads) {
     Handle * handle = handle_of(value);
     if (handle == nullptr) return nullptr;
@@ -203,22 +199,15 @@ Java_de_corespace_shroud_core_transcription_WhisperNative_detectLanguage(
     if (pcm.data == nullptr || pcm.length == 0) return nullptr;
     const int samples = pcm.length < kLanguageWindowSamples ? pcm.length : kLanguageWindowSamples;
     std::vector<float> probs(static_cast<size_t>(whisper_lang_max_id() + 1), 0.0f);
-    int id = -1;
     try {
         if (whisper_pcm_to_mel(handle->ctx, pcm.data, samples, threads) != 0) return nullptr;
-        id = whisper_lang_auto_detect(handle->ctx, 0, threads, probs.data());
+        if (whisper_lang_auto_detect(handle->ctx, 0, threads, probs.data()) < 0) return nullptr;
     } catch (...) {
         return nullptr;
     }
-    if (id < 0 || id >= static_cast<int>(probs.size())) return nullptr;
-    const char * code = whisper_lang_str(id);
-    if (code == nullptr) return nullptr;
-    char probability[32];
-    snprintf(probability, sizeof(probability), "%.6f", static_cast<double>(probs[static_cast<size_t>(id)]));
-    jobjectArray result = env->NewObjectArray(2, g_string_class, nullptr);
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(probs.size()));
     if (result == nullptr) return nullptr;
-    env->SetObjectArrayElement(result, 0, env->NewStringUTF(code));
-    env->SetObjectArrayElement(result, 1, env->NewStringUTF(probability));
+    env->SetFloatArrayRegion(result, 0, static_cast<jsize>(probs.size()), probs.data());
     return result;
 }
 
@@ -263,7 +252,7 @@ Java_de_corespace_shroud_core_transcription_WhisperNative_transcribe(
     params.entropy_thold = entropy_thold;
     params.logprob_thold = logprob_thold;
     params.no_speech_thold = no_speech_thold;
-    params.initial_prompt = nullptr;  // iOS ignores hints (WhisperKitEngine.swift:114-143)
+    params.initial_prompt = nullptr;  // iOS ignores hints (WhisperKitEngine.swift:123-152)
     params.abort_callback = abort_requested;
     params.abort_callback_user_data = handle;
     params.encoder_begin_callback = encoder_may_begin;
@@ -287,7 +276,7 @@ Java_de_corespace_shroud_core_transcription_WhisperNative_transcribe(
     if (result == nullptr) return nullptr;
     for (int i = 0; i < count; ++i) {
         // Mean log probability over the text tokens (ids below EOT; timestamps and specials are
-        // above it), media §9.9 → iOS-style confidence (WhisperKitEngine.swift:209-216).
+        // above it), media §9.9 → iOS-style confidence (WhisperKitEngine.swift:218-225).
         double sum = 0;
         int tokens = 0;
         const int n_tokens = whisper_full_n_tokens(ctx, i);

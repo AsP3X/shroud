@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import de.corespace.shroud.core.voice.AudioPcmDecoder
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,7 +20,7 @@ import kotlin.math.min
  * Android offers — base q5_1 if its real-time factor is ≤ 0.3 and the peak resident memory ≤ 400 MB;
  * small q5_1 only where its RTF is ≤ 1.0 and the phone has ≥ 6 GB RAM (media-voice-links §9.9).
  *
- * Each clip runs the way a voice note will (iOS `WhisperKitEngine.swift:41-100`): detect the language
+ * Each clip runs the way a voice note will (iOS `WhisperKitEngine.swift:42-106`): detect the language
  * on the opening, then one whole-note pass with it forced ([WhisperDecodeOptions.voiceNote]). The RTF
  * the gate reads is (detect + transcribe) / audio length; model loading is reported apart.
  *
@@ -244,9 +245,8 @@ object ProcessMemory {
 
 /**
  * 16 kHz mono float PCM for whisper from WAV files (PCM 16-bit, μ-law or 32-bit float, any rate and
- * channel count): channels averaged, rate changed by linear interpolation exactly as iOS and the web
- * do (`WhisperKitEngine.swift:236-249`, web `wav.ts:3-17`). For fixtures and the benchmark; voice
- * notes are decoded by `AudioPcmDecoder` (W2-VOICE, media §9.8).
+ * channel count): channels averaged, rate changed by [AudioPcmDecoder.resample] as for a voice note.
+ * For fixtures and the benchmark; voice notes are decoded by `AudioPcmDecoder` (W2-VOICE, media §9.8).
  */
 object Pcm16k {
     const val SAMPLE_RATE = 16_000
@@ -296,7 +296,7 @@ object Pcm16k {
             format == FORMAT_FLOAT && bits == 32 -> FloatArray(dataSize / 4) { buffer.getFloat(dataOffset + it * 4) }
             else -> throw WavFormatException("unsupported WAV encoding $format/$bits")
         }
-        return resample(downmix(samples, channels), rate.toDouble(), SAMPLE_RATE.toDouble())
+        return AudioPcmDecoder.resample(downmix(samples, channels), rate.toDouble(), SAMPLE_RATE.toDouble())
     }
 
     /** Averages interleaved [channels] into one. */
@@ -307,21 +307,6 @@ object Pcm16k {
             var sum = 0f
             for (c in 0 until channels) sum += interleaved[frame * channels + c]
             sum / channels
-        }
-    }
-
-    /** Linear interpolation, `count = max(1, Int(n / ratio))` (`WhisperKitEngine.swift:236-249`). */
-    fun resample(samples: FloatArray, from: Double, to: Double): FloatArray {
-        if (samples.isEmpty() || from == to) return samples
-        val ratio = from / to
-        val count = max(1, (samples.size / ratio).toInt())
-        val last = samples.size - 1
-        return FloatArray(count) { i ->
-            val x = i * ratio
-            val i0 = min(x.toInt(), last)
-            val i1 = min(i0 + 1, last)
-            val t = (x - i0).toFloat()
-            samples[i0] * (1 - t) + samples[i1] * t
         }
     }
 

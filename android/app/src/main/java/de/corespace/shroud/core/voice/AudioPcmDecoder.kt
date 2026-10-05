@@ -8,8 +8,14 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import java.io.IOException
 import java.nio.ByteOrder
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /** Mono float PCM (−1…1) at [sampleRate] Hz. */
 class DecodedAudio(val samples: FloatArray, val sampleRate: Int) {
@@ -21,13 +27,13 @@ class DecodedAudio(val samples: FloatArray, val sampleRate: Int) {
 
 /**
  * Voice-note audio → PCM for on-device transcription, and the true length of a note — iOS
- * `AVAudioFile` decode (`ios/shroud/Services/Voice/VoiceTranscriber.swift:306-311`) and
+ * `AVAudioFile` decode (`ios/shroud/Services/Voice/VoiceTranscriber.swift:311-316`) and
  * `AVAudioPlayer(data:).duration` (`VoiceMessageBubble.swift:694-708`) on Android
  * (media-voice-links §9.8, §13.2; conversation-thread §11.1). Everything runs from memory: a
  * [MediaDataSource] over the decrypted bytes, never a plaintext temp file (plan §1.1 rule 7).
  *
  * Handles every container a note arrives in: `audio/mp4` AAC (iPhone, Android), `audio/wav` 16-bit
- * mono (web; parsed here directly, web `voice/wav.ts:54-90`) and `audio/webm` Opus (web fallback).
+ * mono (web; parsed here directly, web `voice/wav.ts:94-130`) and `audio/webm` Opus (web fallback).
  * Blocking; call off the main thread. Never logs content.
  */
 object AudioPcmDecoder {
@@ -38,8 +44,8 @@ object AudioPcmDecoder {
     const val MAX_SECONDS = 30 * 60
 
     /**
-     * [bytes] decoded, downmixed to mono and resampled to 16 kHz with iOS's linear formula ([resample])
-     * — the input of the Whisper engine (W3-TRANSCRIPTION). [mimeHint] is the payload's `mime`; the
+     * [bytes] decoded, downmixed to mono and resampled to 16 kHz ([resample]) — the input of the
+     * Whisper engine (W3-TRANSCRIPTION). [mimeHint] is the payload's `mime`; the
      * container is sniffed either way. Throws [IOException] when nothing can be decoded.
      */
     fun decodeMono16k(bytes: ByteArray, mimeHint: String? = null): FloatArray {
@@ -78,21 +84,55 @@ object AudioPcmDecoder {
     }
 
     /**
-     * Linear resampling, iOS `WhisperKitEngine.resample` (`ios/shroud/Services/Transcription/WhisperKitEngine.swift:236-249`)
-     * and web `voice/wav.ts:3-16`: `count = max(1, Int(n / ratio))`, output `i` interpolates between
-     * `samples[floor(i·ratio)]` and the next one. The same array when the rates match or it is empty.
+     * Band-limited resampling with a windowed-sinc filter, the web's `resample` (`voice/wav.ts`)
+     * line for line. Plain interpolation from 44.1 or 48 kHz to 16 kHz folds everything above 8 kHz
+     * (the hiss of s, sh, f) back into the band Whisper hears; this filter removes it first (80 dB
+     * down). Each output is divided by its weight sum, so the edges keep their level.
+     * `count = max(1, Int(n / ratio))`. The same array when the rates match or it is empty.
      */
     fun resample(samples: FloatArray, fromRate: Double, toRate: Double): FloatArray {
         if (samples.isEmpty() || fromRate == toRate) return samples
-        val ratio = fromRate / toRate
-        val count = max(1, (samples.size / ratio).toInt())
+        val step = fromRate / toRate
+        val count = max(1, (samples.size / step).toInt())
+        // Kernel units per input sample: below one when downsampling, which widens the kernel and
+        // lowers its cutoff to the output's Nyquist rate.
+        val scale = min(1.0, toRate / fromRate) * CUTOFF
+        val reach = ZERO_CROSSINGS / scale
         val last = samples.size - 1
         return FloatArray(count) { i ->
-            val x = i * ratio
-            val i0 = min(x.toInt(), last)
-            val i1 = min(i0 + 1, last)
-            val t = (x - i0).toFloat()
-            samples[i0] * (1 - t) + samples[i1] * t
+            // Upsampling ends up to one input sample past the last one; hold it there.
+            val center = min(i * step, last.toDouble())
+            val from = max(0, ceil(center - reach).toInt())
+            val to = min(last, floor(center + reach).toInt())
+            var acc = 0.0
+            var weights = 0.0
+            for (k in from..to) {
+                val at = abs(k - center) * scale * TABLE_STEPS
+                val j = at.toInt()
+                val weight = KERNEL[j] + (KERNEL[j + 1] - KERNEL[j]) * (at - j)
+                acc += samples[k] * weight
+                weights += weight
+            }
+            if (weights != 0.0) (acc / weights).toFloat() else 0f
+        }
+    }
+
+    /** Sinc zero crossings on each side of an output sample. */
+    private const val ZERO_CROSSINGS = 16
+
+    /** Cutoff as a share of the lower Nyquist rate, so the filter has stopped before it. */
+    private const val CUTOFF = 0.9
+
+    /** Kernel table steps per zero crossing; read with linear interpolation. */
+    private const val TABLE_STEPS = 128
+
+    /** Blackman-windowed sinc over [0, ZERO_CROSSINGS], one entry per step and one spare. */
+    private val KERNEL = FloatArray(ZERO_CROSSINGS * TABLE_STEPS + 2).also { table ->
+        for (i in 0..ZERO_CROSSINGS * TABLE_STEPS) {
+            val x = i.toDouble() / TABLE_STEPS
+            val sinc = if (i == 0) 1.0 else sin(PI * x) / (PI * x)
+            val u = x / ZERO_CROSSINGS
+            table[i] = (sinc * (0.42 + 0.5 * cos(PI * u) + 0.08 * cos(2 * PI * u))).toFloat()
         }
     }
 
@@ -108,7 +148,7 @@ object AudioPcmDecoder {
     }
 
     /**
-     * 16-bit mono PCM WAV, what the web client sends (web `pcmFromWav`, `voice/wav.ts:54-90`): RIFF/WAVE
+     * 16-bit mono PCM WAV, what the web client sends (web `pcmFromWav`, `voice/wav.ts:94-130`): RIFF/WAVE
      * chunks walked to `fmt ` (PCM, format 1) and `data`; null for anything else (other bit depths or
      * channel counts go through the platform decoder). Samples scale as the web's: `s / 0x8000` below
      * zero, `s / 0x7fff` above.

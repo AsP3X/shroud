@@ -193,7 +193,7 @@ class VoiceDeviceTest {
         assertTrue("expected ≈ $expected, got $actual", abs(expected - actual) <= tolerance)
     }
 
-    /** The web client's 16-bit mono 22 050 Hz WAV (`web/src/voice/wav.ts:18-42`). */
+    /** The web client's 16-bit mono 22 050 Hz WAV (`web/src/voice/wav.ts:58-82`). */
     private fun webWav(seconds: Double): ByteArray {
         val webRate = 22_050
         val n = (webRate * seconds).toInt()

@@ -1,4 +1,3 @@
-import { resample } from "../wav";
 import type {
   TranscriptionEngine,
   TranscriptionModelId,
@@ -9,7 +8,6 @@ import { DEFAULT_TRANSCRIPTION_MODEL } from "./types";
 import { WhisperEngine } from "./whisper";
 
 const MODEL_KEY = "transcription.model";
-const WHISPER_RATE = 16_000;
 
 /**
  * Owns the loaded engine so two record presses cannot start two downloads, and
@@ -65,7 +63,6 @@ export class TranscriptionSession {
     request: TranscriptionRequest = {},
   ): Promise<TranscriptionOutput> {
     await this.prepare();
-    const pcm = resample(samples, sampleRate, WHISPER_RATE);
     let release!: () => void;
     const slot = new Promise<void>((resolve) => {
       release = resolve;
@@ -78,7 +75,7 @@ export class TranscriptionSession {
       /* previous job failed; this one still runs */
     }
     try {
-      return await this.engine.transcribe(pcm, WHISPER_RATE, request);
+      return await this.engine.transcribe(samples, sampleRate, request);
     } catch (err) {
       this.loaded = null;
       throw err;

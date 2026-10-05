@@ -6,13 +6,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.log10
+import kotlin.math.sin
 
 /**
- * The pure parts of [AudioPcmDecoder] (media-voice-links §9.8): the iOS/web linear resampler
- * (`WhisperKitEngine.swift:236-249`, `web/src/voice/wav.ts:3-16`), channel downmix, and the web WAV
- * reader (`wav.ts:54-90`). Vectors computed by running `web/src/voice/wav.ts`. The MediaCodec path
- * (AAC, Opus) is exercised on a device (`AacM4aWriterDeviceTest`).
+ * The pure parts of [AudioPcmDecoder] (media-voice-links §9.8): the web's band-limited resampler
+ * (`web/src/voice/wav.ts`), channel downmix, and the web WAV reader. Vectors computed by running
+ * `web/src/voice/wav.ts`. The MediaCodec path (AAC, Opus) is exercised on a device
+ * (`AacM4aWriterDeviceTest`).
  */
 class AudioPcmDecoderTest {
     /** `encodeWav([0, 0.5, −0.5, 1, −1, 0.25], 22050)` from the web client, byte for byte. */
@@ -67,19 +72,41 @@ class AudioPcmDecoderTest {
     }
 
     @Test
-    fun resampleMatchesIosAndTheWeb() {
+    fun resampleMatchesTheWeb() {
         val input = floatArrayOf(0f, 1f, 0f, -1f, 0.5f, 0.25f, -0.25f, 0.75f, 1f, 0f)
-        assertArrayEquals(floatArrayOf(0f, -0.5f, 0.25f, 0.875f), AudioPcmDecoder.resample(input, 44_100.0, 17_640.0), 1e-6f)
         assertArrayEquals(
-            floatArrayOf(0f, -0.7562500238418579f, -0.0062500000931322575f),
+            floatArrayOf(0.441580683f, -0.0473401099f, 0.0318375751f, 0.578580081f),
+            AudioPcmDecoder.resample(input, 44_100.0, 17_640.0),
+            1e-6f,
+        )
+        assertArrayEquals(
+            floatArrayOf(0.403395355f, -0.0869536847f, 0.198266789f),
             AudioPcmDecoder.resample(input, 44_100.0, 16_000.0),
             1e-6f,
         )
         assertArrayEquals(
-            floatArrayOf(0f, 0.4285714328289032f, 0.8571428656578064f, 0.4285714328289032f, -0.4285714328289032f, -1f, -1f),
+            floatArrayOf(0.204766229f, 0.702111900f, 0.823446155f, 0.372569948f, -0.395200640f, -0.883982599f, -0.883982599f),
             AudioPcmDecoder.resample(floatArrayOf(0f, 1f, -1f), 3.0, 7.0),
             1e-6f,
         )
+    }
+
+    @Test
+    fun resamplePassesSpeechAndRemovesWhatWouldFoldIntoIt() {
+        assertEquals(0.0, level(1_000.0, 48_000, 16_000), 0.05)
+        assertEquals(0.0, level(6_000.0, 48_000, 16_000), 0.5)
+        assertEquals(0.0, level(6_000.0, 44_100, 16_000), 0.5)
+        // Linear interpolation passed these at 0 dB, folded to 6, 4 and 1.6 kHz.
+        assertTrue(level(10_000.0, 48_000, 16_000) < -70)
+        assertTrue(level(12_000.0, 48_000, 16_000) < -70)
+        assertTrue(level(14_400.0, 44_100, 16_000) < -70)
+        assertEquals(0.0, level(1_000.0, 8_000, 16_000), 0.05)
+    }
+
+    @Test
+    fun resampleKeepsAConstantUpToBothEdges() {
+        val ones = AudioPcmDecoder.resample(FloatArray(4_800) { 1f }, 48_000.0, 16_000.0)
+        assertTrue(ones.all { abs(it - 1f) < 1e-4f })
     }
 
     @Test
@@ -117,7 +144,7 @@ class AudioPcmDecoderTest {
         assertEquals(0, source.readAt(0, buffer, 0, 0))
     }
 
-    /** The web's `encodeWav` (`wav.ts:18-42`) for test input. */
+    /** The web's `encodeWav` (`wav.ts:58-82`) for test input. */
     private fun wav(samples: FloatArray, rate: Int): ByteArray {
         val n = samples.size
         val out = java.nio.ByteBuffer.allocate(44 + n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
@@ -129,5 +156,16 @@ class AudioPcmDecoderTest {
             out.putShort((if (c < 0) c * 0x8000 else c * 0x7fff).toInt().toShort())
         }
         return out.array()
+    }
+
+    /** Level of a resampled full-scale sine against full scale, in dB, over the middle of the signal. */
+    private fun level(hz: Double, from: Int, to: Int): Double {
+        val sine = FloatArray(from) { sin(2 * PI * hz * it / from).toFloat() }
+        val out = AudioPcmDecoder.resample(sine, from.toDouble(), to.toDouble())
+        val start = out.size / 5
+        val end = out.size * 4 / 5
+        var power = 0.0
+        for (i in start until end) power += out[i].toDouble() * out[i]
+        return 10 * log10(power / (end - start) / 0.5 + 1e-30)
     }
 }

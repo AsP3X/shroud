@@ -15,7 +15,7 @@ fun interface Pcm16kSource {
 }
 
 /**
- * On-device transcription of voice notes (iOS `VoiceTranscriber`, `VoiceTranscriber.swift:81-311`;
+ * On-device transcription of voice notes (iOS `VoiceTranscriber`, `VoiceTranscriber.swift:81-316`;
  * media-voice-links §9.5). [VoiceTranscription] for the composer and the bubbles.
  *
  * Language: a Settings pin wins, otherwise a trusted per-chat prior, otherwise detect and let a
@@ -133,7 +133,7 @@ class VoiceTranscriber(
 
     /**
      * Pin, else a trusted prior, else auto-detect and one challenger
-     * (`decodeVoiceNote`, `VoiceTranscriber.swift:230-297`).
+     * (`decodeVoiceNote`, `VoiceTranscriber.swift:230-302`).
      */
     private suspend fun decodeVoiceNote(
         pcm: FloatArray,
@@ -142,8 +142,12 @@ class VoiceTranscriber(
         conversationId: UUID?,
         duration: Double,
     ): TranscriptionOutput {
+        val candidates = TranscriptionLanguage.detectionCandidates(hints)
         suspend fun run(lang: String?): TranscriptionOutput =
-            session.transcribe(pcm, TranscriptionRequest.voiceNote(language = lang, hints = contextual))
+            session.transcribe(
+                pcm,
+                TranscriptionRequest.voiceNote(language = lang, hints = contextual, candidateLanguages = candidates),
+            )
 
         if (language.override != null) {
             val forced = hints.firstOrNull() ?: return run(null)

@@ -10,7 +10,7 @@ import kotlin.math.exp
 
 /**
  * The pure parts of the whisper.cpp wrapper: text joining, the iOS confidence rule
- * (`WhisperKitEngine.swift:197-218`), the media §9.9 parameter mapping and per-run cancellation.
+ * (`WhisperKitEngine.swift:206-227`), the media §9.9 parameter mapping and per-run cancellation.
  * The native calls themselves run in `TranscriptionBenchmarkDeviceTest` (androidTest).
  */
 class WhisperRunTest {
@@ -55,7 +55,7 @@ class WhisperRunTest {
         assertEquals(exp(-0.4), run.confidence, 1e-6)
     }
 
-    /** `segments.isEmpty → text.isEmpty ? 0 : 0.7` (`WhisperKitEngine.swift:211-212`). */
+    /** `segments.isEmpty → text.isEmpty ? 0 : 0.7` (`WhisperKitEngine.swift:220-221`). */
     @Test
     fun withoutScoredSegmentsConfidenceIsZeroOrTheFixedGuess() {
         assertEquals(0.0, WhisperRun(emptyList(), null).confidence, 0.0)
@@ -85,7 +85,7 @@ class WhisperRunTest {
         assertEquals(0.2f, options.temperatureInc)
     }
 
-    /** `TranscriptionRequest.detectLanguage(clipSeconds: 8)` → 0…8 s without timestamps (`TranscriptionTypes.swift:70-72`). */
+    /** `TranscriptionRequest.detectLanguage(clipSeconds: 8)` → 0…8 s without timestamps (`TranscriptionTypes.swift:82-84`). */
     @Test
     fun theLanguageProbeReadsTheFirstEightSecondsWithoutTimestamps() {
         val probe = WhisperDecodeOptions.languageProbe(threads = 2)

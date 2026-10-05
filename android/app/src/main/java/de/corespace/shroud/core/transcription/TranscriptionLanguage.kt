@@ -9,7 +9,7 @@ import java.util.UUID
 
 /**
  * Which language a voice note is decoded in (iOS `TranscriptionLanguage`,
- * `TranscriptionLanguage.swift:14-195`). The Settings pin is prefs `transcription.locale`
+ * `TranscriptionLanguage.swift:14-201`). The Settings pin is prefs `transcription.locale`
  * (absent = automatic) in [de.corespace.shroud.core.storage.PrefsFiles.VOICE]. Log Out wipes
  * that key; [StorageSeal] drops the write while a wipe is running.
  *
@@ -65,7 +65,7 @@ class TranscriptionLanguage(
     }
 
     /**
-     * Languages to try, best first (`decodeHints`, `TranscriptionLanguage.swift:78-101`).
+     * Languages to try, best first (`decodeHints`, `TranscriptionLanguage.swift:78-107`).
      * A pin is the only entry. Otherwise: this chat's memory, the global habit when a chat is
      * given, the UI languages, then the region.
      */
@@ -151,7 +151,14 @@ class TranscriptionLanguage(
         fun languageForRegion(region: String): String? = REGIONS[region.uppercase()]
 
         /**
-         * Second pass when detection landed on English or failed (`challenger`, `:106-115`).
+         * Languages detection should prefer ([SpokenLanguagePick]): the hints, and English, which
+         * Whisper is best at and many people mix in (`detectionCandidates`). No hints, no preference.
+         */
+        fun detectionCandidates(hints: List<String>): List<String> =
+            if (hints.isEmpty() || "en" in hints) hints else hints + "en"
+
+        /**
+         * Second pass when detection landed on English or failed (`challenger`, `:112-121`).
          * A French or German detection is kept. The challenger is never English.
          */
         fun challenger(detected: String?, hints: List<String>): String? {

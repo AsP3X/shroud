@@ -2,6 +2,7 @@ import {
   challenger,
   choose,
   decodeHints,
+  detectionCandidates,
   languageForRegion,
   languageProbability,
   normalize,
@@ -23,6 +24,9 @@ if (challenger("en", hints) !== "de") throw new Error("English auto-detect must 
 if (challenger(null, ["en", "de"]) !== "de") throw new Error("unknown detection must skip a wasted English pass");
 if (challenger("de", ["de", "en"]) !== null) throw new Error("matching German detection must not spend a second pass");
 if (challenger("fr", ["en", "de"]) !== null) throw new Error("a detected language must not be replaced by the region");
+if (detectionCandidates(["de"]).join() !== "de,en") throw new Error("detection prefers the hints and English");
+if (detectionCandidates(["en", "de"]).join() !== "en,de") throw new Error("English is not listed twice");
+if (detectionCandidates([]).length !== 0) throw new Error("no hints, no preference");
 if (normalize("german") !== "de") throw new Error("normalize german");
 if (languageForRegion("DE") !== "de") throw new Error("region DE");
 

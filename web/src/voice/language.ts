@@ -173,6 +173,15 @@ export function decodeHints(peerId?: string | null): string[] {
   return ordered;
 }
 
+/**
+ * Languages detection should prefer: the hints, and English, which Whisper is
+ * best at and many people mix in. No hints, no preference.
+ */
+export function detectionCandidates(hints: readonly string[]): string[] {
+  if (hints.length === 0 || hints.includes("en")) return [...hints];
+  return [...hints, "en"];
+}
+
 export function challenger(detected: string | null | undefined, hints: string[]): string | null {
   const got = detected ? normalize(detected) : "";
   // Only English, or a detection that failed, gets a second pass. A French or

@@ -6,7 +6,7 @@ import kotlin.math.min
 
 /**
  * Whether a transcript is speech, and how much to trust it (iOS `VoiceTranscript`,
- * `TranscriptionLanguage.swift:387-529`). Pure: no audio, no network. [toString] of a
+ * `TranscriptionLanguage.swift:393-535`). Pure: no audio, no network. [toString] of a
  * [Candidate] does not include the words.
  */
 object VoiceTranscript {
@@ -28,7 +28,7 @@ object VoiceTranscript {
 
     /**
      * Trim, drop punctuation-only output, collapse whitespace to one space
-     * (`TranscriptionLanguage.swift:401-408`). `", , , ,"` becomes "".
+     * (`TranscriptionLanguage.swift:407-414`). `", , , ,"` becomes "".
      */
     fun cleaned(text: String): String {
         val trimmed = text.trim()
@@ -37,7 +37,7 @@ object VoiceTranscript {
     }
 
     /**
-     * Higher is better; 0 means not speech (`TranscriptionLanguage.swift:420-441`).
+     * Higher is better; 0 means not speech (`TranscriptionLanguage.swift:426-447`).
      * [languageProbability] and [prior] are centred on 0.5 so "no opinion" is plain
      * confidence × substance. [prior] weighs more as the audio gets shorter.
      */
@@ -83,7 +83,7 @@ object VoiceTranscript {
     }
 
     /**
-     * Auto-detect versus a forced-language challenger (`TranscriptionLanguage.swift:482-513`).
+     * Auto-detect versus a forced-language challenger (`TranscriptionLanguage.swift:488-519`).
      * English (or a missing language) is discounted; the challenger wins only when strictly better.
      */
     fun choose(

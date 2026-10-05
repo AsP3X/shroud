@@ -122,6 +122,39 @@ class TranscriptionEngineTests {
     }
 
     @Test
+    fun detectionPrefersThePersonsLanguagesUnlessAnotherIsFarLikelier() {
+        val germanHeardAsDutch = mapOf("nl" to 0.45, "de" to 0.35, "en" to 0.1, "af" to 0.1)
+        assertEquals("de", SpokenLanguagePick.pick(germanHeardAsDutch, listOf("de", "en")))
+        assertEquals("nl", SpokenLanguagePick.pick(germanHeardAsDutch, emptyList()))
+        val spanish = mapOf("es" to 0.92, "pt" to 0.04, "de" to 0.02, "en" to 0.02)
+        assertEquals("es", SpokenLanguagePick.pick(spanish, listOf("de", "en")))
+        val justOver = mapOf("fr" to 0.5, "de" to 0.5 / SpokenLanguagePick.OUTSIDE_CANDIDATE_ODDS - 0.001)
+        assertEquals("fr", SpokenLanguagePick.pick(justOver, listOf("de")))
+        assertEquals("no", SpokenLanguagePick.pick(mapOf("da" to 0.5, "no" to 0.4), listOf("nb", "en")))
+        assertEquals("de", SpokenLanguagePick.pick(mapOf("fr" to 0.3, "de" to 0.3), emptyList()))
+        assertNull(SpokenLanguagePick.pick(emptyMap(), listOf("de")))
+    }
+
+    @Test
+    fun theDetectedLanguageHonoursTheRequestsCandidates() = runBlocking {
+        val harness = tinyEngine()
+        harness.engine.prepare(TranscriptionModelId.Base)
+        val runner = harness.runners.single()
+        runner.probabilities = mapOf("nl" to 0.5, "de" to 0.3, "en" to 0.2)
+
+        val preferred = harness.engine.transcribe(
+            floatArrayOf(0f),
+            TranscriptionRequest.voiceNote(candidateLanguages = listOf("de", "en")),
+        )
+        assertEquals("de", runner.options.last().language)
+        assertEquals("de", preferred.language)
+
+        val open = harness.engine.transcribe(floatArrayOf(0f), TranscriptionRequest.voiceNote())
+        assertEquals("nl", runner.options.last().language)
+        assertEquals("nl", open.language)
+    }
+
+    @Test
     fun theLanguageTheNoteOpenedWithIsTheOneReported() {
         assertEquals("fr", WhisperReportedLanguage.choose(forced = "fr", openingToken = "en", reported = "de"))
         assertEquals("de", WhisperReportedLanguage.choose(forced = null, openingToken = "de", reported = "en"))
@@ -296,12 +329,12 @@ class TranscriptionEngineTests {
         val options = mutableListOf<WhisperDecodeOptions>()
         var closed = false
         var failure: Exception? = null
-        var detect = WhisperLanguage("de", 0.9)
+        var probabilities = mapOf("de" to 0.9, "en" to 0.06, "nl" to 0.04)
         var reported = "de"
 
-        override fun detectLanguage(pcm16k: FloatArray, threads: Int): WhisperLanguage? {
+        override fun languageProbabilities(pcm16k: FloatArray, threads: Int): Map<String, Double>? {
             detectedSamples += pcm16k.size
-            return detect
+            return probabilities
         }
 
         override fun transcribe(pcm16k: FloatArray, options: WhisperDecodeOptions, cancellation: WhisperCancellation?): WhisperRun {

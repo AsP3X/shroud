@@ -19,6 +19,7 @@ import {
   WHISPER_WINDOW_SECONDS,
 } from "./decode";
 import { detectSpokenLanguage } from "./spoken";
+import { resample } from "../wav";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
@@ -39,6 +40,16 @@ type AsrOut = {
   text?: string;
   chunks?: { timestamp?: [number | null, number | null]; text?: string }[];
 };
+
+type WorkerIn =
+  | { type: "prepare"; modelId: string }
+  | {
+      type: "transcribe";
+      audio: ArrayBuffer;
+      sampleRate: number;
+      language: string | null;
+      candidates: readonly string[];
+    };
 
 type AsrPipe = {
   (audio: Float32Array, options: Record<string, unknown>): Promise<AsrOut>;
@@ -71,21 +82,18 @@ async function load(modelId: string): Promise<AsrPipe> {
   })) as AsrPipe;
 }
 
-async function handle(
-  data:
-    | { type: "prepare"; modelId: string }
-    | { type: "transcribe"; audio: ArrayBuffer; language: string | null },
-): Promise<void> {
+async function handle(data: WorkerIn): Promise<void> {
   if (data.type === "prepare") {
     pipe = await load(data.modelId);
     self.postMessage({ type: "ready" });
     return;
   }
   if (!pipe) throw new Error("Whisper is not loaded.");
-  const samples = new Float32Array(data.audio);
+  // Resampled here, not on the page: a long note must not stall the composer.
+  const samples = resample(new Float32Array(data.audio), data.sampleRate, WHISPER_RATE);
   // A missing language used to be transcribed as English. Detect it from the
   // opening of the note and keep that code for every later window.
-  const language = data.language || (await detectSpokenLanguage(pipe, samples));
+  const language = data.language || (await detectSpokenLanguage(pipe, samples, data.candidates));
   const pieces: string[] = [];
   let offset = 0;
   // Each pass hears one window. A long or paused note takes several; the cap
@@ -122,9 +130,7 @@ async function handle(
 
 let chain: Promise<void> = Promise.resolve();
 self.onmessage = (event: MessageEvent) => {
-  const data = event.data as
-    | { type: "prepare"; modelId: string }
-    | { type: "transcribe"; audio: ArrayBuffer; language: string | null };
+  const data = event.data as WorkerIn;
   chain = chain.then(async () => {
     try {
       await handle(data);

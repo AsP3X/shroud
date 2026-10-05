@@ -34,13 +34,13 @@ type Detectable = {
   processor?: (audio: Float32Array) => Promise<{ input_features?: unknown }>;
 };
 
-function languageMask(tokens: LanguageToken[]): LogitsProcessor {
+function languageMask(tokens: LanguageToken[], candidates: readonly string[]): LogitsProcessor {
   const proc = new LogitsProcessor();
   const call = (_inputIds: bigint[][], logits: Tensor): Tensor => {
     const vocab = logits.dims[logits.dims.length - 1] ?? 0;
     const data = logits.data;
     if (vocab > 0 && (data instanceof Float32Array || data instanceof Float64Array)) {
-      maskToLanguage(data, vocab, tokens);
+      maskToLanguage(data, vocab, tokens, candidates);
     }
     return logits;
   };
@@ -48,10 +48,14 @@ function languageMask(tokens: LanguageToken[]): LogitsProcessor {
   return proc;
 }
 
-/** ISO 639-1 code from the first 30 seconds, or null when the model cannot say. */
+/**
+ * ISO 639-1 code from the first 30 seconds, or null when the model cannot say.
+ * `candidates` are the languages this person uses (`pickSpokenLanguage`).
+ */
 export async function detectSpokenLanguage(
   transcriber: unknown,
   samples: Float32Array,
+  candidates: readonly string[],
 ): Promise<string | null> {
   const pipe = transcriber as Detectable;
   const model = pipe.model;
@@ -68,7 +72,7 @@ export async function detectSpokenLanguage(
     const features = await processor(opening);
     if (!features.input_features) return null;
     const list = new LogitsProcessorList();
-    list.push(languageMask(tokens));
+    list.push(languageMask(tokens, candidates));
     const output = await model.generate({
       inputs: features.input_features,
       decoder_input_ids: new Tensor("int64", [BigInt(sot)], [1, 1]),
