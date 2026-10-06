@@ -92,7 +92,7 @@ decision record below supersedes the options tables, which stay for the reasonin
 **Decision record 2026-10-01 (binding):**
 
 - **No Google, one build.** No Firebase/FCM, no Google Play services, ML Kit, Tink or Play Core,
-  directly or transitively; no `play`/`foss` flavors. CI enforces it (`verifyNoGoogleServices`,
+  directly or transitively; no `play`/`foss` flavors. `check` enforces it (`verifyNoGoogleServices`,
   `verifyNoGoogleClasses`).
 - **Decision 1 (key storage):** as recommended, with these corrections. Items the phone must read
   while locked — call secrets, the UnifiedPush subscription keys, the notification name cache —
@@ -304,7 +304,7 @@ Order is roughly dependency order. iOS sources are the reference implementation.
   the call service is `phoneCall|microphone|mediaProjection` (calls D3). The release APKs are
   per-ABI (`arm64-v8a`, `x86_64`) with no universal APK. R8 and resource shrinking are on. The
   key stays offline; `android/e2e/repro-build.sh` is the two-build compare. 16 KB alignment is
-  `android/app/src/main/cpp/check-native.sh` (POSIX sh, CI). Listing copy is
+  `android/app/src/main/cpp/check-native.sh` (POSIX sh). Listing copy is
   `android/fastlane/metadata/android/en-US/`. `fdroid build` is not run from this repo. The
   build recipe, the foreground-service notes and choosing a distributor are in
   [android/README.md](../android/README.md).

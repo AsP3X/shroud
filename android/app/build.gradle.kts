@@ -13,7 +13,7 @@ plugins {
 }
 
 // Release signing is optional and never stored in the repo. The owner's key stays offline.
-// e2e/repro-build.sh points these at a throwaway keystore under /tmp. CI leaves them unset.
+// ./apk.sh points these at the release key, e2e/repro-build.sh at a throwaway keystore under /tmp.
 val shroudReleaseStore = providers.environmentVariable("SHROUD_RELEASE_STORE")
 val shroudReleaseStorePassword = providers.environmentVariable("SHROUD_RELEASE_STORE_PASSWORD")
 val shroudReleaseKeyAlias = providers.environmentVariable("SHROUD_RELEASE_KEY_ALIAS")
@@ -22,7 +22,7 @@ val shroudReleaseKeyPassword = providers.environmentVariable("SHROUD_RELEASE_KEY
 // Play's ABI offsets, so each release split can be installed and updated on its own.
 val abiSplitVersionOffset = mapOf("arm64-v8a" to 2, "x86_64" to 4)
 
-// ./apk.sh passes these. Unset, CI and e2e/repro-build.sh keep both CPUs and version 0.1.0 (1).
+// ./apk.sh passes these. Unset, the build (and e2e/repro-build.sh) keeps both CPUs and version 0.1.0 (1).
 val shroudAbis: List<String> = run {
     val raw = providers.gradleProperty("shroudAbi").orNull?.trim().orEmpty()
     val parsed = if (raw.isEmpty() || raw == "both") {
@@ -153,7 +153,7 @@ android {
     ndkVersion = "30.0.16248370"
     defaultConfig {
         ndk {
-            // Both CPUs unless -PshroudAbi selects one (./apk.sh). CI leaves the property unset.
+            // Both CPUs unless -PshroudAbi selects one (./apk.sh).
             abiFilters += shroudAbis
         }
         externalNativeBuild {
@@ -248,7 +248,7 @@ dependencies {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Ground-rule checks, wired into `check` and CI (00-plan §1.1 rules 1 and 5, §2.0 rule 10, §5.2).
+// Ground-rule checks, wired into `check` (00-plan §1.1 rules 1 and 5, §2.0 rule 10, §5.2).
 
 /**
  * Base of the dependency checks: the resolved debug and release runtime graphs as task inputs

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Checks native libraries in one or more built APKs (W2-WHISPER, 00-plan §5.2, W4-RELEASE).
-# POSIX sh, so the Ubuntu CI job can run it (the previous script was zsh).
+# POSIX sh, so it runs on Linux as well as macOS (the previous script was zsh).
 #
 # For each APK:
 #   - a split named for one ABI must contain that ABI; any other APK must contain both
