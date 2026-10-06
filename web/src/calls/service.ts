@@ -338,6 +338,11 @@ export function setCallScreenQuality(quality: ScreenQuality): void {
   controller.setScreenQuality(quality);
 }
 
+/** Where the faces are in our outgoing picture (0…1), for our own small picture; returns the unsubscribe. */
+export function subscribeCallFocus(listener: (focus: { x: number; y: number }) => void): () => void {
+  return controller.subscribeFocus(listener);
+}
+
 /** Center Stage on or off, in this call and the next ones from this browser. */
 export function setCallCenterStage(on: boolean): void {
   controller.setCenterStage(on);

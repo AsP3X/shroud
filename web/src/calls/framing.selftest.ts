@@ -4,7 +4,7 @@
  * Run: npx esbuild src/calls/framing.selftest.ts --bundle --platform=node --format=esm | node --input-type=module
  */
 import { decodeYunet, facesInPicture, yunetInput, yunetScale, YUNET_SIZE } from "./faceDetect";
-import { Framer, faceUnion, largestInside, outputSize, shapeChanged, targetCrop, type Rect } from "./framing";
+import { Framer, coverOffset, faceUnion, largestInside, outputSize, shapeChanged, targetCrop, type Rect } from "./framing";
 
 function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`framing selftest: ${what}`);
@@ -103,6 +103,42 @@ check(shapeChanged(null, phone) && shapeChanged(phone, null) && !shapeChanged(nu
   check(near(cut.width / cut.height, 886 / 1920, 0.002) && near(cut.height, 2160), "a new shape starts again from the whole picture");
   const late = framer.next(26_033 + 10_000);
   check(late.height <= 2160 && late.y >= 0, "a long pause between frames is not a jump past the target");
+}
+
+/* --- our own small picture centres on the faces --- */
+{
+  const output = outputSize(uhd, null);
+  const framer = new Framer();
+  framer.configure(uhd, output, true);
+  framer.next(0);
+  check(JSON.stringify(framer.focus()) === JSON.stringify({ x: 0.5, y: 0.5 }), "no faces: the middle");
+  const face: Rect = { x: 1770, y: 900, width: 300, height: 300 };
+  framer.faces([face], 0);
+  for (let t = 33; t <= 6_000; t += 33) framer.next(t);
+  const settled = framer.focus();
+  check(near(settled.x, 0.5, 0.01) && near(settled.y, 0.42, 0.01), `on the face, a little above the middle (${JSON.stringify(settled)})`);
+  framer.faces([{ x: 3600, y: 900, width: 200, height: 200 }], 6_000);
+  for (let t = 6_033; t <= 12_000; t += 33) framer.next(t);
+  check(framer.focus().x > 0.6, `a face the cut cannot centre (at the picture's edge) is off its middle (${framer.focus().x})`);
+  framer.configure(uhd, output, false);
+  for (let t = 12_033; t <= 20_000; t += 33) framer.next(t);
+  const off = framer.focus();
+  check(near(off.x, 0.5, 0.01) && near(off.y, 0.5, 0.01), "Center Stage off: back to the middle");
+  const fresh = new Framer();
+  check(fresh.focus().x === 0.5 && fresh.focus().y === 0.5, "before any frame: the middle");
+}
+{
+  const tile = { width: 200, height: 125 };
+  const tall = { width: 886, height: 1920 };
+  const at = coverOffset(tile, tall, { x: 0.5, y: 0.35 });
+  check(near(at.x, 0) && near(at.y, 62.5 - 0.35 * 1920 * (200 / 886), 0.01), `the face's point in the tile's middle (${JSON.stringify(at)})`);
+  check(near(coverOffset(tile, tall, { x: 0.5, y: 0 }).y, 0), "never past the top");
+  check(near(coverOffset(tile, tall, { x: 0.5, y: 1 }).y, 125 - 1920 * (200 / 886), 0.01), "nor past the bottom");
+  const same = coverOffset({ width: 108, height: 234 }, tall, { x: 0.9, y: 0.1 });
+  check(near(same.x, 0, 0.6) && near(same.y, 0, 0.6), "one shape: nothing to move");
+  const wide = coverOffset({ width: 108, height: 164 }, { width: 1920, height: 1080 }, { x: 0.8, y: 0.5 });
+  check(wide.x < 0 && near(wide.y, 0) && near(wide.x, 54 - 0.8 * 1920 * (164 / 1080), 0.01), "a wide picture in a tall tile moves sideways");
+  check(coverOffset({ width: 0, height: 0 }, tall, { x: 0.5, y: 0.5 }).x === 0, "an empty box: nothing");
 }
 
 /* --- the face detector's input and output --- */

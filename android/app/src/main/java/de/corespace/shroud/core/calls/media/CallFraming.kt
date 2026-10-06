@@ -28,6 +28,17 @@ data class FrameSize(val width: Int, val height: Int)
 /** A part of a picture, in pixels (fractional while it glides). */
 data class FrameRect(val x: Double, val y: Double, val width: Double, val height: Double)
 
+/** A point: in picture pixels, or 0…1 on each axis of a picture (a focus). */
+data class FramePoint(val x: Double, val y: Double) {
+    companion object {
+        /** The middle of a picture, as a focus: where our own small picture centres without faces. */
+        val Middle = FramePoint(0.5, 0.5)
+    }
+}
+
+/** Where an aspect-filled picture goes in its box ([coverOffset]): its top left, and its scale. */
+data class CoverOffset(val x: Double, val y: Double, val scale: Double)
+
 /** The most pixels the output's longer side gets: the camera ladder's top rung (1080p). */
 const val FRAME_MAX_LONG = 1920
 
@@ -153,6 +164,24 @@ private fun ease(from: Double, to: Double, seconds: Double, tau: Double): Double
     from + (to - from) * (1 - exp(-seconds / tau))
 
 /**
+ * Where to put a picture of [picture]'s size, filled into a [box] (aspect fill: scaled to cover it
+ * and cropped), so that [focus] (a point in the picture, 0…1 on each axis) lands as near the box's
+ * middle as the picture allows: the offset of the scaled picture's top left inside the box, never
+ * past an edge. Our own small picture uses it to keep the faces in view (docs/calls.md, "Framing
+ * and Center Stage"); a box and a picture of one shape need no offset.
+ */
+fun coverOffset(box: FrameSize, picture: FrameSize, focus: FramePoint): CoverOffset {
+    if (box.width <= 0 || box.height <= 0 || picture.width <= 0 || picture.height <= 0) return CoverOffset(0.0, 0.0, 1.0)
+    val scale = max(box.width.toDouble() / picture.width, box.height.toDouble() / picture.height)
+    fun axis(boxSide: Int, pictureSide: Int, at: Double): Double {
+        val shown = pictureSide * scale
+        if (shown - boxSide < 0.5) return (boxSide - shown) / 2
+        return min(0.0, max(boxSide - shown, boxSide / 2.0 - at * shown))
+    }
+    return CoverOffset(axis(box.width, picture.width, focus.x), axis(box.height, picture.height, focus.y), scale)
+}
+
+/**
  * The cut over time, for one camera: [faces] gives it what the detector saw, [next] where the cut
  * is for a frame. It glides (pans quicker than it zooms), ignores small jitter, holds on a face
  * that is briefly lost, and goes back to the whole picture once none has been seen for a while.
@@ -169,12 +198,21 @@ class Framer {
     private var lastStep: Long? = null
     private var follow = true
 
+    /** The faces' middle the cut aims at (upright pixels), or null: none to follow. */
+    private var faceTarget: FramePoint? = null
+
+    /** The point our own picture centres on, gliding like the cut: the faces' middle, else the cut's. */
+    private var faceAt: FramePoint? = null
+
     /** The picture coming in and the output going out; a change starts again from the whole picture. */
     fun configure(capture: FrameSize, output: FrameSize, follow: Boolean) {
         val same = capture == this.capture && output == this.output
         this.follow = follow
         if (same && current != null) {
-            if (!follow) target = targetCrop(capture, output, null)
+            if (!follow) {
+                target = targetCrop(capture, output, null)
+                faceTarget = null
+            }
             return
         }
         this.capture = capture
@@ -182,12 +220,14 @@ class Framer {
         val whole = targetCrop(capture, output, null)
         current = whole
         target = whole
+        faceTarget = null
+        faceAt = null
         lastStep = null
     }
 
     /**
      * Another camera (or the same one started again): everything about the last picture is
-     * forgotten, the cut, where it was heading and the last face; the next [configure] starts from
+     * forgotten, the cut, where it was heading, the last face and our own picture's focus; the next [configure] starts from
      * the whole picture.
      */
     fun reset() {
@@ -197,6 +237,8 @@ class Framer {
         target = null
         lastFace = null
         lastStep = null
+        faceTarget = null
+        faceAt = null
     }
 
     /** What the detector saw in the picture at [now] (ms): faces in upright pixels, maybe none. */
@@ -211,7 +253,10 @@ class Framer {
         }
         val next = targetCrop(capture, output, union)
         val held = target
-        if (held == null || far(held, next)) target = next
+        if (held == null || far(held, next)) {
+            target = next
+            faceTarget = union?.let { FramePoint(it.x + it.width / 2, it.y + it.height / 2) }
+        }
     }
 
     /** Where the cut is for a frame at [now] (ms). */
@@ -230,7 +275,23 @@ class Framer {
         val y = min(capture.height - height, max(0.0, centerY - height / 2))
         val moved = FrameRect(x, y, width, height)
         current = moved
+        // Our own picture's focus glides with the pan: toward the faces' middle, or without
+        // faces to follow toward the cut's own, which reads as the picture's middle in [focus].
+        val aim = faceTarget ?: FramePoint(x + width / 2, y + height / 2)
+        val at = faceAt ?: aim
+        faceAt = FramePoint(ease(at.x, aim.x, seconds, PAN_SECONDS), ease(at.y, aim.y, seconds, PAN_SECONDS))
         return moved
+    }
+
+    /**
+     * Where the faces are in the cut that last went out (0…1 on each axis), for our own small
+     * picture to centre on; the middle when there are none to follow.
+     */
+    fun focus(): FramePoint {
+        val cut = current
+        val at = faceAt
+        if (cut == null || at == null || cut.width <= 0 || cut.height <= 0) return FramePoint.Middle
+        return FramePoint(((at.x - cut.x) / cut.width).coerceIn(0.0, 1.0), ((at.y - cut.y) / cut.height).coerceIn(0.0, 1.0))
     }
 }
 
@@ -271,6 +332,9 @@ class CameraCut {
 
     /** Where the cut is for the frame at [now] (ms). */
     fun next(now: Long): FrameRect = framer.next(now)
+
+    /** Where the faces are in the last cut (0…1), for our own small picture ([Framer.focus]). */
+    fun focus(): FramePoint = framer.focus()
 }
 
 /**

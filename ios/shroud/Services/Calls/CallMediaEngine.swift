@@ -94,6 +94,9 @@ final class CallMediaEngine: NSObject {
     /// Between the camera (or the test pattern) and the video source: cuts each frame to what
     /// goes out (docs/calls.md, "Framing and Center Stage"). WebRTC holds it weakly; kept here.
     private var framer: CameraFramer?
+    /// Where the faces are in what our camera sends, for our own small picture to centre on;
+    /// every framer of this engine writes it, and it is the middle while there is none.
+    let localFocus = CallSelfViewFocus()
     /// The size of the area that shows our camera on their side (`media_state` `view`), device
     /// pixels; nil when they did not say (our camera keeps its own shape). Per call.
     private var peerView: CallFraming.Size?
@@ -355,7 +358,7 @@ final class CallMediaEngine: NSObject {
         guard CallCamera.isAvailable || Self.simulatorPattern else { return nil }
         let source = Self.factory.videoSource()
         let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
-        let framer = CameraFramer(source: source, centerStage: centerStage)
+        let framer = CameraFramer(source: source, centerStage: centerStage, focus: localFocus)
         framer.setPeerView(peerView)
         framer.setOnOutputSize { [weak self, weak framer] size in
             guard let self, let framer, self.framer === framer else { return }
@@ -642,6 +645,7 @@ final class CallMediaEngine: NSObject {
         #endif
         framer?.setOnOutputSize(nil)
         framer = nil
+        localFocus.reset()
         framedSize = nil
         peerView = nil
         cameraOn = false

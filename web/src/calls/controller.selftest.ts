@@ -422,6 +422,7 @@ class FakeFramed {
       onSize: () => void;
       onFollowChange: () => void;
       onStall: () => void;
+      onFocus?: (focus: { x: number; y: number }) => void;
     },
   ) {
     this.track.size = { width: 1080, height: 1920 };
@@ -1868,6 +1869,12 @@ const ICE = 150;
   await clock.advance(1_000);
   check(framed.views.at(-1) === null, "a window that shows the whole picture: her own shape again");
 
+  // Our own small picture hears where the faces are, and the middle once nothing frames.
+  const focuses: { x: number; y: number }[] = [];
+  const unsubscribe = a1.controller.subscribeFocus((focus) => focuses.push(focus));
+  framed.options.onFocus?.({ x: 0.3, y: 0.4 });
+  check(JSON.stringify(focuses.at(-1)) === JSON.stringify({ x: 0.3, y: 0.4 }), "the faces' place reaches our own picture");
+
   // Center Stage off and on again, kept for the next call.
   a1.controller.setCenterStage(false);
   check(framed.follows.at(-1) === false && a1.view?.centerStage === false, "Center Stage off");
@@ -1885,6 +1892,8 @@ const ICE = 150;
   await clock.advance(0);
   check(second.stopped && a1.peer.videoSender?.track === second.camera, "a stalled framing gives the camera back");
   check(a1.view?.canCenterStage === false, "and Center Stage is not offered");
+  check(JSON.stringify(focuses.at(-1)) === JSON.stringify({ x: 0.5, y: 0.5 }), "a stalled framing puts our picture back in the middle");
+  unsubscribe();
   a1.controller.hangup();
   await clock.advance(4_000);
   check(second.stopped, "nothing left running");

@@ -59,6 +59,8 @@ export function frameCamera(
     onFollowChange: () => void;
     /** No frame came out: send the camera itself instead. */
     onStall: () => void;
+    /** Where the faces are in the output (0…1), for our own small picture to centre on. */
+    onFocus?: (focus: { x: number; y: number }) => void;
   },
 ): FramedCamera | null {
   const api = constructors();
@@ -109,6 +111,8 @@ export function frameCamera(
       options.onFollowChange();
     } else if (message.type === "failed" && camera.readyState === "live") {
       options.onStall();
+    } else if (message.type === "focus") {
+      options.onFocus?.({ x: message.x, y: message.y });
     }
   };
   framing.onerror = () => {

@@ -53,7 +53,9 @@ import org.webrtc.VideoTrack
  *
  * Fill (crop) by default: the layout aspect ratio is the view's. [matchBufferToFrame] (their
  * shared screen) sizes the texture to the frame instead, so a zoom samples the source pixels and
- * stays sharp (calls §8.9).
+ * stays sharp (calls §8.9). [aspectOfFrame] (our own small picture) draws the whole frame, its
+ * shape kept: the parent sizes the view to the frame's shape and crops it itself, round the faces
+ * (`SelfView`, docs/calls.md "Framing and Center Stage").
  */
 @SuppressLint("ViewConstructor")
 internal class CallTextureRenderer(context: Context) : TextureView(context), TextureView.SurfaceTextureListener, VideoSink {
@@ -68,6 +70,13 @@ internal class CallTextureRenderer(context: Context) : TextureView(context), Tex
 
     /** Size the texture to the frame (their shared screen) rather than to the view. */
     var matchBufferToFrame = false
+
+    /**
+     * Draw the whole frame in its own shape instead of cropping it to the view's: the view is
+     * already sized to that shape by its parent, which crops it (our own picture, `SelfView`). The
+     * texture keeps the view's size, so a small picture is not drawn at the frame's resolution.
+     */
+    var aspectOfFrame = false
 
     init {
         surfaceTextureListener = this
@@ -148,6 +157,8 @@ internal class CallTextureRenderer(context: Context) : TextureView(context), Tex
         if (matchBufferToFrame && frameWidth > 0 && frameHeight > 0) {
             surfaceTexture?.setDefaultBufferSize(frameWidth, frameHeight)
             renderer.setLayoutAspectRatio(frameWidth.toFloat() / frameHeight)
+        } else if (aspectOfFrame && frameWidth > 0 && frameHeight > 0) {
+            renderer.setLayoutAspectRatio(frameWidth.toFloat() / frameHeight)
         } else if (width > 0 && height > 0) {
             renderer.setLayoutAspectRatio(width.toFloat() / height)
         }
@@ -191,6 +202,7 @@ internal fun CallVideo(
     mirror: Boolean = false,
     paused: Boolean = false,
     matchBufferToFrame: Boolean = false,
+    aspectOfFrame: Boolean = false,
     onFrameSize: ((IntSize) -> Unit)? = null,
 ) {
     val currentOnFrameSize by rememberUpdatedState(onFrameSize)
@@ -200,6 +212,7 @@ internal fun CallVideo(
         onRelease = { it.release() },
         update = { view ->
             view.matchBufferToFrame = matchBufferToFrame
+            view.aspectOfFrame = aspectOfFrame
             view.onFrameSize = { size -> currentOnFrameSize?.invoke(size) }
             view.attach(eglContext(), track)
             view.setMirror(mirror)

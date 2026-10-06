@@ -211,6 +211,48 @@ struct CallFramingTests {
         #expect(late.height <= 2160 && late.y >= 0, "a long pause between frames is not a jump past the target")
     }
 
+    // MARK: - Our own small picture
+
+    @Test
+    func ourOwnSmallPictureCentresOnTheFaces() {
+        let output = CallFraming.outputSize(Self.uhd, view: nil)
+        var framer = CallFramer()
+        framer.configure(capture: Self.uhd, output: output, follow: true)
+        _ = framer.next(0)
+        #expect(framer.focus() == CallFraming.Point(x: 0.5, y: 0.5), "no faces: the middle")
+        framer.faces([Self.face], now: 0)
+        run(&framer, from: 33, to: 6_000)
+        let settled = framer.focus()
+        #expect(near(settled.x, 0.5, 0.01) && near(settled.y, 0.42, 0.01), "on the face, a little above the middle (\(settled))")
+        framer.faces([Rect(x: 3600, y: 900, width: 200, height: 200)], now: 6_000)
+        run(&framer, from: 6_033, to: 12_000)
+        #expect(framer.focus().x > 0.6, "a face the cut cannot centre (at the picture's edge) is off its middle (\(framer.focus().x))")
+        framer.configure(capture: Self.uhd, output: output, follow: false)
+        run(&framer, from: 12_033, to: 20_000)
+        let off = framer.focus()
+        #expect(near(off.x, 0.5, 0.01) && near(off.y, 0.5, 0.01), "Center Stage off: back to the middle")
+        let fresh = CallFramer()
+        #expect(fresh.focus().x == Double(0.5) && fresh.focus().y == Double(0.5), "before any frame: the middle")
+    }
+
+    @Test
+    func coverOffsetPutsTheFocusInTheBoxsMiddle() {
+        let tile = Size(width: 200, height: 125)
+        let tall = Size(width: 886, height: 1920)
+        let at = CallFraming.coverOffset(tile, picture: tall, focus: .init(x: 0.5, y: 0.35))
+        #expect(near(at.x, 0) && near(at.y, 62.5 - 0.35 * 1920 * (200.0 / 886.0), 0.01), "the face's point in the tile's middle (\(at))")
+        #expect(near(CallFraming.coverOffset(tile, picture: tall, focus: .init(x: 0.5, y: 0)).y, 0), "never past the top")
+        #expect(
+            near(CallFraming.coverOffset(tile, picture: tall, focus: .init(x: 0.5, y: 1)).y, 125 - 1920 * (200.0 / 886.0), 0.01),
+            "nor past the bottom"
+        )
+        let same = CallFraming.coverOffset(Size(width: 108, height: 234), picture: tall, focus: .init(x: 0.9, y: 0.1))
+        #expect(near(same.x, 0, 0.6) && near(same.y, 0, 0.6), "one shape: nothing to move")
+        let wide = CallFraming.coverOffset(Size(width: 108, height: 164), picture: Self.fhd, focus: .init(x: 0.8, y: 0.5))
+        #expect(wide.x < 0 && near(wide.y, 0) && near(wide.x, 54 - 0.8 * 1920 * (164.0 / 1080.0), 0.01), "a wide picture in a tall tile moves sideways")
+        #expect(CallFraming.coverOffset(Size(width: 0, height: 0), picture: tall, focus: .middle).x == Double(0), "an empty box: nothing")
+    }
+
     // MARK: - On the buffer (iPhone only)
 
     /// A 1920×1080 buffer turned by each rotation; the upright cut maps back onto it.

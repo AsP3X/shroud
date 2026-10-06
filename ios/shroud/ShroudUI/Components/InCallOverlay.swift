@@ -370,7 +370,8 @@ struct InCallOverlay: View {
                     .transition(.scale(scale: 0.8, anchor: .topTrailing).combined(with: .opacity))
             }
             if showsLocalVideo(call), let local = calls.localVideoTrack {
-                CallVideoView(track: local, mirror: calls.usesFrontCamera)
+                // Centred on the faces Center Stage follows: it goes out in their shape, not this one.
+                CallVideoView(track: local, mirror: calls.usesFrontCamera, focus: calls.localVideoFocus)
                     .frame(width: size.width, height: size.height)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(alignment: .bottom) {

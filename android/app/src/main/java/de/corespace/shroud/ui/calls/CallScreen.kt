@@ -17,6 +17,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -51,6 +52,7 @@ import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -74,6 +76,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -88,6 +91,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -97,6 +101,10 @@ import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.calls.CallUiState
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ShareAction
+import de.corespace.shroud.core.calls.media.CoverOffset
+import de.corespace.shroud.core.calls.media.FramePoint
+import de.corespace.shroud.core.calls.media.FrameSize
+import de.corespace.shroud.core.calls.media.coverOffset
 import de.corespace.shroud.ui.components.Avatar
 import de.corespace.shroud.ui.components.AvatarPalette
 import de.corespace.shroud.ui.components.RollingText
@@ -108,6 +116,7 @@ import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
 import de.corespace.shroud.ui.theme.inter
 import java.util.UUID
+import kotlin.math.ceil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -833,6 +842,7 @@ private fun Tiles(
                         mirror = state.usesFrontCamera,
                         canSwitch = state.canSwitchCamera,
                         onSwitch = ports::switchCamera,
+                        focus = ports::selfViewFocus,
                         width = width,
                         height = height,
                     )
@@ -842,7 +852,63 @@ private fun Tiles(
     }
 }
 
-/** Our camera: a tap flips it (one element: "Switch camera" or "Your camera"; :315-341). */
+/**
+ * Our own picture filled into its tile (aspect fill) and cropped round [focus] rather than round
+ * its middle: the picture is laid out at its whole scaled size and its layer moved by
+ * [coverOffset], so the faces' point lands as near the tile's middle as the picture's edges allow.
+ * The tile's own clip crops it. The renderer draws the whole frame (`aspectOfFrame`), so what is
+ * laid out is what shows.
+ *
+ * [focus] is in the picture as it goes out ([selfViewOffset] mirrors it for the front camera).
+ * Before the first frame's size is known the picture simply fills the tile (the renderer then
+ * crops round the middle).
+ */
+private fun Modifier.coverFocused(frame: State<FrameSize?>, focus: State<FramePoint>, mirror: Boolean): Modifier =
+    layout { measurable, constraints ->
+        val picture = frame.value
+        if (picture == null || !constraints.hasBoundedWidth || !constraints.hasBoundedHeight ||
+            constraints.maxWidth <= 0 || constraints.maxHeight <= 0
+        ) {
+            val whole = measurable.measure(constraints)
+            return@layout layout(whole.width, whole.height) { whole.place(0, 0) }
+        }
+        val box = FrameSize(constraints.maxWidth, constraints.maxHeight)
+        val scale = coverOffset(box, picture, FramePoint.Middle).scale
+        val shown = measurable.measure(
+            Constraints.fixed(
+                maxOf(box.width, ceil(picture.width * scale).toInt()),
+                maxOf(box.height, ceil(picture.height * scale).toInt()),
+            ),
+        )
+        layout(box.width, box.height) {
+            // Read in the layer, not in layout: a new focus only moves the picture.
+            shown.placeWithLayer(0, 0) {
+                val offset = selfViewOffset(box, picture, focus.value, mirror)
+                translationX = offset.x.toFloat()
+                translationY = offset.y.toFloat()
+            }
+        }
+    }
+
+/**
+ * Where our own [picture] goes in its [box] so the faces' point [focus] (in the picture as it goes
+ * out) is as near the box's middle as the picture allows ([coverOffset]). The front camera's
+ * picture is drawn [mirrored] (`EglRenderer.setMirror`, after turning it upright), which shows a
+ * point at x at 1 − x: that is the point centred, else the tile would push the face the wrong way.
+ */
+internal fun selfViewOffset(box: FrameSize, picture: FrameSize, focus: FramePoint, mirrored: Boolean): CoverOffset =
+    coverOffset(box, picture, if (mirrored) FramePoint(1 - focus.x, focus.y) else focus)
+
+/**
+ * Our camera: a tap flips it (one element: "Switch camera" or "Your camera"; :315-341).
+ *
+ * It shows the picture as it goes out, cut to the other side's shape (docs/calls.md, "Framing and
+ * Center Stage"), which is rarely the tile's: a tall phone's cut is 0.46 wide, a window's
+ * landscape. A crop round the middle could cut the face off, so the tile crops round [focus]
+ * instead, where the camera says the faces are in that picture, and Center Stage shows working
+ * here too. [focus] glides with the cut and is polled once a frame while the tile shows; without
+ * Center Stage or faces it is the middle, the plain centred crop.
+ */
 @Composable
 private fun SelfView(
     track: org.webrtc.VideoTrack,
@@ -850,10 +916,22 @@ private fun SelfView(
     mirror: Boolean,
     canSwitch: Boolean,
     onSwitch: () -> Unit,
+    focus: () -> FramePoint,
     width: Dp,
     height: Dp,
 ) {
     val shape = RoundedCornerShape(16.dp)
+    // The picture's upright size, from the renderer (it changes with a camera switch or their new
+    // view), and the faces' point in it. Both are read only while laying out and placing the
+    // picture ([coverFocused]), so a new focus moves its layer without recomposing the tile.
+    val frame = remember { mutableStateOf<FrameSize?>(null) }
+    val at = remember { mutableStateOf(FramePoint.Middle) }
+    val readFocus by rememberUpdatedState(focus)
+    LaunchedEffect(Unit) {
+        // Once a frame while shown (an infinite animation: screen tests do not wait on it). An
+        // unchanged point is no state change, so a still picture costs no redraw.
+        while (true) withInfiniteAnimationFrameNanos { at.value = readFocus() }
+    }
     Box(
         Modifier
             .size(width, height)
@@ -869,7 +947,14 @@ private fun SelfView(
             },
         contentAlignment = Alignment.BottomCenter,
     ) {
-        CallVideo(track = track, eglContext = eglContext, mirror = mirror, modifier = Modifier.fillMaxSize())
+        CallVideo(
+            track = track,
+            eglContext = eglContext,
+            mirror = mirror,
+            aspectOfFrame = true,
+            onFrameSize = { size -> frame.value = FrameSize(size.width, size.height) },
+            modifier = Modifier.fillMaxSize().coverFocused(frame, at, mirror),
+        )
         if (canSwitch) {
             Box(
                 Modifier

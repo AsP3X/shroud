@@ -119,6 +119,45 @@ struct CallCameraFramerTests {
         rig.track.remove(rig.sink)
     }
 
+    /// Our own picture is told where the faces are in what goes out: on the face (a little above
+    /// the cut's middle) while ours frames, the middle once Apple's camera frames by itself, and
+    /// the middle again when the camera starts over.
+    @Test
+    func theFocusFollowsTheFacesOnlyWhileWeFrame() async throws {
+        let focus = CallSelfViewFocus()
+        let source = Self.factory.videoSource()
+        let framer = CameraFramer(source: source, centerStage: true, focus: focus)
+        let feed = FrameFeed(delegate: framer)
+        let pixels = try buffer(width: 1920, height: 1080)
+        let capture = CallFraming.Size(width: 1920, height: 1080)
+        var time: Int64 = 1_000_000_000
+        /// `count` frames 33 ms apart; with `face`, the detector sees it every 15 frames, so the
+        /// test's blank frames (no faces for Vision) never count as the face being lost.
+        func push(_ count: Int, face: CallFraming.Rect? = nil) {
+            for index in 0..<count {
+                if let face, index % 15 == 0 {
+                    framer.takeFaces([face], capture: capture, at: Double(time) / 1_000_000, generation: framer.currentGeneration)
+                }
+                feed.push(RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: ._0, timeStampNs: time))
+                time += 33_000_000
+            }
+        }
+        push(1)
+        #expect(focus.point == .middle, "no faces yet: the middle")
+        push(120, face: CallFraming.Rect(x: 900, y: 400, width: 120, height: 120))
+        #expect(abs(focus.point.x - 0.5) < 0.01 && abs(focus.point.y - 0.42) < 0.01, "on the face (\(focus.point))")
+
+        framer.setSystemFraming(true)
+        push(240)
+        #expect(abs(focus.point.x - 0.5) < 0.01 && abs(focus.point.y - 0.5) < 0.01, "Apple framing: the middle (\(focus.point))")
+
+        framer.setSystemFraming(false)
+        push(60, face: CallFraming.Rect(x: 1500, y: 300, width: 120, height: 120))
+        #expect(focus.point != .middle)
+        framer.restart()
+        #expect(focus.point == .middle, "a camera switch: the middle at once")
+    }
+
     /// A camera switch (both cameras 1080p) starts the cut over from the whole picture at once,
     /// and faces the detector found in the last camera's frames are dropped when they arrive.
     @Test

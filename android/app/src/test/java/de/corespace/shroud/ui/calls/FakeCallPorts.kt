@@ -10,6 +10,7 @@ import de.corespace.shroud.core.calls.RecentCall
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.ShareAction
+import de.corespace.shroud.core.calls.media.FramePoint
 import de.corespace.shroud.core.net.CallModality
 import kotlinx.coroutines.flow.MutableStateFlow
 import de.corespace.shroud.ui.components.ComposeHarness
@@ -28,6 +29,9 @@ internal class FakeCallPorts(
     override val lastError = MutableStateFlow<String?>(null)
     override val isOnEarpiece = MutableStateFlow(true)
     var safetyNumber: String? = null
+
+    /** Where the faces are in our camera's picture, as [selfViewFocus] reports it; the middle by default. */
+    var focus: FramePoint = FramePoint.Middle
     val calls = mutableListOf<String>()
 
     override fun eglContext(): EglBase.Context? = null.also { calls += "eglContext" }
@@ -68,6 +72,7 @@ internal class FakeCallPorts(
     override fun setCenterStage(on: Boolean) {
         calls += "centerStage:$on"
     }
+    override fun selfViewFocus(): FramePoint = focus
     override fun setOwnView(width: Int, height: Int) {
         calls += "ownView:${width}x$height"
     }

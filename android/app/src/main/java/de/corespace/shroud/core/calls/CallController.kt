@@ -5,6 +5,7 @@ import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.calls.crypto.CallCrypto
 import de.corespace.shroud.core.calls.crypto.CallCryptoException
 import de.corespace.shroud.core.calls.crypto.CallSignalKeys
+import de.corespace.shroud.core.calls.media.FramePoint
 import de.corespace.shroud.core.calls.media.FrameSize
 import de.corespace.shroud.core.calls.media.shapeChanged
 import de.corespace.shroud.core.calls.signal.CallEndReason
@@ -1198,6 +1199,14 @@ class CallController(
         uiState.update { it.copy(centerStage = on) }
         engine?.setCenterStage(on)
     }
+
+    /**
+     * Where the faces are in our camera's picture as it goes out (0…1, upright, not mirrored), for
+     * our own small picture to centre on (`CallMediaEngine.selfViewFocus`); the middle without an
+     * engine. A plain read, not part of [ui]: it glides every frame, and the self view polls it
+     * per frame instead of recomposing for it.
+     */
+    fun selfViewFocus(): FramePoint = engine?.selfViewFocus ?: FramePoint.Middle
 
     /** Numbers, seals and queues one signal in order (CC:1268-1302). */
     private fun send(signal: CallSignal, m: Machine) {

@@ -26,10 +26,14 @@ export type FramingOut =
   /** The face detector cannot run in this browser: Center Stage is not offered. */
   | { type: "faces-unavailable" }
   /** Frames stopped going out while the camera still ran (a lost graphics context): send the camera itself. */
-  | { type: "failed" };
+  | { type: "failed" }
+  /** Where the faces are in the output (0…1), for our own small picture to centre on. */
+  | { type: "focus"; x: number; y: number };
 
 /** How often faces are looked for. */
 const DETECT_MS = 200;
+/** The focus is told at most this often, and only when it moved. */
+const FOCUS_MS = 50;
 
 const framer = new Framer();
 let view: Size | null = null;
@@ -43,6 +47,17 @@ let facePort: MessagePort | null = null;
 let detecting = false;
 let lastDetect = -Infinity;
 let detectId = 0;
+let lastFocus = { x: 0.5, y: 0.5 };
+let lastFocusAt = -Infinity;
+
+function tellFocus(now: number): void {
+  if (now - lastFocusAt < FOCUS_MS) return;
+  const focus = framer.focus();
+  if (Math.abs(focus.x - lastFocus.x) < 0.002 && Math.abs(focus.y - lastFocus.y) < 0.002) return;
+  lastFocus = focus;
+  lastFocusAt = now;
+  post({ type: "focus", x: focus.x, y: focus.y });
+}
 
 function post(message: FramingOut): void {
   self.postMessage(message);
@@ -81,6 +96,7 @@ async function pump(readable: ReadableStream<VideoFrame>, writable: WritableStre
       const out = shape(frame.displayWidth, frame.displayHeight);
       lookForFaces(frame, now);
       const cut = framer.next(now);
+      tellFocus(now);
       const whole = cut.x === 0 && cut.y === 0 && cut.width === capture.width && cut.height === capture.height;
       if (whole && out.width === capture.width && out.height === capture.height) {
         // Nothing to cut or shrink: the frame goes out as it came.

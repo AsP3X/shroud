@@ -363,6 +363,8 @@ class CallMediaEngine(context: Context) : Engine {
 
     override val usesFrontCamera: Boolean get() = camera?.usesFrontCamera ?: true
 
+    override val selfViewFocus: FramePoint get() = camera?.focus ?: FramePoint.Middle
+
     override fun awaitRemoteFrame() {
         remoteFrames.arm()
     }

@@ -387,8 +387,12 @@ the face detector differs.
   active (`isCenterStageActive`); otherwise Vision frames. Apple's switch is global, so the call
   camera holds it only while it runs (control mode `cooperative`, put back when the camera
   stops), and the two switches agree on start: a change made in Control Center since the last
-  call wins, otherwise ours is applied (`CallCenterStage.agreed`). Our own picture shows what goes
-  out.
+  call wins, otherwise ours is applied (`CallCenterStage.agreed`).
+- **Our own picture** shows what goes out. Its tile has its own shape (a wide 200×125 on the web's
+  desktop, 108×164 on the phones), so it fills the tile centred on the faces instead of on the
+  middle (`Framer.focus` gives where they are in the cut, gliding with it; `coverOffset` places
+  the filled picture so that point is as near the tile's middle as the picture allows). Without
+  faces, or with Center Stage off, it is the middle.
 - **The switch.** Center Stage is a button next to the call's camera controls while our camera
   is on and the device can frame: on the iPhone, iPad and Android a glass circle with the
   Share button, on the web a control in the call bar.

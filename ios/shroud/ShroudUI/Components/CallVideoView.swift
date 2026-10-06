@@ -4,13 +4,18 @@ import WebRTC
 
 /// One WebRTC video track, cropped to fill. A front-camera self view is mirrored.
 ///
-/// Human: With `reveal`, the other side's picture opens out of their face: it shows only inside
-/// a circle that grows from the face to the whole screen when their camera comes on, and shrinks
-/// back behind the face when it goes off.
+/// Human: With `focus` (our own small picture), the crop centres on the faces Center Stage follows
+/// instead of on the picture's middle: our picture goes out in the other side's shape, so a tile
+/// of another shape would otherwise cut the faces off. With `reveal`, the other side's picture
+/// opens out of their face: it shows only inside a circle that grows from the face to the whole
+/// screen when their camera comes on, and shrinks back behind the face when it goes off.
 struct CallVideoView: UIViewRepresentable {
     let track: RTCVideoTrack?
     var mirror = false
     var reveal: FaceReveal?
+    /// Where the faces are in the picture, for our own small picture; nil: the middle (their
+    /// picture).
+    var focus: CallSelfViewFocus?
 
     /// Where the picture opens from and closes into, and whether it is open.
     struct FaceReveal: Equatable {
@@ -43,7 +48,8 @@ struct CallVideoView: UIViewRepresentable {
             track?.add(view.video)
             context.coordinator.track = track
         }
-        view.video.transform = mirror ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+        view.setMirror(mirror)
+        view.follow(focus)
         if let reveal {
             view.reveal(reveal, animated: true)
         }
@@ -75,7 +81,15 @@ final class FaceSpot {
 /// thread does, with no mask layer (an extra offscreen pass of the whole picture every frame) and
 /// no path redrawn per frame. At rest an open picture is not clipped at all, and a closed one is
 /// hidden with its renderer paused, so a voice call costs nothing here.
-final class CallVideoContainer: UIView {
+///
+/// Our own picture follows the faces (`follow`): the video view is sized to the picture filled
+/// into this box (aspect fill, so nothing is letterboxed) and moved inside it, clipped by the clip
+/// view, so the point `CallSelfViewFocus` names sits as near the middle as the picture allows
+/// (`CallFraming.coverOffset`). A display link at up to 30 Hz reads the focus and moves only the
+/// video view's `center`: no layout pass, nothing in SwiftUI. The focus already glides with the
+/// cut; at rest (no faces, Center Stage off, Apple framing) it is the middle, which is the plain
+/// centred fill.
+final class CallVideoContainer: UIView, RTCVideoViewDelegate {
     let video = RTCMTLVideoView(frame: .zero)
 
     /// Both directions move from the first frame and slow evenly: into the screen's corners when
@@ -91,6 +105,16 @@ final class CallVideoContainer: UIView {
     private var face: FaceSpot?
     private var animating = false
     private var generation = 0
+    /// Our own picture: where its faces are (nil for theirs, centred).
+    private var focusSource: CallSelfViewFocus?
+    /// The focus the video view is placed for now.
+    private var shownFocus = CallFraming.Point.middle
+    /// The picture's size as the renderer last reported it (upright); zero before its first frame.
+    private var pictureSize: CGSize = .zero
+    private var mirrored = false
+    private var focusLink: CADisplayLink?
+    /// Fast enough for a glide that takes a third of a second; the screen's own rate is not needed.
+    private static let focusRate = CAFrameRateRange(minimum: 15, maximum: 30, preferred: 30)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -102,6 +126,7 @@ final class CallVideoContainer: UIView {
         video.clipsToBounds = true
         video.backgroundColor = .clear
         video.autoresizingMask = []
+        video.delegate = self
         clip.addSubview(video)
         addSubview(clip)
     }
@@ -113,11 +138,97 @@ final class CallVideoContainer: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Pinned to the screen in the clip's coordinates; `bounds`/`center`, as a self view
-        // carries a mirroring transform.
-        video.bounds = CGRect(origin: .zero, size: bounds.size)
-        video.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        placeVideo()
         if !animating { settle() }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateFocusLink()
+    }
+
+    /// A front-camera self view shows the picture mirrored, as in a mirror.
+    func setMirror(_ on: Bool) {
+        guard on != mirrored else { return }
+        mirrored = on
+        video.transform = on ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+        placeVideo()
+    }
+
+    /// Our own picture centres on where `focus` says the faces are; nil: on its middle.
+    func follow(_ focus: CallSelfViewFocus?) {
+        guard focus !== focusSource else { return }
+        focusSource = focus
+        shownFocus = focus?.point ?? .middle
+        placeVideo()
+        updateFocusLink()
+    }
+
+    /// The video view in the clip's coordinates (pinned where it is on screen while the circle
+    /// moves); `bounds`/`center`, as a self view carries a mirroring transform. Without a focus,
+    /// or before the first frame, it covers this box and fills it round the middle; with one, it
+    /// is the filled picture's size, moved to put the focus in the middle. The renderer mirrors
+    /// inside the video view, about its own middle, so a point at `x` in the picture shows at
+    /// `1 - x` of it: the offset is worked out for what the person sees.
+    private func placeVideo() {
+        let box = bounds.size
+        guard focusSource != nil, pictureSize.width > 0, pictureSize.height > 0, box.width > 0, box.height > 0 else {
+            setVideo(size: box, center: CGPoint(x: bounds.midX, y: bounds.midY))
+            return
+        }
+        let seen = CallFraming.Point(x: mirrored ? 1 - shownFocus.x : shownFocus.x, y: shownFocus.y)
+        let cover = CallFraming.coverOffset(
+            CallFraming.Size(width: box.width, height: box.height),
+            picture: CallFraming.Size(width: pictureSize.width, height: pictureSize.height),
+            focus: seen
+        )
+        let size = CGSize(width: pictureSize.width * cover.scale, height: pictureSize.height * cover.scale)
+        setVideo(size: size, center: CGPoint(x: cover.x + size.width / 2, y: cover.y + size.height / 2))
+    }
+
+    /// Sets only what changed: a new size re-lays the renderer out, a new centre only moves it.
+    private func setVideo(size: CGSize, center: CGPoint) {
+        if video.bounds.size != size {
+            video.bounds = CGRect(origin: .zero, size: size)
+        }
+        if video.center != center {
+            video.center = center
+        }
+    }
+
+    /// Runs while there is a focus to follow and the picture is on screen.
+    private func updateFocusLink() {
+        let wanted = focusSource != nil && window != nil
+        if wanted, focusLink == nil {
+            let link = CADisplayLink(target: FocusTicker(self), selector: #selector(FocusTicker.tick(_:)))
+            link.preferredFrameRateRange = Self.focusRate
+            link.add(to: .main, forMode: .common)
+            focusLink = link
+        } else if !wanted, let link = focusLink {
+            link.invalidate()
+            focusLink = nil
+        }
+    }
+
+    /// One display-link tick: the latest focus, applied when it moved by more than a hair.
+    fileprivate func followFocus() {
+        guard let focusSource else { return }
+        let next = focusSource.point
+        guard abs(next.x - shownFocus.x) > 0.0005 || abs(next.y - shownFocus.y) > 0.0005 else { return }
+        shownFocus = next
+        placeVideo()
+    }
+
+    // MARK: - RTCVideoViewDelegate
+
+    /// The picture's (upright) size: on the first frame, and whenever it changes shape or the
+    /// encoder's ladder resizes it. Delivered on the main queue.
+    nonisolated func videoView(_ videoView: any RTCVideoRenderer, didChangeVideoSize size: CGSize) {
+        Task { @MainActor in
+            guard size != self.pictureSize else { return }
+            self.pictureSize = size
+            self.placeVideo()
+        }
     }
 
     /// Opens or closes the picture round the face.
@@ -224,5 +335,23 @@ final class CallVideoContainer: UIView {
         let dx = max(center.x - bounds.minX, bounds.maxX - center.x)
         let dy = max(center.y - bounds.minY, bounds.maxY - center.y)
         return (dx * dx + dy * dy).squareRoot() + 2
+    }
+}
+
+/// The focus display link's target: CADisplayLink keeps its target, so this holds the picture
+/// weakly and stops the link once the picture is gone.
+private final class FocusTicker: NSObject {
+    private weak var owner: CallVideoContainer?
+
+    init(_ owner: CallVideoContainer) {
+        self.owner = owner
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        guard let owner else {
+            link.invalidate()
+            return
+        }
+        owner.followFocus()
     }
 }

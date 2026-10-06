@@ -139,6 +139,45 @@ nonisolated enum CallFraming {
     fileprivate static func ease(_ from: Double, _ to: Double, seconds: Double, tau: Double) -> Double {
         from + (to - from) * (1 - exp(-seconds / tau))
     }
+
+    /// A point in a picture, 0…1 on each axis from its top left (upright).
+    struct Point: Equatable, Sendable {
+        var x: Double
+        var y: Double
+
+        /// The picture's middle: nothing to follow.
+        static let middle = Point(x: 0.5, y: 0.5)
+    }
+
+    /// Where a picture filled into a box (aspect fill) sits in it.
+    struct Cover: Equatable, Sendable {
+        /// The scaled picture's top left inside the box (zero or negative: it is cropped there).
+        var x: Double
+        var y: Double
+        /// The picture's pixels per box point.
+        var scale: Double
+    }
+
+    /// Where to put a picture of `picture`'s size, filled into a `box` (aspect fill: scaled to
+    /// cover it and cropped), so that `focus` (a point in the picture, 0…1 on each axis) lands as
+    /// near the box's middle as the picture allows: the offset of the scaled picture's top left
+    /// inside the box, never past an edge. Our own small picture uses it to keep the faces in view
+    /// (docs/calls.md, "Framing and Center Stage"); a box and a picture of one shape need no
+    /// offset.
+    ///
+    /// Agent: the web's `coverOffset`, same numbers (`CallFramingTests` checks its cases).
+    static func coverOffset(_ box: Size, picture: Size, focus: Point) -> Cover {
+        guard box.width > 0, box.height > 0, picture.width > 0, picture.height > 0 else {
+            return Cover(x: 0, y: 0, scale: 1)
+        }
+        let scale = max(box.width / picture.width, box.height / picture.height)
+        func axis(_ boxSide: Double, _ pictureSide: Double, _ at: Double) -> Double {
+            let shown = pictureSide * scale
+            if shown - boxSide < 0.5 { return (boxSide - shown) / 2 }
+            return min(0, max(boxSide - shown, boxSide / 2 - at * shown))
+        }
+        return Cover(x: axis(box.width, picture.width, focus.x), y: axis(box.height, picture.height, focus.y), scale: scale)
+    }
 }
 
 /// The cut over time, for one camera: `faces` gives it what the detector saw, `next` where the
@@ -159,6 +198,11 @@ nonisolated struct CallFramer: Sendable {
     private var lastFace = -Double.infinity
     private var lastStep: Double?
     private var follow = true
+    /// The faces' middle the cut aims at (upright pixels), or nil: none to follow.
+    private var faceTarget: (x: Double, y: Double)?
+    /// The point our own picture centres on, gliding like the cut: the faces' middle, else the
+    /// cut's.
+    private var faceAt: (x: Double, y: Double)?
 
     init() {}
 
@@ -168,7 +212,10 @@ nonisolated struct CallFramer: Sendable {
         let same = capture == self.capture && output == self.output
         self.follow = follow
         if same, current != nil {
-            if !follow { target = CallFraming.targetCrop(capture, output: output, faces: nil) }
+            if !follow {
+                target = CallFraming.targetCrop(capture, output: output, faces: nil)
+                faceTarget = nil
+            }
             return
         }
         self.capture = capture
@@ -176,6 +223,8 @@ nonisolated struct CallFramer: Sendable {
         let whole = CallFraming.targetCrop(capture, output: output, faces: nil)
         current = whole
         target = whole
+        faceTarget = nil
+        faceAt = nil
         lastStep = nil
     }
 
@@ -191,6 +240,7 @@ nonisolated struct CallFramer: Sendable {
         let next = CallFraming.targetCrop(capture, output: output, faces: union)
         if let target, !CallFraming.far(target, next) { return }
         target = next
+        faceTarget = union.map { (x: $0.x + $0.width / 2, y: $0.y + $0.height / 2) }
     }
 
     /// Where the cut is for a frame at `now` (ms).
@@ -208,7 +258,22 @@ nonisolated struct CallFramer: Sendable {
         let y = min(capture.height - height, max(0, centerY - height / 2))
         let rect = Rect(x: x, y: y, width: width, height: height)
         current = rect
+        let aim = faceTarget ?? (x: x + width / 2, y: y + height / 2)
+        let at = faceAt ?? aim
+        faceAt = (
+            x: CallFraming.ease(at.x, aim.x, seconds: seconds, tau: CallFraming.panSeconds),
+            y: CallFraming.ease(at.y, aim.y, seconds: seconds, tau: CallFraming.panSeconds)
+        )
         return rect
+    }
+
+    /// Where the faces are in the cut that last went out (0…1 on each axis, upright), for our own
+    /// small picture to centre on; the middle when there are none to follow (Center Stage off,
+    /// Apple's framing it, no faces, or no frame yet).
+    func focus() -> CallFraming.Point {
+        guard let cut = current, let at = faceAt, cut.width > 0, cut.height > 0 else { return .middle }
+        func clamp(_ value: Double) -> Double { min(1, max(0, value)) }
+        return CallFraming.Point(x: clamp((at.x - cut.x) / cut.width), y: clamp((at.y - cut.y) / cut.height))
     }
 }
 

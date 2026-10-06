@@ -11,6 +11,7 @@ import de.corespace.shroud.core.calls.CallUiState
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.ShareAction
+import de.corespace.shroud.core.calls.media.FramePoint
 import de.corespace.shroud.core.net.CallModality
 import de.corespace.shroud.ui.LocalAppContainer
 import kotlinx.coroutines.flow.StateFlow
@@ -64,6 +65,13 @@ interface CallPorts {
     fun setCenterStage(on: Boolean)
 
     /**
+     * Where the faces are in our camera's picture as it goes out (0…1 on each axis, upright, not
+     * mirrored; `CallController.selfViewFocus`): our own small picture centres its crop on it. The
+     * middle without Center Stage or faces. Polled once a frame while our picture shows.
+     */
+    fun selfViewFocus(): FramePoint
+
+    /**
      * The area their camera fills, in pixels (`CallController.setOwnView`): the call screen, or the
      * tile while it sits beside their screen. Their camera is cut to its shape. Called only when
      * it changes.
@@ -109,6 +117,7 @@ class ContainerCallPorts(private val container: AppContainer) : CallPorts {
     override fun onScreenCaptureConsent(grant: ScreenCaptureGrant?) = controller.onScreenCaptureConsent(grant)
     override fun setScreenShareQuality(quality: ScreenShareQuality) = controller.setScreenShareQuality(quality)
     override fun setCenterStage(on: Boolean) = controller.setCenterStage(on)
+    override fun selfViewFocus(): FramePoint = controller.selfViewFocus()
     override fun setOwnView(width: Int, height: Int) = controller.setOwnView(width, height)
     override suspend fun localAudioLevel(): Float? = controller.localAudioLevel()
     override fun safetyNumberForActiveCall(): String? = controller.safetyNumberForActiveCall()

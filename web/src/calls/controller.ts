@@ -190,7 +190,14 @@ export type CallEnv = {
   framingSupported?(): boolean;
   frameCamera?(
     camera: MediaStreamTrack,
-    options: { view: Size | null; follow: boolean; onSize: () => void; onFollowChange: () => void; onStall: () => void },
+    options: {
+      view: Size | null;
+      follow: boolean;
+      onSize: () => void;
+      onFollowChange: () => void;
+      onStall: () => void;
+      onFocus?: (focus: { x: number; y: number }) => void;
+    },
   ): FramedCamera | null;
 };
 
@@ -212,6 +219,8 @@ const FRAMED_VIDEO: MediaTrackConstraints = {
   height: { ideal: 2160 },
   frameRate: { ideal: 30, max: 30 },
 };
+/** The middle of a picture: where our own small picture centres when nothing is framed. */
+const MIDDLE = { x: 0.5, y: 0.5 };
 /** Their view of our camera is told at most this often while it changes (a window being resized). */
 const VIEW_MS = 500;
 /** The sizes a camera steps down through while it runs below 25 fps at one: 1440p, 1080p, 720p. */
@@ -536,6 +545,8 @@ export class CallController {
   private readonly finished: string[] = [];
   /** How our screen goes out, in every call from this browser (screenQuality.ts). */
   private screenQuality: ScreenQuality = loadScreenQuality();
+  /** Who wants to know where the faces are in our picture (the call screen's own small picture). */
+  private readonly focusListeners = new Set<(focus: { x: number; y: number }) => void>();
   /** The last size of the area that shows their camera, measured by the call screen (`setView`). */
   private lastView: CallViewSize | null = null;
   /** Center Stage, in every call from this browser (centerStage.ts). */
@@ -811,6 +822,7 @@ export class CallController {
     if (old !== track) {
       call.framed?.stop();
       call.framed = track ? this.frame(call, track) : null;
+      if (!call.framed) this.tellFocus(MIDDLE);
     }
     call.camera = track;
     call.cameraMuted = track?.muted === true;
@@ -856,11 +868,15 @@ export class CallController {
         onFollowChange: () => {
           if (!this.gone(call) && call.framed === framed) this.publish(call);
         },
+        onFocus: (focus) => {
+          if (!this.gone(call) && call.framed === framed) this.tellFocus(focus);
+        },
         onStall: () => {
           // No frame came out: the camera goes out as it comes.
           if (this.gone(call) || call.framed !== framed || !framed) return;
           framed.stop();
           call.framed = null;
+          this.tellFocus(MIDDLE);
           const camera = call.camera;
           if (camera && call.video?.sender.track === framed.track) void call.video.sender.replaceTrack(camera).catch(() => undefined);
           const audio = call.local?.getAudioTracks() ?? [];
@@ -870,6 +886,19 @@ export class CallController {
         },
       }) ?? null;
     return framed;
+  }
+
+  /**
+   * Where the faces are in our outgoing picture (0…1 on each axis), as it glides: our own small
+   * picture centres on it. The middle while nothing is framed. Returns the unsubscribe.
+   */
+  subscribeFocus(listener: (focus: { x: number; y: number }) => void): () => void {
+    this.focusListeners.add(listener);
+    return () => this.focusListeners.delete(listener);
+  }
+
+  private tellFocus(focus: { x: number; y: number }): void {
+    for (const listener of this.focusListeners) listener(focus);
   }
 
   /** Center Stage on or off, in this call and the next ones from this browser. */

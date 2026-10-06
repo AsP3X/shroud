@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.calls
 
 import android.content.Intent
+import de.corespace.shroud.core.calls.media.FramePoint
 import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.net.IceServerDto
 import de.corespace.shroud.core.notifications.NotificationKind
@@ -106,6 +107,14 @@ interface CallMediaEngine {
     val isCameraOn: Boolean
     val canSwitchCamera: Boolean
     val usesFrontCamera: Boolean
+
+    /**
+     * Where the faces are in our camera's picture as it goes out (0…1 on each axis, upright, not
+     * mirrored), gliding with the cut: our own small picture centres on it (docs/calls.md,
+     * "Framing and Center Stage"). The middle without Center Stage, faces or a camera; engines
+     * that do not frame keep this default. Read on main, as often as every frame.
+     */
+    val selfViewFocus: FramePoint get() = FramePoint.Middle
     fun awaitRemoteFrame()
     fun awaitRemoteScreenFrame()
     fun startScreen(grant: ScreenCaptureGrant): Boolean

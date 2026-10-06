@@ -146,6 +146,78 @@ class CallFramingTest {
         check(late.height <= 2160 && late.y >= 0, "a long pause between frames is not a jump past the target")
     }
 
+    // ---- our own small picture centres on the faces ----
+
+    @Test
+    fun ourOwnSmallPictureCentresOnTheFaces() {
+        val output = outputSize(uhd, null)
+        val framer = Framer()
+        framer.configure(uhd, output, true)
+        framer.next(0)
+        assertEquals("no faces: the middle", FramePoint(0.5, 0.5), framer.focus())
+        val face = FrameRect(1770.0, 900.0, 300.0, 300.0)
+        framer.faces(listOf(face), 0)
+        var t = 33L
+        while (t <= 6_000) {
+            framer.next(t)
+            t += 33
+        }
+        val settled = framer.focus()
+        check(near(settled.x, 0.5, 0.01) && near(settled.y, 0.42, 0.01), "on the face, a little above the middle ($settled)")
+        framer.faces(listOf(FrameRect(3600.0, 900.0, 200.0, 200.0)), 6_000)
+        t = 6_033
+        while (t <= 12_000) {
+            framer.next(t)
+            t += 33
+        }
+        check(framer.focus().x > 0.6, "a face the cut cannot centre (at the picture's edge) is off its middle (${framer.focus().x})")
+        framer.configure(uhd, output, false)
+        t = 12_033
+        while (t <= 20_000) {
+            framer.next(t)
+            t += 33
+        }
+        val off = framer.focus()
+        check(near(off.x, 0.5, 0.01) && near(off.y, 0.5, 0.01), "Center Stage off: back to the middle")
+        val fresh = Framer()
+        check(fresh.focus().x == 0.5 && fresh.focus().y == 0.5, "before any frame: the middle")
+    }
+
+    @Test
+    fun anAspectFilledPictureIsPlacedRoundItsFocus() {
+        val tile = FrameSize(200, 125)
+        val tall = FrameSize(886, 1920)
+        val at = coverOffset(tile, tall, FramePoint(0.5, 0.35))
+        check(near(at.x, 0.0) && near(at.y, 62.5 - 0.35 * 1920 * (200.0 / 886), 0.01), "the face's point in the tile's middle ($at)")
+        check(near(coverOffset(tile, tall, FramePoint(0.5, 0.0)).y, 0.0), "never past the top")
+        check(near(coverOffset(tile, tall, FramePoint(0.5, 1.0)).y, 125 - 1920 * (200.0 / 886), 0.01), "nor past the bottom")
+        val same = coverOffset(FrameSize(108, 234), tall, FramePoint(0.9, 0.1))
+        check(near(same.x, 0.0, 0.6) && near(same.y, 0.0, 0.6), "one shape: nothing to move")
+        val wide = coverOffset(FrameSize(108, 164), FrameSize(1920, 1080), FramePoint(0.8, 0.5))
+        check(wide.x < 0 && near(wide.y, 0.0) && near(wide.x, 54 - 0.8 * 1920 * (164.0 / 1080), 0.01), "a wide picture in a tall tile moves sideways")
+        check(coverOffset(FrameSize(0, 0), tall, FramePoint(0.5, 0.5)).x == 0.0, "an empty box: nothing")
+    }
+
+    /** A camera switch forgets the focus with the cut: the new camera's picture starts in its middle. */
+    @Test
+    fun anotherCameraStartsTheFocusInTheMiddle() {
+        val output = outputSize(uhd, null)
+        val cut = CameraCut()
+        cut.frame(1, uhd, output, follow = true)
+        cut.next(0)
+        cut.faces(listOf(FrameRect(3600.0, 900.0, 200.0, 200.0)), uhd, 1, 0)
+        var t = 33L
+        while (t <= 6_000) {
+            cut.frame(1, uhd, output, follow = true)
+            cut.next(t)
+            t += 33
+        }
+        check(cut.focus().x > 0.6, "on the face at the edge (${cut.focus()})")
+        cut.frame(2, uhd, output, follow = true)
+        cut.next(t)
+        assertEquals("another camera: the middle", FramePoint.Middle, cut.focus())
+    }
+
     // ---- Android: the cut in the camera buffer ----
 
     @Test

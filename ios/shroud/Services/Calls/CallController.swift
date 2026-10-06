@@ -88,6 +88,9 @@ final class CallController {
     private(set) var localVideoLive = false
     private(set) var usesFrontCamera = true
     private(set) var canSwitchCamera = false
+    /// Where the faces are in what our camera sends: our own small picture centres on them. Not
+    /// observed; the picture reads it itself at display rate (`CallSelfViewFocus`).
+    var localVideoFocus: CallSelfViewFocus { engine.localFocus }
     private(set) var remoteScreenTrack: RTCVideoTrack?
     /// Their screen's frames are arriving since they started sharing: their screen shows.
     private(set) var remoteScreenLive = false

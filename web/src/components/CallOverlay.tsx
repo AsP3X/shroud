@@ -35,6 +35,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { coverOffset } from "../calls/framing";
 import { incomingStaysInBanner, statusLine, videoLayout, type CallView } from "../calls/logic";
 import {
   acceptCall,
@@ -47,6 +48,7 @@ import {
   setCallCenterStage,
   setCallMinimized,
   setCallView,
+  subscribeCallFocus,
   switchCallCamera,
   toggleCallCamera,
   toggleCallMute,
@@ -152,6 +154,41 @@ function useViewReport(ref: RefObject<HTMLVideoElement | null>, which: string): 
     report();
     return () => observer.disconnect();
   }, [ref, which]);
+}
+
+/**
+ * Our own picture centres on the faces in it: the outgoing picture is cut to the other side's
+ * shape, which a differently shaped tile would crop around its middle and cut the face. The focus
+ * comes from the framing (it glides like the cut); written straight to `object-position`, so no
+ * render per update. docs/calls.md, "Framing and Center Stage".
+ */
+function useSelfFocus(ref: RefObject<HTMLVideoElement | null>): void {
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    let focus = { x: 0.5, y: 0.5 };
+    const apply = () => {
+      const offset = coverOffset(
+        { width: element.clientWidth, height: element.clientHeight },
+        { width: element.videoWidth, height: element.videoHeight },
+        focus,
+      );
+      element.style.objectPosition = `${offset.x.toFixed(1)}px ${offset.y.toFixed(1)}px`;
+    };
+    const unsubscribe = subscribeCallFocus((next) => {
+      focus = next;
+      apply();
+    });
+    element.addEventListener("resize", apply);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+    observer?.observe(element);
+    apply();
+    return () => {
+      unsubscribe();
+      element.removeEventListener("resize", apply);
+      observer?.disconnect();
+    };
+  }, [ref]);
 }
 
 function usePicture(stream: MediaStream | null, wanted: boolean, revision: unknown) {
@@ -801,6 +838,7 @@ function CallScreen({ view }: { view: CallView }) {
   // Their camera fills the screen, or the tile while their screen is up.
   useViewReport(screenUp ? peerTile.ref : remote.ref, screenUp ? "tile" : "screen");
   const self = usePicture(view.localStream, live && view.cameraOn && view.localStream !== null, null);
+  useSelfFocus(self.ref);
   const ownScreen = usePicture(view.screenStream, live && view.screenOn && view.screenStream !== null, null);
   const layout = videoLayout(view, self.shown, remote.shown);
   /* Their picture opens out of their face as a growing circle, and closes back into it. The name

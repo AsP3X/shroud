@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * buffer, no copy. The encoder then sends a rung of the ladder below that output ([CameraQuality],
  * "Camera quality"), so [captureSize] is the output's size as the frames give it. Each start and
  * each camera switch begins a new generation of the cut ([CameraCut]): the zoom and the faces of
- * one camera never carry over into the next.
+ * one camera never carry over into the next. After each cut it publishes [focus], where the faces
+ * are in what went out, for our own small picture to centre on.
  *
  * The system taking the camera (a phone call, another app) reports paused, and the next frame
  * reports it back. Stopping the camera ourselves does not: the call controller already pauses it
@@ -75,6 +76,16 @@ internal class CallCamera(
         private set
 
     /**
+     * Where the faces are in the picture that last went out (0…1 on each axis, upright, before any
+     * mirroring), gliding like the cut ([Framer.focus]): our own small picture centres on it
+     * (`SelfView`). The middle with Center Stage off, without faces, and before the first frame.
+     * Written on the camera's thread after each cut, read on main; one immutable value, so a
+     * reader never sees half of an update.
+     */
+    @Volatile var focus: FramePoint = FramePoint.Middle
+        private set
+
+    /**
      * Bumped by each [start] and each finished camera switch; the camera's thread starts the cut
      * and the face detector afresh when it sees a new one ([CameraCut]).
      */
@@ -107,6 +118,7 @@ internal class CallCamera(
         }
         stopping = false
         generation.incrementAndGet()
+        focus = FramePoint.Middle
         // Before the first frame can arrive, so the frames' own cut has the last word: the format
         // as it will stand upright on this screen, cut for their view.
         val portrait = appContext.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -137,6 +149,7 @@ internal class CallCamera(
 
     fun close() {
         faces.close()
+        focus = FramePoint.Middle
         stopping = true
         reportedPaused = false
         isRunning = false
@@ -210,6 +223,7 @@ internal class CallCamera(
             if (cut.frame(camera, capture, output, follow)) faces.reset()
             faces.take()?.let { found -> cut.faces(found.faces, found.capture, found.generation, now) }
             val rect = cut.next(now)
+            focus = cut.focus()
             if (follow) faces.offer(frame, capture, camera, now)
 
             val buffer = frame.buffer

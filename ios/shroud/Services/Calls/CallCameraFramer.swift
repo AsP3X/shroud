@@ -11,7 +11,9 @@ import WebRTC
 /// Center Stage on the cut follows the faces in it. Faces are found on this device, about five
 /// times a second, and nothing about them leaves it. While the camera frames people by itself
 /// (Apple's Center Stage active, on iPads and newer front cameras), it does that instead, and this
-/// only cuts the shape. Our own picture shows what goes out: it comes from the same source.
+/// only cuts the shape. Our own picture shows what goes out: it comes from the same source, and
+/// it centres on the faces the cut follows (`focus`), so a small tile of another shape does not
+/// crop them away.
 ///
 /// Agent: `RTCCameraVideoCapturer` (or the simulator's test pattern) delivers here instead of to
 /// the source; `CallFramer` (the web's `Framer`) says where the cut is for each frame, in upright
@@ -32,6 +34,8 @@ nonisolated final class CameraFramer: NSObject, RTCVideoCapturerDelegate, @unche
     static let detectEvery = 200.0
 
     private let source: RTCVideoSource
+    /// Where the faces are in what goes out, for our own small picture (`CallSelfViewFocus`).
+    let focus: CallSelfViewFocus
     private let lock = NSLock()
     /// Behind `lock`.
     private var framer = CallFramer()
@@ -55,9 +59,11 @@ nonisolated final class CameraFramer: NSObject, RTCVideoCapturerDelegate, @unche
 
     private let faceQueue = DispatchQueue(label: "shroud.call-faces", qos: .userInitiated)
 
-    init(source: RTCVideoSource, centerStage: Bool) {
+    /// - Parameter focus: told after every cut where the faces are in it; a new one when nil.
+    init(source: RTCVideoSource, centerStage: Bool, focus: CallSelfViewFocus = CallSelfViewFocus()) {
         self.source = source
         self.centerStage = centerStage
+        self.focus = focus
     }
 
     /// The size of the area that shows our camera on the other side (device pixels), or nil:
@@ -88,6 +94,7 @@ nonisolated final class CameraFramer: NSObject, RTCVideoCapturerDelegate, @unche
             upright = nil
             lastDetect = -Double.infinity
         }
+        focus.reset()
     }
 
     /// The camera's current run (`restart`): face results are tagged with it.
@@ -121,12 +128,14 @@ nonisolated final class CameraFramer: NSObject, RTCVideoCapturerDelegate, @unche
         let now = Double(frame.timeStampNs) / 1_000_000
 
         let step = lock.withLock {
-            () -> (output: Size, cut: Rect, detect: Bool, generation: Int, report: (@MainActor @Sendable (Size) -> Void)?) in
+            () -> (output: Size, cut: Rect, focus: CallFraming.Point, detect: Bool, generation: Int, report: (@MainActor @Sendable (Size) -> Void)?) in
             let output = CallFraming.outputSize(capture, view: peerView)
             let follow = centerStage && !systemFraming
             framer.configure(capture: capture, output: output, follow: follow)
             upright = capture
             let cut = framer.next(now)
+            // The middle while not following (Center Stage off, or Apple's framing it).
+            let focus = framer.focus()
             let detect = follow && !detecting && now - lastDetect >= Self.detectEvery
             if detect {
                 detecting = true
@@ -137,8 +146,9 @@ nonisolated final class CameraFramer: NSObject, RTCVideoCapturerDelegate, @unche
                 reportedOutput = output
                 report = onOutputSize
             }
-            return (output, cut, detect, generation, report)
+            return (output, cut, focus, detect, generation, report)
         }
+        focus.set(step.focus)
         if let report = step.report {
             let output = step.output
             Task { @MainActor in report(output) }
@@ -271,6 +281,38 @@ nonisolated final class CameraFramer: NSObject, RTCVideoCapturerDelegate, @unche
         case 270: .left
         default: .up
         }
+    }
+}
+
+/// Where the faces are in our outgoing picture (0…1 on each axis, upright, as it goes out, not
+/// mirrored), for our own small picture to centre on (docs/calls.md, "Framing and Center Stage").
+///
+/// Human: The picture goes out in the other side's shape; our tile has another, so it shows only
+/// part of it. Centring that part on the faces keeps them in view, and shows Center Stage at work.
+///
+/// Agent: Written by `CameraFramer` on the capture queue after every cut (it glides like the cut,
+/// `CallFramer.focus`); read by the self view on the main thread at display rate
+/// (`CallVideoContainer`), so neither waits for the other and SwiftUI sees nothing. One per call
+/// engine, kept across camera runs; the middle whenever nothing is followed.
+nonisolated final class CallSelfViewFocus: @unchecked Sendable {
+    private let lock = NSLock()
+    /// Behind `lock`.
+    private var current = CallFraming.Point.middle
+
+    init() {}
+
+    /// Where the faces are now; the middle when nothing is followed.
+    var point: CallFraming.Point {
+        lock.withLock { current }
+    }
+
+    func set(_ point: CallFraming.Point) {
+        lock.withLock { current = point }
+    }
+
+    /// Back to the middle: the camera starts over, switched, or stopped.
+    func reset() {
+        set(.middle)
     }
 }
 
