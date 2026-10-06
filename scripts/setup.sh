@@ -4,6 +4,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
+# shellcheck disable=SC1091
+source scripts/compose-env.sh
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[0;31m'
@@ -86,6 +88,54 @@ else
 fi
 
 echo ""
+echo "${BOLD}── Data storage ──${NC}"
+echo "  Postgres, Nebular and media data live in named Docker volumes, or in a folder you can"
+echo "  see and back up (database/, nebular/ and media/ inside it)."
+EXISTING_DATA_DIR="$(shroud_env_value SHROUD_DATA_DIR)"
+if [[ -n "${SHROUD_SETUP_DATA_DIR+set}" ]]; then
+  # Chosen with ./deploy.sh --data-dir or --named-volumes.
+  SHROUD_DATA_DIR_VALUE="$SHROUD_SETUP_DATA_DIR"
+else
+  # A first setup defaults to named volumes; a re-run keeps what .env has.
+  if [[ -n "$EXISTING_DATA_DIR" ]]; then
+    data_dir_default="y"; data_dir_hint="[Y/n]"
+  else
+    data_dir_default="n"; data_dir_hint="[y/N]"
+  fi
+  printf '  Store data in a folder instead of Docker volumes? %s%s%s: ' "$DIM" "$data_dir_hint" "$NC"
+  data_dir_choice=""
+  if [[ "${SHROUD_SETUP_ASSUME_YES:-}" == "1" ]]; then
+    echo "$data_dir_default"
+  else
+    read -r data_dir_choice || true
+  fi
+  SHROUD_DATA_DIR_VALUE=""
+  case "$(printf '%s' "${data_dir_choice:-$data_dir_default}" | tr '[:upper:]' '[:lower:]')" in
+    y|yes)
+      while :; do
+        SHROUD_DATA_DIR_VALUE="$(prompt "Data folder (relative to this repository, or absolute)" "${EXISTING_DATA_DIR:-./data}")"
+        # .env holds it unquoted, and Compose would interpolate a $ in it.
+        case "$SHROUD_DATA_DIR_VALUE" in
+          *[\$\"\'\\\#]*) echo "  ${RED}It can't contain \$ \" ' \\ or #.${NC}" >&2 ;;
+          *) break ;;
+        esac
+        [[ "${SHROUD_SETUP_ASSUME_YES:-}" != "1" ]] || die "invalid data folder: $SHROUD_DATA_DIR_VALUE"
+      done
+      ;;
+  esac
+fi
+if [[ -n "$SHROUD_DATA_DIR_VALUE" ]]; then
+  switch_cmd="${SHROUD_SETUP_SWITCH_CMD:-./deploy.sh --data-dir $(printf '%q' "$SHROUD_DATA_DIR_VALUE")}"
+else
+  switch_cmd="${SHROUD_SETUP_SWITCH_CMD:-./deploy.sh --named-volumes}"
+fi
+# Leaving data behind on the other side stops here, before .env changes.
+shroud_prepare_storage_switch "$SHROUD_DATA_DIR_VALUE" "$switch_cmd" || exit 1
+DATA_DIR_RESOLVED="$(shroud_resolve_data_dir "$SHROUD_DATA_DIR_VALUE")"
+STORAGE_LABEL="$(shroud_storage_label "$DATA_DIR_RESOLVED")"
+echo "  Storage: ${GREEN}${STORAGE_LABEL}${NC}"
+
+echo ""
 echo "${BOLD}── Secrets ──${NC}"
 # Postgres only hashes POSTGRES_PASSWORD on first volume init. Reuse the existing
 # password whenever .env already has one so a wizard re-run cannot lock the API out.
@@ -95,12 +145,12 @@ if [[ -f .env ]]; then
 fi
 if [[ -n "$EXISTING_PG" && "$EXISTING_PG" != "GENERATE_ME" ]]; then
   POSTGRES_PASSWORD="$EXISTING_PG"
-  echo "  Postgres password: ${GREEN}reused from .env${NC} (volume already initialized)"
+  echo "  Postgres password: ${GREEN}reused from .env${NC} (data already initialized)"
 else
   POSTGRES_PASSWORD="$(generate_secret)"
   echo "  Postgres password: ${GREEN}generated${NC}"
-  if docker volume ls -q 2>/dev/null | grep -q 'shroud_pg_data$'; then
-    echo "${YELLOW}  A Postgres volume already exists. The new password will not apply to it.${NC}"
+  if shroud_pg_data_exists "$DATA_DIR_RESOLVED"; then
+    echo "${YELLOW}  Postgres already has data in ${STORAGE_LABEL}. The new password will not apply to it.${NC}"
     echo "  Wipe it first: ${BOLD}./deploy.sh --down --volumes${NC}"
   fi
 fi
@@ -167,17 +217,19 @@ TURN_SECRET=${TURN_SECRET}
 RUST_LOG=info
 RUST_LOG_FORMAT=text
 EOF
+if [[ -n "$SHROUD_DATA_DIR_VALUE" ]]; then
+  printf 'SHROUD_DATA_DIR=%s\n' "$SHROUD_DATA_DIR_VALUE" >>.env
+fi
 chmod 600 .env 2>/dev/null || true
 
 echo ""
 echo "${GREEN}Wrote .env${NC} (mode ${BOLD}${PROXY_MODE}${NC})."
 echo "  Web:  ${WEB_PUBLIC_URL}"
 echo "  API:  ${API_PUBLIC_URL}/api/v1"
+echo "  Data: ${STORAGE_LABEL}"
 echo ""
 echo "Starting the stack…"
 echo ""
 
-# shellcheck disable=SC1091
-source scripts/compose-env.sh
 shroud_up
 shroud_info

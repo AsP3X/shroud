@@ -35,8 +35,36 @@ shroud_env_value() {
   { grep -E "^${key}=" "$file" 2>/dev/null || true; } | tail -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'"
 }
 
+# A SHROUD_DATA_DIR value as an absolute path: relative to the repository root (not the caller's
+# directory), `~` for $HOME, no trailing slash. Empty stays empty (named volumes).
+shroud_resolve_data_dir() {
+  local dir="$1"
+  [[ -n "$dir" ]] || return 0
+  case "$dir" in
+    "~") dir="$HOME" ;;
+    "~/"*) dir="${HOME}/${dir:2}" ;;
+    /*) ;;
+    *) dir="${SHROUD_REPO_ROOT}/${dir#./}" ;;
+  esac
+  while [[ "$dir" == */ && "$dir" != / ]]; do dir="${dir%/}"; done
+  printf '%s\n' "$dir"
+}
+
+# Where the stack keeps its data, from .env only: a one-off environment variable would switch
+# storage for one command and leave the next on the other side. Sets SHROUD_DATA_DIR to the
+# absolute folder, exported for the compose overlay, or unsets it for named volumes.
+shroud_load_data_dir() {
+  SHROUD_DATA_DIR="$(shroud_resolve_data_dir "$(shroud_env_value SHROUD_DATA_DIR)")"
+  if [[ -n "$SHROUD_DATA_DIR" ]]; then
+    export SHROUD_DATA_DIR
+  else
+    unset SHROUD_DATA_DIR
+  fi
+}
+
 shroud_compose_cli_args() {
   shroud_load_proxy_mode
+  shroud_load_data_dir
   local args=(
     -f "${SHROUD_REPO_ROOT}/docker-compose.yml"
   )
@@ -44,11 +72,16 @@ shroud_compose_cli_args() {
     npm) args+=(-f "${SHROUD_REPO_ROOT}/docker-compose.npm.yml") ;;
     *)   args+=(-f "${SHROUD_REPO_ROOT}/docker-compose.local.yml") ;;
   esac
+  if [[ -n "${SHROUD_DATA_DIR:-}" ]]; then
+    args+=(-f "${SHROUD_REPO_ROOT}/docker-compose.data-dir.yml")
+  fi
   printf '%s\n' "${args[@]}"
 }
 
 shroud_compose() {
   local args=() line
+  # Here too, not only in the subshell below: the overlay reads the exported path.
+  shroud_load_data_dir
   while IFS= read -r line; do
     [[ -n "$line" ]] && args+=("$line")
   done < <(shroud_compose_cli_args)
@@ -131,8 +164,243 @@ shroud_assert_env() {
   fi
 }
 
-shroud_pg_volume_exists() {
-  docker volume ls -q 2>/dev/null | grep -q 'shroud_pg_data$'
+# Removes KEY's lines from .env, the same way.
+shroud_unset_env_value() {
+  local key="$1" file="${SHROUD_REPO_ROOT}/.env" tmp
+  [[ -f "$file" ]] && grep -qE "^${key}=" "$file" || return 0
+  tmp="$(mktemp "${file}.XXXXXX")"
+  awk -v k="$key" 'index($0, k "=") != 1' "$file" >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$file"
+}
+
+# Storage is either named volumes, written "" below, or a folder: SHROUD_DATA_DIR resolved by
+# shroud_resolve_data_dir. Each holds three kinds of data, as <volume>:<subfolder>.
+SHROUD_DATA_KINDS="shroud_pg_data:database shroud_nebular_data:nebular shroud_media_data:media"
+# The image that copies and wipes data owned by the containers' users; the stack already pulls it.
+SHROUD_DATA_TOOL_IMAGE="postgres:16-alpine"
+
+# The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
+shroud_project_name() {
+  local name
+  name="$(cd "$SHROUD_REPO_ROOT" && docker compose -f docker-compose.yml config --no-interpolate 2>/dev/null |
+    sed -n 's/^name: //p' | head -1 || true)"
+  if [[ -z "$name" ]]; then
+    name="$(basename "$SHROUD_REPO_ROOT" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+  fi
+  printf '%s\n' "$name"
+}
+
+shroud_storage_label() {
+  if [[ -n "$1" ]]; then
+    printf 'the folder %s\n' "$1"
+  else
+    printf 'named Docker volumes\n'
+  fi
+}
+
+# What `docker run -v` mounts for one kind of data: a volume name or a folder.
+shroud_storage_source() {
+  local storage="$1" project="$2" kind="$3"
+  if [[ -n "$storage" ]]; then
+    printf '%s/%s\n' "$storage" "${kind#*:}"
+  else
+    printf '%s_%s\n' "$project" "${kind%%:*}"
+  fi
+}
+
+# Whether a data folder holds anything. A folder we can't look into counts as full: Postgres
+# keeps its own at mode 700 for uid 70.
+shroud_dir_has_data() {
+  [[ -d "$1" ]] || return 1
+  [[ -r "$1" && -x "$1" ]] || return 0
+  [[ -n "$(ls -A "$1" 2>/dev/null)" ]]
+}
+
+# Whether storage $1 has kind $3's data; $2 is the project name. A volume counts once it exists.
+shroud_storage_has() {
+  local source
+  source="$(shroud_storage_source "$1" "$2" "$3")"
+  if [[ -n "$1" ]]; then
+    shroud_dir_has_data "$source"
+  else
+    docker volume inspect "$source" >/dev/null 2>&1
+  fi
+}
+
+# Whether Postgres has already initialized its data in storage $1 (default: the current one), so
+# POSTGRES_PASSWORD no longer applies.
+shroud_pg_data_exists() {
+  local storage
+  if (( $# )); then
+    storage="$1"
+  else
+    shroud_load_data_dir
+    storage="${SHROUD_DATA_DIR:-}"
+  fi
+  shroud_storage_has "$storage" "$(shroud_project_name)" "shroud_pg_data:database"
+}
+
+# Asks a yes/no question, default no. --yes answers yes; without a terminal the answer is no.
+shroud_confirm() {
+  local answer=""
+  if [[ "${SHROUD_SETUP_ASSUME_YES:-}" == "1" ]]; then
+    printf '%s [y/N]: y (--yes)\n' "$1"
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    printf '%s [y/N]: no terminal to answer; run it from one, or add --yes\n' "$1" >&2
+    return 1
+  fi
+  printf '%s [y/N]: ' "$1"
+  read -r answer || true
+  case "$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')" in
+    y|yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prints the commands that copy every kind of data from storage $1 to storage $2 and switch with
+# $3, for a stack that is down. Nothing is deleted.
+shroud_print_copy_commands() {
+  local from="$1" to="$2" switch_cmd="$3" project kind src dst
+  project="$(shroud_project_name)"
+  echo "  ./deploy.sh --down"
+  if [[ -n "$to" ]]; then
+    echo "  mkdir -p \"${to}/database\" \"${to}/nebular\" \"${to}/media\""
+  fi
+  for kind in $SHROUD_DATA_KINDS; do
+    shroud_storage_has "$from" "$project" "$kind" || continue
+    src="$(shroud_storage_source "$from" "$project" "$kind")"
+    dst="$(shroud_storage_source "$to" "$project" "$kind")"
+    if [[ -z "$to" ]]; then
+      echo "  docker volume create --label com.docker.compose.project=${project} --label com.docker.compose.volume=${kind%%:*} ${dst}"
+    fi
+    echo "  docker run --rm -v \"${src}:/from:ro\" -v \"${dst}:/to\" ${SHROUD_DATA_TOOL_IMAGE} cp -a /from/. /to/"
+  done
+  echo "  ${switch_cmd}"
+}
+
+# Prints how to remove storage $1 once the data has moved on; nothing here removes it.
+shroud_print_cleanup_commands() {
+  local storage="$1" project kind volumes=""
+  project="$(shroud_project_name)"
+  if [[ -n "$storage" ]]; then
+    echo "  docker run --rm -v \"${storage}:/data\" ${SHROUD_DATA_TOOL_IMAGE} rm -rf /data/database /data/nebular /data/media"
+  else
+    for kind in $SHROUD_DATA_KINDS; do
+      shroud_storage_has "" "$project" "$kind" && volumes="${volumes} $(shroud_storage_source "" "$project" "$kind")"
+    done
+    [[ -z "$volumes" ]] || echo "  docker volume rm${volumes}"
+  fi
+}
+
+# Copies every kind of data storage $1 has into storage $2, through a container that keeps each
+# file's owner. The stack must be down; storage $1 is left as it is. Returns 1 at the first
+# failure (callers run it where set -e is off).
+shroud_copy_storage() {
+  local from="$1" to="$2" project kind src dst
+  project="$(shroud_project_name)"
+  if [[ -n "$to" ]]; then
+    mkdir -p "${to}/database" "${to}/nebular" "${to}/media" || return 1
+  fi
+  for kind in $SHROUD_DATA_KINDS; do
+    shroud_storage_has "$from" "$project" "$kind" || continue
+    src="$(shroud_storage_source "$from" "$project" "$kind")"
+    dst="$(shroud_storage_source "$to" "$project" "$kind")"
+    if [[ -z "$to" ]]; then
+      # Labelled as Compose labels its own, or every `up` warns that it didn't create it.
+      docker volume create --label "com.docker.compose.project=${project}" \
+        --label "com.docker.compose.volume=${kind%%:*}" "$dst" >/dev/null || return 1
+    fi
+    echo "Copying ${src} → ${dst}…"
+    docker run --rm -v "${src}:/from:ro" -v "${dst}:/to" "$SHROUD_DATA_TOOL_IMAGE" cp -a /from/. /to/ || return 1
+  done
+}
+
+# Gets a switch of storage ready before .env changes: $1 is the new SHROUD_DATA_DIR value (empty
+# for named volumes), $2 the command that makes the switch, for the instructions. When the data
+# would stay behind on the old side, returns 1 having changed nothing, unless SHROUD_MIGRATE=1
+# and the user confirms the copy. Stops a running stack. Never deletes or overwrites data.
+# Callers run it as `… || exit 1`, which turns set -e off in here: every step checks itself.
+shroud_prepare_storage_switch() {
+  local new_value="$1" switch_cmd="$2" from to project kind from_label to_label
+  shroud_load_data_dir
+  from="${SHROUD_DATA_DIR:-}"
+  to="$(shroud_resolve_data_dir "$new_value")"
+  [[ "$from" != "$to" ]] || return 0
+  if [[ "$to" == "/" ]]; then
+    echo "ERROR: the data folder can't be / itself." >&2
+    return 1
+  fi
+  project="$(shroud_project_name)"
+  from_label="$(shroud_storage_label "$from")"
+  to_label="$(shroud_storage_label "$to")"
+  local copy=0
+  if shroud_pg_data_exists "$from"; then
+    if shroud_pg_data_exists "$to"; then
+      if [[ "${SHROUD_MIGRATE:-}" == "1" ]]; then
+        echo "ERROR: there is already a database in ${to_label}; --migrate never overwrites data." >&2
+        echo "  Switch without --migrate to use the data there, or empty it first." >&2
+        return 1
+      fi
+      echo "Note: ${from_label} and ${to_label} both hold a database."
+      echo "  Shroud switches to the one in ${to_label}; the data in ${from_label} is left as it is."
+    elif [[ "${SHROUD_MIGRATE:-}" == "1" ]]; then
+      for kind in $SHROUD_DATA_KINDS; do
+        if shroud_storage_has "$to" "$project" "$kind"; then
+          echo "ERROR: $(shroud_storage_source "$to" "$project" "$kind") already holds data; --migrate never overwrites data." >&2
+          return 1
+        fi
+      done
+      echo "This copies the data in ${from_label} to ${to_label}."
+      echo "  The stack is stopped for the copy; the data in ${from_label} is left as it is."
+      if ! shroud_confirm "  Copy the data now?"; then
+        echo "Nothing was changed."
+        return 1
+      fi
+      copy=1
+    else
+      echo "ERROR: this server's data is in ${from_label}, and there is none in ${to_label}." >&2
+      echo "  Switching now would start Shroud on an empty database. Nothing was changed." >&2
+      echo "" >&2
+      echo "  Copy the data first, with the stack down:" >&2
+      shroud_print_copy_commands "$from" "$to" "$switch_cmd" >&2
+      echo "" >&2
+      echo "  Or let deploy.sh copy it, after asking: ${switch_cmd} --migrate" >&2
+      echo "  Either way the data in ${from_label} stays; remove it yourself once the switch works." >&2
+      return 1
+    fi
+  elif [[ "${SHROUD_MIGRATE:-}" == "1" ]]; then
+    echo "Nothing to copy: there is no database in ${from_label}."
+  fi
+  if [[ -n "$(shroud_compose ps -q 2>/dev/null)" ]]; then
+    echo "Stopping the stack to switch storage…"
+    if ! shroud_compose down; then
+      echo "ERROR: could not stop the stack; storage was not switched." >&2
+      return 1
+    fi
+  fi
+  if (( copy )); then
+    if ! shroud_copy_storage "$from" "$to"; then
+      echo "ERROR: copying failed; storage was not switched, and the data in ${from_label} is unchanged." >&2
+      echo "  Remove the partial copy in ${to_label} before trying again:" >&2
+      shroud_print_cleanup_commands "$to" >&2
+      return 1
+    fi
+    echo "Copied. The data in ${from_label} is still there; once Shroud works from ${to_label}, remove it with:"
+    shroud_print_cleanup_commands "$from"
+  fi
+}
+
+# Where Postgres keeps its data, for messages.
+shroud_pg_data_location() {
+  shroud_load_data_dir
+  if [[ -n "${SHROUD_DATA_DIR:-}" ]]; then
+    printf '%s/database\n' "$SHROUD_DATA_DIR"
+  else
+    printf 'the volume %s_shroud_pg_data\n' "$(shroud_project_name)"
+  fi
 }
 
 shroud_diagnose_up() {
@@ -143,8 +411,8 @@ shroud_diagnose_up() {
     echo "ERROR: Postgres rejected the API password."
     echo ""
     echo "  The official Postgres image applies POSTGRES_PASSWORD only the first"
-    echo "  time the data volume is created. This host already has a volume"
-    echo "  (shroud_pg_data), so a new password in .env is ignored by Postgres."
+    echo "  time it sets up its data. This host already has that data"
+    echo "  ($(shroud_pg_data_location)), so a new password in .env is ignored by Postgres."
     echo ""
     echo "  Keep existing chat data:"
     echo "    Put the original password in .env as POSTGRES_PASSWORD"
@@ -225,6 +493,12 @@ shroud_up() {
   shroud_export_web_build
   # Created here, not by Docker: a missing bind-mount source would be made root-owned.
   mkdir -p "${SHROUD_REPO_ROOT}/.shroud-run"
+  shroud_load_data_dir
+  if [[ -n "${SHROUD_DATA_DIR:-}" ]] &&
+    ! mkdir -p "${SHROUD_DATA_DIR}/database" "${SHROUD_DATA_DIR}/nebular" "${SHROUD_DATA_DIR}/media"; then
+    echo "ERROR: cannot create the data folders in ${SHROUD_DATA_DIR} (SHROUD_DATA_DIR in .env)." >&2
+    return 1
+  fi
   if ! shroud_compose up -d --build --remove-orphans; then
     shroud_diagnose_up
     return 1
@@ -232,10 +506,26 @@ shroud_up() {
   shroud_publish_web_build
 }
 
+# Empties the three data folders in $1 and makes them again. Their contents belong to uid 70,
+# 10001 and nobody, so a container removes them. Nothing else in $1 is touched.
+shroud_wipe_data_dir() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 0
+  docker run --rm -v "${dir}:/data" "$SHROUD_DATA_TOOL_IMAGE" rm -rf /data/database /data/nebular /data/media
+  mkdir -p "${dir}/database" "${dir}/nebular" "${dir}/media"
+}
+
 shroud_down() {
   if [[ "${1:-}" == "--volumes" ]]; then
-    echo "Removing containers and named volumes (Postgres data will be wiped)…"
-    shroud_compose down --volumes --remove-orphans
+    shroud_load_data_dir
+    if [[ -n "${SHROUD_DATA_DIR:-}" ]]; then
+      echo "Removing containers and wiping the Postgres, Nebular and media data in ${SHROUD_DATA_DIR}…"
+      shroud_compose down --volumes --remove-orphans
+      shroud_wipe_data_dir "$SHROUD_DATA_DIR"
+    else
+      echo "Removing containers and named volumes (Postgres, Nebular and media data will be wiped)…"
+      shroud_compose down --volumes --remove-orphans
+    fi
   else
     shroud_compose down
   fi
@@ -249,8 +539,14 @@ shroud_info() {
   web="${web:-http://localhost:8081}"
   api="${api:-http://localhost:8080}"
 
+  shroud_load_data_dir
   echo ""
   echo "  Proxy mode:  ${PROXY_MODE}"
+  if [[ -n "${SHROUD_DATA_DIR:-}" ]]; then
+    echo "  Storage:     ${SHROUD_DATA_DIR} (SHROUD_DATA_DIR)"
+  else
+    echo "  Storage:     named Docker volumes"
+  fi
   echo "  Web client:  ${web}"
   echo "  API (iOS):   ${api}/api/v1"
   if [[ ",$(shroud_env_value COMPOSE_PROFILES)," == *",calls,"* ]]; then

@@ -10,6 +10,7 @@
     .\deploy.ps1
     .\deploy.ps1 -Init
     .\deploy.ps1 -Logs api
+    .\deploy.ps1 -DataDir D:\shroud-data
 #>
 param(
     [switch]$Init,
@@ -20,6 +21,10 @@ param(
     [switch]$Rebuild,
     [switch]$Down,
     [switch]$Volumes,
+    # -DataDir [path]: the optional path arrives with the remaining arguments ($Service).
+    [switch]$DataDir,
+    [switch]$NamedVolumes,
+    [switch]$Migrate,
     [switch]$Yes,
     [switch]$NoColor,
     [switch]$Help,
@@ -42,13 +47,53 @@ function Write-Step { param([string]$Message) Write-Line "-> $Message" "Cyan" }
 function Write-Ok   { param([string]$Message) Write-Line "OK: $Message" "Green" }
 function Write-Die  { param([string]$Message) Write-Line "ERROR: $Message" "Red"; exit 1 }
 
+# .env as UTF-8 without a byte-order mark, which Compose would read as part of the first key;
+# Windows PowerShell's Get-Content and Set-Content would otherwise use the ANSI code page and
+# mangle a data folder with non-ASCII letters.
+function Read-EnvLines {
+    $path = Join-Path $repoRoot ".env"
+    # The comma keeps PowerShell from unrolling the list into an array (or one string).
+    return ,([System.Collections.Generic.List[string]]@(Get-Content -LiteralPath $path -Encoding UTF8))
+}
+function Write-EnvLines {
+    param($Lines)
+    [System.IO.File]::WriteAllLines((Join-Path $repoRoot ".env"), [string[]]@($Lines))
+}
+
 function Get-EnvValue {
     param([string]$Key)
     $path = Join-Path $repoRoot ".env"
     if (-not (Test-Path -LiteralPath $path)) { return $null }
-    $line = Get-Content -LiteralPath $path | Where-Object { $_ -match "^$Key=" } | Select-Object -Last 1
+    $line = (Read-EnvLines) | Where-Object { $_ -match "^$Key=" } | Select-Object -Last 1
     if (-not $line) { return $null }
     return ($line.Substring($Key.Length + 1).Trim().Trim('"').Trim("'"))
+}
+
+# Replaces KEY's line in .env, or appends one.
+function Set-EnvValue {
+    param([string]$Key, [string]$Value)
+    $lines = Read-EnvLines
+    $index = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^$Key=") { $index = $i } }
+    if ($index -ge 0) { $lines[$index] = "$Key=$Value" } else { $lines.Add("$Key=$Value") }
+    Write-EnvLines $lines
+}
+
+function Remove-EnvValue {
+    param([string]$Key)
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".env"))) { return }
+    $lines = Read-EnvLines
+    if (-not ($lines | Where-Object { $_ -match "^$Key=" })) { return }
+    Write-EnvLines ($lines | Where-Object { $_ -notmatch "^$Key=" })
+}
+
+# Runs a native command and returns its standard output, for callers that read $LASTEXITCODE.
+# Its stderr must not stop the script under Windows PowerShell's "Stop".
+function Invoke-NativeOutput {
+    param([scriptblock]$Block)
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Block 2>$null } finally { $ErrorActionPreference = $eap }
 }
 
 function New-HexSecret {
@@ -63,7 +108,7 @@ function New-HexSecret {
 function Add-NebularSecrets {
     $path = Join-Path $repoRoot ".env"
     if (-not (Test-Path -LiteralPath $path)) { return }
-    $lines = [System.Collections.Generic.List[string]]@(Get-Content -LiteralPath $path)
+    $lines = Read-EnvLines
     $added = @()
     foreach ($key in @("NOS_JWT_SECRET", "NEBULAR_ACCESS_KEY_ID", "NEBULAR_SECRET_ACCESS_KEY", "NOS_METRICS_TOKEN", "REDIS_PASSWORD")) {
         $current = Get-EnvValue $key
@@ -75,7 +120,7 @@ function Add-NebularSecrets {
         $added += $key
     }
     if ($added.Count -gt 0) {
-        $lines | Set-Content -LiteralPath $path -Encoding ascii
+        Write-EnvLines $lines
         Write-Line ("Added generated credentials to .env: " + ($added -join " ")) "Green"
     }
 }
@@ -87,12 +132,12 @@ function Add-TurnSecret {
     if (-not (Test-Path -LiteralPath $path)) { return }
     $current = Get-EnvValue "TURN_SECRET"
     if ($current -and $current -ne "GENERATE_ME") { return }
-    $lines = [System.Collections.Generic.List[string]]@(Get-Content -LiteralPath $path)
+    $lines = Read-EnvLines
     $value = New-HexSecret
     $index = -1
     for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^TURN_SECRET=") { $index = $i } }
     if ($index -ge 0) { $lines[$index] = "TURN_SECRET=$value" } else { $lines.Add("TURN_SECRET=$value") }
-    $lines | Set-Content -LiteralPath $path -Encoding ascii
+    Write-EnvLines $lines
     Write-Line "Added the TURN relay secret to .env: TURN_SECRET" "Green"
 }
 
@@ -105,6 +150,26 @@ function Get-ProxyMode {
     return "local"
 }
 
+# A SHROUD_DATA_DIR value as an absolute path: relative to the repository root (not the current
+# directory), ~ for the home folder, no trailing separator. Empty stays empty (named volumes).
+function Resolve-DataDir {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    if ($Value -eq "~" -or $Value.StartsWith("~/") -or $Value.StartsWith("~\")) {
+        $Value = $HOME + $Value.Substring(1)
+    }
+    if (-not [System.IO.Path]::IsPathRooted($Value)) { $Value = Join-Path $repoRoot $Value }
+    $full = [System.IO.Path]::GetFullPath($Value)
+    if ($full -ne [System.IO.Path]::GetPathRoot($full)) { $full = $full.TrimEnd('\', '/') }
+    return $full
+}
+
+# Where the stack keeps its data, from .env only: a one-off environment variable would switch
+# storage for one command and leave the next on the other side. "" means named volumes.
+function Get-DataDir {
+    return (Resolve-DataDir (Get-EnvValue "SHROUD_DATA_DIR"))
+}
+
 function Get-ComposeArgs {
     $args = @("-f", (Join-Path $repoRoot "docker-compose.yml"))
     if ((Get-ProxyMode) -eq "npm") {
@@ -112,7 +177,229 @@ function Get-ComposeArgs {
     } else {
         $args += @("-f", (Join-Path $repoRoot "docker-compose.local.yml"))
     }
+    if (Get-DataDir) {
+        $args += @("-f", (Join-Path $repoRoot "docker-compose.data-dir.yml"))
+    }
     return $args
+}
+
+# Runs $Block with SHROUD_DATA_DIR set to the absolute folder the overlay reads, or unset for
+# named volumes, as .env says. The window's own value comes back afterwards.
+function Invoke-WithDataDirEnv {
+    param([scriptblock]$Block)
+    $previousDataDir = $env:SHROUD_DATA_DIR
+    $env:SHROUD_DATA_DIR = Get-DataDir
+    try { & $Block } finally { $env:SHROUD_DATA_DIR = $previousDataDir }
+}
+
+# Storage is either named volumes, written "" below, or a folder: SHROUD_DATA_DIR resolved by
+# Resolve-DataDir. Each holds three kinds of data.
+$script:DataKinds = @(
+    @{ Volume = "shroud_pg_data"; Folder = "database" },
+    @{ Volume = "shroud_nebular_data"; Folder = "nebular" },
+    @{ Volume = "shroud_media_data"; Folder = "media" }
+)
+# The image that copies and wipes data owned by the containers' users; the stack already pulls it.
+$script:DataToolImage = "postgres:16-alpine"
+
+# The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
+function Get-ProjectName {
+    $composeFile = Join-Path $repoRoot "docker-compose.yml"
+    foreach ($line in @(Invoke-NativeOutput { docker compose -f $composeFile config --no-interpolate })) {
+        if ($line -match '^name: (.+)$') { return $Matches[1].Trim() }
+    }
+    return ((Split-Path -Leaf $repoRoot).ToLowerInvariant() -replace '[^a-z0-9_-]', '')
+}
+
+function Get-StorageLabel {
+    param([string]$Storage)
+    if ($Storage) { return "the folder $Storage" }
+    return "named Docker volumes"
+}
+
+# What `docker run -v` mounts for one kind of data: a volume name or a folder.
+function Get-StorageSource {
+    param([string]$Storage, [string]$Project, $Kind)
+    if ($Storage) { return (Join-Path $Storage $Kind.Folder) }
+    return "$($Project)_$($Kind.Volume)"
+}
+
+# Whether storage has a kind of data. A volume counts once it exists; a folder we can't look
+# into counts as full (Postgres keeps its own at mode 700 for uid 70).
+function Test-StorageHas {
+    param([string]$Storage, [string]$Project, $Kind)
+    $source = Get-StorageSource $Storage $Project $Kind
+    if ($Storage) {
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) { return $false }
+        try {
+            return [bool](Get-ChildItem -LiteralPath $source -Force -ErrorAction Stop | Select-Object -First 1)
+        } catch {
+            return $true
+        }
+    }
+    Invoke-NativeOutput { docker volume inspect $source } | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Whether Postgres has already set up its data in $Storage (default: the current storage), so
+# POSTGRES_PASSWORD no longer applies.
+function Test-PgDataExists {
+    param([string]$Storage = (Get-DataDir))
+    return (Test-StorageHas $Storage (Get-ProjectName) $script:DataKinds[0])
+}
+
+function Get-PgDataLocation {
+    $dir = Get-DataDir
+    if ($dir) { return (Join-Path $dir "database") }
+    return "the volume $(Get-ProjectName)_shroud_pg_data"
+}
+
+# Asks a yes/no question, default no. -Yes answers yes.
+function Confirm-Choice {
+    param([string]$Question)
+    if ($env:SHROUD_SETUP_ASSUME_YES -eq "1") {
+        Write-Host "$Question [y/N]: y (-Yes)"
+        return $true
+    }
+    return ((Read-Host "$Question [y/N]") -match '^[yY]')
+}
+
+# The commands that copy every kind of data from one storage to another and switch with
+# $SwitchCommand, for a stack that is down. Nothing is deleted.
+function Write-CopyCommands {
+    param([string]$From, [string]$To, [string]$Project, [string]$SwitchCommand)
+    Write-Host "    .\deploy.ps1 -Down"
+    if ($To) {
+        $folders = ($script:DataKinds | ForEach-Object { "`"$(Join-Path $To $_.Folder)`"" }) -join ","
+        Write-Host "    New-Item -ItemType Directory -Force $folders"
+    }
+    foreach ($kind in $script:DataKinds) {
+        if (-not (Test-StorageHas $From $Project $kind)) { continue }
+        $src = Get-StorageSource $From $Project $kind
+        $dst = Get-StorageSource $To $Project $kind
+        if (-not $To) {
+            Write-Host "    docker volume create --label com.docker.compose.project=$Project --label com.docker.compose.volume=$($kind.Volume) $dst"
+        }
+        Write-Host "    docker run --rm -v `"${src}:/from:ro`" -v `"${dst}:/to`" $($script:DataToolImage) cp -a /from/. /to/"
+    }
+    Write-Host "    $SwitchCommand"
+}
+
+# How to remove storage once the data has moved on; nothing here removes it.
+function Write-CleanupCommands {
+    param([string]$Storage, [string]$Project)
+    if ($Storage) {
+        Write-Host "    docker run --rm -v `"${Storage}:/data`" $($script:DataToolImage) rm -rf /data/database /data/nebular /data/media"
+        return
+    }
+    $existing = @($script:DataKinds | Where-Object { Test-StorageHas "" $Project $_ } |
+        ForEach-Object { Get-StorageSource "" $Project $_ })
+    if ($existing.Count -gt 0) { Write-Host "    docker volume rm $($existing -join ' ')" }
+}
+
+# Copies every kind of data $From has into $To, through a container that keeps each file's
+# owner. The stack must be down; $From is left as it is.
+function Copy-Storage {
+    param([string]$From, [string]$To, [string]$Project)
+    if ($To) {
+        foreach ($kind in $script:DataKinds) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $To $kind.Folder) | Out-Null
+        }
+    }
+    foreach ($kind in $script:DataKinds) {
+        if (-not (Test-StorageHas $From $Project $kind)) { continue }
+        $src = Get-StorageSource $From $Project $kind
+        $dst = Get-StorageSource $To $Project $kind
+        if (-not $To) {
+            # Labelled as Compose labels its own, or every `up` warns that it didn't create it.
+            & docker volume create --label "com.docker.compose.project=$Project" --label "com.docker.compose.volume=$($kind.Volume)" $dst | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "docker volume create $dst exited $LASTEXITCODE" }
+        }
+        Write-Step "Copying $src -> $dst"
+        & docker run --rm -v "${src}:/from:ro" -v "${dst}:/to" $script:DataToolImage cp -a /from/. /to/ | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "copying $src exited $LASTEXITCODE" }
+    }
+}
+
+# Gets a switch of storage ready before .env changes: $NewValue is the new SHROUD_DATA_DIR value
+# (empty for named volumes), $SwitchCommand the command that makes the switch, for the
+# instructions. When the data would stay behind on the old side, stops the script having
+# changed nothing, unless -Migrate and the user confirms the copy. Stops a running stack. Never
+# deletes or overwrites data.
+function Initialize-StorageSwitch {
+    param([string]$NewValue, [string]$SwitchCommand, [switch]$Migrate)
+    $from = Get-DataDir
+    $to = Resolve-DataDir $NewValue
+    if ($from -eq $to) { return }
+    if ($to -and $to -eq [System.IO.Path]::GetPathRoot($to)) { Write-Die "the data folder can't be a drive's root ($to)." }
+    $project = Get-ProjectName
+    $fromLabel = Get-StorageLabel $from
+    $toLabel = Get-StorageLabel $to
+    $copy = $false
+    if (Test-PgDataExists $from) {
+        if (Test-PgDataExists $to) {
+            if ($Migrate) {
+                Write-Die "There is already a database in $toLabel; -Migrate never overwrites data. Switch without -Migrate to use the data there, or empty it first."
+            }
+            Write-Host "Note: $fromLabel and $toLabel both hold a database."
+            Write-Host "  Shroud switches to the one in $toLabel; the data in $fromLabel is left as it is."
+        } elseif ($Migrate) {
+            foreach ($kind in $script:DataKinds) {
+                if (Test-StorageHas $to $project $kind) {
+                    Write-Die "$(Get-StorageSource $to $project $kind) already holds data; -Migrate never overwrites data."
+                }
+            }
+            Write-Host "This copies the data in $fromLabel to $toLabel."
+            Write-Host "  The stack is stopped for the copy; the data in $fromLabel is left as it is."
+            if (-not (Confirm-Choice "  Copy the data now?")) {
+                Write-Host "Nothing was changed."
+                exit 1
+            }
+            $copy = $true
+        } else {
+            Write-Line "ERROR: this server's data is in $fromLabel, and there is none in $toLabel." "Red"
+            Write-Host "  Switching now would start Shroud on an empty database. Nothing was changed."
+            Write-Host ""
+            Write-Host "  Copy the data first, with the stack down:"
+            Write-CopyCommands $from $to $project $SwitchCommand
+            Write-Host ""
+            Write-Host "  Or let deploy.ps1 copy it, after asking: $SwitchCommand -Migrate"
+            Write-Host "  Either way the data in $fromLabel stays; remove it yourself once the switch works."
+            exit 1
+        }
+    } elseif ($Migrate) {
+        Write-Host "Nothing to copy: there is no database in $fromLabel."
+    }
+    $files = Get-ComposeArgs
+    $running = @(Invoke-WithDataDirEnv { Invoke-NativeOutput { docker compose @files ps -q } })
+    if ($running.Count -gt 0) {
+        Write-Step "Stopping the stack to switch storage..."
+        Invoke-Compose @("down")
+    }
+    if ($copy) {
+        try {
+            Copy-Storage $from $to $project
+        } catch {
+            Write-Line "ERROR: copying failed; storage was not switched, and the data in $fromLabel is unchanged." "Red"
+            Write-Host "  Remove the partial copy in $toLabel before trying again:"
+            Write-CleanupCommands $to $project
+            throw
+        }
+        Write-Host "Copied. The data in $fromLabel is still there; once Shroud works from $toLabel, remove it with:"
+        Write-CleanupCommands $from $project
+    }
+}
+
+# Empties the three data folders in $Dir and makes them again. Their contents belong to uid 70,
+# 10001 and nobody, so a container removes them. Nothing else in $Dir is touched.
+function Clear-DataDir {
+    param([string]$Dir)
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return }
+    & docker run --rm -v "${Dir}:/data" $script:DataToolImage rm -rf /data/database /data/nebular /data/media | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "wiping the data in $Dir exited $LASTEXITCODE" }
+    foreach ($kind in $script:DataKinds) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $Dir $kind.Folder) | Out-Null
+    }
 }
 
 # The web bundle's build id: a hash of what goes into the web image, so a redeploy that
@@ -176,10 +463,16 @@ function Invoke-Compose {
         $env:SHROUD_WEB_BUILD = $script:webBuild
         # Created here, not by Docker: a missing bind-mount source would be made by the daemon.
         New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot ".shroud-run") | Out-Null
+        $dataDir = Get-DataDir
+        if ($dataDir) {
+            foreach ($kind in $script:DataKinds) {
+                New-Item -ItemType Directory -Force -Path (Join-Path $dataDir $kind.Folder) | Out-Null
+            }
+        }
     }
     try {
         $files = Get-ComposeArgs
-        & docker compose @files @ComposeArgs
+        Invoke-WithDataDirEnv { & docker compose @files @ComposeArgs }
         if ($LASTEXITCODE -ne 0) { throw "docker compose $($ComposeArgs -join ' ') exited $LASTEXITCODE" }
     } finally {
         if ($stampsWeb) { $env:SHROUD_WEB_BUILD = $previousBuild }
@@ -191,8 +484,11 @@ function Show-Info {
     $mode = Get-ProxyMode
     $web = Get-EnvValue "WEB_PUBLIC_URL"; if (-not $web) { $web = "http://localhost:8081" }
     $api = Get-EnvValue "API_PUBLIC_URL"; if (-not $api) { $api = "http://localhost:8080" }
+    $dataDir = Get-DataDir
     Write-Host ""
     Write-Host "  Proxy mode:  $mode"
+    if ($dataDir) { Write-Host "  Storage:     $dataDir (SHROUD_DATA_DIR)" }
+    else { Write-Host "  Storage:     named Docker volumes" }
     Write-Host "  Web client:  $web"
     Write-Host "  API (iOS):   $api/api/v1"
     if ($mode -eq "npm") {
@@ -217,8 +513,15 @@ function Show-Help {
     Write-Host "    .\deploy.ps1 -Restart [svc...]   Restart services"
     Write-Host "    .\deploy.ps1 -Rebuild            Rebuild images, then start"
     Write-Host "    .\deploy.ps1 -Down               Stop and remove all services"
-    Write-Host "    .\deploy.ps1 -Down -Volumes      Also wipe Postgres / Redis / media volumes"
+    Write-Host "    .\deploy.ps1 -Down -Volumes      Also wipe the Postgres / Nebular / media data"
     Write-Host "    .\deploy.ps1 -Help               This help"
+    Write-Host ""
+    Write-Host "  Data storage (saved in .env as SHROUD_DATA_DIR, then deploys):"
+    Write-Host "    .\deploy.ps1 -DataDir [path]     Keep data in a folder (default .\data, relative"
+    Write-Host "                                     to this repository) instead of named volumes"
+    Write-Host "    .\deploy.ps1 -NamedVolumes       Back to named Docker volumes (the default)"
+    Write-Host "    ... -Migrate                     Copy the data across when switching, after asking;"
+    Write-Host "                                     the old volumes or folder stay for you to remove"
     Write-Host ""
 }
 
@@ -242,6 +545,31 @@ $services = @()
 if ($Service) { $services = @($Service | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) }
 if ($Yes) { $env:SHROUD_SETUP_ASSUME_YES = "1" }
 
+$storage = ""
+$dataDirValue = ""
+$switchCommand = ""
+if ($DataDir -and $NamedVolumes) { Write-Die "-DataDir and -NamedVolumes can't be used together." }
+if ($DataDir -or $NamedVolumes) {
+    if ($cmd -notin @("up", "rebuild", "init")) {
+        Write-Die "-DataDir and -NamedVolumes switch storage for a deploy; they don't go with -$cmd."
+    }
+    if ($DataDir) {
+        $storage = "dir"
+        if ($services.Count -gt 1) { Write-Die "-DataDir takes one folder (got: $($services -join ' '))." }
+        $dataDirValue = if ($services.Count -eq 1) { $services[0] } else { "./data" }
+        $services = @()
+        # .env holds it unquoted, and Compose would interpolate a $ in it.
+        if ($dataDirValue -match '[$"''#]') { Write-Die "the data folder can't contain `$ `" ' or #: $dataDirValue" }
+        $switchCommand = ".\deploy.ps1 -DataDir `"$dataDirValue`""
+    } else {
+        $storage = "volumes"
+        $switchCommand = ".\deploy.ps1 -NamedVolumes"
+    }
+}
+if ($Migrate -and -not $storage) {
+    Write-Die "-Migrate copies data while switching storage. Example: .\deploy.ps1 -DataDir .\data -Migrate"
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Die "Docker is not installed or not on PATH."
 }
@@ -249,7 +577,14 @@ docker compose version 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Die "Docker Compose v2 is required." }
 
 function Invoke-Wizard {
-    & (Join-Path $repoRoot "scripts\setup.ps1")
+    # The wizard takes a storage choice from -DataDir / -NamedVolumes instead of asking.
+    $wizardArgs = @{}
+    if ($storage) {
+        $wizardArgs.DataDir = $dataDirValue
+        $wizardArgs.SwitchCommand = $switchCommand
+        $wizardArgs.Migrate = [bool]$Migrate
+    }
+    & (Join-Path $repoRoot "scripts\setup.ps1") @wizardArgs
     if ($LASTEXITCODE -ne 0) { throw "setup.ps1 exited $LASTEXITCODE" }
     if ((Get-ProxyMode) -eq "npm") {
         docker network inspect proxy-network 2>$null | Out-Null
@@ -269,7 +604,7 @@ try {
         "logs"    {
             Write-Step "Following logs (Ctrl-C to stop)..."
             $files = Get-ComposeArgs
-            & docker compose @files logs -f --tail 200 @services
+            Invoke-WithDataDirEnv { & docker compose @files logs -f --tail 200 @services }
             exit 0
         }
         "restart" {
@@ -280,8 +615,13 @@ try {
             exit 0
         }
         "down"    {
-            if ($Volumes) {
-                Write-Step "Removing containers and named volumes (Postgres data will be wiped)..."
+            $dataDir = Get-DataDir
+            if ($Volumes -and $dataDir) {
+                Write-Step "Removing containers and wiping the Postgres, Nebular and media data in $dataDir..."
+                Invoke-Compose @("down", "--volumes", "--remove-orphans")
+                Clear-DataDir $dataDir
+            } elseif ($Volumes) {
+                Write-Step "Removing containers and named volumes (Postgres, Nebular and media data will be wiped)..."
                 Invoke-Compose @("down", "--volumes", "--remove-orphans")
             } else {
                 Invoke-Compose @("down")
@@ -309,6 +649,13 @@ try {
         Write-Die ".env still contains GENERATE_ME placeholders. Run .\deploy.ps1 -Init."
     }
 
+    if ($storage) {
+        Initialize-StorageSwitch -NewValue $dataDirValue -SwitchCommand $switchCommand -Migrate:$Migrate
+        if ($storage -eq "dir") { Set-EnvValue "SHROUD_DATA_DIR" $dataDirValue } else { Remove-EnvValue "SHROUD_DATA_DIR" }
+        Write-Ok "Storage: $(Get-StorageLabel (Get-DataDir)) (saved in .env)"
+        Write-Host ""
+    }
+
     $startedAt = Get-Date
     if ((Get-ProxyMode) -eq "npm") {
         docker network inspect proxy-network 2>$null | Out-Null
@@ -326,8 +673,8 @@ try {
             Write-Host ""
             Write-Line "ERROR: Postgres rejected the API password." "Red"
             Write-Host ""
-            Write-Host "  The Postgres image applies POSTGRES_PASSWORD only the first time the"
-            Write-Host "  data volume is created. A new password in .env is ignored after that."
+            Write-Host "  The Postgres image applies POSTGRES_PASSWORD only the first time it sets up"
+            Write-Host "  its data ($(Get-PgDataLocation)). A new password in .env is ignored after that."
             Write-Host ""
             Write-Host "  Keep data:  set POSTGRES_PASSWORD in .env to the original (old default: shroud)"
             Write-Host "  Wipe data:  .\deploy.ps1 -Down -Volumes ; .\deploy.ps1"

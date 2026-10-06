@@ -18,6 +18,8 @@
 .env
 # The deployed web build id the API reads (scripts/compose-env.sh)
 /.shroud-run/
+# Postgres, Nebular and media data with ./deploy.sh --data-dir (its default folder)
+/data/
 .env.*
 !.env.example
 

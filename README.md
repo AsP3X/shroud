@@ -53,6 +53,11 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 docker network create proxy-network
 docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 
+# Either one with data in folders instead of named volumes (see Data storage; make the three
+# folders first, or Docker creates them as root):
+mkdir -p data/database data/nebular data/media
+SHROUD_DATA_DIR="$PWD/data" docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.data-dir.yml up -d --build
+
 curl http://127.0.0.1:8080/api/v1/health/live
 # {"status":"ok"}
 ```
@@ -70,13 +75,43 @@ Logging: set `RUST_LOG` in `.env` (wizard default `info`).
 Stop:
 
 ```bash
-./deploy.sh --down              # keep data volumes
-./deploy.sh --down --volumes    # wipe Postgres / Redis / media (needed if POSTGRES_PASSWORD changed)
+./deploy.sh --down              # keep the data
+./deploy.sh --down --volumes    # wipe Postgres / Nebular / media data (needed if POSTGRES_PASSWORD changed)
 ```
 
-Postgres only hashes `POSTGRES_PASSWORD` the first time its volume is created. Changing the password in `.env` later will make the API fail with `password authentication failed`. Either restore the original password or wipe volumes as above.
+Postgres only hashes `POSTGRES_PASSWORD` the first time it sets up its data. Changing the password in `.env` later will make the API fail with `password authentication failed`. Either restore the original password or wipe the data as above.
 
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
+
+### Data storage
+
+Postgres, Nebular (media blobs) and the API's media folder keep their data in one of two places. Redis keeps nothing on disk.
+
+| Mode | Where | Turn on |
+| --- | --- | --- |
+| Named volumes (default) | Docker volumes `<project>_shroud_pg_data`, `_shroud_nebular_data`, `_shroud_media_data` (`<project>` is the checkout's folder name, e.g. `shroud`) | `./deploy.sh --named-volumes` |
+| Data folder | `database/`, `nebular/` and `media/` inside one folder, `./data` by default | `./deploy.sh --data-dir [path]` |
+
+`--data-dir` takes a path relative to the repository or an absolute one, saves it in `.env` as `SHROUD_DATA_DIR`, and deploys; later plain `./deploy.sh` runs keep it. `--named-volumes` removes the setting. Windows: `.\deploy.ps1 -DataDir [path]` and `-NamedVolumes`. The wizard asks too. `--status` shows which storage is in use. The files in the folders belong to the containers' users (Postgres uid 70, Nebular 10001, media `nobody`), so `./deploy.sh --down --volumes` empties those three folders through a container and leaves everything else in the folder alone.
+
+**Back up** with the stack down (`./deploy.sh --down`): in folder mode, copy the data folder as root (or with `sudo`) so owners and modes stay; with named volumes, copy each volume out through a container:
+
+```bash
+docker run --rm -v shroud_shroud_pg_data:/from:ro -v "$PWD/backup/database:/to" postgres:16-alpine cp -a /from/. /to/
+```
+
+**Switching** never moves, deletes or overwrites data on its own. When the side you leave holds a database and the other side is empty, the switch stops and prints the copy commands for your setup. Copy with the stack down, then switch:
+
+```bash
+./deploy.sh --down
+mkdir -p data/database data/nebular data/media
+docker run --rm -v shroud_shroud_pg_data:/from:ro -v "$PWD/data/database:/to" postgres:16-alpine cp -a /from/. /to/
+docker run --rm -v shroud_shroud_nebular_data:/from:ro -v "$PWD/data/nebular:/to" postgres:16-alpine cp -a /from/. /to/
+docker run --rm -v shroud_shroud_media_data:/from:ro -v "$PWD/data/media:/to" postgres:16-alpine cp -a /from/. /to/
+./deploy.sh --data-dir
+```
+
+Going back works the same way the other round: create each volume with Compose's labels (`docker volume create --label com.docker.compose.project=shroud --label com.docker.compose.volume=shroud_pg_data shroud_shroud_pg_data`), copy `data/database` into it, and so on, then `./deploy.sh --named-volumes`. Or add `--migrate` to the switch: after you confirm, it stops the stack and runs those copies itself. Either way the old volumes or folders stay where they are; remove them once the switch works (`docker volume rm …`, or `docker run --rm -v "$PWD/data:/data" postgres:16-alpine rm -rf /data/database /data/nebular /data/media`).
 
 ## Android APK
 

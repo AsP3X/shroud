@@ -10,7 +10,9 @@
 #   ./deploy.sh --restart [svc]  restart
 #   ./deploy.sh --rebuild        rebuild images, then start
 #   ./deploy.sh --down           stop stack
-#   ./deploy.sh --down --volumes stop stack and wipe Postgres/Redis/media volumes
+#   ./deploy.sh --down --volumes stop stack and wipe the Postgres / Nebular / media data
+#   ./deploy.sh --data-dir [path] keep data in a folder (default ./data), saved in .env
+#   ./deploy.sh --named-volumes  keep data in named Docker volumes again (the default)
 #   ./deploy.sh --help
 
 set -Eeuo pipefail
@@ -60,8 +62,15 @@ show_help() {
     ./deploy.sh --restart [svc...] Restart all services, or the named ones
     ./deploy.sh --rebuild          Rebuild images, then start
     ./deploy.sh --down             Stop and remove all services
-    ./deploy.sh --down --volumes   Also wipe Postgres / Redis / media volumes
+    ./deploy.sh --down --volumes   Also wipe the Postgres / Nebular / media data
     ./deploy.sh --help             This help
+
+  ${BOLD}Data storage${NC} (saved in .env as SHROUD_DATA_DIR, then deploys):
+    ./deploy.sh --data-dir [path]  Keep data in a folder (default ./data, relative
+                                   to this repository) instead of named volumes
+    ./deploy.sh --named-volumes    Back to named Docker volumes (the default)
+    ... --migrate                  Copy the data across when switching, after asking;
+                                   the old volumes or folder stay for you to remove
 
   ${BOLD}Service names${NC} (for --logs / --restart):
     api  web  postgres  redis  nebular
@@ -72,8 +81,9 @@ show_help() {
     iOS:   point the app at the API URL from --status
 
   ${BOLD}Environment:${NC}
-    PROXY_MODE    local | npm   (from .env; npm joins proxy-network)
-    NO_COLOR      disable coloured output
+    PROXY_MODE       local | npm   (from .env; npm joins proxy-network)
+    SHROUD_DATA_DIR  data folder   (from .env; unset = named volumes)
+    NO_COLOR         disable coloured output
 
 EOF
 }
@@ -101,7 +111,7 @@ require_docker() {
 
 require_compose_files() {
   local missing=() f
-  for f in docker-compose.yml docker-compose.local.yml docker-compose.npm.yml scripts/compose-env.sh scripts/setup.sh web/Dockerfile server/Dockerfile; do
+  for f in docker-compose.yml docker-compose.local.yml docker-compose.npm.yml docker-compose.data-dir.yml scripts/compose-env.sh scripts/setup.sh web/Dockerfile server/Dockerfile; do
     [[ -f "$f" ]] || missing+=("$f")
   done
   if (( ${#missing[@]} )); then
@@ -121,6 +131,14 @@ run_wizard() {
 CMD=""
 PASSTHRU=()
 DOWN_VOLUMES=0
+STORAGE=""        # "", dir or volumes
+DATA_DIR_VALUE=""
+MIGRATE=0
+set_storage() {
+  [[ -z "$STORAGE" || "$STORAGE" == "$1" ]] ||
+    die "--data-dir and --named-volumes can't be used together. See ./deploy.sh --help"
+  STORAGE="$1"
+}
 set_cmd() {
   [[ -z "$CMD" || "$CMD" == "$1" ]] ||
     die "only one command at a time (got '$CMD' and '$1'). See ./deploy.sh --help"
@@ -140,9 +158,21 @@ while (( $# )); do
     --init|init|--setup|setup) set_cmd init ;;
     --up|up)                 set_cmd up ;;
     --yes|-y)                export SHROUD_SETUP_ASSUME_YES=1 ;;
+    --data-dir=*)            set_storage dir; DATA_DIR_VALUE="${1#--data-dir=}" ;;
+    --data-dir)
+      set_storage dir
+      DATA_DIR_VALUE="./data"
+      if (( $# > 1 )) && [[ "$2" != -* ]]; then
+        DATA_DIR_VALUE="$2"
+        shift
+      fi
+      ;;
+    --named-volumes)         set_storage volumes ;;
+    --migrate)               MIGRATE=1 ;;
     --)                      shift; PASSTHRU+=("$@"); break ;;
     -*)                      die "unknown option: $1
-  Valid: --init --status --ps --logs --restart --rebuild --down --volumes --help" ;;
+  Valid: --init --status --ps --logs --restart --rebuild --down --volumes
+         --data-dir [path] --named-volumes --migrate --yes --help" ;;
     *)                       PASSTHRU+=("$1") ;;
   esac
   shift
@@ -151,6 +181,31 @@ CMD="${CMD:-up}"
 
 if [[ "$DOWN_VOLUMES" -eq 1 && "$CMD" != "down" ]]; then
   die "--volumes is only valid with --down. Example: ./deploy.sh --down --volumes"
+fi
+
+if [[ -n "$STORAGE" ]]; then
+  case "$CMD" in
+    up|rebuild|init) ;;
+    *) die "--data-dir and --named-volumes switch storage for a deploy; they don't go with --${CMD}.
+  Example: ./deploy.sh --data-dir ./data" ;;
+  esac
+  if [[ "$STORAGE" == dir ]]; then
+    [[ -n "$DATA_DIR_VALUE" ]] || die "--data-dir needs a folder, or nothing for ./data."
+    # .env holds it unquoted, and Compose would interpolate a $ in it.
+    case "$DATA_DIR_VALUE" in
+      *[\$\"\'\\\#]*|*$'\n'*) die "the data folder can't contain \$ \" ' \\ # or a line break: $DATA_DIR_VALUE" ;;
+    esac
+    SWITCH_CMD="./deploy.sh --data-dir $(printf '%q' "$DATA_DIR_VALUE")"
+  else
+    SWITCH_CMD="./deploy.sh --named-volumes"
+  fi
+  # The wizard takes the choice instead of asking (scripts/setup.sh).
+  export SHROUD_SETUP_DATA_DIR="$DATA_DIR_VALUE" SHROUD_SETUP_SWITCH_CMD="$SWITCH_CMD"
+fi
+if [[ "$MIGRATE" -eq 1 ]]; then
+  [[ -n "$STORAGE" ]] ||
+    die "--migrate copies data while switching storage. Example: ./deploy.sh --data-dir ./data --migrate"
+  export SHROUD_MIGRATE=1
 fi
 
 case "$CMD" in
@@ -213,6 +268,19 @@ fi
 STARTED_AT=$SECONDS
 echo "Environment found — starting / redeploying stack..."
 echo ""
+
+if [[ -n "$STORAGE" ]]; then
+  CURRENT_STAGE="storage switch"
+  shroud_prepare_storage_switch "$DATA_DIR_VALUE" "$SWITCH_CMD" || exit 1
+  if [[ "$STORAGE" == dir ]]; then
+    shroud_set_env_value SHROUD_DATA_DIR "$DATA_DIR_VALUE"
+  else
+    shroud_unset_env_value SHROUD_DATA_DIR
+  fi
+  shroud_load_data_dir
+  ok "Storage: $(shroud_storage_label "${SHROUD_DATA_DIR:-}") (saved in .env)"
+  echo ""
+fi
 
 CURRENT_STAGE="stack build/start"
 if [[ "$CMD" == "rebuild" ]]; then

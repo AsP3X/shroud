@@ -1,7 +1,20 @@
 #Requires -Version 5.1
+# First-time setup wizard, run by deploy.ps1 (-Init, or when .env is missing), whose storage
+# helpers it uses. -DataDir / -SwitchCommand / -Migrate carry deploy.ps1's storage flags; with
+# them the storage question isn't asked.
+param(
+    [string]$DataDir,
+    [string]$SwitchCommand,
+    [switch]$Migrate
+)
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Set-Location -LiteralPath $repoRoot
+
+if (-not (Get-Command Initialize-StorageSwitch -ErrorAction SilentlyContinue)) {
+    Write-Host "Run the wizard through deploy.ps1: .\deploy.ps1 -Init"
+    exit 1
+}
 
 function New-Secret {
     param([int]$Bytes = 32)
@@ -53,6 +66,38 @@ if ($modeChoice -eq "2") {
     $API_PUBLIC_URL = "http://localhost:$API_PORT"
 }
 
+Write-Host ""
+Write-Host "  Postgres, Nebular and media data live in named Docker volumes, or in a folder you can"
+Write-Host "  see and back up (database\, nebular\ and media\ inside it)."
+$existingDataDir = Get-EnvValue "SHROUD_DATA_DIR"
+if ($PSBoundParameters.ContainsKey("DataDir")) {
+    # Chosen with deploy.ps1 -DataDir or -NamedVolumes.
+    $SHROUD_DATA_DIR = $DataDir
+} else {
+    # A first setup defaults to named volumes; a re-run keeps what .env has.
+    $hint = if ($existingDataDir) { "[Y/n]" } else { "[y/N]" }
+    $answer = Read-Prompt "Store data in a folder instead of Docker volumes? $hint" ""
+    if (-not $answer) { $answer = if ($existingDataDir) { "y" } else { "n" } }
+    $SHROUD_DATA_DIR = ""
+    if ($answer -match '^[yY]') {
+        while ($true) {
+            $SHROUD_DATA_DIR = Read-Prompt "Data folder (relative to this repository, or absolute)" $(if ($existingDataDir) { $existingDataDir } else { "./data" })
+            # .env holds it unquoted, and Compose would interpolate a $ in it.
+            if ($SHROUD_DATA_DIR -notmatch '[$"''#]') { break }
+            Write-Host "  It can't contain `$ `" ' or #." -ForegroundColor Red
+            if ($env:SHROUD_SETUP_ASSUME_YES -eq "1") { exit 1 }
+        }
+    }
+}
+if (-not $SwitchCommand) {
+    $SwitchCommand = if ($SHROUD_DATA_DIR) { ".\deploy.ps1 -DataDir `"$SHROUD_DATA_DIR`"" } else { ".\deploy.ps1 -NamedVolumes" }
+}
+# Leaving data behind on the other side stops here, before .env changes.
+Initialize-StorageSwitch -NewValue $SHROUD_DATA_DIR -SwitchCommand $SwitchCommand -Migrate:$Migrate
+$dataDirResolved = Resolve-DataDir $SHROUD_DATA_DIR
+$storageLabel = Get-StorageLabel $dataDirResolved
+Write-Host "  Storage: $storageLabel" -ForegroundColor Green
+
 $existingPg = $null
 if (Test-Path -LiteralPath ".env") {
     $line = Get-Content -LiteralPath ".env" | Where-Object { $_ -match "^POSTGRES_PASSWORD=" } | Select-Object -Last 1
@@ -60,10 +105,14 @@ if (Test-Path -LiteralPath ".env") {
 }
 if ($existingPg -and $existingPg -ne "GENERATE_ME") {
     $POSTGRES_PASSWORD = $existingPg
-    Write-Host "  Postgres password: reused from .env (volume already initialized)" -ForegroundColor Green
+    Write-Host "  Postgres password: reused from .env (data already initialized)" -ForegroundColor Green
 } else {
     $POSTGRES_PASSWORD = New-Secret
     Write-Host "  Postgres password: generated" -ForegroundColor Green
+    if (Test-PgDataExists $dataDirResolved) {
+        Write-Host "  Postgres already has data in $storageLabel. The new password will not apply to it." -ForegroundColor Yellow
+        Write-Host "  Wipe it first: .\deploy.ps1 -Down -Volumes"
+    }
 }
 $NOS_JWT_SECRET = New-Secret
 $NEBULAR_ACCESS_KEY_ID = "SHRD" + (New-Secret -Bytes 8).ToUpperInvariant()
@@ -96,7 +145,7 @@ if ($TURN_HOST) {
     Write-Host "  TURN relay: off"
 }
 
-@(
+$envLines = @(
     "PROXY_MODE=$PROXY_MODE"
     "WEB_PUBLIC_URL=$WEB_PUBLIC_URL"
     "API_PUBLIC_URL=$API_PUBLIC_URL"
@@ -116,10 +165,14 @@ if ($TURN_HOST) {
     "TURN_SECRET=$TURN_SECRET"
     "RUST_LOG=info"
     "RUST_LOG_FORMAT=text"
-) | Set-Content -LiteralPath ".env" -Encoding ascii
+)
+if ($SHROUD_DATA_DIR) { $envLines += "SHROUD_DATA_DIR=$SHROUD_DATA_DIR" }
+# UTF-8 without a byte-order mark (deploy.ps1's Write-EnvLines).
+Write-EnvLines $envLines
 
 Write-Host ""
 Write-Host "Wrote .env (mode $PROXY_MODE)." -ForegroundColor Green
 Write-Host "  Web:  $WEB_PUBLIC_URL"
 Write-Host "  API:  $API_PUBLIC_URL/api/v1"
+Write-Host "  Data: $storageLabel"
 Write-Host ""

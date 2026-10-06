@@ -1,0 +1,29 @@
+# Data-directory overlay: keep Postgres, Nebular and media data in folders under
+# SHROUD_DATA_DIR instead of the named volumes. Used by ./deploy.sh (and deploy.ps1) whenever
+# .env sets SHROUD_DATA_DIR; they pass it on as an absolute path and create the folders first.
+#
+#   SHROUD_DATA_DIR=/srv/shroud-data docker compose -f docker-compose.yml \
+#     -f docker-compose.local.yml -f docker-compose.data-dir.yml up -d --build
+#
+# Each mount replaces the named volume with the same target, so those volumes are neither
+# mounted nor created. The entrypoints hand each folder to its service: database to uid 70,
+# nebular to uid 10001, media to nobody.
+
+services:
+  postgres:
+    volumes:
+      - type: bind
+        source: ${SHROUD_DATA_DIR:?set SHROUD_DATA_DIR in .env, or leave out docker-compose.data-dir.yml}/database
+        target: /var/lib/postgresql/data
+
+  nebular:
+    volumes:
+      - type: bind
+        source: ${SHROUD_DATA_DIR:?set SHROUD_DATA_DIR in .env, or leave out docker-compose.data-dir.yml}/nebular
+        target: /data
+
+  api:
+    volumes:
+      - type: bind
+        source: ${SHROUD_DATA_DIR:?set SHROUD_DATA_DIR in .env, or leave out docker-compose.data-dir.yml}/media
+        target: /data/shroud-media
