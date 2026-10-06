@@ -6,8 +6,9 @@
 #     -f docker-compose.local.yml -f docker-compose.data-dir.yml up -d --build
 #
 # Each mount replaces the named volume with the same target, so those volumes are neither
-# mounted nor created. The entrypoints hand each folder to its service: database to uid 70,
-# nebular to uid 10001, media to nobody.
+# mounted nor created. The Postgres and API entrypoints hand database/ to uid 70 and media/ to
+# nobody. Nebular's gives uid 10001 only the folders inside nebular/, so nebular/ itself must
+# belong to 10001 first; deploy.sh does that before each start (see shroud_own_nebular_dir).
 
 services:
   postgres:

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# First-time setup wizard — writes .env. Bash 3.2 compatible (stock macOS).
+# First-time setup wizard — writes .env; deploy.sh then starts the stack. Bash 3.2 compatible
+# (stock macOS). Exits 3 when the user keeps an existing .env.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,7 +52,7 @@ if [[ -f .env && "${SHROUD_SETUP_ASSUME_YES:-}" != "1" ]]; then
   read -r overwrite || true
   case "$(printf '%s' "$overwrite" | tr '[:upper:]' '[:lower:]')" in
     y|yes) ;;
-    *) echo "Cancelled."; exit 0 ;;
+    *) echo "Cancelled."; exit 3 ;;
   esac
 fi
 
@@ -227,9 +228,3 @@ echo "${GREEN}Wrote .env${NC} (mode ${BOLD}${PROXY_MODE}${NC})."
 echo "  Web:  ${WEB_PUBLIC_URL}"
 echo "  API:  ${API_PUBLIC_URL}/api/v1"
 echo "  Data: ${STORAGE_LABEL}"
-echo ""
-echo "Starting the stack…"
-echo ""
-
-shroud_up
-shroud_info

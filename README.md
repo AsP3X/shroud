@@ -53,9 +53,11 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 docker network create proxy-network
 docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 
-# Either one with data in folders instead of named volumes (see Data storage; make the three
-# folders first, or Docker creates them as root):
+# Either one with data in folders instead of named volumes (see Data storage). Make the three
+# folders first, or Docker creates them as root, and give nebular/ to Nebular's user, which
+# its entrypoint doesn't do (./deploy.sh does both):
 mkdir -p data/database data/nebular data/media
+sudo chown 10001:10001 data/nebular
 SHROUD_DATA_DIR="$PWD/data" docker compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.data-dir.yml up -d --build
 
 curl http://127.0.0.1:8080/api/v1/health/live

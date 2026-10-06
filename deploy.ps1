@@ -463,15 +463,25 @@ function Invoke-Compose {
         $env:SHROUD_WEB_BUILD = $script:webBuild
         # Created here, not by Docker: a missing bind-mount source would be made by the daemon.
         New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot ".shroud-run") | Out-Null
-        $dataDir = Get-DataDir
-        if ($dataDir) {
-            foreach ($kind in $script:DataKinds) {
-                New-Item -ItemType Directory -Force -Path (Join-Path $dataDir $kind.Folder) | Out-Null
-            }
+    }
+    $dataDir = if ($ComposeArgs[0] -eq "up") { Get-DataDir } else { "" }
+    if ($dataDir) {
+        foreach ($kind in $script:DataKinds) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $dataDir $kind.Folder) | Out-Null
         }
     }
     try {
         $files = Get-ComposeArgs
+        if ($dataDir) {
+            # Nebular's entrypoint hands only /data/blobs and /data/meta to its user (uid 10001),
+            # not /data itself. A new named volume takes /data's owner from the image; a folder
+            # doesn't, and Nebular then fails with "Permission denied". A one-off Nebular
+            # container gives it to uid 10001 as root. Postgres and the API chown their own.
+            Invoke-WithDataDirEnv {
+                & docker compose @files run --rm --no-deps -T --user 0 --entrypoint chown nebular 10001:10001 /data | Out-Null
+            }
+            if ($LASTEXITCODE -ne 0) { throw "cannot give $(Join-Path $dataDir "nebular") to Nebular's user (uid 10001)" }
+        }
         Invoke-WithDataDirEnv { & docker compose @files @ComposeArgs }
         if ($LASTEXITCODE -ne 0) { throw "docker compose $($ComposeArgs -join ' ') exited $LASTEXITCODE" }
     } finally {

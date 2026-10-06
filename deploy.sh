@@ -120,12 +120,20 @@ require_compose_files() {
   fi
 }
 
+# Runs the wizard, which only writes .env: the stack starts afterwards as its own stage, so a
+# failed start isn't reported as a failed wizard. Exits when the user keeps the existing .env.
 run_wizard() {
   if [[ ! -t 0 && "${SHROUD_SETUP_ASSUME_YES:-}" != "1" ]]; then
     die "the setup wizard needs an interactive terminal.
   Run ./deploy.sh --init from a terminal, or copy .env.example to .env and re-run."
   fi
-  bash scripts/setup.sh
+  local rc=0
+  bash scripts/setup.sh || rc=$?
+  case "$rc" in
+    0) ;;
+    3) exit 0 ;;  # cancelled: .env and the stack stay as they are
+    *) return "$rc" ;;
+  esac
 }
 
 CMD=""
@@ -250,7 +258,6 @@ case "$CMD" in
     fi
     exit 0
     ;;
-  init) run_wizard; exit 0 ;;
 esac
 
 echo ""
@@ -259,17 +266,24 @@ echo "  ${BOLD}Shroud — API + web client${NC}"
 echo "===================================================="
 echo ""
 
-if [[ ! -f .env ]]; then
+WIZARD_RAN=0
+if [[ "$CMD" == "init" || ! -f .env ]]; then
   CURRENT_STAGE="setup wizard"
   run_wizard
-  exit 0
+  WIZARD_RAN=1
 fi
 
 STARTED_AT=$SECONDS
-echo "Environment found — starting / redeploying stack..."
+if (( WIZARD_RAN )); then
+  echo ""
+  echo "Starting the stack…"
+else
+  echo "Environment found — starting / redeploying stack..."
+fi
 echo ""
 
-if [[ -n "$STORAGE" ]]; then
+# The wizard has already switched storage and written it to .env.
+if [[ -n "$STORAGE" ]] && (( ! WIZARD_RAN )); then
   CURRENT_STAGE="storage switch"
   shroud_prepare_storage_switch "$DATA_DIR_VALUE" "$SWITCH_CMD" || exit 1
   if [[ "$STORAGE" == dir ]]; then

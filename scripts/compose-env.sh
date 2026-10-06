@@ -191,6 +191,26 @@ shroud_project_name() {
   printf '%s\n' "$name"
 }
 
+# Makes the three data folders in $1 at the usual 755, whatever the caller's umask: under the
+# wizard's 077 they would be 700 and owned by the host user.
+shroud_make_data_dirs() {
+  (umask 022 && mkdir -p "${1}/database" "${1}/nebular" "${1}/media")
+}
+
+# Nebular's entrypoint hands only /data/blobs and /data/meta to its user (uid 10001), not /data
+# itself. A new named volume takes /data's owner from the image; a folder keeps the host user's,
+# and Nebular then fails with "Permission denied". The host user can't chown to 10001, so a
+# one-off Nebular container does it as root (the service keeps CAP_CHOWN for its entrypoint).
+# Postgres and the API chown their own mount points.
+shroud_own_nebular_dir() {
+  local out
+  if ! out="$(shroud_compose run --rm --no-deps -T --user 0 --entrypoint chown nebular 10001:10001 /data 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    echo "ERROR: cannot give ${SHROUD_DATA_DIR}/nebular to Nebular's user (uid 10001)." >&2
+    return 1
+  fi
+}
+
 shroud_storage_label() {
   if [[ -n "$1" ]]; then
     printf 'the folder %s\n' "$1"
@@ -302,7 +322,7 @@ shroud_copy_storage() {
   local from="$1" to="$2" project kind src dst
   project="$(shroud_project_name)"
   if [[ -n "$to" ]]; then
-    mkdir -p "${to}/database" "${to}/nebular" "${to}/media" || return 1
+    shroud_make_data_dirs "$to" || return 1
   fi
   for kind in $SHROUD_DATA_KINDS; do
     shroud_storage_has "$from" "$project" "$kind" || continue
@@ -494,10 +514,12 @@ shroud_up() {
   # Created here, not by Docker: a missing bind-mount source would be made root-owned.
   mkdir -p "${SHROUD_REPO_ROOT}/.shroud-run"
   shroud_load_data_dir
-  if [[ -n "${SHROUD_DATA_DIR:-}" ]] &&
-    ! mkdir -p "${SHROUD_DATA_DIR}/database" "${SHROUD_DATA_DIR}/nebular" "${SHROUD_DATA_DIR}/media"; then
-    echo "ERROR: cannot create the data folders in ${SHROUD_DATA_DIR} (SHROUD_DATA_DIR in .env)." >&2
-    return 1
+  if [[ -n "${SHROUD_DATA_DIR:-}" ]]; then
+    if ! shroud_make_data_dirs "$SHROUD_DATA_DIR"; then
+      echo "ERROR: cannot create the data folders in ${SHROUD_DATA_DIR} (SHROUD_DATA_DIR in .env)." >&2
+      return 1
+    fi
+    shroud_own_nebular_dir || return 1
   fi
   if ! shroud_compose up -d --build --remove-orphans; then
     shroud_diagnose_up
@@ -512,7 +534,7 @@ shroud_wipe_data_dir() {
   local dir="$1"
   [[ -d "$dir" ]] || return 0
   docker run --rm -v "${dir}:/data" "$SHROUD_DATA_TOOL_IMAGE" rm -rf /data/database /data/nebular /data/media
-  mkdir -p "${dir}/database" "${dir}/nebular" "${dir}/media"
+  shroud_make_data_dirs "$dir"
 }
 
 shroud_down() {
