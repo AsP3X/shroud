@@ -409,8 +409,9 @@ struct VoiceMessageBubble: View {
                 .font(.system(size: 11, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(metaColor)
-                // Rolls each second while it plays; a scrub jumps straight to the new time.
-                .rollingDigits(value: time, animated: scrubProgress == nil)
+                // Rolls each second while it plays, and to the new time when a scrub lets go
+                // (the player seeks then; the time stays put during the drag).
+                .rollingDigits(value: time)
 
             if showsUnplayedDot {
                 Circle()
@@ -628,10 +629,11 @@ struct VoiceMessageBubble: View {
     private var transcriptProgress: some View {
         let downloading = install.isActive(for: message.id) && install.phase == .downloading
         return VStack(alignment: .leading, spacing: 7) {
-            Text(transcriptProgressLabel(downloading: downloading))
-                .font(.system(size: 13, weight: .medium))
+            // The percent rolls, paced to twice a second; the bar below follows every tick, and
+            // "Transcribing…" lands at once.
+            PacedRollingText(transcriptProgressLabel(downloading: downloading), pacing: downloading)
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
                 .foregroundStyle(metaColor)
-                .contentTransition(.numericText())
                 .shimmering()
             if downloading, install.isDeterminate {
                 ProgressView(value: max(install.fractionCompleted, 0.02))

@@ -234,11 +234,12 @@ struct FileMessageBubble: View {
                     .foregroundStyle(primaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(metaLine)
+                // "1.2 MB of 4.8 MB" rolls as a transfer runs, paced to twice a second; the
+                // size after it lands at once.
+                PacedRollingText(metaLine, pacing: transfer != nil)
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(secondaryText)
                     .lineLimit(1)
-                    .contentTransition(.numericText())
                 if let warning = type?.warning {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")

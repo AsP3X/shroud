@@ -32,6 +32,7 @@ import de.corespace.shroud.core.transcription.TranscriptionInstallState
 import de.corespace.shroud.core.transcription.VoiceTranscription
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.InsetDivider
+import de.corespace.shroud.ui.components.LabelWithRollingValue
 import de.corespace.shroud.ui.components.PushedScreen
 import de.corespace.shroud.ui.components.SettingsCard
 import de.corespace.shroud.ui.components.ShroudText
@@ -133,12 +134,15 @@ object TranscriptionPicker {
     fun isSelected(row: Locale, selection: Locale?): Boolean = selection != null && selection.language == row.language
 
     /**
-     * The download card's title (`:94-100`): "Downloading Whisper… n%" while determinate and
-     * past 0 % (n rounded), else "Downloading Whisper…".
+     * The download card's title (`:94-100`): [DOWNLOAD_TITLE], then [downloadPercent] while there is
+     * one ("Downloading Whisper… 42%").
      */
-    fun downloadTitle(state: TranscriptionInstallState): String {
+    const val DOWNLOAD_TITLE = "Downloading Whisper…"
+
+    /** The title's percent (n rounded), only while determinate and past 0 %. */
+    fun downloadPercent(state: TranscriptionInstallState): String? {
         val percent = (state.fractionCompleted * 100).roundToInt()
-        return if (state.isDeterminate && percent > 0) "Downloading Whisper… $percent%" else "Downloading Whisper…"
+        return if (state.isDeterminate && percent > 0) "$percent%" else null
     }
 
     /** The determinate bar's value, never quite empty (`:79`). */
@@ -226,7 +230,13 @@ private fun DownloadCard(install: TranscriptionInstallState) {
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ShroudText(TranscriptionPicker.downloadTitle(install), inter(15f, FontWeight.SemiBold), colors.textPrimary)
+        // The percent rolls, paced to twice a second; the bar below follows every tick.
+        LabelWithRollingValue(
+            TranscriptionPicker.DOWNLOAD_TITLE,
+            TranscriptionPicker.downloadPercent(install),
+            inter(15f, FontWeight.SemiBold, tabularDigits = true),
+            colors.textPrimary,
+        )
         if (install.isDeterminate) {
             val fraction = TranscriptionPicker.barFraction(install)
             Box(

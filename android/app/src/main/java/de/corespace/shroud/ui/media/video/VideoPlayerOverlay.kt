@@ -76,6 +76,7 @@ import de.corespace.shroud.core.media.video.VideoSource
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.GlassStyle
+import de.corespace.shroud.ui.components.RollingText
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.Spinner
@@ -441,20 +442,20 @@ private fun BottomBar(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ShroudText(
-            ChatVideoPlayer.timeLabel(shown),
-            inter(12f, FontWeight.Medium, tabularDigits = true),
-            Color.White,
-            Modifier.widthIn(min = 38.dp),
-        )
+        // Both roll once a second while the clip plays (the remaining time downwards); a scrub jumps
+        // straight to the time under the finger.
+        val style = inter(12f, FontWeight.Medium, tabularDigits = true)
+        RollingText(ChatVideoPlayer.timeLabel(shown), style, Color.White, Modifier.widthIn(min = 38.dp), animated = !scrubbing)
         Scrubber(shown, duration, scrubbing, onScrub, onScrubEnd, onStep, Modifier.weight(1f))
-        ShroudText(
-            VideoPlayerRules.remainingLabel(duration, shown),
-            inter(12f, FontWeight.Medium, tabularDigits = true),
-            Color.White.copy(alpha = 0.75f),
-            Modifier.widthIn(min = 42.dp),
-            textAlign = TextAlign.End,
-        )
+        Box(Modifier.widthIn(min = 42.dp), contentAlignment = Alignment.CenterEnd) {
+            RollingText(
+                VideoPlayerRules.remainingLabel(duration, shown),
+                style,
+                Color.White.copy(alpha = 0.75f),
+                countsDown = true,
+                animated = !scrubbing,
+            )
+        }
     }
 }
 

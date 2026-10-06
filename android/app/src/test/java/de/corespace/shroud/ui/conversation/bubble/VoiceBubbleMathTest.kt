@@ -72,15 +72,21 @@ class VoiceBubbleMathTest {
 
     @Test
     fun theDrawerSaysWhatIsHappening() {
-        assertEquals("Transcribing…", VoiceBubbleMath.progressLabel(downloading = false, fraction = 0.5, isDeterminate = true, languageName = null))
-        assertEquals("Downloading model… 42%", VoiceBubbleMath.progressLabel(true, 0.42, true, null))
+        // The line as drawn: the words, then the percent when there is one.
+        fun line(downloading: Boolean, fraction: Double, isDeterminate: Boolean, languageName: String?) =
+            listOfNotNull(
+                VoiceBubbleMath.progressLead(downloading, languageName),
+                VoiceBubbleMath.progressPercent(downloading, fraction, isDeterminate),
+            ).joinToString(" ")
+        assertEquals("Transcribing…", line(downloading = false, fraction = 0.5, isDeterminate = true, languageName = null))
+        assertEquals("Downloading model… 42%", line(true, 0.42, true, null))
         // Rounded, as Swift's `.rounded()` does.
-        assertEquals("Downloading model… 43%", VoiceBubbleMath.progressLabel(true, 0.425, true, null))
+        assertEquals("Downloading model… 43%", line(true, 0.425, true, null))
         // No percent before the first one, nor while it is indeterminate.
-        assertEquals("Downloading model…", VoiceBubbleMath.progressLabel(true, 0.001, true, null))
-        assertEquals("Downloading model…", VoiceBubbleMath.progressLabel(true, 0.5, false, null))
-        assertEquals("Downloading German… 7%", VoiceBubbleMath.progressLabel(true, 0.07, true, "German"))
-        assertEquals("Downloading German…", VoiceBubbleMath.progressLabel(true, 0.0, true, "German"))
+        assertEquals("Downloading model…", line(true, 0.001, true, null))
+        assertEquals("Downloading model…", line(true, 0.5, false, null))
+        assertEquals("Downloading German… 7%", line(true, 0.07, true, "German"))
+        assertEquals("Downloading German…", line(true, 0.0, true, "German"))
     }
 
     @Test

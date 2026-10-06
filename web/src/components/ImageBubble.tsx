@@ -7,6 +7,7 @@ import { transferFraction, useTransfer } from "../media/transfers";
 import { Highlight } from "./Highlight";
 import { ProgressRing } from "./ProgressRing";
 import { Receipt } from "./Receipt";
+import { RollingText, usePaced } from "./RollingText";
 
 /* On-screen photo size, in iOS proportions: never upscaled past the original,
    no side under MIN_SIDE (the crop covers the rest), capped at MAX_W × MAX_H. */
@@ -168,6 +169,8 @@ export function ImageBubble({
     }
     return formatBytes(message.mediaBytes);
   })();
+  // The bytes roll at most twice a second while they move; the chip comes and goes with `sizeLabel`.
+  const pacedSize = usePaced(sizeLabel, transfer?.direction === "down");
 
   return (
     <div
@@ -208,7 +211,11 @@ export function ImageBubble({
           />
         ) : null}
         {center ? <span className="photo-center">{center}</span> : null}
-        {sizeLabel ? <span className="photo-size">{sizeLabel}</span> : null}
+        {sizeLabel ? (
+          <span className="photo-size">
+            <RollingText text={pacedSize ?? sizeLabel} />
+          </span>
+        ) : null}
         {!caption ? (
           <span className="photo-meta" title={fullTimestamp(message.createdAt)}>
             {meta}

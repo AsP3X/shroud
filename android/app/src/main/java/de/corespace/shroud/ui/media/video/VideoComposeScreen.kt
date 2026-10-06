@@ -76,6 +76,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -93,6 +95,7 @@ import de.corespace.shroud.ui.components.MenuAction
 import de.corespace.shroud.ui.components.MenuRows
 import de.corespace.shroud.ui.components.MenuStyle
 import de.corespace.shroud.ui.components.NoLearningTextInput
+import de.corespace.shroud.ui.components.RollingText
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.Spinner
@@ -191,6 +194,8 @@ private fun ComposeBody(
     var qualityAnchor by remember { mutableStateOf<Rect?>(null) }
     var qualityBounds by remember { mutableStateOf(Rect.Zero) }
     var removeFor by remember { mutableStateOf<Pair<Int, Rect>?>(null) }
+    // While a trim handle is held: the kept length follows the finger instead of rolling.
+    var trimming by remember { mutableStateOf(false) }
 
     val selection = VideoComposeRules.selection(ids, selectedId)
     val current = clips.getOrNull(selection)
@@ -362,14 +367,18 @@ private fun ComposeBody(
                             onTrimChange = { trims[current.id] = it },
                             playhead = playback.currentTime,
                             onSeek = { seconds ->
+                                trimming = true
                                 player.pause()
                                 player.seek(seconds)
                             },
                             onScrubEnd = {
+                                trimming = false
                                 applyLoopRange()
                                 player.play()
                             },
-                            selectionLabel = VideoComposeRules.selectionLabel(currentTrim, currentPlan),
+                            kept = ChatVideoPlayer.timeLabel(currentTrim.duration),
+                            detail = VideoComposeRules.selectionDetail(currentPlan),
+                            trimming = trimming,
                             planFails = currentPlan?.isFailure == true,
                             trimmed = VideoComposeRules.isTrimmed(currentTrim, current.probe.durationSeconds),
                             quality = quality,
@@ -658,7 +667,9 @@ private fun TrimSection(
     playhead: Double,
     onSeek: (Double) -> Unit,
     onScrubEnd: () -> Unit,
-    selectionLabel: String,
+    kept: String,
+    detail: String?,
+    trimming: Boolean,
     planFails: Boolean,
     trimmed: Boolean,
     quality: VideoUploadQuality,
@@ -679,14 +690,24 @@ private fun TrimSection(
             modifier = Modifier.padding(horizontal = 2.dp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            // A cross-fade, never a per-digit morph (that is a CPU blur on iOS, `:423-424`).
-            ShroudText(
-                selectionLabel,
-                inter(12f, FontWeight.Medium, tabularDigits = true),
-                if (planFails) MediaColors.warningText else Color.White.copy(alpha = 0.75f),
-                Modifier.weight(1f),
-                maxLines = 2,
-            )
+            // The line under the strip (`selectionLabel`, `:92-98`) in two parts: the kept length rolls
+            // when a released trim changes it (while a handle is held it follows the finger in place);
+            // the detail after it may wrap to a second line, which a roll can't.
+            val style = inter(12f, FontWeight.Medium, tabularDigits = true)
+            val color = if (planFails) MediaColors.warningText else Color.White.copy(alpha = 0.75f)
+            val line = if (detail != null) kept + VideoComposeRules.SELECTION_SEPARATOR + detail else kept
+            Row(Modifier.weight(1f).clearAndSetSemantics { text = AnnotatedString(line) }) {
+                RollingText(kept, style, color, Modifier.alignByBaseline(), animated = !trimming)
+                if (detail != null) {
+                    ShroudText(
+                        VideoComposeRules.SELECTION_SEPARATOR + detail,
+                        style,
+                        color,
+                        Modifier.weight(1f).alignByBaseline(),
+                        maxLines = 2,
+                    )
+                }
+            }
             QualityLabel(quality, onBounds = onQualityBounds, onClick = onQuality)
             AnimatedVisibility(visible = trimmed, enter = fadeIn(Motion.snappy()), exit = fadeOut(Motion.snappy())) {
                 ShroudText(TRIMMED, inter(10f, FontWeight.Bold), MediaColors.blue)

@@ -73,6 +73,8 @@ import de.corespace.shroud.core.transcription.TranscriptionInstallState
 import de.corespace.shroud.core.voice.VoicePlaybackState
 import de.corespace.shroud.core.voice.VoiceTimeFormat
 import de.corespace.shroud.core.voice.VoiceWaveform
+import de.corespace.shroud.ui.components.LabelWithRollingValue
+import de.corespace.shroud.ui.components.RollingText
 import de.corespace.shroud.ui.components.Spinner
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.Toast
@@ -158,18 +160,20 @@ object VoiceBubbleMath {
         if (rate == rate.roundToInt().toFloat()) "${rate.roundToInt()}×" else String.format(Locale.ROOT, "%.1f×", rate)
 
     /**
-     * The drawer's progress line (`:647-660`): the model download with its language and percent (percent
-     * only when determinate and above 0), else "Transcribing…".
+     * The drawer's progress line (`:647-660`) is [progressLead] then [progressPercent]: the model download
+     * with its language and percent, else "Transcribing…". These are its words.
      */
-    fun progressLabel(downloading: Boolean, fraction: Double, isDeterminate: Boolean, languageName: String?): String {
-        if (!downloading) return "Transcribing…"
+    fun progressLead(downloading: Boolean, languageName: String?): String = when {
+        !downloading -> "Transcribing…"
+        languageName != null -> "Downloading $languageName…"
+        else -> "Downloading model…"
+    }
+
+    /** The line's percent ("42%"), only while a determinate download is past 0 %. */
+    fun progressPercent(downloading: Boolean, fraction: Double, isDeterminate: Boolean): String? {
+        if (!downloading || !isDeterminate) return null
         val percent = (fraction * 100).roundToInt()
-        val showsPercent = isDeterminate && percent > 0
-        return if (languageName != null) {
-            if (showsPercent) "Downloading $languageName… $percent%" else "Downloading $languageName…"
-        } else {
-            if (showsPercent) "Downloading model… $percent%" else "Downloading model…"
-        }
+        return if (percent > 0) "$percent%" else null
     }
 
     /**
@@ -707,6 +711,8 @@ private fun ScrubbableWaveform(
 /**
  * The footer under the waveform (`VoiceMessageBubble.swift:403-435`): the elapsed or full time, the
  * unplayed dot, the speed chip while this note is loaded, and — on a bare note — the time and ticks.
+ * The time rolls each second while the note plays, and to the new time when a scrub lets go (the player
+ * seeks then; the time stays put during the drag).
  */
 @Composable
 private fun VoiceFooter(
@@ -720,7 +726,7 @@ private fun VoiceFooter(
 ) {
     val colors = ShroudTheme.colors
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        BasicText(time, style = inter(11f, FontWeight.Medium, tabularDigits = true).copy(color = metaColor), maxLines = 1, softWrap = false)
+        RollingText(time, inter(11f, FontWeight.Medium, tabularDigits = true), metaColor)
         AnimatedVisibility(showsUnplayedDot, enter = Motion.iconSwap.enter, exit = Motion.iconSwap.exit) {
             Canvas(Modifier.size(5.dp)) { drawCircle(colors.accent) }
         }
@@ -791,9 +797,15 @@ private fun TranscriptDrawer(
             is DrawerContent.Text -> VoiceTranscriptText(content.text, textColor, streams, reservation, Modifier.fillMaxWidth())
             DrawerContent.Working -> {
                 val downloading = installActive && install.phase == TranscriptionInstallState.Phase.Downloading
-                val text = VoiceBubbleMath.progressLabel(downloading, install.fractionCompleted, install.isDeterminate, install.languageName)
                 Column(Modifier.padding(end = clearance), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    BasicText(text, style = inter(13f, FontWeight.Medium).copy(color = metaColor), modifier = Modifier.shimmering())
+                    // The percent rolls, paced to twice a second; the bar below follows every tick.
+                    LabelWithRollingValue(
+                        VoiceBubbleMath.progressLead(downloading, install.languageName),
+                        VoiceBubbleMath.progressPercent(downloading, install.fractionCompleted, install.isDeterminate),
+                        inter(13f, FontWeight.Medium, tabularDigits = true),
+                        metaColor,
+                        Modifier.shimmering(),
+                    )
                     if (downloading && install.isDeterminate) {
                         LinearProgress(max(install.fractionCompleted, 0.02).toFloat(), progressTint)
                     }

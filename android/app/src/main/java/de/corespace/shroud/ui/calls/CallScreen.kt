@@ -97,6 +97,7 @@ import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ShareAction
 import de.corespace.shroud.ui.components.Avatar
 import de.corespace.shroud.ui.components.AvatarPalette
+import de.corespace.shroud.ui.components.RollingText
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.theme.CallColors

@@ -47,6 +47,10 @@ enum Motion {
         reduceMotion ? reduced : animation
     }
 
+    /// Shortest gap between two changes of a fast readout (bytes moved, a download's percent),
+    /// so each digit roll finishes before the next one starts. See `PacedRollingText`.
+    static let readoutPace: Duration = .milliseconds(500)
+
     // MARK: - Shared transitions
 
     /// New chat bubble: grows out of the corner it was "spoken" from.
@@ -277,7 +281,8 @@ extension View {
 
 // MARK: - Rolling digits
 
-/// Digits that roll as a readout changes — the call timer, a voice note's time, the recorder.
+/// Digits that roll as a readout changes — the call timer, a voice note's time, the recorder,
+/// the video player.
 ///
 /// Human: `.numericText()` only morphs a change made inside an animation, and a ticking clock
 /// changes outside one, so on its own the digits just snapped. This keys a snappy spring on
@@ -308,5 +313,49 @@ extension View {
         animated: Bool = true
     ) -> some View {
         modifier(RollingDigits(value: value, countsDown: countsDown, animated: animated))
+    }
+}
+
+/// A readout that can change many times a second — a transfer's bytes, a download's percent —
+/// shown with rolling digits.
+///
+/// Human: rolled on every change, the digits would morph back to back for a whole download, and
+/// the morph is a main-thread CPU blur. This shows at most one change per `Motion.readoutPace`
+/// and always ends on the latest text, so each roll finishes before the next begins.
+/// Agent: style it like a `Text` (font, colour, line limit reach it through the environment).
+/// Pass `pacing: false` once the stream ends (a transfer finished) so the final text lands at once.
+struct PacedRollingText: View {
+    private let text: String
+    private let pacing: Bool
+
+    @State private var shown: String
+    @State private var shownAt: ContinuousClock.Instant?
+
+    init(_ text: String, pacing: Bool = true) {
+        self.text = text
+        self.pacing = pacing
+        _shown = State(initialValue: text)
+    }
+
+    var body: some View {
+        Text(shown)
+            .rollingDigits(value: shown)
+            // Restarts on every new text (and when pacing stops), but the deadline hangs off the
+            // last change shown, so a stream of updates still lands one per pace instead of
+            // waiting for a pause.
+            .task(id: Pending(text: text, pacing: pacing)) {
+                guard text != shown else { return }
+                if pacing, let shownAt {
+                    try? await Task.sleep(until: shownAt + Motion.readoutPace, clock: .continuous)
+                    guard !Task.isCancelled else { return }
+                }
+                shown = text
+                shownAt = .now
+            }
+    }
+
+    private struct Pending: Equatable {
+        let text: String
+        let pacing: Bool
     }
 }

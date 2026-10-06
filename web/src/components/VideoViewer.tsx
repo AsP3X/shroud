@@ -9,6 +9,7 @@ import { clockLabel } from "../media/videoPlan";
 import { thumbnailUrl } from "./ImageBubble";
 import { ProgressRing } from "./ProgressRing";
 import { stopVoice } from "../voice/playback";
+import { RollingText } from "./RollingText";
 
 const SWIPE_CLOSE = 110;
 const TAP_SLOP = 6;
@@ -174,6 +175,12 @@ export function VideoViewer({
     else showChrome();
   }
 
+  /** Lets go of a drag on the scrubber, keeping its time: the player's own report of it was ignored meanwhile. */
+  function endScrub() {
+    if (scrub != null) setCurrent(scrub);
+    setScrub(null);
+  }
+
   function seek(fraction: number) {
     const node = player.current;
     if (!node || !(node.duration > 0)) return;
@@ -299,7 +306,11 @@ export function VideoViewer({
       </div>
 
       <div className="viewer-transport" hidden={!ready}>
-        <span>{clockLabel(shown)}</span>
+        {/* Both roll once a second while the clip plays (the remaining time downwards); a scrub
+            jumps straight to the time under the pointer. */}
+        <span>
+          <RollingText text={clockLabel(shown)} animated={scrub == null} />
+        </span>
         <input
           className="viewer-scrub"
           type="range"
@@ -311,12 +322,20 @@ export function VideoViewer({
           onPointerDown={() => setScrub(current)}
           onChange={(event) => {
             const next = Number(event.currentTarget.value) * duration;
-            setScrub(next);
+            // Only a pointer drag holds the time; an arrow key just seeks and the player reports back.
+            setScrub((held) => (held == null ? null : next));
             seek(Number(event.currentTarget.value));
           }}
-          onPointerUp={() => setScrub(null)}
+          onPointerUp={endScrub}
+          onPointerCancel={endScrub}
         />
-        <span>{duration > 0 ? `-${clockLabel(Math.max(0, duration - shown))}` : "-0:00"}</span>
+        <span>
+          <RollingText
+            text={duration > 0 ? `-${clockLabel(Math.max(0, duration - shown))}` : "-0:00"}
+            countsDown
+            animated={scrub == null}
+          />
+        </span>
       </div>
 
       {caption ? <p className="viewer-caption">{caption}</p> : null}

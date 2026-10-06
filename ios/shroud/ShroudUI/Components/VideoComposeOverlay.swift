@@ -27,6 +27,8 @@ struct VideoComposeOverlay: View {
     /// Trim window per clip id, so removing one can't hand its handles to another.
     @State private var trims: [UUID: VideoTrim] = [:]
     @State private var muted: Set<UUID> = []
+    /// While a trim handle is held: the kept length follows the finger instead of rolling.
+    @State private var isTrimming = false
     /// One quality for every clip in this send. High is at most 720p.
     @State private var quality: VideoUploadQuality = .high
     /// Filmstrip tiles per clip id, generated once each.
@@ -404,10 +406,12 @@ struct VideoComposeOverlay: View {
                     ),
                     playhead: player.currentTime,
                     onSeek: { seconds in
+                        isTrimming = true
                         player.pause()
                         player.seek(to: seconds)
                     },
                     onScrubEnd: {
+                        isTrimming = false
                         applyLoopRange()
                         player.play()
                     }
@@ -420,8 +424,9 @@ struct VideoComposeOverlay: View {
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
                         .foregroundStyle(currentPlan == nil ? Color(red: 1, green: 0.62, blue: 0.55) : Color.white.opacity(0.75))
                         .lineLimit(2)
-                        // A cross-fade, not numericText: that morph is a main-thread CPU blur.
-                        .contentTransition(.opacity)
+                        // Rolls when a quality or a released trim changes it; while a handle is
+                        // held the numbers follow the finger in place.
+                        .rollingDigits(value: selectionLabel, animated: !isTrimming)
                     Spacer(minLength: 0)
                     qualityMenu
                     if isTrimmed {
@@ -431,8 +436,7 @@ struct VideoComposeOverlay: View {
                             .transition(.opacity)
                     }
                 }
-                // Keyed on the badge, not the trim: a handle drag writes the trim every tick, and
-                // the numbers should follow the finger in place.
+                // Keyed on the badge, not the trim: a handle drag writes the trim every tick.
                 .animation(Motion.snappy, value: isTrimmed)
                 .animation(Motion.snappy, value: quality)
 

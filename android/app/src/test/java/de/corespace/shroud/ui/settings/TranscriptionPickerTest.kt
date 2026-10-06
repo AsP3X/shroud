@@ -49,10 +49,12 @@ class TranscriptionPickerTest {
     fun downloadTitle() {
         fun state(fraction: Double, determinate: Boolean) =
             TranscriptionInstallState(TranscriptionInstallState.Phase.Downloading, fraction, determinate, languageName = null, messageId = null)
-        assertEquals("Downloading Whisper… 42%", TranscriptionPicker.downloadTitle(state(0.42, true)))
-        assertEquals("Downloading Whisper… 1%", TranscriptionPicker.downloadTitle(state(0.005, true)))
-        assertEquals("Downloading Whisper…", TranscriptionPicker.downloadTitle(state(0.004, true)))
-        assertEquals("Downloading Whisper…", TranscriptionPicker.downloadTitle(state(0.5, false)))
+        fun title(state: TranscriptionInstallState) =
+            listOfNotNull(TranscriptionPicker.DOWNLOAD_TITLE, TranscriptionPicker.downloadPercent(state)).joinToString(" ")
+        assertEquals("Downloading Whisper… 42%", title(state(0.42, true)))
+        assertEquals("Downloading Whisper… 1%", title(state(0.005, true)))
+        assertEquals("Downloading Whisper…", title(state(0.004, true)))
+        assertEquals("Downloading Whisper…", title(state(0.5, false)))
         assertEquals(0.02f, TranscriptionPicker.barFraction(state(0.0, true)), 0f)
         assertEquals(0.5f, TranscriptionPicker.barFraction(state(0.5, true)), 0f)
     }

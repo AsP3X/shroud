@@ -354,20 +354,19 @@ struct VideoMessageBubble: View {
                 Text("·")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.55))
-                Text(sizeLabel)
+                // The bytes roll at most twice a second; a phase change lands at once.
+                // Monospaced digits keep the width steady as they tick.
+                PacedRollingText(sizeLabel, pacing: transfer?.phase == .transferring)
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Color.white.opacity(0.9))
                     .lineLimit(1)
-                    // Not numericText: its per-frame blur would run back to back for the whole
-                    // transfer. Monospaced digits keep the width steady as the bytes tick.
-                    .contentTransition(.opacity)
             }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3.5)
         .background(Color.black.opacity(0.45), in: Capsule())
         // Springs when a transfer starts, changes phase or ends, and when the size comes or
-        // goes; the byte ticks in between update in place.
+        // goes; the byte ticks in between roll (`PacedRollingText`).
         .animation(Motion.snappy, value: transfer?.phase)
         .animation(Motion.snappy, value: sizeLabel == nil)
     }

@@ -38,6 +38,7 @@ import {
   wasHandedOff,
 } from "../voice/transcriptView";
 import { Highlight } from "./Highlight";
+import { RollingText } from "./RollingText";
 
 
 const MIN_TRUSTED_MS = 300;
@@ -399,7 +400,11 @@ export function VoiceBubble({
             ) : null}
           </div>
           <div className="voice-footer">
-            <span className="voice-time">{formatVoiceTime(display)}</span>
+            {/* Rolls each second while it plays, and to the new time when a scrub lets go (the
+                player seeks then; the time stays put during the drag). */}
+            <span className="voice-time">
+              <RollingText text={formatVoiceTime(display)} />
+            </span>
             {unplayed ? <span className="voice-dot" aria-label="Unplayed" /> : null}
             {active ? (
               <button

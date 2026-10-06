@@ -64,9 +64,11 @@ import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.core.model.needsMediaDownload
+import de.corespace.shroud.ui.components.RollingText
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.pressable
+import de.corespace.shroud.ui.components.rememberPaced
 import de.corespace.shroud.ui.conversation.BubbleContext
 import de.corespace.shroud.ui.conversation.PdfCardCache
 import de.corespace.shroud.ui.conversation.reactions.reactionAccessibilityActions
@@ -227,7 +229,14 @@ internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modif
                     FileTile(state, type, isMine, transfer, if (showsCard) null else preview, tileTap)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         ShroudText(name, inter(15f, FontWeight.Medium), textColor, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
-                        ShroudText(meta, inter(13f, tabularDigits = true), secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // "1.2 MB of 4.8 MB" rolls while the bytes move, paced to twice a second; the size and
+                        // type after it land at once.
+                        RollingText(
+                            rememberPaced(meta, pacing = transfer?.phase == MediaTransfer.Phase.Transferring),
+                            inter(13f, tabularDigits = true),
+                            secondary,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         type?.warning?.let { warning -> FileWarningLine(warning, isMine) }
                     }
                 }

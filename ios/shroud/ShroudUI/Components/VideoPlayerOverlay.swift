@@ -227,9 +227,12 @@ struct VideoPlayerOverlay: View {
 
     private func bottomChrome(bottomInset: CGFloat) -> some View {
         HStack(spacing: 12) {
+            // Both roll once a second while the clip plays (the remaining time downwards); a
+            // scrub jumps straight to the time under the finger.
             Text(elapsedLabel)
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundStyle(Color.white)
+                .rollingDigits(value: elapsedLabel, animated: scrubTime == nil)
                 .frame(minWidth: 38, alignment: .leading)
 
             scrubber
@@ -237,6 +240,7 @@ struct VideoPlayerOverlay: View {
             Text(remainingLabel)
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundStyle(Color.white.opacity(0.75))
+                .rollingDigits(value: remainingLabel, countsDown: true, animated: scrubTime == nil)
                 .frame(minWidth: 42, alignment: .trailing)
         }
         .padding(.horizontal, 18)

@@ -38,15 +38,15 @@ class VideoComposeRulesTest {
     private val long4k = ComposeClip(UUID.randomUUID(), probe(4.0 * 3600, 3840, 2160, 80_000_000, ext = "mov"), Uri.parse("content://picker/2"))
 
     @Test
-    fun selectionLabelShowsKeptLengthResolutionAndSize() {
+    fun selectionDetailShowsResolutionAndSize() {
         val trim = VideoComposeRules.fullTrim(short.probe)
         val plan = VideoComposeRules.plan(short.probe, trim, removeAudio = false, quality = VideoUploadQuality.High)
         assertEquals(2_527_642L, plan.getOrThrow().estimatedBytes)
         // Two spaces each side of the middle dot, ≈ before the size.
-        assertEquals("0:08  ·  720p  ·  ≈2.5 MB", VideoComposeRules.selectionLabel(trim, plan, Locale.US))
+        assertEquals("720p  ·  ≈2.5 MB", VideoComposeRules.selectionDetail(plan, Locale.US))
         val original = VideoComposeRules.plan(short.probe, trim, removeAudio = false, quality = VideoUploadQuality.Original)
-        assertEquals("0:08  ·  Original  ·  ≈2 MB", VideoComposeRules.selectionLabel(trim, original, Locale.US))
-        assertEquals("0:08", VideoComposeRules.selectionLabel(trim, null))
+        assertEquals("Original  ·  ≈2 MB", VideoComposeRules.selectionDetail(original, Locale.US))
+        assertNull(VideoComposeRules.selectionDetail(null))
     }
 
     @Test
@@ -54,7 +54,7 @@ class VideoComposeRulesTest {
         val trim = VideoComposeRules.fullTrim(long4k.probe)
         val plan = VideoComposeRules.plan(long4k.probe, trim, removeAudio = false, quality = VideoUploadQuality.Original)
         assertTrue(plan.isFailure)
-        assertEquals("240:00  ·  Too long", VideoComposeRules.selectionLabel(trim, plan))
+        assertEquals("Too long", VideoComposeRules.selectionDetail(plan))
         val sentence = assertThrows(VideoPlanError::class.java) {
             VideoPlanner.previewPlan(long4k.probe, trim = trim, removeAudio = false, quality = VideoUploadQuality.Original)
         }.message!!

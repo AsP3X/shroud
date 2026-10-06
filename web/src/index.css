@@ -29,6 +29,9 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   /* The PDF pages sidebar and drawer slide (§10.2): decelerating, but without the jump at the start. */
   --pdf-slide: 280ms cubic-bezier(0.32, 0.72, 0, 1);
+  /* A rolling digit (RollingText): iOS Motion.snappy (spring response 0.26, damping 0.86), settled
+     in 210 ms. Sampled every 30 ms where linear() easing exists, else its nearest cubic. */
+  --roll: 210ms cubic-bezier(0.2, 0.8, 0.3, 1);
   --rail-w: 76px;
   --pane-w: 340px;
 
@@ -172,6 +175,32 @@ a { color: var(--accent-text); text-decoration: none; }
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* RollingText: each changed character rises in from half a line below while the old one leaves
+   upwards over it (mirrored for a count-down), like iOS .contentTransition(.numericText()). Words stay
+   whole; the spaces between them keep their width and stay the only places a line can wrap. */
+.rolling { white-space-collapse: preserve; }
+.roll-word { white-space: nowrap; }
+.roll-slot { position: relative; display: inline-block; }
+.roll-in { display: inline-block; animation: roll-in var(--roll) backwards; }
+/* Hidden unless its animation runs, so one that is cancelled or never starts leaves nothing behind;
+   the element itself goes on animationend. */
+.roll-out { position: absolute; inset: 0; opacity: 0; animation: roll-out var(--roll); }
+.rolling-down .roll-in { animation-name: roll-in-down; }
+.rolling-down .roll-out { animation-name: roll-out-down; }
+@keyframes roll-in { from { opacity: 0; transform: translateY(50%); } }
+@keyframes roll-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-50%); } }
+@keyframes roll-in-down { from { opacity: 0; transform: translateY(-50%); } }
+@keyframes roll-out-down { from { opacity: 1; } to { opacity: 0; transform: translateY(50%); } }
+@keyframes roll-fade-in { from { opacity: 0; } }
+@keyframes roll-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@supports (animation-timing-function: linear(0, 1)) {
+  :root { --roll: 210ms linear(0, 0.174, 0.461, 0.699, 0.854, 0.941, 0.983, 1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .roll-in, .rolling-down .roll-in { animation: roll-fade-in 150ms ease-out backwards; }
+  .roll-out, .rolling-down .roll-out { animation: roll-fade-out 150ms ease-out; }
 }
 /* ------------------------------------------------------ shared controls -- */
 .btn {

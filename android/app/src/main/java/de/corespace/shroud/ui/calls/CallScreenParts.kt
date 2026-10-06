@@ -10,8 +10,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -50,7 +47,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
@@ -164,36 +160,6 @@ private class TintMemory {
     var color: Color = Color.White
 }
 private const val DISABLED_ALPHA = 0.45f
-
-/**
- * A line whose characters roll in from below as they change (iOS `.contentTransition(.numericText())`
- * on the call timer, :831-835): each character position animates on its own, so "0:41" → "0:42"
- * moves only the last digit. Plain under reduce motion.
- */
-@Composable
-internal fun RollingText(text: String, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
-    if (ShroudTheme.reduceMotion) {
-        ShroudText(text, style, color, modifier, maxLines = 1)
-        return
-    }
-    Row(modifier) {
-        text.forEachIndexed { index, char ->
-            // Keyed from the end: "9:59" → "10:00" keeps the seconds' positions.
-            key(text.length - index) {
-                AnimatedContent(
-                    targetState = char,
-                    transitionSpec = {
-                        (slideInVertically(Motion.snappy()) { it / 2 } + fadeIn(Motion.snappy()))
-                            .togetherWith(slideOutVertically(Motion.snappy()) { -it / 2 } + fadeOut(Motion.snappy()))
-                    },
-                    label = "rollingChar",
-                ) { shown ->
-                    ShroudText(shown.toString(), style, color, maxLines = 1)
-                }
-            }
-        }
-    }
-}
 
 /**
  * Our screen goes out: the red pill at the top centre (`sharingIndicator`, :349-385). A pulsing

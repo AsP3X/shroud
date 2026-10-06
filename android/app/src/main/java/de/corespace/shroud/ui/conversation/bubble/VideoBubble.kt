@@ -62,10 +62,13 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.Haptic
+import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.model.displayPreview
 import de.corespace.shroud.core.model.needsMediaDownload
+import de.corespace.shroud.ui.components.RollingText
 import de.corespace.shroud.ui.components.ShroudIcon
+import de.corespace.shroud.ui.components.rememberPaced
 import de.corespace.shroud.ui.components.shimmering
 import de.corespace.shroud.ui.conversation.BubbleContext
 import de.corespace.shroud.ui.conversation.DecodedImageCache
@@ -209,7 +212,7 @@ internal fun VideoMessageBubble(parts: BubbleParts, context: BubbleContext, serv
                         onDisc = discTap,
                     )
                     if (!message.deleted && !failed) {
-                        VideoChrome(parts, durationLabel, sizeLabel, showsTimeChip = !hasFooter)
+                        VideoChrome(parts, durationLabel, sizeLabel, sizeTicks = transfer?.phase == MediaTransfer.Phase.Transferring, showsTimeChip = !hasFooter)
                     }
                 }
                 if (hasFooter && !message.deleted) MediaCaptionFooter(parts, caption, width, hasReactions)
@@ -367,10 +370,10 @@ private fun PlayDisc() {
 
 /** The duration badge top-leading and, with no caption strip, the time chip bottom-trailing (`:326-342`). */
 @Composable
-private fun VideoChrome(parts: BubbleParts, durationLabel: String, sizeLabel: String?, showsTimeChip: Boolean) {
+private fun VideoChrome(parts: BubbleParts, durationLabel: String, sizeLabel: String?, sizeTicks: Boolean, showsTimeChip: Boolean) {
     val message = parts.message
     Box(Modifier.fillMaxSize().padding(8.dp)) {
-        DurationBadge(durationLabel, sizeLabel, Modifier.align(Alignment.TopStart))
+        DurationBadge(durationLabel, sizeLabel, sizeTicks, Modifier.align(Alignment.TopStart))
         if (showsTimeChip) {
             MediaTimeChip(
                 time = parts.time,
@@ -385,11 +388,11 @@ private fun VideoChrome(parts: BubbleParts, durationLabel: String, sizeLabel: St
 
 /**
  * "▶ 0:12" plus the size while the clip is still on the server (`:344-373`). The badge springs when the
- * size comes, goes or changes phase; the byte ticks in between update in place (monospaced digits keep
- * its width steady).
+ * size comes, goes or changes phase; while the bytes [sizeTicks] they roll, at most twice a second
+ * (monospaced digits keep the badge's width steady).
  */
 @Composable
-private fun DurationBadge(durationLabel: String, sizeLabel: String?, modifier: Modifier) {
+private fun DurationBadge(durationLabel: String, sizeLabel: String?, sizeTicks: Boolean, modifier: Modifier) {
     Row(
         modifier
             .animateContentSize(Motion.snappy())
@@ -404,11 +407,10 @@ private fun DurationBadge(durationLabel: String, sizeLabel: String?, modifier: M
         BasicText(durationLabel, style = inter(11f, FontWeight.SemiBold, tabularDigits = true).copy(color = Color.White), maxLines = 1, softWrap = false)
         if (sizeLabel != null) {
             BasicText("·", style = inter(11f, FontWeight.SemiBold).copy(color = Color.White.copy(alpha = 0.55f)))
-            BasicText(
-                sizeLabel,
-                style = inter(11f, FontWeight.Medium, tabularDigits = true).copy(color = Color.White.copy(alpha = 0.9f)),
-                maxLines = 1,
-                softWrap = false,
+            RollingText(
+                rememberPaced(sizeLabel, pacing = sizeTicks),
+                inter(11f, FontWeight.Medium, tabularDigits = true),
+                Color.White.copy(alpha = 0.9f),
             )
         }
     }

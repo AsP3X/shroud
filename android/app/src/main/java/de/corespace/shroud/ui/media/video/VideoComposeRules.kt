@@ -2,7 +2,6 @@ package de.corespace.shroud.ui.media.video
 
 import android.net.Uri
 import de.corespace.shroud.core.media.ByteCountLabel
-import de.corespace.shroud.core.media.video.ChatVideoPlayer
 import de.corespace.shroud.core.media.video.VideoOutgoingPlan
 import de.corespace.shroud.core.media.video.VideoPlanError
 import de.corespace.shroud.core.media.video.VideoPlanner
@@ -78,15 +77,18 @@ internal object VideoComposeRules {
     }
 
     /**
-     * The line under the trim strip (`selectionLabel`, `:92-98`): the kept length, then "Too long"
-     * or the plan's resolution and estimated size — two spaces each side of every middle dot.
+     * The line under the trim strip (`selectionLabel`, `:92-98`) after the kept length: "Too long" or
+     * the plan's resolution and estimated size; null without a plan. The screen joins the two with
+     * [SELECTION_SEPARATOR] and rolls only the length.
      */
-    fun selectionLabel(trim: VideoTrim, plan: Result<VideoOutgoingPlan>?, locale: Locale = Locale.getDefault()): String {
-        val kept = ChatVideoPlayer.timeLabel(trim.duration)
-        if (plan == null) return kept
-        val ready = plan.getOrNull() ?: return "$kept  ·  Too long"
-        return "$kept  ·  ${ready.resolutionLabel}  ·  ≈${ByteCountLabel.format(ready.estimatedBytes, locale)}"
+    fun selectionDetail(plan: Result<VideoOutgoingPlan>?, locale: Locale = Locale.getDefault()): String? {
+        if (plan == null) return null
+        val ready = plan.getOrNull() ?: return "Too long"
+        return "${ready.resolutionLabel}$SELECTION_SEPARATOR≈${ByteCountLabel.format(ready.estimatedBytes, locale)}"
     }
+
+    /** Two spaces each side of every middle dot in the line. */
+    const val SELECTION_SEPARATOR = "  ·  "
 
     /** The menu hint: "Full size" when Original keeps the source frame, else the plan's resolution (`hint(for:plan:)`, `:546-549`). */
     fun hint(quality: VideoUploadQuality, plan: VideoOutgoingPlan): String =

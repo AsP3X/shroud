@@ -33,6 +33,7 @@ import { ringFraction, useTransfer } from "../media/transfers";
 import { LinkedText } from "./LinkedText";
 import { ProgressRing } from "./ProgressRing";
 import { thumbnailUrl } from "./ImageBubble";
+import { RollingText, usePaced } from "./RollingText";
 
 const CATEGORY_ICONS: Record<FileCategory, LucideIcon> = {
   text: FileText,
@@ -168,6 +169,8 @@ export function FileBubble({
     glyph = onDevice ? <FileCategoryIcon category={type.category} /> : <ArrowDown size={20} aria-hidden="true" />;
     metaLine = fileMetaLine(size, name, pages);
   }
+  // Rolls at most twice a second while the bytes move; the size and type after them land at once.
+  const shownMeta = usePaced(metaLine, uploading || downloading);
 
   const tileClass = [
     "file-tile",
@@ -186,7 +189,9 @@ export function FileBubble({
       </span>
       <span className="file-text">
         <FileName name={name} />
-        <span className="file-meta">{metaLine}</span>
+        <span className="file-meta">
+          <RollingText text={shownMeta} />
+        </span>
         {type?.warning ? (
           <span className="file-warning">
             <TriangleAlert size={12} aria-hidden="true" />

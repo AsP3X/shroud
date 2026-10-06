@@ -100,8 +100,9 @@ struct TranscriptionLanguageView: View {
 
     private var downloadProgressCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(downloadProgressTitle)
-                .font(.system(size: 15, weight: .semibold))
+            // The percent rolls, paced to twice a second; the bar below follows every tick.
+            PacedRollingText(downloadProgressTitle)
+                .font(.system(size: 15, weight: .semibold).monospacedDigit())
                 .foregroundStyle(Theme.textPrimary)
             if install.isDeterminate {
                 ProgressView(value: max(install.fractionCompleted, 0.02))

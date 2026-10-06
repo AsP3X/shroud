@@ -42,6 +42,7 @@ import {
   type VideoQuality,
   type VideoTrim,
 } from "../media/videoPlan";
+import { RollingText } from "./RollingText";
 
 const MAX_CAPTION = 1024;
 const STRIP_TILES = 14;
@@ -119,6 +120,8 @@ export function VideoComposer({
   const [sending, setSending] = useState(false);
   const [quality, setQuality] = useState<VideoQuality>("high");
   const [qualityOpen, setQualityOpen] = useState(false);
+  /** While a trim handle is held: the kept length follows the pointer instead of rolling. */
+  const [trimming, setTrimming] = useState(false);
   const player = useRef<HTMLVideoElement>(null);
   const qualityMenu = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -489,19 +492,26 @@ export function VideoComposer({
             trim={trim}
             playhead={playhead}
             onChange={(next, seekTo) => setTrim(next, seekTo)}
+            onHold={setTrimming}
           />
         ) : (
           <div className="vtrim skeleton" aria-hidden="true" />
         )}
         <div className="vcompose-meta">
           <span>
-            {estimate
-              ? `${clockLabel(estimate.duration)}  ·  ${estimate.resolution}  ·  ≈${formatBytes(estimate.bytes)}`
-              : inspecting
-                ? "Reading…"
-                : tooLong
-                  ? `${clockLabel(Math.max(0, kept.end - kept.start))}  ·  Too long`
-                  : " "}
+            {/* Rolls when a quality or a released trim changes it. */}
+            <RollingText
+              text={
+                estimate
+                  ? `${clockLabel(estimate.duration)}  ·  ${estimate.resolution}  ·  ≈${formatBytes(estimate.bytes)}`
+                  : inspecting
+                    ? "Reading…"
+                    : tooLong
+                      ? `${clockLabel(Math.max(0, kept.end - kept.start))}  ·  Too long`
+                      : " "
+              }
+              animated={!trimming}
+            />
           </span>
           {probe && kept.end - kept.start < probe.duration - 0.05 ? <em>TRIMMED</em> : null}
           <div className="vcompose-quality" ref={qualityMenu}>
@@ -631,12 +641,15 @@ function TrimStrip({
   trim,
   playhead,
   onChange,
+  onHold,
 }: {
   tiles: (string | null)[];
   duration: number;
   trim: VideoTrim;
   playhead: number;
   onChange: (trim: VideoTrim, seekTo: number) => void;
+  /** A handle is grabbed (true) or let go (false). */
+  onHold: (held: boolean) => void;
 }) {
   const track = useRef<HTMLDivElement>(null);
   const dragging = useRef<"start" | "end" | null>(null);
@@ -665,6 +678,7 @@ function TrimStrip({
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragging.current = which;
+    onHold(true);
     move(which, event.clientX);
   }
 
@@ -675,6 +689,7 @@ function TrimStrip({
 
   function onHandleUp() {
     dragging.current = null;
+    onHold(false);
   }
 
   const startPct = duration > 0 ? (trim.start / duration) * 100 : 0;

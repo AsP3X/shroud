@@ -9,6 +9,7 @@ import { Highlight } from "./Highlight";
 import { ProgressRing } from "./ProgressRing";
 import { Receipt } from "./Receipt";
 import { thumbnailUrl } from "./ImageBubble";
+import { RollingText, usePaced } from "./RollingText";
 
 const MAX_W = 360;
 const MAX_H = 340;
@@ -82,6 +83,9 @@ export function VideoBubble({
     if ((needsDownload || downloading) && message.mediaBytes) return formatBytes(message.mediaBytes);
     return null;
   })();
+  // The bytes roll at most twice a second; a phase change lands at once, and the label comes and goes
+  // with `sizeLabel` itself.
+  const pacedSize = usePaced(sizeLabel, transfer?.phase === "transferring");
 
   const meta = (
     <>
@@ -163,7 +167,7 @@ export function VideoBubble({
           {sizeLabel ? (
             <>
               <span className="video-badge-dot">·</span>
-              {sizeLabel}
+              <RollingText text={pacedSize ?? sizeLabel} />
             </>
           ) : null}
         </span>

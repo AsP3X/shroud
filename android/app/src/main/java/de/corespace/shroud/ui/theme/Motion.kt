@@ -103,6 +103,12 @@ object Motion {
     /** `Motion.reducedDuration` (`Motion.swift:42`). */
     const val REDUCED_MS = 150L
 
+    /**
+     * `Motion.readoutPace`: the shortest gap between two changes of a fast readout (bytes moved, a
+     * download's percent), so each digit roll finishes before the next begins (`rememberPaced`).
+     */
+    const val READOUT_PACE_MS = 500L
+
     /** Unit-mass stiffness of [menuLift]: 900 / 5. */
     const val MENU_LIFT_STIFFNESS = 180f
 
