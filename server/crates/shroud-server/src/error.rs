@@ -14,9 +14,14 @@ use uuid::Uuid;
 #[derive(Debug, Serialize)]
 pub struct ErrorBody {
     pub error: ErrorDetail,
-    /// `DEVICE_LIMIT` only: the device a login retried with `replace_device_id` would sign out.
+    /// `DEVICE_LIMIT` only: the device a login retried with `replace_device_id` would sign out
+    /// unless the user picks another; the first of `devices`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub oldest_device: Option<OldestDevice>,
+    pub oldest_device: Option<LimitDevice>,
+    /// `DEVICE_LIMIT` only: every device of the account, least recently active first, for the
+    /// user to pick a different one to sign out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub devices: Option<Vec<LimitDevice>>,
     /// `DEVICE_LIMIT` only: the account's published identity key (Base64), for the client to
     /// check the encryption phrase before it offers to sign a device out. Absent while no device
     /// of the account has published keys.
@@ -24,11 +29,14 @@ pub struct ErrorBody {
     pub identity_key: Option<String>,
 }
 
-/// The account's least recently active device, offered for sign-out when every device slot is
-/// signed in. Its sealed name stays out: the device logging in has no phrase yet to open it.
+/// A device of an account whose every slot is signed in, offered for sign-out. Its name stays
+/// sealed (Base64, as in `GET /devices`): the client opens it once the user's phrase checked out
+/// against `identity_key`, so only someone with the password and the phrase reads it.
 #[derive(Debug, Clone, Serialize)]
-pub struct OldestDevice {
+pub struct LimitDevice {
     pub id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sealed_name: Option<String>,
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_seen_at: Option<DateTime<Utc>>,
@@ -59,7 +67,8 @@ pub enum AppError {
         "This account already has the maximum number of devices (5). Remove a device and try again."
     )]
     DeviceLimit {
-        oldest_device: OldestDevice,
+        /// Least recently active first; never empty.
+        devices: Vec<LimitDevice>,
         identity_key: Option<String>,
     },
 
@@ -120,9 +129,9 @@ impl AppError {
         }
     }
 
-    pub fn device_limit(oldest_device: OldestDevice, identity_key: Option<String>) -> Self {
+    pub fn device_limit(devices: Vec<LimitDevice>, identity_key: Option<String>) -> Self {
         Self::DeviceLimit {
-            oldest_device,
+            devices,
             identity_key,
         }
     }
@@ -257,7 +266,11 @@ impl AppError {
                 message: self.client_message(),
             },
             oldest_device: match self {
-                Self::DeviceLimit { oldest_device, .. } => Some(oldest_device.clone()),
+                Self::DeviceLimit { devices, .. } => devices.first().cloned(),
+                _ => None,
+            },
+            devices: match self {
+                Self::DeviceLimit { devices, .. } => Some(devices.clone()),
                 _ => None,
             },
             identity_key: match self {

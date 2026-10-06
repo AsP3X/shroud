@@ -141,6 +141,30 @@ class ApiErrorTest {
         val bare = """{"error":{"code":"DEVICE_LIMIT","message":"x"},"oldest_device":{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","created_at":"2025-03-12T08:30:00Z"}}"""
         assertNull(ApiError.from(409, bare).deviceLimit!!.oldestDevice!!.lastSeenAt)
         assertNull(ApiError.from(409, bare).deviceLimit!!.identityKey)
+        // A server without `devices`: the oldest is the only one to choose.
+        assertEquals(listOf(java.util.UUID.fromString("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")), ApiError.from(409, bare).deviceLimit!!.candidates.map { it.id })
+    }
+
+    @Test
+    fun aFullAccountsLoginAnswerListsEveryDeviceWithItsSealedName() {
+        // v3: `devices`, least recently active first, each with its sealed name when named; `oldest_device` is the first.
+        val body = """
+        {
+          "error": { "code": "DEVICE_LIMIT", "message": "full" },
+          "oldest_device": { "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "sealed_name": "c2VhbGVk", "created_at": "2025-03-12T08:30:00Z" },
+          "devices": [
+            { "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "sealed_name": "c2VhbGVk", "created_at": "2025-03-12T08:30:00Z" },
+            { "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "created_at": "2025-06-01T10:00:00Z", "last_seen_at": "2026-10-02T08:00:00Z" }
+          ],
+          "identity_key": "a2V5"
+        }
+        """
+        val limit = ApiError.from(409, body).deviceLimit!!
+        assertEquals(2, limit.candidates.size)
+        assertEquals(limit.oldestDevice, limit.candidates.first())
+        assertEquals("c2VhbGVk", limit.candidates[0].sealedName)
+        assertNull(limit.candidates[1].sealedName)
+        assertEquals(Instant.parse("2026-10-02T08:00:00Z"), limit.candidates[1].lastSeenAt)
     }
 
     @Test

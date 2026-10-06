@@ -119,6 +119,13 @@ nonisolated struct IdentityKeyMaterial: Sendable {
         return agreement.publicKey.rawRepresentation
     }
 
+    /// The history key `words` derive, which opens the account's sealed device names. For a
+    /// login that has no keys on this device yet. Throws `BIP39Seed.SeedError` like the above.
+    static func historyKey(fromMnemonic words: [String]) throws -> SymmetricKey {
+        let seed = try BIP39Seed.seed(fromMnemonic: words)
+        return SymmetricKey(data: hkdf(seed: seed, info: "shroud-history-aes", length: 32))
+    }
+
     static func hkdf(seed: Data, info: String, length: Int) -> Data {
         let input = SymmetricKey(data: seed)
         let derived = HKDF<SHA256>.deriveKey(

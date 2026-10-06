@@ -739,7 +739,7 @@ class DtoDecodingTest {
         val allDtoSerializers: List<KSerializer<*>> = listOf(
             // Auth
             RegisterRequest.serializer(), LoginRequest.serializer(), UserDto.serializer(), DeviceDto.serializer(),
-            AuthSessionResponse.serializer(), MeResponse.serializer(), OldestDeviceDto.serializer(), DeviceLimitDto.serializer(), PasswordChangeRequest.serializer(),
+            AuthSessionResponse.serializer(), MeResponse.serializer(), LimitDeviceDto.serializer(), DeviceLimitDto.serializer(), PasswordChangeRequest.serializer(),
             DeleteAccountRequest.serializer(), HealthResponse.serializer(),
             // Devices
             LinkedDeviceDto.serializer(), DevicesResponse.serializer(), PutDeviceNameRequest.serializer(),

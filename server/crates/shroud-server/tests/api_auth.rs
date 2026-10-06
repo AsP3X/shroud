@@ -722,6 +722,28 @@ async fn login_at_device_cap_signs_out_the_oldest_device_once_agreed() {
     assert_eq!(refused["oldest_device"]["id"], oldest.as_str());
     assert!(refused["oldest_device"]["created_at"].is_string());
     assert!(refused["oldest_device"].get("sealed_name").is_none());
+    // Every device is listed, least recently active first, for the user to pick another.
+    let listed = refused["devices"].as_array().expect("devices");
+    assert_eq!(
+        listed.len() as i64,
+        shroud_server::auth::MAX_DEVICES_PER_USER
+    );
+    assert_eq!(listed[0]["id"], oldest.as_str());
+
+    // Names travel sealed: only a client whose phrase checked out can open them.
+    let sealed = BASE64.encode([0x5A_u8; 156]);
+    let named = authed(
+        &app,
+        "PUT",
+        &format!("/api/v1/devices/{oldest}/name"),
+        &oldest_token,
+        Some(json!({ "sealed_name": sealed })),
+    )
+    .await;
+    assert_eq!(named.status(), StatusCode::NO_CONTENT);
+    let refused = json_body(login_request(&app, &username, &password).await).await;
+    assert_eq!(refused["oldest_device"]["sealed_name"], sealed.as_str());
+    assert_eq!(refused["devices"][0]["sealed_name"], sealed.as_str());
     // No device has published keys yet, so there is no identity to check a phrase against.
     assert!(refused.get("identity_key").is_none());
 

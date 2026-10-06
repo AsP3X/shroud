@@ -21,6 +21,8 @@ import de.corespace.shroud.core.auth.OnboardingService
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
+import de.corespace.shroud.core.crypto.DeviceNameSeal
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.ui.shell.HoldWindowProtection
 import de.corespace.shroud.ui.shell.LocalWindowProtectionGuard
 import de.corespace.shroud.ui.shell.WindowProtection
@@ -65,6 +67,9 @@ interface OnboardingServices {
 
     /** A full account's phrase against the `409`'s identity key, before any session ([OnboardingService.checkPhrase]). */
     suspend fun checkPhrase(words: List<String>, identityKey: String)
+
+    /** A full account's device names, opened with the checked phrase's history key ([OnboardingService.openDeviceNames]). */
+    suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<UUID, DeviceNameSeal.Label?>
 
     /** What became of the session after a failed authenticated request ([OnboardingService.sessionAfterFailure]). */
     fun sessionAfterFailure(): SessionController.Validation
@@ -118,6 +123,8 @@ class ContainerOnboardingServices(
     override suspend fun login(username: String, password: String, replaceDeviceId: UUID?): Session =
         onboarding.login(username, password, replaceDeviceId)
     override suspend fun checkPhrase(words: List<String>, identityKey: String) = onboarding.checkPhrase(words, identityKey)
+    override suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<UUID, DeviceNameSeal.Label?> =
+        onboarding.openDeviceNames(words, devices)
     override fun sessionAfterFailure(): SessionController.Validation = onboarding.sessionAfterFailure()
     override suspend fun establishFromSignup(words: List<String>, session: Session) = onboarding.establishFromSignup(words, session)
     override suspend fun unlockWithPhrase(words: List<String>, session: Session) = onboarding.unlockWithPhrase(words, session)

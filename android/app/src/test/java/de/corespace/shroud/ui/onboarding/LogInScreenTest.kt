@@ -6,13 +6,14 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.view.inputmethod.EditorInfo
 import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.test.core.app.ApplicationProvider
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.net.ApiError
-import de.corespace.shroud.core.net.OldestDeviceDto
 import de.corespace.shroud.ui.components.ComposeHarness
 import de.corespace.shroud.ui.components.OverlayHost
 import kotlinx.coroutines.CompletableDeferred
@@ -25,7 +26,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.time.Instant
 import java.util.UUID
 
 /**
@@ -128,7 +128,7 @@ class LogInScreenTest {
 
     @Test
     fun aFullAccountMovesOnToThePhraseWithoutASession() {
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += LogInTest.deviceLimit()
         val ui = overlaid()
         ui.logInAsAlice()
         // The phrase first: no dialog, no inline error, no session (so no `GET keys/identity`).
@@ -142,7 +142,7 @@ class LogInScreenTest {
 
     @Test
     fun aWrongPhraseAsksNothingAndSendsNothing() {
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += LogInTest.deviceLimit()
         services.checkError = CryptoException.PhraseDoesNotMatchAccount()
         val ui = overlaid()
         ui.logInAsAlice()
@@ -154,8 +154,9 @@ class LogInScreenTest {
     }
 
     @Test
-    fun aRightPhraseAsksThenLogsTheOldestOutAndUnlocksWithTheSameWords() {
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+    fun aRightPhraseAsksAboutTheNamedOldestThenLogsItOutAndUnlocksWithTheSameWords() {
+        services.loginFailures += LogInTest.deviceLimit()
+        services.names = mapOf(LogInTest.OLDEST.id to DeviceNameSeal.Label("Noah’s iPhone", DeviceNameSeal.Kind.IPhone))
         val ui = overlaid()
         ui.logInAsAlice()
         val phrase = services.bip39.generate()
@@ -163,8 +164,12 @@ class LogInScreenTest {
         assertTrue(ui.shows(DeviceLimitCopy.TITLE))
         assertTrue(ui.shows(DeviceLimitCopy.MESSAGE))
         assertTrue(ui.shows(DeviceLimitCopy.NOTE))
+        // The name the phrase opened, and "Last active … · Linked …".
+        assertEquals(phrase, services.namesWords)
+        assertTrue(ui.shows("Noah’s iPhone"))
         assertTrue(ui.showsTextStartingWith("Last active "))
-        assertTrue(ui.showsTextStartingWith("Linked "))
+        assertTrue(ui.unmergedNodes().any { node -> node.config.getOrNull(SemanticsProperties.Text)?.any { " · Linked " in it.text } == true })
+        assertTrue(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER).isEnabled)
         assertTrue(ui.button("Cancel").isEnabled)
         // The phrase step under it is out of TalkBack's reach.
         assertFalse(ui.hasButton("Unlock Messages"))
@@ -175,6 +180,7 @@ class LogInScreenTest {
         assertTrue(ui.shows(DeviceLimitCopy.CONFIRMING))
         assertFalse(ui.button(DeviceLimitCopy.CONFIRMING).isEnabled)
         assertFalse(ui.button("Cancel").isEnabled)
+        assertFalse(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER).isEnabled)
         gate.complete(Unit)
         ui.waitUntil { unlocked == 1 }
         assertFalse(ui.shows(DeviceLimitCopy.TITLE))
@@ -188,9 +194,64 @@ class LogInScreenTest {
         assertEquals(phrase, services.lastWords)
     }
 
+    private fun ComposeHarness.pickerRow(index: Int) = tagged("login.pickDevice$index")
+
+    private val SemanticsNode.isSelected: Boolean get() = config.getOrNull(SemanticsProperties.Selected) == true
+
+    @Test
+    fun anotherDeviceIsPickedFromTheListAndLoggedOutInstead() {
+        services.loginFailures += LogInTest.deviceLimit()
+        services.names = mapOf(LogInTest.THIRD.id to DeviceNameSeal.Label("Work laptop", DeviceNameSeal.Kind.Other))
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        ui.click(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER))
+        // The picker in place of the question: every device, oldest first, the oldest tagged and ticked.
+        assertTrue(ui.shows(DeviceLimitCopy.PICKER_TITLE))
+        assertTrue(ui.shows(DeviceLimitCopy.PICKER_MESSAGE))
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        assertEquals(LogInTest.DEVICES.size, LogInTest.DEVICES.indices.count { ui.hasTag("login.pickDevice$it") })
+        assertTrue(ui.pickerRow(0).isSelected)
+        // TalkBack: name, the tag, the last activity.
+        assertTrue(ui.pickerRow(0).config[SemanticsProperties.ContentDescription].single().startsWith("Unnamed device, Oldest, Last active "))
+        assertEquals("Unnamed device, Never active", ui.pickerRow(1).config[SemanticsProperties.ContentDescription].single())
+        assertFalse(ui.pickerRow(2).isSelected)
+        ui.click(ui.pickerRow(2))
+        // Back to the question, about the picked device.
+        assertFalse(ui.shows(DeviceLimitCopy.PICKER_TITLE))
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE_OTHER))
+        assertTrue(ui.shows("Work laptop"))
+        ui.click(ui.button("Log Out and Continue"))
+        ui.waitUntil { unlocked == 1 }
+        assertEquals(
+            listOf("login:alice", "check:${LogInTest.KEY}", "login:alice:replace=${LogInTest.THIRD.id}", "unlock:device"),
+            services.calls,
+        )
+    }
+
+    @Test
+    fun thePickersCancelKeepsTheChoice() {
+        services.loginFailures += LogInTest.deviceLimit()
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        ui.click(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER))
+        ui.click(ui.pickerRow(2))
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE_OTHER))
+        ui.click(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER))
+        assertTrue(ui.pickerRow(2).isSelected)
+        assertFalse(ui.pickerRow(0).isSelected)
+        ui.click(ui.button("Cancel"))
+        // The question again, still about the third device.
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE_OTHER))
+        ui.click(ui.button("Log Out and Continue"))
+        ui.waitUntil { unlocked == 1 }
+        assertEquals("login:alice:replace=${LogInTest.THIRD.id}", services.calls[2])
+    }
+
     @Test
     fun cancelStaysOnThePhraseWithTheWordsAndUnlockAsksAgain() {
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += LogInTest.deviceLimit()
         val ui = overlaid()
         ui.logInAsAlice()
         val phrase = services.bip39.generate()
@@ -208,17 +269,21 @@ class LogInScreenTest {
 
     @Test
     fun aRetryThatFindsTheAccountFullAgainShowsTheNewOldest() {
-        val next = OldestDeviceDto(UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), Instant.parse("2025-06-01T10:00:00Z"))
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        // The oldest was gone already and another device took the slot: the new list, the new oldest.
+        val next = LogInTest.DEVICES - LogInTest.OLDEST + LogInTest.FIFTH.copy(id = UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"))
+        services.loginFailures += LogInTest.deviceLimit()
         services.loginFailures += LogInTest.deviceLimit(next)
         val ui = overlaid()
         ui.logInAsAlice()
-        ui.enterPhrase(services.bip39.generate())
-        assertFalse(ui.shows(DeviceLimitCopy.NEVER_ACTIVE))
+        val phrase = services.bip39.generate()
+        ui.enterPhrase(phrase)
+        assertFalse(ui.showsTextStartingWith(DeviceLimitCopy.NEVER_ACTIVE))
+        services.namesWords = null
         ui.click(ui.button("Log Out and Continue"))
-        // Still open, idle again, now about the device the server named next.
+        // Still open, idle again, about the new oldest ("Never active"), its names opened again.
         assertTrue(ui.shows(DeviceLimitCopy.TITLE))
-        assertTrue(ui.shows(DeviceLimitCopy.NEVER_ACTIVE))
+        assertTrue(ui.showsTextStartingWith(DeviceLimitCopy.NEVER_ACTIVE))
+        assertEquals(phrase, services.namesWords)
         assertTrue(ui.button("Log Out and Continue").isEnabled)
         ui.click(ui.button("Log Out and Continue"))
         ui.waitUntil { unlocked == 1 }
@@ -227,7 +292,7 @@ class LogInScreenTest {
                 "login:alice",
                 "check:${LogInTest.KEY}",
                 "login:alice:replace=${LogInTest.OLDEST.id}",
-                "login:alice:replace=${next.id}",
+                "login:alice:replace=${LogInTest.SECOND.id}",
                 "unlock:device",
             ),
             services.calls,
@@ -235,8 +300,39 @@ class LogInScreenTest {
     }
 
     @Test
+    fun aRetryThatFindsTheAccountFullAgainKeepsAPickStillListed() {
+        services.loginFailures += LogInTest.deviceLimit()
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.DEVICES - LogInTest.OLDEST)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        ui.click(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER))
+        ui.click(ui.pickerRow(3))
+        ui.click(ui.button("Log Out and Continue"))
+        // The fourth device is still listed: still the question about it.
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE_OTHER))
+        ui.click(ui.button("Log Out and Continue"))
+        ui.waitUntil { unlocked == 1 }
+        assertEquals(
+            listOf("login:alice:replace=${LogInTest.FOURTH.id}", "login:alice:replace=${LogInTest.FOURTH.id}"),
+            services.calls.filter { it.contains("replace") },
+        )
+    }
+
+    @Test
+    fun anOlderServersOldestDeviceOffersNoOther() {
+        services.loginFailures += LogInTest.deviceLimit(listed = false)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE))
+        assertTrue(ui.shows("Unnamed device"))
+        assertFalse(ui.hasButton(DeviceLimitCopy.CHOOSE_ANOTHER))
+    }
+
+    @Test
     fun anotherErrorOnTheRetryClosesTheDialogAndShowsOnThePhraseStep() {
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += LogInTest.deviceLimit()
         services.loginFailures += ApiError.Transport("The request timed out.")
         val ui = overlaid()
         ui.logInAsAlice()
@@ -250,7 +346,7 @@ class LogInScreenTest {
 
     @Test
     fun backFromTheWaitingPhraseStepDropsTheLimit() {
-        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += LogInTest.deviceLimit()
         val ui = overlaid()
         ui.logInAsAlice()
         ui.click(ui.button("Back"))
@@ -263,7 +359,7 @@ class LogInScreenTest {
 
     @Test
     fun aLimitWithoutAKeyOrADeviceKeepsTheInlineError() {
-        services.loginError = LogInTest.deviceLimit(LogInTest.OLDEST, identityKey = null)
+        services.loginError = LogInTest.deviceLimit(identityKey = null)
         val ui = overlaid()
         ui.logInAsAlice()
         assertTrue(ui.shows("full"))

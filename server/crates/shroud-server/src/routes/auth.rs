@@ -16,7 +16,7 @@ use crate::auth::{
     MAX_DEVICES_PER_USER, decode_username_hash, generate_share_code, hash_password,
     issue_session_token, parse_username_hash, verify_password,
 };
-use crate::error::{AppError, OldestDevice};
+use crate::error::{AppError, LimitDevice};
 use crate::rate_limit::budgets;
 use crate::state::AppState;
 
@@ -65,8 +65,9 @@ pub struct LoginRequest {
     pub username_hash: String,
     pub password: String,
     pub device_id: Option<Uuid>,
-    /// The device to sign out when every slot is signed in: the `oldest_device` of the
-    /// `DEVICE_LIMIT` answer, sent once the user agreed. Ignored while a slot is free.
+    /// The device to sign out when every slot is signed in: one of the `devices` of the
+    /// `DEVICE_LIMIT` answer (`oldest_device` unless the user picked another), sent once the user
+    /// agreed. Ignored while a slot is free.
     pub replace_device_id: Option<Uuid>,
 }
 
@@ -854,9 +855,9 @@ async fn resolve_login_device(
             return Ok(LoginDevice { id, replaced: None });
         }
 
-        // Human: Every device is signed in. The login names the least recently active one and
-        // signs it out only once the user has agreed to that very device; when the one they
-        // agreed to is gone already, they are asked again about whichever is oldest now.
+        // Human: Every device is signed in. The login names the least recently active one (and
+        // lists the rest, for the user to pick another) and signs out only the device the user
+        // agreed to; when that one is gone already, they are asked again.
         // Clients ask only after the encryption phrase checked out against `identity_key`, so
         // nobody without their phrase loses a working device to a login they can't finish.
         // Signing out means removing: a device still holding its id would otherwise sign back
@@ -873,19 +874,28 @@ async fn resolve_login_device(
             None => None,
         };
         let Some(replace) = replace else {
-            let (id, created_at, last_seen_at) =
-                sqlx::query_as::<_, (Uuid, DateTime<Utc>, Option<DateTime<Utc>>)>(
+            // Every device, least recently active first: the first is the one offered, and the
+            // user may pick another. Names stay sealed; the phrase opens them on the client.
+            let devices =
+                sqlx::query_as::<_, (Uuid, Option<Vec<u8>>, DateTime<Utc>, Option<DateTime<Utc>>)>(
                     r#"
-                    SELECT id, created_at, last_seen_at FROM devices
-                    WHERE user_id = $1 AND revoked_at IS NULL
-                    ORDER BY COALESCE(last_seen_at, created_at), created_at
-                    LIMIT 1
-                    "#,
+                SELECT id, sealed_name, created_at, last_seen_at FROM devices
+                WHERE user_id = $1 AND revoked_at IS NULL
+                ORDER BY COALESCE(last_seen_at, created_at), created_at
+                "#,
                 )
                 .bind(user_id)
-                .fetch_one(&mut **tx)
+                .fetch_all(&mut **tx)
                 .await
-                .map_err(|err| AppError::Internal(format!("find oldest device failed: {err}")))?;
+                .map_err(|err| AppError::Internal(format!("list devices at cap failed: {err}")))?
+                .into_iter()
+                .map(|(id, sealed_name, created_at, last_seen_at)| LimitDevice {
+                    id,
+                    sealed_name: sealed_name.map(|bytes| BASE64.encode(bytes)),
+                    created_at,
+                    last_seen_at,
+                })
+                .collect();
             // The same key `GET /keys/identity/:user_id` serves peers: the phrase derives it, so
             // the client can tell a wrong phrase before anything is signed out.
             let identity_key: Option<Vec<u8>> = sqlx::query_scalar(
@@ -903,11 +913,7 @@ async fn resolve_login_device(
             .await
             .map_err(|err| AppError::Internal(format!("find identity key failed: {err}")))?;
             return Err(AppError::device_limit(
-                OldestDevice {
-                    id,
-                    created_at,
-                    last_seen_at,
-                },
+                devices,
                 identity_key.map(|key| BASE64.encode(key)),
             ));
         };

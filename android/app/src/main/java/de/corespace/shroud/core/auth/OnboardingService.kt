@@ -6,11 +6,13 @@ import android.os.Build
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.keys.DeviceSecurity
 import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.IdentityKeyResponse
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.core.net.ShroudApi
@@ -51,6 +53,12 @@ interface OnboardingService {
      */
     suspend fun checkPhrase(words: List<String>, identityKey: String)
 
+    /**
+     * The sealed names of a full account's [devices], opened with the history key of [words] (a
+     * phrase [checkPhrase] accepted; [CryptoController.openDeviceNames]). Null for one that doesn't open.
+     */
+    suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<UUID, DeviceNameSeal.Label?>
+
     /** What became of the session after an authenticated request failed. Never counts anything itself. */
     fun sessionAfterFailure(): SessionController.Validation
 
@@ -89,6 +97,7 @@ class ShroudOnboardingService internal constructor(
     private val registerAccount: suspend (String, String) -> Session,
     private val loginAccount: suspend (String, String, UUID?) -> Session,
     private val checkAccountPhrase: suspend (List<String>, String) -> Unit,
+    private val openNames: suspend (List<String>, List<LimitDeviceDto>) -> Map<UUID, DeviceNameSeal.Label?>,
     private val afterFailure: () -> SessionController.Validation,
     private val establish: suspend (List<String>, Session) -> Unit,
     private val unlockPhrase: suspend (List<String>, Session) -> Unit,
@@ -108,6 +117,7 @@ class ShroudOnboardingService internal constructor(
         registerAccount = { username, password -> sessions.register(username, password) },
         loginAccount = { username, password, replace -> sessions.login(username, password, replace) },
         checkAccountPhrase = { words, identityKey -> crypto.checkPhrase(words, identityKey) },
+        openNames = { words, devices -> crypto.openDeviceNames(words, devices) },
         afterFailure = { sessions.sessionAfterFailure() },
         establish = { words, session -> crypto.establishFromSignup(words, session) },
         unlockPhrase = { words, session -> crypto.unlockWithPhrase(words, session) },
@@ -131,6 +141,9 @@ class ShroudOnboardingService internal constructor(
         loginAccount(username, password, replaceDeviceId)
 
     override suspend fun checkPhrase(words: List<String>, identityKey: String) = checkAccountPhrase(words, identityKey)
+
+    override suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<UUID, DeviceNameSeal.Label?> =
+        openNames(words, devices)
 
     override fun sessionAfterFailure(): SessionController.Validation = afterFailure()
 

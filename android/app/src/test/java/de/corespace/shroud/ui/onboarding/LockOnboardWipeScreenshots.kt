@@ -12,6 +12,7 @@ import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.WipePhase
 import de.corespace.shroud.core.auth.WipeReason
 import de.corespace.shroud.core.auth.WipeStep
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.keys.BiometricLabel
 import de.corespace.shroud.core.keys.UnlockMethod
 import de.corespace.shroud.core.keys.VaultState
@@ -297,13 +298,24 @@ class LockOnboardWipeScreenshots {
         overLock.save("login-phrase-over-lock-screen")
     }
 
-    /** "Log out your oldest device?" over the checked phrase step, light, dark and busy, the device last seen yesterday. */
+    /**
+     * "Log out your oldest device?" over the checked phrase step — light, dark and busy, the named
+     * oldest device last seen yesterday — then about another device picked, and the picker with that
+     * pick ticked and the oldest tagged.
+     */
     @Test
     fun logInDeviceLimitStates() {
         val clock = FakeAppClock(java.time.Instant.parse("2026-10-02T09:00:00Z").toEpochMilli())
-        fun full(dark: Boolean, busy: Boolean, name: String) {
+        val names = mapOf(
+            LogInTest.OLDEST.id to DeviceNameSeal.Label("Noah’s iPad", DeviceNameSeal.Kind.IPad),
+            LogInTest.THIRD.id to DeviceNameSeal.Label("Pixel 9", DeviceNameSeal.Kind.Android),
+            LogInTest.FOURTH.id to DeviceNameSeal.Label("Chrome on Mac", DeviceNameSeal.Kind.Web),
+            LogInTest.FIFTH.id to DeviceNameSeal.Label("MacBook Pro", DeviceNameSeal.Kind.Other),
+        )
+        fun full(dark: Boolean, name: String, act: (ComposeHarness, FakeOnboardingServices) -> Unit = { _, _ -> }) {
             val services = FakeOnboardingServices()
-            services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+            services.names = names
+            services.loginFailures += LogInTest.deviceLimit()
             val ui = hosts.host(dark = dark) { OverlayHost { LogInContent(services, onBack = {}, onSignUp = {}, clock = clock) } }
             ui.type(ui.field("Username"), "noah")
             ui.type(ui.field("Password"), "secret")
@@ -311,17 +323,30 @@ class LockOnboardWipeScreenshots {
             // A full account: the phrase step first; the question only once the phrase checked out.
             services.bip39.generate().forEachIndexed { i, word -> ui.type(ui.tagged("login.word${i + 1}"), word) }
             ui.click(ui.button("Unlock Messages"))
-            if (busy) {
-                services.loginGate = CompletableDeferred()
-                ui.click(ui.button("Log Out and Continue"))
-            }
+            act(ui, services)
             ui.save(name)
             services.loginGate?.complete(Unit)
         }
-        full(dark = false, busy = false, "v2-login-device-limit")
-        full(dark = true, busy = false, "v2-login-device-limit-dark")
-        full(dark = false, busy = true, "v2-login-device-limit-busy")
-        full(dark = true, busy = true, "v2-login-device-limit-busy-dark")
+        val busy: (ComposeHarness, FakeOnboardingServices) -> Unit = { ui, services ->
+            services.loginGate = CompletableDeferred()
+            ui.click(ui.button("Log Out and Continue"))
+        }
+        val pickThird: (ComposeHarness, FakeOnboardingServices) -> Unit = { ui, _ ->
+            ui.click(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER))
+            ui.click(ui.tagged("login.pickDevice2"))
+        }
+        val picker: (ComposeHarness, FakeOnboardingServices) -> Unit = { ui, services ->
+            pickThird(ui, services)
+            ui.click(ui.button(DeviceLimitCopy.CHOOSE_ANOTHER))
+        }
+        full(dark = false, "v3-login-device-limit")
+        full(dark = true, "v3-login-device-limit-dark")
+        full(dark = false, "v3-login-device-limit-busy", busy)
+        full(dark = true, "v3-login-device-limit-busy-dark", busy)
+        full(dark = false, "v3-login-device-limit-other", pickThird)
+        full(dark = true, "v3-login-device-limit-other-dark", pickThird)
+        full(dark = false, "v3-login-device-limit-picker", picker)
+        full(dark = true, "v3-login-device-limit-picker-dark", picker)
     }
 
     @Test

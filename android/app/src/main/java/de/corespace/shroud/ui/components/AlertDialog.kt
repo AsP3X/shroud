@@ -114,7 +114,7 @@ data class AlertButton(
  * tap on the dim or Cancel close it; the keyboard's Done does what [primary] does while it is
  * enabled. A null [cancelTitle] leaves [primary] alone, full width (an "OK" notice). [body] sits
  * under the message; [stackedButtons] puts [primary] full width over Cancel, for titles too long to
- * share a row.
+ * share a row. A null [primary] leaves Cancel alone, full width (a list to pick from, whose rows act).
  *
  * Agent: [visible] is the caller's state; [onDismiss] asks to hide it. [primary] calls [onDismiss]
  * first, then its own `onClick` (an iOS alert button always closes the alert), unless its
@@ -127,7 +127,7 @@ fun ShroudAlertDialog(
     title: String,
     message: String? = null,
     field: AlertField? = null,
-    primary: AlertButton,
+    primary: AlertButton?,
     onDismiss: () -> Unit,
     cancelTitle: String? = "Cancel",
     stackedButtons: Boolean = false,
@@ -147,11 +147,12 @@ fun ShroudAlertDialog(
         val reduceMotion = ShroudTheme.reduceMotion
         val transition = rememberTransition(visibility, label = "alert")
         val back by rememberOverlayBack(enabled = visible, onBack = dismissIfIdle)
-        val busy = content.primary.isLoading
+        val primary = content.primary
+        val busy = primary?.isLoading == true
         val confirm: () -> Unit = {
-            if (visibility.targetState && content.primary.enabled && !busy) {
-                if (content.primary.closesAlert) currentOnDismiss()
-                content.primary.onClick()
+            if (visibility.targetState && primary != null && primary.enabled && !busy) {
+                if (primary.closesAlert) currentOnDismiss()
+                primary.onClick()
             }
         }
 
@@ -203,15 +204,17 @@ fun ShroudAlertDialog(
                         }
                         content.body?.invoke()
                         val primaryButton: @Composable (Modifier) -> Unit = { modifier ->
-                            AlertCapsule(
-                                title = content.primary.title,
-                                fill = if (content.primary.destructive) colors.danger else colors.accent,
-                                textColor = Color.White,
-                                enabled = content.primary.enabled,
-                                onClick = confirm,
-                                modifier = modifier,
-                                isLoading = busy,
-                            )
+                            if (primary != null) {
+                                AlertCapsule(
+                                    title = primary.title,
+                                    fill = if (primary.destructive) colors.danger else colors.accent,
+                                    textColor = Color.White,
+                                    enabled = primary.enabled,
+                                    onClick = confirm,
+                                    modifier = modifier,
+                                    isLoading = busy,
+                                )
+                            }
                         }
                         val cancelButton: @Composable (Modifier) -> Unit = { modifier ->
                             if (content.cancelTitle != null) {
@@ -261,7 +264,7 @@ private data class AlertContent(
     val title: String,
     val message: String?,
     val field: AlertField?,
-    val primary: AlertButton,
+    val primary: AlertButton?,
     val cancelTitle: String?,
     val stackedButtons: Boolean,
     val body: (@Composable () -> Unit)?,

@@ -3,8 +3,10 @@ package de.corespace.shroud.ui.onboarding
 import de.corespace.shroud.core.auth.OnboardingService
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.crypto.TestWordlist
 import de.corespace.shroud.core.net.ApiError
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.ui.components.badgePulses
@@ -69,12 +71,13 @@ class OnboardingSupportTest {
         services.establishFromSignup(listOf("a", "b"), session)
         services.unlockWithPhrase(listOf("c"), session)
         services.checkPhrase(listOf("d"), "a2V5")
+        services.openDeviceNames(listOf("d"), LogInTest.DEVICES)
         core.noKey = true
         assertTrue(services.accountHasNoKey(session))
         core.keyError = ApiError.Transport("offline")
         assertTrue(runCatching { services.accountHasNoKey(session) }.exceptionOrNull() is ApiError.Transport)
         assertEquals(
-            listOf("register:Alice:pw-1", "login:alice:pw-2", "login:alice:pw-3:33333333-3333-3333-3333-333333333333", "establish:a b", "unlock:c", "check:d:a2V5", "identity", "identity"),
+            listOf("register:Alice:pw-1", "login:alice:pw-2", "login:alice:pw-3:33333333-3333-3333-3333-333333333333", "establish:a b", "unlock:c", "check:d:a2V5", "names:d:5", "identity", "identity"),
             core.calls,
         )
         // `keys.cryptoController.hasLocalIdentity` (K1), as asked.
@@ -108,6 +111,11 @@ class OnboardingSupportTest {
 
         override suspend fun checkPhrase(words: List<String>, identityKey: String) {
             calls += "check:${words.joinToString(" ")}:$identityKey"
+        }
+
+        override suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<java.util.UUID, DeviceNameSeal.Label?> {
+            calls += "names:${words.joinToString(" ")}:${devices.size}"
+            return emptyMap()
         }
 
         override fun sessionAfterFailure(): SessionController.Validation = validation

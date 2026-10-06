@@ -3,7 +3,9 @@ package de.corespace.shroud.ui.onboarding
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.crypto.TestWordlist
+import de.corespace.shroud.core.net.LimitDeviceDto
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +69,21 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
         calls += "check:$identityKey"
         lastWords = words
         checkError?.let { throw it }
+    }
+
+    /** Opened device names by id; [openDeviceNames] answers with them (null for every other device). */
+    var names: Map<UUID, DeviceNameSeal.Label> = emptyMap()
+
+    /** Thrown by [openDeviceNames]. */
+    var namesError: Throwable? = null
+
+    /** The words the names were last opened with. */
+    var namesWords: List<String>? = null
+
+    override suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<UUID, DeviceNameSeal.Label?> {
+        namesWords = words
+        namesError?.let { throw it }
+        return devices.associate { it.id to names[it.id] }
     }
 
     override fun sessionAfterFailure(): SessionController.Validation = afterFailure

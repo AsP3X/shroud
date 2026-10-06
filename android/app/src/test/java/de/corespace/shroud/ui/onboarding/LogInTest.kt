@@ -2,8 +2,12 @@ package de.corespace.shroud.ui.onboarding
 
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.crypto.DeviceNameSeal
+import de.corespace.shroud.core.devices.DeviceKind
+import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.net.ApiError
-import de.corespace.shroud.core.net.OldestDeviceDto
+import de.corespace.shroud.core.net.LimitDeviceDto
+import de.corespace.shroud.ui.settings.devices.DevicesCopy
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -116,16 +120,42 @@ class LogInTest {
     }
 
     @Test
-    fun aFullAccountWaitsForThePhraseThenLogsTheOldestOut() = runTest {
-        services.loginFailures += deviceLimit(OLDEST)
-        assertEquals(LogInActions.Outcome.DeviceLimit(OLDEST, KEY), actions.logIn("alice", "pw") { true })
+    fun aFullAccountWaitsForThePhraseThenLogsTheChosenDeviceOut() = runTest {
+        services.loginFailures += deviceLimit()
+        assertEquals(LogInActions.Outcome.DeviceLimit(DEVICES, KEY), actions.logIn("alice", "pw") { true })
         assertEquals(null, services.session.value)
         // The phrase against the 409's key, no session and no request.
         assertEquals(LogInActions.Outcome.Done, actions.checkPhrase(twelve, KEY))
         assertEquals(twelve, services.lastWords)
-        // The same credentials again, naming the device the user saw.
-        assertEquals(LogInActions.Outcome.Done, actions.logIn("alice", "pw", OLDEST.id) { true })
-        assertEquals(listOf("login:alice", "check:$KEY", "login:alice:replace=${OLDEST.id}"), services.calls)
+        // The same credentials again, naming the device the user chose.
+        assertEquals(LogInActions.Outcome.Done, actions.logIn("alice", "pw", SECOND.id) { true })
+        assertEquals(listOf("login:alice", "check:$KEY", "login:alice:replace=${SECOND.id}"), services.calls)
+    }
+
+    @Test
+    fun anOlderServersOldestDeviceIsTheOnlyChoice() = runTest {
+        // No `devices` list: the oldest alone, so nothing else to pick.
+        services.loginFailures += deviceLimit(listed = false)
+        assertEquals(LogInActions.Outcome.DeviceLimit(listOf(OLDEST), KEY), actions.logIn("alice", "pw") { true })
+        assertFalse(PendingDeviceLimit(listOf(OLDEST), KEY).canChoose)
+        assertTrue(PendingDeviceLimit(DEVICES, KEY).canChoose)
+    }
+
+    @Test
+    fun theRowsCarryTheNamesThePhraseOpens() = runTest {
+        services.names = mapOf(OLDEST.id to DeviceNameSeal.Label("Noah’s iPhone", DeviceNameSeal.Kind.IPhone))
+        val rows = actions.deviceRows(twelve, DEVICES)
+        assertEquals(twelve, services.namesWords)
+        assertEquals(DEVICES.map { it.id }, rows.map { it.id })
+        // The Devices list's mapping: the sealed kind's tile, the name; no name → "Unnamed device".
+        assertEquals(DeviceKind.IPhone, rows[0].kind)
+        assertEquals("Noah’s iPhone", DevicesCopy.displayName(rows[0]))
+        assertEquals(DeviceKind.Unknown, rows[1].kind)
+        assertEquals("Unnamed device", DevicesCopy.displayName(rows[1]))
+        assertEquals(SECOND.lastSeenAt, rows[1].lastSeenAt)
+        // A key that can't be derived leaves every row unnamed, never fails the question.
+        services.namesError = IllegalStateException("boom")
+        assertTrue(actions.deviceRows(twelve, DEVICES).all { it.label == null })
     }
 
     @Test
@@ -138,7 +168,7 @@ class LogInTest {
     @Test
     fun withoutAKeyOrADeviceTheLimitStaysInline() = runTest {
         // No `identity_key` (no device published keys): the phrase can't be checked first.
-        services.loginFailures += deviceLimit(OLDEST, identityKey = null)
+        services.loginFailures += deviceLimit(identityKey = null)
         assertEquals(LogInActions.Outcome.Failed("full"), actions.logIn("alice", "pw") { true })
         // No `oldest_device` (a server from before it): today's inline message.
         services.loginFailures += ApiError.from(409, """{"error":{"code":"DEVICE_LIMIT","message":"This account already has the maximum number of devices (5). Remove a device and try again."}}""")
@@ -151,12 +181,34 @@ class LogInTest {
     }
 
     @Test
+    fun theSelectionStartsOldestAndIsKeptWhileListed() {
+        val pending = PendingDeviceLimit(DEVICES, KEY)
+        assertEquals(OLDEST.id, pending.selectedId)
+        assertTrue(pending.selectedIsOldest)
+        val asking = pending.asked(twelve, rowsOf(DEVICES))
+        assertTrue(asking.asking)
+        assertEquals(OLDEST.id, asking.selected?.id)
+        // Picked another: the title changes; Cancel and asking again keep the pick.
+        val picked = asking.copy(selectedId = THIRD.id)
+        assertFalse(picked.selectedIsOldest)
+        assertEquals(THIRD.id, picked.closed().asked(twelve, rowsOf(DEVICES)).selectedId)
+        assertFalse(picked.copy(choosing = true).closed().choosing)
+        // Full again: the pick stays while listed, else the new oldest.
+        val without = DEVICES - OLDEST - SECOND
+        assertEquals(THIRD.id, picked.refilled(without, rowsOf(without)).selectedId)
+        assertEquals(THIRD.id, picked.refilled(without, rowsOf(without)).selected?.id)
+        val withoutPick = DEVICES - THIRD
+        assertEquals(OLDEST.id, picked.refilled(withoutPick, rowsOf(withoutPick)).selectedId)
+        assertEquals(SECOND.id, asking.copy(selectedId = OLDEST.id).refilled(DEVICES - OLDEST, rowsOf(DEVICES - OLDEST)).selectedId)
+    }
+
+    @Test
     fun aRefusedRetryKeepsAskingOnlyAboutTheCheckedKey() {
-        val asking = PendingDeviceLimit(OLDEST, KEY, twelve)
-        val next = OldestDeviceDto(UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), Instant.parse("2025-06-01T10:00:00Z"))
-        // Full again with another oldest device: the dialog stays and shows it.
+        val asking = PendingDeviceLimit(DEVICES, KEY).asked(twelve, rowsOf(DEVICES))
+        val next = DEVICES - OLDEST
+        // Full again with another list: the dialog stays, its names opened again.
         assertEquals(
-            LogInRules.ReplaceRefused(PendingDeviceLimit(next, KEY, twelve), null),
+            LogInRules.ReplaceRefused(asking, null, refill = next),
             LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.DeviceLimit(next, KEY)),
         )
         // The account's key changed: the checked phrase no longer matches — no dialog, the wrong-phrase error.
@@ -166,7 +218,7 @@ class LogInTest {
         )
         // Anything else closes the dialog with its message; Unlock checks and asks again.
         assertEquals(
-            LogInRules.ReplaceRefused(PendingDeviceLimit(OLDEST, KEY), "The request timed out."),
+            LogInRules.ReplaceRefused(asking.closed(), "The request timed out."),
             LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.Failed("The request timed out.")),
         )
         assertFalse(LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.Failed("x")).limit!!.asking)
@@ -178,10 +230,16 @@ class LogInTest {
         assertEquals("Last active 9:37", DeviceLimitCopy.lastActive(Instant.EPOCH, timeLabel))
         assertEquals("Never active", DeviceLimitCopy.lastActive(null, timeLabel))
         assertEquals("Linked 12 March 2025", DeviceLimitCopy.linked(Instant.EPOCH) { "12 March 2025" })
+        assertEquals("Last active 9:37 · Linked 12 March 2025", DeviceLimitCopy.status(Instant.EPOCH, Instant.EPOCH, timeLabel) { "12 March 2025" })
+        assertEquals("Never active · Linked 12 March 2025", DeviceLimitCopy.status(null, Instant.EPOCH, timeLabel) { "12 March 2025" })
         assertEquals(
-            "Your account is logged in on 5 devices, the most it can have. To log in here, Shroud logs out the one you used least recently:",
+            "Your account is logged in on 5 devices, the most it can have. To log in here, Shroud logs out:",
             DeviceLimitCopy.MESSAGE,
         )
+        assertEquals("Log out your oldest device?", DeviceLimitCopy.TITLE)
+        assertEquals("Log out this device?", DeviceLimitCopy.TITLE_OTHER)
+        assertEquals("Pixel 9, Oldest, Last active 9:37", DeviceLimitCopy.pickerLabel("Pixel 9", true, "Last active 9:37"))
+        assertEquals("Pixel 9, Never active", DeviceLimitCopy.pickerLabel("Pixel 9", false, "Never active"))
     }
 
     @Test
@@ -249,21 +307,37 @@ class LogInTest {
     }
 
     companion object {
-        val OLDEST = OldestDeviceDto(
-            UUID.fromString("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
-            Instant.parse("2025-03-12T08:30:00Z"),
-            Instant.parse("2026-10-01T17:05:00Z"),
-        )
+        private fun device(id: String, created: String, seen: String?) =
+            LimitDeviceDto(id = UUID.fromString(id), createdAt = Instant.parse(created), lastSeenAt = seen?.let(Instant::parse))
+
+        val OLDEST = device("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "2025-03-12T08:30:00Z", "2026-10-01T17:05:00Z")
+        val SECOND = device("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "2025-06-01T10:00:00Z", null)
+        val THIRD = device("cccccccc-cccc-4ccc-8ccc-cccccccccccc", "2025-09-20T12:00:00Z", "2026-10-02T07:40:00Z")
+        val FOURTH = device("dddddddd-dddd-4ddd-8ddd-dddddddddddd", "2026-01-05T09:00:00Z", "2026-10-02T08:15:00Z")
+        val FIFTH = device("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "2026-04-18T16:00:00Z", "2026-10-02T08:50:00Z")
+
+        /** The account's five devices, least recently active first, as the server lists them. */
+        val DEVICES = listOf(OLDEST, SECOND, THIRD, FOURTH, FIFTH)
 
         /** The account's published identity key in [deviceLimit] (any Base64; the fake checks nothing). */
         const val KEY = "mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ="
 
-        /** The server's `409 DEVICE_LIMIT` naming [oldest] and [identityKey] (`error.rs` `ErrorBody`). */
-        fun deviceLimit(oldest: OldestDeviceDto, identityKey: String? = KEY): ApiError {
-            val seen = oldest.lastSeenAt?.let { ",\"last_seen_at\":\"$it\"" }.orEmpty()
-            val device = "{\"id\":\"${oldest.id}\",\"created_at\":\"${oldest.createdAt}\"$seen}"
+        /** Unnamed rows for [devices]. */
+        fun rowsOf(devices: List<LimitDeviceDto>) = devices.map { DeviceRow(it.id, null, DeviceKind.Unknown, false, it.createdAt, it.lastSeenAt) }
+
+        /**
+         * The server's `409 DEVICE_LIMIT` (`error.rs` `ErrorBody`): [devices] (oldest first, also as
+         * `oldest_device`), [identityKey]; without [listed] only `oldest_device`, as an older server.
+         */
+        fun deviceLimit(devices: List<LimitDeviceDto> = DEVICES, identityKey: String? = KEY, listed: Boolean = true): ApiError {
+            fun json(d: LimitDeviceDto): String {
+                val name = d.sealedName?.let { ",\"sealed_name\":\"$it\"" }.orEmpty()
+                val seen = d.lastSeenAt?.let { ",\"last_seen_at\":\"$it\"" }.orEmpty()
+                return "{\"id\":\"${d.id}\"$name,\"created_at\":\"${d.createdAt}\"$seen}"
+            }
+            val list = if (listed) ",\"devices\":[${devices.joinToString(",") { json(it) }}]" else ""
             val key = identityKey?.let { ",\"identity_key\":\"$it\"" }.orEmpty()
-            return ApiError.from(409, "{\"error\":{\"code\":\"DEVICE_LIMIT\",\"message\":\"full\"},\"oldest_device\":$device$key}")
+            return ApiError.from(409, "{\"error\":{\"code\":\"DEVICE_LIMIT\",\"message\":\"full\"},\"oldest_device\":${json(devices.first())}$list$key}")
         }
     }
 }

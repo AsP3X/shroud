@@ -136,12 +136,10 @@ struct LogInFlowView: View {
             get: { deviceLimit.isPresented },
             set: { if !$0 { deviceLimit.cancel() } }
         )) {
-            if let device = deviceLimit.device {
+            if deviceLimit.selectedDevice != nil {
                 DeviceLimitSheet(
-                    device: device,
-                    isLoggingOut: deviceLimit.isLoggingOut,
-                    onConfirm: { Task { await confirmDeviceLimit() } },
-                    onCancel: { deviceLimit.cancel() }
+                    confirmation: deviceLimit,
+                    onConfirm: { Task { await confirmDeviceLimit() } }
                 )
             }
         }
@@ -739,10 +737,10 @@ struct LogInFlowView: View {
         }
     }
 
-    // Human: "Log Out and Continue" — the same login again, naming the device to log out, then
+    // Human: "Log Out and Continue" — the same login again, naming the chosen device, then
     // the rest of the phrase step with the words already checked.
     // Agent: CALLS SessionController.login(replacingDeviceID:) via DeviceLimitConfirmation; a
-    // different `oldest_device` keeps the sheet open, any other failure goes inline.
+    // full account again keeps the sheet open with the new list, any other failure goes inline.
     private func confirmDeviceLimit() async {
         let outcome = await deviceLimit.confirm { username, password, deviceID in
             try await sessionController.login(

@@ -14,6 +14,7 @@ import de.corespace.shroud.core.keys.VaultError
 import de.corespace.shroud.core.keys.VaultKeyStore
 import de.corespace.shroud.core.keys.VaultState
 import de.corespace.shroud.core.net.ApiClient
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.storage.ScriptedSealer
@@ -46,6 +47,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -208,6 +210,33 @@ class CryptoControllerTest {
         assertTrue(invalid.toString(), invalid is Bip39.PhraseException.InvalidChecksum)
         assertEquals(0, server.requestCount)
         assertNull(crypto.unlockedUserId.value)
+        assertFalse(identityStore.hasRecord())
+    }
+
+    @Test
+    fun aFullAccountsDeviceNamesOpenWithThePhrasesHistoryKey() = runBlocking<Unit> {
+        // Sealed the way a device names itself: with the history key its identity holds after login.
+        val identity = IdentityKeyMaterial.establish(bip39, words, USER_ID, oneTimePreKeyCount = 0)
+        val named = UUID.fromString("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        val other = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        val unnamed = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+        val label = DeviceNameSeal.Label("Noah’s iPhone", DeviceNameSeal.Kind.IPhone)
+        val sealed = DeviceNameSeal.seal(label, named, identity.historyKey)
+        identity.wipe()
+        val created = java.time.Instant.parse("2025-03-12T08:30:00Z")
+        val devices = listOf(
+            LimitDeviceDto(id = named, sealedName = sealed, createdAt = created),
+            // Sealed for another device id: it doesn't open here.
+            LimitDeviceDto(id = other, sealedName = sealed, createdAt = created),
+            LimitDeviceDto(id = unnamed, createdAt = created),
+        )
+        val names = crypto.openDeviceNames(words, devices)
+        assertEquals(label, names[named])
+        assertNull(names[other])
+        assertNull(names[unnamed])
+        // Another phrase's history key opens nothing; no request, nothing stored.
+        assertNull(crypto.openDeviceNames(otherWords, devices)[named])
+        assertEquals(0, server.requestCount)
         assertFalse(identityStore.hasRecord())
     }
 

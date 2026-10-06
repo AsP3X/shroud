@@ -73,11 +73,13 @@ import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.devices.DeviceKind
+import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.SystemAppClock
 import de.corespace.shroud.core.net.ApiError
-import de.corespace.shroud.core.net.OldestDeviceDto
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.ui.components.Appear
 import de.corespace.shroud.ui.components.BrandLogoMark
 import de.corespace.shroud.ui.components.BrandTileBackground
@@ -208,7 +210,7 @@ internal fun LogInContent(
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     // Every device slot is signed in: the login waits, in memory only, until the phrase checked out
-    // and the user agreed to log out the oldest device. No session meanwhile.
+    // and the user agreed to log out one of its devices. No session meanwhile.
     var deviceLimit by remember { mutableStateOf<PendingDeviceLimit?>(null) }
     var replacingDevice by remember { mutableStateOf(false) }
     // "I never got a 12-word phrase" (`:22-29`): offered once the server said KEYS_REQUIRED.
@@ -297,7 +299,7 @@ internal fun LogInContent(
                     }
                     // A full account: the phrase first, without a session; the question comes after it.
                     is LogInActions.Outcome.DeviceLimit -> {
-                        deviceLimit = PendingDeviceLimit(outcome.oldest, outcome.identityKey)
+                        deviceLimit = PendingDeviceLimit(outcome.devices, outcome.identityKey)
                         toPhraseStep()
                     }
                     is LogInActions.Outcome.Failed -> error = outcome.message
@@ -343,7 +345,7 @@ internal fun LogInContent(
                 } else {
                     // The phrase against the 409's key, on this phone: a wrong one asks nothing.
                     when (val outcome = actions.checkPhrase(chosen, pending.identityKey)) {
-                        LogInActions.Outcome.Done -> deviceLimit = pending.copy(verifiedWords = chosen)
+                        LogInActions.Outcome.Done -> deviceLimit = pending.asked(chosen, actions.deviceRows(chosen, pending.devices))
                         is LogInActions.Outcome.Failed -> error = outcome.message
                         else -> Unit
                     }
@@ -364,7 +366,7 @@ internal fun LogInContent(
         scope.launch {
             var signedIn = false
             try {
-                val outcome = actions.logIn(username, password, pending.oldest.id, localNetwork::ensure)
+                val outcome = actions.logIn(username, password, pending.selectedId, localNetwork::ensure)
                 if (outcome == LogInActions.Outcome.Done) {
                     signedIn = true
                     loggedIn()
@@ -372,7 +374,7 @@ internal fun LogInContent(
                     deviceLimit = null
                 } else {
                     val next = LogInRules.afterReplaceRefused(pending, outcome)
-                    deviceLimit = next.limit
+                    deviceLimit = next.refill?.let { devices -> next.limit?.refilled(devices, actions.deviceRows(chosen, devices)) } ?: next.limit
                     if (next.error != null) error = next.error
                 }
             } finally {
@@ -609,12 +611,16 @@ internal fun LogInContent(
         ToastHost(toast)
     }
     DeviceLimitDialog(
-        device = deviceLimit?.takeIf { it.asking }?.oldest,
+        limit = deviceLimit?.takeIf { it.asking },
         busy = replacingDevice,
         clock = clock,
         onConfirm = ::replaceOldestDevice,
         // Cancel keeps the phrase as typed and says nothing; Unlock asks again.
-        onCancel = { if (!replacingDevice) deviceLimit = deviceLimit?.copy(verifiedWords = null) },
+        onCancel = { if (!replacingDevice) deviceLimit = deviceLimit?.closed() },
+        onChooseAnother = { if (!replacingDevice) deviceLimit = deviceLimit?.copy(choosing = true) },
+        // A row picks that device and returns to the question; the picker's Cancel keeps the choice.
+        onPick = { id -> deviceLimit = deviceLimit?.copy(selectedId = id, choosing = false) },
+        onPickerCancel = { deviceLimit = deviceLimit?.copy(choosing = false) },
     )
 }
 
@@ -627,7 +633,7 @@ internal const val PASTE_FAILED = "The clipboard doesn’t hold a valid 12-word 
  *
  * - [logIn]: `POST /auth/login` (the name trimmed and lower-cased, the anchored device id). A
  *   session alone never opens the chats: the screen moves on to the phrase. A full account's
- *   `409 DEVICE_LIMIT` with its oldest device and published identity key is [Outcome.DeviceLimit];
+ *   `409 DEVICE_LIMIT` with its devices and published identity key is [Outcome.DeviceLimit];
  *   without either (an older server, an account with no keys) the phrase can't be checked first, so
  *   it stays its inline message. The retry passes that device as `replaceDeviceId`.
  * - [checkPhrase]: a full account's phrase against that identity key, on this phone, before the
@@ -643,8 +649,11 @@ internal class LogInActions(private val services: OnboardingServices) {
         data object Done : Outcome
         data class Failed(val message: String) : Outcome
 
-        /** Every device slot is signed in; logging in here would log out [oldest]. [identityKey] checks the phrase. */
-        data class DeviceLimit(val oldest: OldestDeviceDto, val identityKey: String) : Outcome
+        /**
+         * Every device slot is signed in; logging in here logs out one of [devices] (oldest first,
+         * never empty). [identityKey] checks the phrase.
+         */
+        data class DeviceLimit(val devices: List<LimitDeviceDto>, val identityKey: String) : Outcome
         data object SessionExpired : Outcome
         data object SessionEnded : Outcome
     }
@@ -665,14 +674,33 @@ internal class LogInActions(private val services: OnboardingServices) {
         throw e
     } catch (e: Throwable) {
         val limit = (e as? ApiError)?.deviceLimit
-        val oldest = limit?.oldestDevice
+        val devices = limit?.candidates.orEmpty()
         val identityKey = limit?.identityKey
-        if (oldest != null && identityKey != null) {
-            Outcome.DeviceLimit(oldest, identityKey)
+        if (devices.isNotEmpty() && identityKey != null) {
+            Outcome.DeviceLimit(devices, identityKey)
         } else {
             // "Invalid username or password.", a device limit without what the phrase check needs,
             // rate limits, transport text (`:713-715`).
             Outcome.Failed(SessionController.userMessage(e))
+        }
+    }
+
+    /**
+     * The rows of a full account's [devices] with their names opened by the checked [words] (as
+     * Settings › Devices shows them: label → name, tile and tint). A name that doesn't open, or a
+     * failure to derive the key, leaves the row unnamed ("Unnamed device").
+     */
+    suspend fun deviceRows(words: List<String>, devices: List<LimitDeviceDto>): List<DeviceRow> {
+        val labels = try {
+            services.openDeviceNames(words, devices)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        return devices.map { device ->
+            val label = labels[device.id]
+            DeviceRow(device.id, label, DeviceKind.of(label), isThisDevice = false, createdAt = device.createdAt, lastSeenAt = device.lastSeenAt)
         }
     }
 
@@ -727,15 +755,45 @@ internal class LogInActions(private val services: OnboardingServices) {
 
 /**
  * A login refused because every device slot is signed in, held in memory (the password stays in the
- * screen's fields, never stored) while the phrase step runs without a session. [verifiedWords] is
- * set once the phrase matched [identityKey]: the dialog asks about [oldest] while it is.
+ * screen's fields, never stored) while the phrase step runs without a session.
+ *
+ * [devices] are the account's devices, least recently active first (never empty). Once the phrase
+ * matched [identityKey], [verifiedWords] holds it and [rows] the devices with their opened names:
+ * the dialog asks about [selected] (the oldest until the user picks another, [choosing] while the
+ * picker is up) while [asking].
  */
 internal data class PendingDeviceLimit(
-    val oldest: OldestDeviceDto,
+    val devices: List<LimitDeviceDto>,
     val identityKey: String,
     val verifiedWords: List<String>? = null,
+    val rows: List<DeviceRow> = emptyList(),
+    val selectedId: UUID = devices.first().id,
+    val choosing: Boolean = false,
 ) {
     val asking: Boolean get() = verifiedWords != null
+
+    /** The device "Log Out and Continue" logs out. */
+    val selected: DeviceRow? get() = rows.firstOrNull { it.id == selectedId }
+
+    /** The selection is the least recently active device (the dialog's title says so). */
+    val selectedIsOldest: Boolean get() = selectedId == devices.first().id
+
+    /** There is another device to choose ("Choose Another Device"). */
+    val canChoose: Boolean get() = devices.size > 1
+
+    /** Asked with the phrase's names; the selection stays when the device is still listed. */
+    fun asked(words: List<String>, named: List<DeviceRow>): PendingDeviceLimit =
+        copy(verifiedWords = words, rows = named, choosing = false, selectedId = keptSelection(devices))
+
+    /** Closed (Cancel, a failure): Unlock checks the phrase and asks again. */
+    fun closed(): PendingDeviceLimit = copy(verifiedWords = null, choosing = false)
+
+    /** Full again with [next] (re-opened names [named]): keep the selection if listed, else the new oldest. */
+    fun refilled(next: List<LimitDeviceDto>, named: List<DeviceRow>): PendingDeviceLimit =
+        copy(devices = next, rows = named, choosing = false, selectedId = keptSelection(next))
+
+    private fun keptSelection(list: List<LimitDeviceDto>): UUID =
+        selectedId.takeIf { id -> list.any { it.id == id } } ?: list.first().id
 }
 
 /** The pure rules of the Log In screen (`LogInFlowView.swift:50-74, 404-408, 720-742`), tested on the JVM. */
@@ -770,24 +828,25 @@ internal object LogInRules {
     /** Trimmed, lower-cased, no empties (`:740-742`). */
     fun wordsToSubmit(words: List<String>): List<String> = words.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
 
-    /** What [afterReplaceRefused] leaves: the pending limit (null drops it) and the phrase step's error, if any. */
-    data class ReplaceRefused(val limit: PendingDeviceLimit?, val error: String?)
+    /** What [afterReplaceRefused] leaves: the pending limit (null drops it), the phrase step's error, and whether to re-open names. */
+    data class ReplaceRefused(val limit: PendingDeviceLimit?, val error: String?, val refill: List<LimitDeviceDto>? = null)
 
     /**
-     * The retry with `replace_device_id` did not sign in. Full again with another oldest device:
-     * the dialog stays and shows that one — unless the account's identity key changed, which the
-     * checked phrase no longer matches: the wrong-phrase error, no dialog. Any other failure closes
-     * the dialog with its message; Unlock checks and asks again.
+     * The retry with `replace_device_id` did not sign in. Full again (the chosen device was gone and
+     * another took its slot): the dialog stays with the new list ([ReplaceRefused.refill]: re-open
+     * its names, then [PendingDeviceLimit.refilled]) — unless the account's identity key changed,
+     * which the checked phrase no longer matches: the wrong-phrase error, no dialog. Any other
+     * failure closes the dialog with its message; Unlock checks and asks again.
      */
     fun afterReplaceRefused(pending: PendingDeviceLimit, outcome: LogInActions.Outcome): ReplaceRefused = when (outcome) {
         is LogInActions.Outcome.DeviceLimit ->
             if (outcome.identityKey == pending.identityKey) {
-                ReplaceRefused(pending.copy(oldest = outcome.oldest), null)
+                ReplaceRefused(pending, null, refill = outcome.devices)
             } else {
-                ReplaceRefused(PendingDeviceLimit(outcome.oldest, outcome.identityKey), WRONG_PHRASE)
+                ReplaceRefused(PendingDeviceLimit(outcome.devices, outcome.identityKey), WRONG_PHRASE)
             }
-        is LogInActions.Outcome.Failed -> ReplaceRefused(pending.copy(verifiedWords = null), outcome.message)
-        else -> ReplaceRefused(pending.copy(verifiedWords = null), null)
+        is LogInActions.Outcome.Failed -> ReplaceRefused(pending.closed(), outcome.message)
+        else -> ReplaceRefused(pending.closed(), null)
     }
 
     /** The phrase step's wrong-phrase error (`CryptoException.PhraseDoesNotMatchAccount`). */

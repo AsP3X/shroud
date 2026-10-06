@@ -29,38 +29,45 @@ data class LoginRequest(
     /** The device this phone had on the account, so a re-login reuses its row; `null` is sent as `null`. */
     @SerialName("device_id") val deviceId: UUID?,
     /**
-     * The device to log out when every slot is signed in: the [DeviceLimitDto.oldestDevice] of a
-     * `409 DEVICE_LIMIT` answer, sent only once the phrase checked out and the user agreed (server
-     * `routes/auth.rs`). Ignored while a slot is free.
+     * The device to log out when every slot is signed in: one of the [DeviceLimitDto.candidates] of
+     * a `409 DEVICE_LIMIT` answer (the oldest unless the user picked another), sent only once the
+     * phrase checked out and the user agreed (server `routes/auth.rs`). Ignored while a slot is free.
      */
     @SerialName("replace_device_id") val replaceDeviceId: UUID? = null,
 )
 
 /**
- * The account's least recently active device, beside the envelope of a login's `409 DEVICE_LIMIT`
- * (server `error.rs` `OldestDevice`). Its sealed name is not sent: a phone that is only logging in
- * has no phrase yet to open it, so the dates are all that tell it apart. `last_seen_at` is omitted
- * for a device that never was active.
+ * A device of a full account, offered for log-out in a login's `409 DEVICE_LIMIT` (server
+ * `error.rs` `LimitDevice`). Its name is sealed as in `GET /devices`; the phone opens it with the
+ * phrase's history key once the phrase checked out. `sealed_name` and `last_seen_at` are omitted
+ * when null.
  */
 @Serializable
-data class OldestDeviceDto(
+data class LimitDeviceDto(
     val id: UUID,
+    /** Base64, sealed by the account's devices (`DeviceNameSeal`); null when never named. */
+    @SerialName("sealed_name") val sealedName: String? = null,
     @SerialName("created_at") val createdAt: Instant,
     @SerialName("last_seen_at") val lastSeenAt: Instant? = null,
 )
 
 /**
  * What a login's `409 DEVICE_LIMIT` carries beside the envelope (server `error.rs` `ErrorBody`):
- * the device a retry with `replace_device_id` would log out, and the account's published identity
- * key (standard Base64, as `GET /keys/identity/{user}` sends it) so the phrase can be checked before
- * that is offered. The key is absent while no device of the account has published keys; both are
- * absent from an older server.
+ * every device of the account least recently active first ([devices]; [oldestDevice] is the first),
+ * any of which a retry with `replace_device_id` logs out, and the account's published identity key
+ * (standard Base64, as `GET /keys/identity/{user}` sends it) so the phrase can be checked before that
+ * is offered. The key is absent while no device of the account has published keys; older servers
+ * send no [devices], or nothing at all.
  */
 @Serializable
 data class DeviceLimitDto(
-    @SerialName("oldest_device") val oldestDevice: OldestDeviceDto? = null,
+    @SerialName("oldest_device") val oldestDevice: LimitDeviceDto? = null,
+    val devices: List<LimitDeviceDto> = emptyList(),
     @SerialName("identity_key") val identityKey: String? = null,
 ) {
+    /** The devices to choose from, oldest first: [devices], or just [oldestDevice] from a server without them. */
+    val candidates: List<LimitDeviceDto> get() = devices.ifEmpty { listOfNotNull(oldestDevice) }
+
     companion object {
         private val bodyJson = Json { ignoreUnknownKeys = true }
 

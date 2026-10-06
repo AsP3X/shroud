@@ -78,6 +78,11 @@ export function normalizeDeviceName(raw: string): string {
   return out.trim();
 }
 
+/** What a list shows for a device: its name, or "Unnamed device" when it has none or it won't open. */
+export function deviceDisplayName(label: DeviceLabel | null): string {
+  return label?.name.trim() || "Unnamed device";
+}
+
 /** `nonce` is for test vectors only; leave it out. */
 export function sealDeviceName(
   historyKey: Uint8Array,

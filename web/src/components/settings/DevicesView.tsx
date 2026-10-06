@@ -13,7 +13,13 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { api, ApiError, type Device, type Session } from "../../api/client";
-import { DEVICE_NAME_MAX_BYTES, normalizeDeviceName, openDeviceName, type DeviceLabel } from "../../crypto/deviceName";
+import {
+  DEVICE_NAME_MAX_BYTES,
+  deviceDisplayName,
+  normalizeDeviceName,
+  openDeviceName,
+  type DeviceLabel,
+} from "../../crypto/deviceName";
 import { loadIdentity } from "../../crypto/store";
 import { saveDeviceName } from "../../deviceNaming";
 import { fullTimestamp, listTimestamp } from "../../format";
@@ -80,10 +86,6 @@ export function DeviceTile({ label, size = 30 }: { label: DeviceLabel | null; si
   );
 }
 
-function displayName(label: DeviceLabel | null): string {
-  return label?.name.trim() || "Unnamed device";
-}
-
 
 function lastActiveLabel(device: Device): string {
   return device.last_seen_at
@@ -134,7 +136,7 @@ export function DevicesView({
     (device: Device) => (historyKey ? openDeviceName(historyKey, device.id, device.sealed_name) : null),
     [historyKey],
   );
-  const nameOf = useCallback((device: Device) => displayName(labelOf(device)), [labelOf]);
+  const nameOf = useCallback((device: Device) => deviceDisplayName(labelOf(device)), [labelOf]);
 
   const isCurrent = useCallback(
     (device: Device) => device.is_current || device.id === session.device.id,
@@ -562,7 +564,7 @@ function DeviceDetail({
       >
         <div className="info-sheet">
           <DeviceTile label={label} size={64} />
-          <strong id="dev-detail-title">{displayName(label)}</strong>
+          <strong id="dev-detail-title">{deviceDisplayName(label)}</strong>
           <span className={isCurrent ? "dev-active" : undefined}>
             {isCurrent ? "This browser · Active now" : lastActiveLabel(device)}
           </span>

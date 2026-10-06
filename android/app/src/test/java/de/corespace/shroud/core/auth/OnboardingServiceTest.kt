@@ -4,9 +4,11 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.IdentityKeyResponse
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import kotlinx.coroutines.CancellationException
@@ -81,6 +83,7 @@ class OnboardingServiceTest {
         var established = false
         var unlocked = false
         var checked = false
+        var named = false
         val service = service(
             register = { name, password ->
                 registered = name == "Noah" && password == "secret"
@@ -99,13 +102,18 @@ class OnboardingServiceTest {
             },
             secure = { true },
             check = { words, key -> checked = words == listOf("delta") && key == "a2V5" },
+            names = { words, devices ->
+                named = words == listOf("delta") && devices.isEmpty()
+                emptyMap()
+            },
         )
         assertSame(session, service.register("Noah", "secret"))
         assertSame(session, service.login("Noah", "secret"))
         service.establishFromSignup(listOf("alpha"), session)
         service.unlockWithPhrase(listOf("gamma"), session)
         service.checkPhrase(listOf("delta"), "a2V5")
-        assertTrue(registered && logged && established && unlocked && checked)
+        service.openDeviceNames(listOf("delta"), emptyList())
+        assertTrue(registered && logged && established && unlocked && checked && named)
         assertEquals(SessionController.Validation.Offline, service.sessionAfterFailure())
         assertTrue(service.hasScreenLock())
         assertFalse(service(secure = { false }).hasScreenLock())
@@ -152,6 +160,7 @@ class OnboardingServiceTest {
         register: suspend (String, String) -> Session = { _, _ -> session },
         login: suspend (String, String, UUID?) -> Session = { _, _, _ -> session },
         check: suspend (List<String>, String) -> Unit = { _, _ -> },
+        names: suspend (List<String>, List<LimitDeviceDto>) -> Map<UUID, DeviceNameSeal.Label?> = { _, _ -> emptyMap() },
         after: () -> SessionController.Validation = { SessionController.Validation.Valid },
         establish: suspend (List<String>, Session) -> Unit = { _, _ -> },
         unlock: suspend (List<String>, Session) -> Unit = { _, _ -> },
@@ -161,6 +170,7 @@ class OnboardingServiceTest {
         registerAccount = register,
         loginAccount = login,
         checkAccountPhrase = check,
+        openNames = names,
         afterFailure = after,
         establish = establish,
         unlockPhrase = unlock,

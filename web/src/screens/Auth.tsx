@@ -14,15 +14,17 @@ import {
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, TextField } from "../components/auth/Fields";
 import { PhraseDisplay, PhraseEntry } from "../components/auth/Phrase";
-import { DeviceLimitDialog } from "../components/auth/DeviceLimitDialog";
+import { DeviceLimitDialog, DevicePickerDialog } from "../components/auth/DeviceLimitDialog";
 import { hasIdentity, loadIdentity, loadPlaintextIdentity, saveIdentity } from "../crypto/store";
 import { hasVault, isVaultOpen, openVaultWithPhrase } from "../crypto/vault";
 import { hasPin, needsPhrase, sealLegacyStorage } from "../crypto/vaultAccess";
 import {
   attemptLogin,
+  isOldestSelected,
   nextDeviceLimitState,
   phraseOpensAccount,
-  replaceOldestDevice,
+  replaceSelectedDevice,
+  selectedDevice,
   type DeviceLimitEvent,
   type DeviceLimitState,
 } from "../deviceLimit";
@@ -185,9 +187,9 @@ export function Auth() {
   }
 
   async function confirmReplace() {
-    if (!limit?.words || limit.busy) return;
+    if (!limit?.words || limit.busy || limit.picking) return;
     updateLimit({ type: "confirm" });
-    const result = await replaceOldestDevice(limit.pending, limit.words);
+    const result = await replaceSelectedDevice(limit.pending, limit.words);
     updateLimit({ type: "replaced", result });
     if (result.kind === "wrong-phrase") {
       setError(WRONG_PHRASE);
@@ -348,12 +350,26 @@ export function Auth() {
         </button>
       </form>
       {limit?.words ? (
-        <DeviceLimitDialog
-          device={limit.pending.device}
-          busy={limit.busy}
-          onCancel={() => updateLimit({ type: "cancel" })}
-          onConfirm={() => void confirmReplace()}
-        />
+        limit.picking ? (
+          <DevicePickerDialog
+            devices={limit.pending.devices}
+            labels={limit.labels}
+            selectedId={limit.pending.selectedId}
+            onSelect={(id) => updateLimit({ type: "select", id })}
+            onCancel={() => updateLimit({ type: "unpick" })}
+          />
+        ) : (
+          <DeviceLimitDialog
+            device={selectedDevice(limit.pending)}
+            label={limit.labels[selectedDevice(limit.pending).id] ?? null}
+            oldest={isOldestSelected(limit.pending)}
+            canChoose={limit.pending.devices.length > 1}
+            busy={limit.busy}
+            onChoose={() => updateLimit({ type: "pick" })}
+            onCancel={() => updateLimit({ type: "cancel" })}
+            onConfirm={() => void confirmReplace()}
+          />
+        )
       ) : null}
     </AuthLayout>
   );

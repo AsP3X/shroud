@@ -12,6 +12,7 @@ import de.corespace.shroud.core.keys.VaultState
 import de.corespace.shroud.core.model.userUuid
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ErrorCodes
+import de.corespace.shroud.core.net.LimitDeviceDto
 import de.corespace.shroud.core.net.OneTimePreKeyDto
 import de.corespace.shroud.core.net.PutKeyBundleRequest
 import de.corespace.shroud.core.net.ShroudApi
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -309,6 +311,24 @@ class CryptoController(
         val key = B64.decodeStrict(identityKey)
         val matches = key != null && withContext(compute) { IdentityKeyMaterial.phraseMatches(bip39, validated, key) }
         if (!matches) throw CryptoException.PhraseDoesNotMatchAccount()
+    }
+
+    /**
+     * The names of a full account's [devices] (the login's `409 DEVICE_LIMIT`), opened with the
+     * history key of [words] — a phrase [checkPhrase] accepted — the way Settings › Devices opens
+     * them ([DeviceNameSeal.open]). Null for a device without a name or one that doesn't open. The
+     * key is derived here and zeroed; names stay in memory.
+     */
+    suspend fun openDeviceNames(words: List<String>, devices: List<LimitDeviceDto>): Map<UUID, DeviceNameSeal.Label?> {
+        val validated = bip39.validate(words)
+        return withContext(compute) {
+            val historyKey = IdentityKeyMaterial.historyKey(bip39, validated)
+            try {
+                devices.associate { it.id to DeviceNameSeal.open(it.sealedName, it.id, historyKey) }
+            } finally {
+                historyKey.fill(0)
+            }
+        }
     }
 
     /**

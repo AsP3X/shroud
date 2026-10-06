@@ -35,9 +35,9 @@ nonisolated struct AuthService: Sendable {
     /// Logs in and stores the session; reuses `device_id` when Keychain still has one.
     ///
     /// Throws `DeviceLimitError` when every device slot is signed in. Once the phrase checked out
-    /// against its `identityKey`, calling again with `replacingDeviceID` set to its
-    /// `oldestDevice.id` logs that device out to make room; the `device_id` anchor is read the
-    /// same way, so the retry sends the same one.
+    /// against its `identityKey`, calling again with `replacingDeviceID` set to one of its
+    /// `devices` logs that device out to make room; the `device_id` anchor is read the same way,
+    /// so the retry sends the same one.
     func login(
         username: String,
         password: String,
@@ -73,7 +73,8 @@ nonisolated struct AuthService: Sendable {
            let oldest = limit.oldestDevice,
            let identityKey = limit.identityKey.flatMap({ Data(base64Encoded: $0) }),
            !identityKey.isEmpty {
-            throw DeviceLimitError(oldestDevice: oldest, identityKey: identityKey, message: limit.error.message)
+            let devices = limit.devices.flatMap { $0.isEmpty ? nil : $0 } ?? [oldest]
+            throw DeviceLimitError(devices: devices, identityKey: identityKey, message: limit.error.message)
         }
         guard (200 ..< 300).contains(status) else {
             throw APIError.from(data: data, statusCode: status)

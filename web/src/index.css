@@ -2188,6 +2188,25 @@ button.reply-quote { cursor: pointer; }
 .modal-actions .btn { flex: 1; height: 42px; font-size: var(--fs-md); }
 /* Login, every device slot signed in: "Log out your oldest device?" (components/auth/DeviceLimitDialog). */
 .dev-limit .set-card { background: var(--surface-1); }
+/* The selected device's card and "Choose Another Device" right under it. */
+.dev-limit-pick { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.dev-limit-pick > .set-card { align-self: stretch; }
+.dev-limit-choose { margin-block: 0; }
+/* A long name or date line must not widen the dialog past a phone's width (nowrap text sets
+   the modal's min-content otherwise); the confirm card's date line wraps instead. */
+.dev-limit .set-row-copy { contain: inline-size; }
+.dev-limit-pick .set-row-copy > span { white-space: normal; }
+.dev-limit-pick .set-row-copy > span > span { white-space: nowrap; }
+.dev-link:disabled { opacity: 0.45; cursor: default; }
+.dev-link:disabled:hover { background: transparent; }
+/* "Choose a device to log out". */
+.dev-picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-picker-tag {
+  flex-shrink: 0;
+  font-style: normal; font-size: var(--fs-xs); font-weight: 400;
+  color: var(--text-secondary);
+}
+.dev-picker-check { color: var(--accent-text); flex-shrink: 0; }
 .modal p.dev-limit-note { font-size: var(--fs-xs); }
 .dev-spinner.on-danger {
   width: 14px; height: 14px; margin-right: 8px;

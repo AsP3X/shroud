@@ -71,6 +71,19 @@ class IdentityKeyMaterial private constructor(
         private val SALT = "shroud-v1".toByteArray()
 
         /**
+         * The 32-byte `historyKey` of [words] alone (HKDF `shroud-history-aes`, as [establish]
+         * derives it), for opening device names before any identity exists here. The caller zeroes it.
+         */
+        fun historyKey(bip39: Bip39, words: List<String>): ByteArray {
+            val seed = bip39.seed(words)
+            try {
+                return hkdf(seed, "shroud-history-aes", 32)
+            } finally {
+                seed.fill(0)
+            }
+        }
+
+        /**
          * Would [words] derive the X25519 identity public key [publicKey]? (`matchesMnemonic`; web
          * `identity.ts`): the HKDF `shroud-identity-x25519` key's public half, compared in constant
          * time. Unreadable words are no match.
