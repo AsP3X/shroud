@@ -89,12 +89,16 @@ class FakeTrack {
   stop(): void {
     this.readyState = "ended";
   }
-  /** A captured screen's size, as the browser reports it (none for a camera here). */
+  /** A capture's size, as the browser reports it. */
   size: { width: number; height: number } | null = null;
+  /** The capture's frame rate, where the browser reports one. */
+  frameRate: number | undefined = undefined;
   /** A browser that cannot change the capture once it is open. */
   refusesConstraints = false;
   getSettings(): MediaTrackSettings {
-    return this.kind === "video" ? { facingMode: this.facing, deviceId: this.deviceId, ...this.size } : {};
+    if (this.kind !== "video") return {};
+    const rate = this.frameRate === undefined ? {} : { frameRate: this.frameRate };
+    return { facingMode: this.facing, deviceId: this.deviceId, ...this.size, ...rate };
   }
   /** What `applyConstraints` was given, in order. */
   readonly applied: MediaTrackConstraints[] = [];
@@ -156,6 +160,11 @@ class FakeSender {
   }
   getParameters(): { encodings: { maxBitrate?: number; priority?: string }[] } {
     return { encodings: [{}] };
+  }
+  /** The camera's stats, as the test sets them on the peer. */
+  async getStats(): Promise<Map<string, Record<string, unknown>>> {
+    const stats = this.track?.kind === "video" ? this.peer.cameraStats : [];
+    return new Map(stats.map((stat) => [String(stat.id), stat]));
   }
   async setParameters(params: {
     encodings?: { maxBitrate?: number; maxFramerate?: number; priority?: string; scaleResolutionDownBy?: number }[];
@@ -224,6 +233,8 @@ class FakePeer {
     scale?: number;
     degradation?: string;
   }[] = [];
+  /** What the camera's sender reports (`getStats`): none until a test sets them. */
+  cameraStats: Record<string, unknown>[] = [];
   closed = false;
   /** The network refuses every path (for timeouts). */
   blocked = false;
@@ -429,6 +440,8 @@ class Device {
   connected = true;
   denyMic = false;
   denyCamera = false;
+  /** The camera's 1080p runs at 15 fps. */
+  slowCamera = false;
   /** Peer connections made from now on never connect. */
   blockPeers = false;
   /** Offers leave video out, as an older app's voice call did. */
@@ -471,7 +484,11 @@ class Device {
           const wanted = (constraints.video as MediaTrackConstraints).facingMode;
           const facing =
             typeof wanted === "object" && wanted && "exact" in wanted ? String(wanted.exact) : "user";
-          tracks.push(new FakeTrack("video", facing, facing === "user" ? "cam-front" : "cam-back"));
+          const camera = new FakeTrack("video", facing, facing === "user" ? "cam-front" : "cam-back");
+          // A 1080p front camera (the encoder sends a rung below it) and a 720p back one.
+          camera.size = facing === "user" ? { width: 1920, height: 1080 } : { width: 1280, height: 720 };
+          if (this.slowCamera) camera.frameRate = 15;
+          tracks.push(camera);
         }
         const stream = new FakeStream(tracks);
         this.streams.push(stream);
@@ -930,9 +947,26 @@ const ICE = 150;
   check(a1.view?.remoteVideo === true && a1.view.remoteCamera === true, "alice sees bob's camera");
   check(a1.view?.cameraOn === true && a1.view.mirrorSelf === true && a1.view.canSwitchCamera, "a mirrored front camera, and a second one");
   check(
-    a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 1_200_000 && t.priority === "low"),
-    "video stays near 1.2 Mbps and yields to speech",
+    a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 2_200_000 && t.scale === 1.5 && t.priority === "low"),
+    "video starts at 720p from the 1080p camera and yields to speech",
   );
+  // The link has room: the camera climbs to 1080p; then it tightens and the camera steps down.
+  const cameraTune = () => a1.peer.tuned.filter((t) => t.kind === "video").at(-1);
+  const link = (estimate: number, limitation = "none") => [
+    { id: "OT", type: "outbound-rtp", kind: "video", qualityLimitationReason: limitation },
+    { id: "RI", type: "remote-inbound-rtp", kind: "video", fractionLost: 0 },
+    { id: "T", type: "transport", selectedCandidatePairId: "CP" },
+    { id: "CP", type: "candidate-pair", availableOutgoingBitrate: estimate },
+  ];
+  a1.peer.cameraStats = link(6_000_000);
+  await clock.advance(6 * 2_000);
+  check(cameraTune()?.maxBitrate === 2_200_000, "six readings in, still 720p");
+  await clock.advance(2_000);
+  check(cameraTune()?.maxBitrate === 3_800_000 && cameraTune()?.scale === 1, `clean readings: 1080p (${JSON.stringify(cameraTune())})`);
+  a1.peer.cameraStats = link(500_000, "bandwidth");
+  await clock.advance(4 * 2_000);
+  check(cameraTune()?.maxBitrate === 600_000 && cameraTune()?.scale === 3, `a tight link: 360p (${JSON.stringify(cameraTune())})`);
+  a1.peer.cameraStats = [];
   // A video call goes to voice: both cameras off, no new offer, every event still doubled.
   const offers = server.signals.filter((s) => s.type === "sdp_offer").length;
   a1.controller.toggleCamera();
@@ -1058,6 +1092,11 @@ const ICE = 150;
   check(b1.view?.mirrorSelf === false, "the back camera is not mirrored");
   check(b1.peer.videoSender?.track?.getSettings().facingMode === "environment", "the sender sends the back camera");
   check(b1.view?.localStream?.getVideoTracks()[0]?.getSettings().facingMode === "environment", "and our picture shows it");
+  const backTune = b1.peer.tuned.filter((t) => t.kind === "video").at(-1);
+  check(
+    backTune?.track === b1.peer.videoSender?.track && backTune?.scale === 1 && backTune.maxBitrate === 2_200_000,
+    `the encoder follows the 720p back camera (${JSON.stringify({ scale: backTune?.scale, max: backTune?.maxBitrate })})`,
+  );
   a1.controller.hangup();
   await clock.advance(2_000);
 }
@@ -1310,7 +1349,7 @@ const ICE = 150;
   check(a1.view?.localStream?.getAudioTracks().length === 1, "next to the microphone");
   check(a1.view?.mirrorSelf === true && a1.view.canSwitchCamera, "the front camera, mirrored; a second one to flip to");
   check(b1.view?.remoteCamera === true, "bob is told");
-  check(a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 1_200_000), "tuned like a video call's video");
+  check(a1.peer.tuned.some((t) => t.kind === "video" && t.maxBitrate === 2_200_000), "tuned like a video call's video");
 
   // Bob turns his on too; then alice goes back to voice while bob stays on video.
   b1.controller.toggleCamera();
@@ -1442,6 +1481,16 @@ const ICE = 150;
   camera!.pause(true);
   await clock.advance(0);
   check(b1.view?.remoteCamera === false, "paused: bob sees alice's face, not a frozen frame");
+  // A paused camera sends nothing, so its stats look clean: the ladder must not climb on them.
+  const tunesBefore = a1.peer.tuned.filter((t) => t.kind === "video").length;
+  a1.peer.cameraStats = [
+    { id: "OT", type: "outbound-rtp", kind: "video", qualityLimitationReason: "none" },
+    { id: "T", type: "transport", selectedCandidatePairId: "CP" },
+    { id: "CP", type: "candidate-pair", availableOutgoingBitrate: 6_000_000 },
+  ];
+  await clock.advance(30_000);
+  check(a1.peer.tuned.filter((t) => t.kind === "video").length === tunesBefore, "a paused camera is not read");
+  a1.peer.cameraStats = [];
   check(a1.view?.cameraOn === true, "alice's video stays on, waiting for the camera");
   camera!.pause(false);
   await clock.advance(0);
@@ -1501,7 +1550,7 @@ const ICE = 150;
   const camera = a1.peer.videoSender?.track;
   const cameraTune = a1.peer.tuned.filter((t) => t.track === camera).at(-1);
   check(a1.view?.cameraOn === true && b1.view?.remoteCamera === true && b1.view.remoteScreen, "camera and screen together");
-  check(cameraTune?.maxBitrate === 350_000 && cameraTune.scale === 2, `the camera as a thumbnail (${JSON.stringify(cameraTune)})`);
+  check(cameraTune?.maxBitrate === 350_000 && cameraTune.scale === 3, `the camera as a thumbnail (${JSON.stringify(cameraTune)})`);
 
   // Bob shares too: both at once.
   b1.controller.toggleScreen();
@@ -1517,7 +1566,7 @@ const ICE = 150;
   check(a1.peer.screenSender?.track === null && a1.peer.soundSender?.track === null, "nothing more goes out");
   check(b1.view?.remoteScreen === false && b1.view.remoteCamera === true, "bob sees her camera again, full size");
   const cameraBack = a1.peer.tuned.filter((t) => t.track === camera).at(-1);
-  check(cameraBack?.maxBitrate === 1_200_000 && cameraBack.scale === 1, "the camera gets its full rate back");
+  check(cameraBack?.maxBitrate === 2_200_000 && cameraBack.scale === 1.5, "the camera gets its rung back");
 
   // Bob stops from the browser's own bar (the track ends): he is told why.
   const bobPicture = b1.displays[0].getVideoTracks()[0];
@@ -1712,6 +1761,23 @@ const ICE = 150;
   await clock.advance(0);
   check(b1.view?.endedText === RELAY_UNAVAILABLE, `the callee sees why it can't answer (${b1.view?.endedText})`);
   check(server.requests.filter((r) => r === "b1 accept").length === accepts, "and never accepts");
+  a1.controller.hangup();
+  await clock.advance(4_000);
+}
+
+/* --- a webcam whose 1080p runs slowly opens at 720p ------------------------------------------ */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  a1.slowCamera = true;
+  await connect(clock, a1, b1, "video");
+  const camera = a1.peer.videoSender?.track;
+  check(
+    JSON.stringify(camera?.applied[0]) === JSON.stringify({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }),
+    `a 15 fps 1080p is narrowed to 720p (${JSON.stringify(camera?.applied)})`,
+  );
+  check(b1.peer.videoSender?.track?.applied.length === 0, "a smooth 1080p is left alone");
   a1.controller.hangup();
   await clock.advance(4_000);
 }

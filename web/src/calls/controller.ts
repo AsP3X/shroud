@@ -38,6 +38,7 @@ import {
   cameraErrorText,
   cameraOnlyFailure,
   callErrorText,
+  cameraVideoSdp,
   endedText,
   fingerprintsMatch,
   isLive,
@@ -69,6 +70,14 @@ import {
   screenVideoConstraints,
   type ScreenQuality,
 } from "./screenQuality";
+import {
+  CameraQuality,
+  QUALITY_SAMPLE_MS,
+  cameraEncoding,
+  readCameraSample,
+  tileOf,
+  type CameraRung,
+} from "./videoQuality";
 
 /*
  * One device's side of 1:1 calls (docs/calls.md, protocol 2).
@@ -171,10 +180,13 @@ export type CallEnv = {
   alwaysRelay?(): boolean;
 };
 
-/** 720p at most, front camera first. */
+/**
+ * 1080p at most, front camera first. The encoder sends a rung of the ladder below that, as the
+ * link allows (videoQuality.ts).
+ */
 const VIDEO: MediaTrackConstraints = {
-  width: { ideal: 1280 },
-  height: { ideal: 720 },
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
   frameRate: { ideal: 30, max: 30 },
 };
 const AUDIO: MediaTrackConstraints = {
@@ -202,9 +214,6 @@ function displayOptions(): DisplayMediaStreamOptions & Record<string, unknown> {
   };
 }
 const AUDIO_MAX_BPS = 32_000;
-const VIDEO_MAX_BPS = 1_200_000;
-/** Our camera while our screen is shared: they show it as a small tile, so a thumbnail's worth. */
-const TILE_MAX_BPS = 350_000;
 const SCREEN_SOUND_MAX_BPS = 128_000;
 
 type TimerKey =
@@ -219,7 +228,7 @@ type TimerKey =
   | "endTimer";
 /** What a section carries: by kind, then by place (docs/calls.md, "Screen sharing"). */
 type Section = "mic" | "camera" | "screen" | "screenSound";
-type IntervalKey = "heartbeat" | "ringCheck";
+type IntervalKey = "heartbeat" | "ringCheck" | "qualityCheck";
 
 type Call = {
   key: number;
@@ -267,6 +276,10 @@ type Call = {
   remote: MediaStream | null;
   /** Our video section: the camera's track goes on its sender and comes off it again. */
   video: RTCRtpTransceiver | null;
+  /** How sharp our camera goes out: a rung of the ladder, moved by the link (videoQuality.ts). */
+  quality: CameraQuality;
+  /** A stats reading is on its way; the next tick waits for it. */
+  sampling: boolean;
   /** The open camera (also while its picture fades out after Video went off). */
   camera: MediaStreamTrack | null;
   /** The browser or the system paused the camera (another app took it, the page went away). */
@@ -367,10 +380,27 @@ function peerConfig(servers: RTCIceServer[], relay: boolean): RTCConfiguration {
   };
 }
 
-/** Opus as each audio section needs it (speech on the microphone's, music on the screen's), and
- *  VP8 first for the screen's picture. */
+/**
+ * A camera whose 1080p runs slower than 25 fps (some webcams) is opened at 720p instead: a smooth
+ * 720p looks better than a stuttering 1080p at every rung. Browsers pick the mode nearest the
+ * `ideal`s, which can be such a slow 1080p.
+ */
+async function smoothCamera(track: MediaStreamTrack | null | undefined): Promise<void> {
+  if (!track || typeof track.getSettings !== "function" || typeof track.applyConstraints !== "function") return;
+  const { width = 0, height = 0, frameRate } = track.getSettings();
+  if (frameRate === undefined || frameRate >= 25 || Math.max(width, height) <= 1280) return;
+  await track
+    .applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } })
+    .catch(() => undefined);
+}
+
+/** Opus as each audio section needs it (speech on the microphone's, music on the screen's),
+ *  H.264 first for the camera's picture and VP8 first for the screen's. */
 function withVoice(description: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
-  return { type: description.type, sdp: screenVideoSdp(screenSoundSdp(voiceSdp(description.sdp ?? ""))) };
+  return {
+    type: description.type,
+    sdp: cameraVideoSdp(screenVideoSdp(screenSoundSdp(voiceSdp(description.sdp ?? "")))),
+  };
 }
 
 /**
@@ -396,13 +426,14 @@ function sectionOf(pc: RTCPeerConnection, transceiver: RTCRtpTransceiver): Secti
 type Sharing = { screen: RTCRtpSender | null; sound: RTCRtpSender | null; on: boolean; quality: ScreenQuality };
 
 /**
- * Speech at about 32 kbps, first in line. The camera at about 1.2 Mbps and 30 fps, shedding rate
- * and detail together; while our screen is shared, a thumbnail's worth (they show it as a tile).
+ * Speech at about 32 kbps, first in line. The camera at its rung of the ladder (videoQuality.ts),
+ * shedding rate and detail together within it; while our screen is shared, a thumbnail's worth
+ * (they show it as a tile).
  * The screen at the chosen frame rate and a bitrate to match (2.5 Mbps at 1080p and 30 fps),
  * ahead of the camera and behind speech: up to 30 fps it keeps its sharpness and gives up frames
  * when the link is tight, at 60 it gives up some of each. Its sound at about 128 kbps.
  */
-function tuneSenders(pc: RTCPeerConnection, sharing: Sharing): void {
+function tuneSenders(pc: RTCPeerConnection, sharing: Sharing, camera: CameraRung): void {
   if (typeof pc.getSenders !== "function") return;
   for (const sender of pc.getSenders()) {
     const track = sender.track;
@@ -427,9 +458,10 @@ function tuneSenders(pc: RTCPeerConnection, sharing: Sharing): void {
         encoding.priority = "high";
         encoding.networkPriority = "high";
       } else if (track.kind === "video") {
-        encoding.maxBitrate = sharing.on ? TILE_MAX_BPS : VIDEO_MAX_BPS;
-        encoding.maxFramerate = sharing.on ? 15 : 30;
-        encoding.scaleResolutionDownBy = sharing.on ? 2 : 1;
+        const shape = cameraEncoding(sharing.on ? tileOf(camera) : camera, track.getSettings?.() ?? {});
+        encoding.maxBitrate = shape.maxBitrate;
+        encoding.maxFramerate = shape.maxFramerate;
+        encoding.scaleResolutionDownBy = shape.scaleResolutionDownBy;
         // Below speech, so a tight link fills the microphone before the camera.
         encoding.priority = "low";
         encoding.networkPriority = "low";
@@ -603,6 +635,7 @@ export class CallController {
     for (const constraints of [wanted, oldDevice ? { ...VIDEO, deviceId: { exact: oldDevice } } : VIDEO]) {
       try {
         fresh = (await this.env.getUserMedia({ video: constraints })).getVideoTracks()[0] ?? null;
+        await smoothCamera(fresh);
       } catch {
         fresh = null;
       }
@@ -625,6 +658,8 @@ export class CallController {
       return;
     }
     this.useCamera(call, fresh);
+    // The other camera may capture at another size: a new ceiling, and a new shrink to the rung.
+    this.tune(call);
     this.publish(call);
   }
 
@@ -643,6 +678,7 @@ export class CallController {
       let failure: unknown = null;
       try {
         track = (await this.env.getUserMedia({ video: { ...VIDEO, facingMode: "user" } })).getVideoTracks()[0] ?? null;
+        await smoothCamera(track);
       } catch (err) {
         failure = err;
       }
@@ -882,12 +918,50 @@ export class CallController {
 
   private tune(call: Call): void {
     if (!call.pc) return;
-    tuneSenders(call.pc, {
-      screen: call.screen?.sender ?? null,
-      sound: call.screenSound?.sender ?? null,
-      on: call.display !== null,
-      quality: this.screenQuality,
-    });
+    const settings = call.camera?.getSettings?.();
+    call.quality.setCapture(Math.max(settings?.width ?? 0, settings?.height ?? 0));
+    tuneSenders(
+      call.pc,
+      {
+        screen: call.screen?.sender ?? null,
+        sound: call.screenSound?.sender ?? null,
+        on: call.display !== null,
+        quality: this.screenQuality,
+      },
+      call.quality.rung,
+    );
+  }
+
+  /**
+   * Every two seconds while the call is up: the camera's stats move it along the ladder, and the
+   * encoder takes a new rung at once. Not while the camera is off, paused by the system, or goes
+   * out as a tile: a camera that sends nothing reads as a clean link.
+   */
+  private watchQuality(call: Call): void {
+    if (call.qualityCheck !== null) return;
+    call.qualityCheck = this.env.setInterval(() => void this.sampleQuality(call), QUALITY_SAMPLE_MS);
+  }
+
+  private async sampleQuality(call: Call): Promise<void> {
+    const sender = call.video?.sender;
+    if (this.gone(call) || !call.pc || !sender || call.sampling) return;
+    if (!call.cameraOn || call.cameraMuted || !sender.track || call.display !== null || call.reconnecting) {
+      call.quality.pause();
+      return;
+    }
+    if (typeof sender.getStats !== "function") return;
+    call.sampling = true;
+    let report: RTCStatsReport | null = null;
+    try {
+      // The sender's own stats: its outbound-rtp, what the other side reports for it, the link.
+      report = await sender.getStats();
+    } catch {
+      report = null;
+    }
+    call.sampling = false;
+    if (!report || this.gone(call) || !call.cameraOn || call.cameraMuted || call.display !== null) return;
+    const sample = readCameraSample(report.values() as Iterable<Record<string, unknown>>);
+    if (sample && call.quality.sample(sample)) this.tune(call);
   }
 
   /**
@@ -1113,6 +1187,8 @@ export class CallController {
       local: null,
       remote: null,
       video: null,
+      quality: new CameraQuality(),
+      sampling: false,
       camera: null,
       cameraMuted: false,
       cameraPending: false,
@@ -1157,6 +1233,7 @@ export class CallController {
       endTimer: null,
       heartbeat: null,
       ringCheck: null,
+      qualityCheck: null,
     };
     this.call = call;
     return call;
@@ -1314,6 +1391,7 @@ export class CallController {
       if (call.modality === "video") {
         try {
           stream = await this.env.getUserMedia({ audio: AUDIO, video: { ...VIDEO, facingMode: "user" } });
+          await smoothCamera(stream.getVideoTracks()[0]);
         } catch (err) {
           // Blocked or missing camera: the call can still go on with sound.
           if (!cameraOnlyFailure(err)) throw err;
@@ -1793,6 +1871,7 @@ export class CallController {
           call.phase = "active";
           call.connectedAt = this.env.now();
           this.stop(call, "connectTimer");
+          this.watchQuality(call);
           this.env.keepAwake(true);
           this.publish(call);
         } else if (call.reconnecting) {
@@ -2006,6 +2085,7 @@ export class CallController {
     }
     this.stopInterval(call, "heartbeat");
     this.stopInterval(call, "ringCheck");
+    this.stopInterval(call, "qualityCheck");
     this.env.tone(null);
     this.env.keepAwake(false);
     const pc = call.pc;

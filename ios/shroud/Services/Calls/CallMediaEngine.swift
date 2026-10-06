@@ -63,7 +63,19 @@ final class CallMediaEngine: NSObject {
     /// the speaking indicator asks for this sender many times a second.
     private var audioSender: RTCRtpSender?
     /// Our video section: the caller's from `start`, the callee's from the offer.
-    private var videoTransceiver: RTCRtpTransceiver?
+    private var videoTransceiver: RTCRtpTransceiver? {
+        didSet { videoSender = videoTransceiver?.sender }
+    }
+    /// The camera section's sender, kept like `audioSender`: the quality readings ask for its
+    /// stats every two seconds.
+    private var videoSender: RTCRtpSender?
+    /// How sharp our camera goes out: a rung of the ladder, moved by the link
+    /// (`CallVideoQuality`). New for each call.
+    private var cameraQuality = CameraQuality()
+    /// Reads the camera's stats every two seconds while the link is connected.
+    private var qualityWatch: Task<Void, Never>?
+    /// A stats reading is on its way; the next one waits for it.
+    private var samplingQuality = false
     /// Our screen's picture and sound sections, found the same way. Nil in a call with an older
     /// app. The sound's stays empty: this app shares the picture only (for now).
     private var screenTransceiver: RTCRtpTransceiver?
@@ -71,6 +83,10 @@ final class CallMediaEngine: NSObject {
     private var screenTrack: RTCVideoTrack?
     private var screenOn = false
     private var cameraOn = false
+    /// The system paused our camera (Shroud left the screen, another app took the camera): no
+    /// frames go out, so its stats say nothing about the link. Cleared when the camera goes on,
+    /// off, or the call ends.
+    private var cameraPaused = false
     private var camera: CallCamera?
     #if DEBUG && targetEnvironment(simulator)
     private var testPattern: TestPatternCapturer?
@@ -193,6 +209,10 @@ final class CallMediaEngine: NSObject {
             delegate: self
         ) else { return }
         peerConnection = connection
+        // The bandwidth estimate starts at 1 Mbps instead of WebRTC's 300 kbps, so the camera is
+        // sharp from the call's first seconds (docs/calls.md, "Camera quality"). Only here: set
+        // mid-call it would throw away what the estimator has learned.
+        _ = connection.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: 1_000_000), maxBitrateBps: nil)
 
         let audioConstraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -294,6 +314,7 @@ final class CallMediaEngine: NSObject {
     func stopCamera() {
         guard cameraOn else { return }
         cameraOn = false
+        cameraPaused = false
         videoTransceiver?.sender.track = nil
         localVideoTrack?.isEnabled = false
         localFrames.disarm()
@@ -309,14 +330,20 @@ final class CallMediaEngine: NSObject {
     }
 
     /// A camera track and what feeds it: the device camera, or the simulator's test pattern.
+    /// Up to 1080p30 goes in; the encoder sends a rung of the ladder below that
+    /// (`CallVideoQuality`), and our own picture stays full size.
     private func makeVideoTrack() -> RTCVideoTrack? {
         guard CallCamera.isAvailable || Self.simulatorPattern else { return nil }
         let source = Self.factory.videoSource()
-        source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
+        source.adaptOutputFormat(toWidth: 1920, height: 1080, fps: 30)
         let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
         if CallCamera.isAvailable {
             let camera = CallCamera(source: source)
-            camera.onPaused = { [weak self] paused in self?.onCameraPaused?(paused) }
+            camera.onPaused = { [weak self] paused in
+                guard let self else { return }
+                cameraPaused = paused
+                onCameraPaused?(paused)
+            }
             self.camera = camera
         } else {
             #if DEBUG && targetEnvironment(simulator)
@@ -331,6 +358,7 @@ final class CallMediaEngine: NSObject {
     private func startCapture(_ track: RTCVideoTrack) {
         track.isEnabled = true
         cameraOn = true
+        cameraPaused = false
         localFrames.arm()
         camera?.start()
         #if DEBUG && targetEnvironment(simulator)
@@ -389,7 +417,7 @@ final class CallMediaEngine: NSObject {
                 }
             }
         }
-        let tuned = CallSdp.withScreenVideo(CallSdp.withScreenSound(CallSdp.withVoiceResilience(sdp)))
+        let tuned = Self.withCodecs(sdp)
         try await setLocal(RTCSessionDescription(type: .offer, sdp: tuned), on: connection)
         tuneSenders()
         return tuned
@@ -410,12 +438,19 @@ final class CallMediaEngine: NSObject {
                 }
             }
         }
-        let tuned = CallSdp.withScreenVideo(CallSdp.withScreenSound(CallSdp.withVoiceResilience(sdp)))
+        let tuned = Self.withCodecs(sdp)
         try await setLocal(RTCSessionDescription(type: .answer, sdp: tuned), on: connection)
         tuneSenders()
         refreshRemoteVideo()
         refreshRemoteScreen()
         return tuned
+    }
+
+    /// Our own description, offer or answer: Opus as each audio section needs it (speech on the
+    /// microphone's, music on the screen's), H.264 first for the camera's picture and VP8 first
+    /// for the screen's. The web does the same (`withVoice`).
+    private static func withCodecs(_ sdp: String) -> String {
+        CallSdp.withCameraVideo(CallSdp.withScreenVideo(CallSdp.withScreenSound(CallSdp.withVoiceResilience(sdp))))
     }
 
     /// Callee: the offer's camera and screen sections become ours both ways. With no track on
@@ -485,7 +520,7 @@ final class CallMediaEngine: NSObject {
     /// stats collector answers from the signaling thread, and only the number crosses back.
     func localAudioLevel() async -> Float? {
         guard let connection = peerConnection, let sender = audioSender else { return nil }
-        let gate = LevelGate()
+        let gate = StatsGate<Float?>()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (cont: CheckedContinuation<Float?, Never>) in
                 gate.arm(cont)
@@ -535,9 +570,14 @@ final class CallMediaEngine: NSObject {
     func switchCamera() {
         guard cameraOn else { return }
         camera?.switchCamera()
+        // The other camera may open at another size: the ladder's ceiling and the shrink follow.
+        tuneSenders()
     }
 
     func close() {
+        stopWatchingQuality()
+        cameraQuality = CameraQuality()
+        samplingQuality = false
         camera?.close()
         camera = nil
         #if DEBUG && targetEnvironment(simulator)
@@ -545,6 +585,7 @@ final class CallMediaEngine: NSObject {
         testPattern = nil
         #endif
         cameraOn = false
+        cameraPaused = false
         videoTransceiver = nil
         screenOn = false
         screenTransceiver = nil
@@ -568,6 +609,7 @@ final class CallMediaEngine: NSObject {
         relayOnly = false
         peerLink = .closed
         iceLink = .closed
+        link = .closed
         audioTrack = nil
         audioSender = nil
         localVideoTrack = nil
@@ -605,13 +647,21 @@ final class CallMediaEngine: NSObject {
         }
     }
 
-    /// Speech near 32 kbps, first in line. The camera near 1.2 Mbps at 30 fps, shedding rate and
-    /// detail together; while our screen is shared, a thumbnail's worth (they show it as a tile).
-    /// The screen at the chosen frame rate and a bitrate to match (`ScreenShareQuality`), ahead
-    /// of the camera and behind speech: up to 30 fps it keeps its sharpness and gives up frames
-    /// when the link is tight, at 60 it gives up some of each.
+    /// Speech near 32 kbps, first in line. The camera at its rung of the ladder
+    /// (`CallVideoQuality`), shedding rate and detail together within it; while our screen is
+    /// shared, a thumbnail's worth and never more than its rung (they show it as a tile). The
+    /// screen at the chosen frame rate and a bitrate to match (`ScreenShareQuality`), ahead of the
+    /// camera and behind speech: up to 30 fps it keeps its sharpness and gives up frames when the
+    /// link is tight, at 60 it gives up some of each.
     private func tuneSenders() {
         guard let connection = peerConnection else { return }
+        let capture = captureSize
+        cameraQuality.setCapture(capture.map { max($0.width, $0.height) })
+        let cameraShape = CallVideoQuality.cameraEncoding(
+            screenOn ? CallVideoQuality.tileOf(cameraQuality.rung) : cameraQuality.rung,
+            width: capture?.width,
+            height: capture?.height
+        )
         for sender in connection.senders {
             guard let track = sender.track else { continue }
             let parameters = sender.parameters
@@ -628,9 +678,9 @@ final class CallMediaEngine: NSObject {
                 encoding.networkPriority = .high
                 encoding.bitratePriority = 4
             } else if track.kind == kRTCMediaStreamTrackKindVideo {
-                encoding.maxBitrateBps = NSNumber(value: screenOn ? 350_000 : 1_200_000)
-                encoding.maxFramerate = NSNumber(value: screenOn ? 15 : 30)
-                encoding.scaleResolutionDownBy = NSNumber(value: screenOn ? 2 : 1)
+                encoding.maxBitrateBps = NSNumber(value: cameraShape.maxBitrate)
+                encoding.maxFramerate = NSNumber(value: cameraShape.maxFramerate)
+                encoding.scaleResolutionDownBy = NSNumber(value: cameraShape.scaleResolutionDownBy)
                 // Below speech, so a tight link fills the microphone before the camera.
                 encoding.networkPriority = .low
                 encoding.bitratePriority = 1
@@ -640,6 +690,91 @@ final class CallMediaEngine: NSObject {
             }
             sender.parameters = parameters
         }
+    }
+
+    /// What our camera captures at: the device camera's chosen format, or the simulator's test
+    /// pattern. Nil while unknown (the encoder then sends it as it is).
+    private var captureSize: (width: Int, height: Int)? {
+        if let size = camera?.captureSize {
+            return (Int(size.width), Int(size.height))
+        }
+        #if DEBUG && targetEnvironment(simulator)
+        if testPattern != nil {
+            return (TestPatternCapturer.width, TestPatternCapturer.height)
+        }
+        #endif
+        return nil
+    }
+
+    /// Every two seconds while the link is connected, the camera's stats move it along the
+    /// ladder, and the encoder takes a new rung at once (docs/calls.md, "Camera quality").
+    private func watchQuality() {
+        guard qualityWatch == nil else { return }
+        qualityWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: CallVideoQuality.sampleInterval)
+                guard !Task.isCancelled, let self else { return }
+                await self.sampleQuality()
+            }
+        }
+    }
+
+    /// The link dropped, or the call is over: no readings until it is connected again, and those
+    /// start counting afresh.
+    /// Agent: pauses only a running watch, so the states before the first connect leave the
+    /// ladder's opening settle as it is.
+    private func stopWatchingQuality() {
+        guard let watch = qualityWatch else { return }
+        watch.cancel()
+        qualityWatch = nil
+        cameraQuality.pause()
+    }
+
+    /// One reading. Not while the camera is off, paused by the system or goes out as a tile:
+    /// those only restart the count.
+    private func sampleQuality() async {
+        guard let connection = peerConnection, let sender = videoSender, !samplingQuality else { return }
+        guard cameraOn, !cameraPaused, !screenOn, link == .connected else {
+            cameraQuality.pause()
+            return
+        }
+        samplingQuality = true
+        let sample = await cameraSample(of: sender, on: connection)
+        samplingQuality = false
+        guard let sample, peerConnection === connection, cameraOn, !cameraPaused, !screenOn else { return }
+        if cameraQuality.sample(sample) {
+            tuneSenders()
+        }
+    }
+
+    /// The camera's reading from its sender's stats; nil when the read was cancelled, or while
+    /// nothing goes out yet.
+    ///
+    /// Agent: the same pattern as `localAudioLevel`: the stats collector answers on the signaling
+    /// thread, the report is read there, and only the `Sendable` sample crosses back.
+    private func cameraSample(of sender: RTCRtpSender, on connection: RTCPeerConnection) async -> CameraSample? {
+        let gate = StatsGate<CameraSample?>()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<CameraSample?, Never>) in
+                gate.arm(cont)
+                connection.statistics(for: sender) { report in
+                    gate.resume(Self.cameraSample(in: report))
+                }
+            }
+        } onCancel: {
+            gate.resume(nil)
+        }
+    }
+
+    /// The report as `CallVideoQuality.readCameraSample` reads it: each stat's values and type by id.
+    nonisolated private static func cameraSample(in report: RTCStatisticsReport) -> CameraSample? {
+        var stats: [String: [String: Any]] = [:]
+        for (id, stat) in report.statistics {
+            var values: [String: Any] = stat.values
+            values["type"] = stat.type
+            stats[id] = values
+        }
+        return CallVideoQuality.readCameraSample(stats)
     }
 
     /// The remote video track, once a remote description created its receiver.
@@ -701,7 +836,11 @@ final class CallMediaEngine: NSObject {
         publishLink()
     }
 
-    /// The peer connection's state, and ICE when that has not settled yet.
+    /// What `publishLink` last reported.
+    private var link: Connection = .new
+
+    /// The peer connection's state, and ICE when that has not settled yet. The camera's quality
+    /// is read only while it is connected.
     private func publishLink() {
         let state: Connection = switch peerLink {
         case .connected, .disconnected, .failed, .closed:
@@ -711,6 +850,12 @@ final class CallMediaEngine: NSObject {
             case .connected, .disconnected, .failed: iceLink
             default: peerLink == .connecting ? .connecting : iceLink
             }
+        }
+        link = state
+        if state == .connected {
+            watchQuality()
+        } else {
+            stopWatchingQuality()
         }
         onConnection?(state)
     }
@@ -807,33 +952,32 @@ nonisolated private final class FrameWatch: NSObject, RTCVideoRenderer, @uncheck
     }
 }
 
-/// Resumes one level read, from the stats callback or from cancellation, and never both.
-nonisolated private final class LevelGate: @unchecked Sendable {
+/// Resumes one stats read (the microphone's level, the camera's quality reading), from the stats
+/// callback or from cancellation, and never both.
+nonisolated private final class StatsGate<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Float?, Never>?
-    private var value: Float?
-    private var finished = false
+    private var continuation: CheckedContinuation<Value, Never>?
+    /// Set once, by the first `resume`.
+    private var result: Value?
 
-    func arm(_ continuation: CheckedContinuation<Float?, Never>) {
+    func arm(_ continuation: CheckedContinuation<Value, Never>) {
         lock.lock()
-        if finished {
-            let value = self.value
+        if let result {
             lock.unlock()
-            continuation.resume(returning: value)
+            continuation.resume(returning: result)
             return
         }
         self.continuation = continuation
         lock.unlock()
     }
 
-    func resume(_ value: Float?) {
+    func resume(_ value: Value) {
         lock.lock()
-        if finished {
+        if result != nil {
             lock.unlock()
             return
         }
-        finished = true
-        self.value = value
+        result = value
         let continuation = self.continuation
         self.continuation = nil
         lock.unlock()

@@ -9,6 +9,11 @@ import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.Standard
 import de.corespace.shroud.core.calls.signal.CallSdp
 import de.corespace.shroud.core.net.IceServerDto
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -48,6 +53,12 @@ import de.corespace.shroud.core.calls.CallMediaEngine as Engine
  * peer sees our face instead of a frozen frame, and the camera starts again on return. A system
  * interruption while we are up (another app took the camera) still reports [CallMediaCallbacks.onCameraPaused].
  *
+ * Our camera goes out at a rung of a ladder from 180p to 1080p that follows the link
+ * ([CameraQuality]; docs/calls.md, "Camera quality"; iOS `CallVideoQuality`). While the link is
+ * connected, its sender's stats are read every 2 s on the main thread and the rung moves with them.
+ * The camera measures its own frames ([CallCamera.captureLong]), so the ladder's ceiling and the
+ * encoder's shrink follow what the camera actually delivers, another camera after a switch too.
+ *
  * Nothing here is logged at info, and a failure never includes an SDP or a candidate address.
  */
 class CallMediaEngine(context: Context) : Engine {
@@ -84,6 +95,18 @@ class CallMediaEngine(context: Context) : Engine {
 
     private var peerLink = Link.NEW
     private var iceLink = Link.NEW
+
+    /** The link as last published is connected. Written on WebRTC's thread, read on main. */
+    @Volatile private var linkUp = false
+
+    /** Where the camera-quality loop runs: main, like every other engine call. Never cancelled itself. */
+    private val mainScope by lazy { MainScope() }
+
+    /** How sharp our camera goes out this call. A new call starts a new one ([start], [close]). */
+    private var quality = CameraQuality()
+
+    /** Reads the camera's stats every [QUALITY_SAMPLE_MS] while the link is connected. */
+    private var qualityJob: Job? = null
 
     private val remoteFrames = FrameWatch { callbacks?.onRemoteFrame() }
     private val localFrames = FrameWatch { callbacks?.onLocalFrame() }
@@ -134,6 +157,14 @@ class CallMediaEngine(context: Context) : Engine {
             return
         }
         peer = connection
+        quality = CameraQuality()
+        // The bandwidth estimate starts at 1 Mbps instead of WebRTC's 300 kbps, so the camera is
+        // sharp from the first seconds (iOS `setBweMinBitrateBps`). Only here: mid-call it would
+        // reset the estimate.
+        try {
+            connection.setBitrate(null, START_BITRATE_BPS, null)
+        } catch (_: RuntimeException) {
+        }
 
         val audioConstraints = MediaConstraints()
         listOf("googEchoCancellation", "googNoiseSuppression", "googAutoGainControl", "googHighpassFilter").forEach { key ->
@@ -388,6 +419,9 @@ class CallMediaEngine(context: Context) : Engine {
     }
 
     override fun close() {
+        stopQualityWatch()
+        quality = CameraQuality()
+        linkUp = false
         screenCapture?.stop()
         screenCapture = null
         camera?.close()
@@ -438,10 +472,14 @@ class CallMediaEngine(context: Context) : Engine {
     private fun makeVideoTrack(): VideoTrack? {
         if (!CallCamera.isAvailable(appContext)) return null
         val source = factory.createVideoSource(false)
-        source.adaptOutputFormat(1280, 720, 30)
-        val camera = CallCamera(appContext, runtime.egl.eglBaseContext, source) { paused ->
-            callbacks?.onCameraPaused(paused)
-        }
+        source.adaptOutputFormat(CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT, CAMERA_CAPTURE_FPS)
+        val camera = CallCamera(
+            appContext,
+            runtime.egl.eglBaseContext,
+            source,
+            onPaused = { paused -> callbacks?.onCameraPaused(paused) },
+            onCaptureSize = { onCaptureSize() },
+        )
         if (!camera.isAvailable) {
             camera.close()
             runCatching { source.dispose() }
@@ -471,17 +509,23 @@ class CallMediaEngine(context: Context) : Engine {
         return track
     }
 
-    /** The projection stopped on its own. [stopScreen] does not come through here. */
+    /**
+     * The projection stopped on its own, reported on the capture's thread; the work runs on main
+     * like every other engine call. [stopScreen] does not come through here.
+     */
     private fun onScreenCaptureEnded() {
-        if (peer == null || !screenOn) return
-        screenOn = false
-        try {
-            sectionTransceiver(MediaSection.SCREEN)?.sender?.setTrack(null, false)
-        } catch (_: RuntimeException) {
+        val token = liveToken ?: return
+        mainScope.launch {
+            if (liveToken !== token || peer == null || !screenOn) return@launch
+            screenOn = false
+            try {
+                sectionTransceiver(MediaSection.SCREEN)?.sender?.setTrack(null, false)
+            } catch (_: RuntimeException) {
+            }
+            screenTrack?.setEnabled(false)
+            tuneSenders()
+            callbacks?.onScreenCaptureEnded()
         }
-        screenTrack?.setEnabled(false)
-        tuneSenders()
-        callbacks?.onScreenCaptureEnded()
     }
 
     private fun addSendRecv(
@@ -609,6 +653,8 @@ class CallMediaEngine(context: Context) : Engine {
      */
     private fun tuneSenders() {
         val connection = peer ?: return
+        val captureLong = camera?.captureLong ?: 0
+        quality.setCapture(captureLong)
         val sections = try {
             sections(connection)
         } catch (_: RuntimeException) {
@@ -627,7 +673,7 @@ class CallMediaEngine(context: Context) : Engine {
             } ?: continue
             val id = trackId(track) ?: continue
             val kind = trackKind(track) ?: continue
-            val tune = senderTune(id, kind, screenOn, screenQuality) ?: continue
+            val tune = senderTune(id, kind, screenOn, screenQuality, quality.rung, captureLong) ?: continue
             val applied = applyTune(sender, tune) || applyTune(sender, tune)
             if (!applied && id == SCREEN_TRACK_ID) {
                 Log.w(TAG, "Screen sender did not take the new quality")
@@ -654,6 +700,97 @@ class CallMediaEngine(context: Context) : Engine {
             false
         }
     }
+
+    /**
+     * On main: the camera-quality loop runs while [token]'s link is connected, and stops while it
+     * is down (a reconnect reads nothing; the ladder counts afresh after it).
+     */
+    private fun followLink(token: Any) {
+        mainScope.launch {
+            if (liveToken !== token) return@launch
+            if (linkUp) watchQuality(token) else stopQualityWatch()
+        }
+    }
+
+    /**
+     * Every 2 s: the camera's stats move it along the ladder, and the encoder takes a new rung at
+     * once (web `watchQuality`). One read at a time: the next tick waits for the last.
+     */
+    private fun watchQuality(token: Any) {
+        if (qualityJob?.isActive == true) return
+        qualityJob = mainScope.launch {
+            while (isActive && liveToken === token) {
+                delay(QUALITY_SAMPLE_MS)
+                if (liveToken !== token) break
+                sampleQuality(token)
+            }
+        }
+    }
+
+    /**
+     * The link dropped, or the call is over: no readings until it is connected again, and those
+     * count afresh. Only a running loop pauses the ladder, so the states before the first connect
+     * leave its opening settle as it is (iOS `stopWatchingQuality`).
+     */
+    private fun stopQualityWatch() {
+        val job = qualityJob ?: return
+        job.cancel()
+        qualityJob = null
+        quality.pause()
+    }
+
+    /**
+     * Our camera's frames came at a new size (the first ones, another camera), reported on the
+     * camera's thread: a new ceiling and a new shrink, on main, whatever the link or the screen.
+     */
+    private fun onCaptureSize() {
+        val token = liveToken ?: return
+        mainScope.launch {
+            if (liveToken === token) tuneSenders()
+        }
+    }
+
+    /**
+     * One reading (web `sampleQuality`). Not while the camera is off, paused by the system (another
+     * app took it), goes out as a tile, or the link is reconnecting: a camera that sends nothing
+     * reads as a clean link, so those pause the count instead.
+     */
+    private suspend fun sampleQuality(token: Any) {
+        val connection = peer ?: return
+        val sender = try {
+            sectionTransceiver(MediaSection.CAMERA)?.sender
+        } catch (_: RuntimeException) {
+            null
+        }
+        val track = try {
+            sender?.track()
+        } catch (_: RuntimeException) {
+            null
+        }
+        if (sender == null || track == null || !cameraOn || camera?.isPaused == true || screenOn || !linkUp) {
+            quality.pause()
+            return
+        }
+        val rows = cameraStats(connection, sender) ?: return
+        if (liveToken !== token || !cameraOn || camera?.isPaused == true || screenOn) return
+        val sample = readCameraSample(rows) ?: return
+        if (quality.sample(sample)) tuneSenders()
+    }
+
+    /** The camera sender's stats: its outbound-rtp, what the other side reports for it, the link. */
+    private suspend fun cameraStats(connection: PeerConnection, sender: RtpSender): List<StatRow>? =
+        suspendCancellableCoroutine { cont ->
+            val finished = AtomicBoolean(false)
+            cont.invokeOnCancellation { finished.set(true) }
+            try {
+                connection.getStats(sender) { report ->
+                    if (!finished.compareAndSet(false, true) || !cont.isActive) return@getStats
+                    cont.resume(report.statsMap.values.map { StatRow(it.id, it.type, it.members) })
+                }
+            } catch (_: RuntimeException) {
+                if (finished.compareAndSet(false, true) && cont.isActive) cont.resume(null)
+            }
+        }
 
     private fun refreshRemoteVideo() {
         val connection = peer ?: return
@@ -719,6 +856,7 @@ class CallMediaEngine(context: Context) : Engine {
                 else -> if (peerLink == Link.CONNECTING) Link.CONNECTING else iceLink
             }
         }
+        linkUp = state == Link.CONNECTED
         callbacks?.onConnection(
             when (state) {
                 Link.NEW -> "new"
@@ -775,6 +913,7 @@ class CallMediaEngine(context: Context) : Engine {
                 noteIce(state)
             } catch (_: RuntimeException) {
             }
+            followLink(token)
         }
 
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
@@ -783,6 +922,7 @@ class CallMediaEngine(context: Context) : Engine {
                 notePeer(state)
             } catch (_: RuntimeException) {
             }
+            followLink(token)
         }
 
         override fun onIceCandidate(candidate: IceCandidate) {
@@ -837,6 +977,9 @@ class CallMediaEngine(context: Context) : Engine {
         private const val TAG = "CallMedia"
         private const val STREAM = "shroud"
         private const val SCREEN_STREAM = "shroud-screen"
+
+        /** Where the bandwidth estimate starts (docs/calls.md, "Camera quality"). */
+        private const val START_BITRATE_BPS = 1_000_000
 
         private fun iceServer(server: IceServerDto): PeerConnection.IceServer? {
             val urls = server.urls.filter { it.isNotEmpty() }

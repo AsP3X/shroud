@@ -5,6 +5,7 @@ import de.corespace.shroud.core.calls.bitrate
 import de.corespace.shroud.core.calls.keepsResolution
 import de.corespace.shroud.core.net.IceServerDto
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -140,9 +141,49 @@ fun sdpMLines(sdp: String): List<SdpMLine> {
     return out
 }
 
-/** The capture size closest to 1280×720 (ME:1060-1063). */
+/**
+ * What the camera is opened at, and the most its video source passes on: 1080p30 (ME:1060-1063;
+ * docs/calls.md, "Camera quality"). The encoder sends a rung of the ladder below it
+ * ([CameraQuality]).
+ */
+const val CAMERA_CAPTURE_WIDTH = 1920
+const val CAMERA_CAPTURE_HEIGHT = 1080
+const val CAMERA_CAPTURE_FPS = 30
+
+/** The capture size closest to 1920×1080 (ME:1060-1063). */
 fun nearestCapture(formats: List<CaptureChoice>): CaptureChoice? =
-    formats.minByOrNull { abs(it.width - 1280) + abs(it.height - 720) }
+    formats.minByOrNull { abs(it.width - CAMERA_CAPTURE_WIDTH) + abs(it.height - CAMERA_CAPTURE_HEIGHT) }
+
+/**
+ * The longer side of the picture the encoder should get from [choice], worked out before its
+ * first frame arrives (the engine then measures it). The video source crops the capture to 16:9
+ * and, past 1920×1080's pixel count, shrinks it in WebRTC's `VideoAdapter` steps (3/4, 1/2, 3/8,
+ * 1/4…) until it fits, so a 2048×1536 camera reaches the encoder at 1536×864. It caps the
+ * camera's ladder ([CameraQuality.setCapture]).
+ */
+fun sentLong(choice: CaptureChoice): Int {
+    val long = max(choice.width, choice.height)
+    val short = min(choice.width, choice.height)
+    if (long <= 0 || short <= 0) return 0
+    // The adapter's own crop, in float like WebRTC's.
+    val aspect = CAMERA_CAPTURE_WIDTH / CAMERA_CAPTURE_HEIGHT.toFloat()
+    val croppedLong = min(long, (short * aspect).toInt())
+    val croppedShort = min(short, (long / aspect).toInt())
+    val pixels = croppedLong.toLong() * croppedShort
+    val most = CAMERA_CAPTURE_WIDTH.toLong() * CAMERA_CAPTURE_HEIGHT
+    var numerator = 1L
+    var denominator = 1L
+    while (numerator * numerator * pixels / (denominator * denominator) > most) {
+        if (numerator % 3 == 0L && denominator % 2 == 0L) {
+            numerator /= 3
+            denominator /= 2
+        } else {
+            numerator *= 3
+            denominator *= 4
+        }
+    }
+    return (croppedLong * numerator / denominator).toInt()
+}
 
 /**
  * Frames per second for `startCapture`. WebRTC stores a format's max rate in milli-fps (30000 for
@@ -154,10 +195,18 @@ fun captureFps(maxRate: Int): Int {
 }
 
 /**
- * Speech near 32 kbps first, the camera near 1.2 Mbps (a tile's worth while the screen is up),
- * the screen at [quality] (ME:608-642).
+ * Speech near 32 kbps first, the camera at its rung of the ladder ([camera], shrunk from a capture
+ * whose longer side is [captureLong]; while the screen is up a tile's worth, never more than the
+ * rung, [tileOf]), the screen at [quality] (ME:608-642; docs/calls.md, "Camera quality").
  */
-fun senderTune(trackId: String, kind: String, screenOn: Boolean, quality: ScreenShareQuality): SenderTune? {
+fun senderTune(
+    trackId: String,
+    kind: String,
+    screenOn: Boolean,
+    quality: ScreenShareQuality,
+    camera: CameraRung = CAMERA_LADDER[CAMERA_START],
+    captureLong: Int = 0,
+): SenderTune? {
     if (trackId == SCREEN_TRACK_ID) {
         return SenderTune(
             maxBitrateBps = quality.bitrate,
@@ -179,10 +228,11 @@ fun senderTune(trackId: String, kind: String, screenOn: Boolean, quality: Screen
         )
     }
     if (kind == "video") {
+        val shape = cameraEncoding(if (screenOn) tileOf(camera) else camera, width = captureLong)
         return SenderTune(
-            maxBitrateBps = if (screenOn) 350_000 else 1_200_000,
-            maxFramerate = if (screenOn) 15 else 30,
-            scaleResolutionDownBy = if (screenOn) 2.0 else 1.0,
+            maxBitrateBps = shape.maxBitrate,
+            maxFramerate = shape.maxFramerate,
+            scaleResolutionDownBy = shape.scaleResolutionDownBy,
             networkPriority = NETWORK_PRIORITY_LOW,
             bitratePriority = 1.0,
             degradation = DEGRADE_BALANCED,

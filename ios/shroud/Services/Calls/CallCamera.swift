@@ -44,12 +44,17 @@ final class CallCamera {
         }
     }
 
+    /// The size the camera captures at (sensor orientation, so landscape), once it has started;
+    /// the last one while it is stopped.
+    private(set) var captureSize: CMVideoDimensions?
+
     func start() {
         guard !isRunning, let device = device(front: usesFrontCamera) else { return }
         let formats = RTCCameraVideoCapturer.supportedFormats(for: device)
         guard let format = Self.bestFormat(formats) else { return }
-        let maxRate = format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 30
+        let maxRate = Self.maxFrameRate(format)
         capturer.startCapture(with: device, format: format, fps: Int(min(30, maxRate)))
+        captureSize = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
         isRunning = true
     }
 
@@ -83,15 +88,21 @@ final class CallCamera {
         return devices.first { $0.position == (front ? .front : .back) } ?? devices.first
     }
 
-    /// The format closest to 1280×720.
+    /// The format closest to 1920×1080 among those that reach 30 fps (any, when none does). The
+    /// encoder sends a rung of the ladder below that, as the link allows (`CallVideoQuality`).
     private static func bestFormat(_ formats: [AVCaptureDevice.Format]) -> AVCaptureDevice.Format? {
-        formats.min { lhs, rhs in
+        let smooth = formats.filter { maxFrameRate($0) >= 30 }
+        return (smooth.isEmpty ? formats : smooth).min { lhs, rhs in
             distance(lhs) < distance(rhs)
         }
     }
 
+    private static func maxFrameRate(_ format: AVCaptureDevice.Format) -> Float64 {
+        format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 30
+    }
+
     private static func distance(_ format: AVCaptureDevice.Format) -> Int32 {
         let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-        return abs(size.width - 1280) + abs(size.height - 720)
+        return abs(size.width - 1920) + abs(size.height - 1080)
     }
 }

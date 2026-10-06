@@ -72,15 +72,29 @@ class CallMediaPlanTest {
     }
 
     @Test
-    fun capturePicksTheFormatNearest720pAndCapsAt30() {
+    fun capturePicksTheFormatNearest1080pAndCapsAt30() {
         val picked = nearestCapture(
             listOf(
                 CaptureChoice(640, 480, 30_000),
                 CaptureChoice(1920, 1080, 30_000),
                 CaptureChoice(1280, 720, 60_000),
+                CaptureChoice(3840, 2160, 30_000),
             ),
         )
-        assertEquals(CaptureChoice(1280, 720, 60_000), picked)
+        assertEquals(CaptureChoice(1920, 1080, 30_000), picked)
+        // A front camera without 1080p: the nearest it has.
+        assertEquals(
+            CaptureChoice(1280, 960, 30_000),
+            nearestCapture(listOf(CaptureChoice(640, 480, 30_000), CaptureChoice(1280, 960, 30_000))),
+        )
+        assertEquals(1920, sentLong(CaptureChoice(1920, 1080, 30)))
+        assertEquals(1920, sentLong(CaptureChoice(1920, 1440, 30)))
+        assertEquals(1920, sentLong(CaptureChoice(3840, 2160, 30)))
+        assertEquals(1280, sentLong(CaptureChoice(1280, 960, 30)))
+        // The video source crops to 16:9 and shrinks a larger capture in 3/4 steps until it fits.
+        assertEquals(1536, sentLong(CaptureChoice(2048, 1536, 30)))
+        assertEquals(1920, sentLong(CaptureChoice(2560, 1440, 30)))
+        assertEquals(0, sentLong(CaptureChoice(0, 0, 30)))
         assertEquals(30, captureFps(60_000))
         assertEquals(30, captureFps(30_000))
         assertEquals(15, captureFps(15_000))
@@ -107,17 +121,35 @@ class CallMediaPlanTest {
         assertEquals(60, motion.maxFramerate)
         assertEquals(DEGRADE_BALANCED, motion.degradation)
 
-        val camera = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard)!!
-        assertEquals(1_200_000, camera.maxBitrateBps)
+        // The camera starts at 720p; from a 1080p capture the encoder shrinks it by 1.5.
+        val camera = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, captureLong = 1920)!!
+        assertEquals(2_200_000, camera.maxBitrateBps)
         assertEquals(30, camera.maxFramerate)
-        assertEquals(1.0, camera.scaleResolutionDownBy)
+        assertEquals(1.5, camera.scaleResolutionDownBy)
         assertEquals(NETWORK_PRIORITY_LOW, camera.networkPriority)
+        assertEquals(1.0, camera.bitratePriority, 0.0)
         assertEquals(DEGRADE_BALANCED, camera.degradation)
 
-        val tile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard)!!
+        // Each rung of the ladder.
+        val top = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[5], 1920)!!
+        assertEquals(3_800_000, top.maxBitrateBps)
+        assertEquals(1.0, top.scaleResolutionDownBy)
+        val bottom = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[0], 1920)!!
+        assertEquals(150_000, bottom.maxBitrateBps)
+        assertEquals(15, bottom.maxFramerate)
+        assertEquals(6.0, bottom.scaleResolutionDownBy)
+
+        // While the screen is shared, a tile's worth whatever the rung.
+        val tile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, CAMERA_LADDER[5], 1920)!!
         assertEquals(350_000, tile.maxBitrateBps)
         assertEquals(15, tile.maxFramerate)
-        assertEquals(2.0, tile.scaleResolutionDownBy)
+        assertEquals(3.0, tile.scaleResolutionDownBy)
+        assertEquals(2.0, senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, captureLong = 1280)!!.scaleResolutionDownBy)
+        // A camera the link had pushed below the tile stays there while the screen is shared.
+        val lowTile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, CAMERA_LADDER[1], 1920)!!
+        assertEquals(300_000, lowTile.maxBitrateBps)
+        assertEquals(15, lowTile.maxFramerate)
+        assertEquals(4.0, lowTile.scaleResolutionDownBy)
 
         val mic = senderTune("shroud-audio", "audio", screenOn = true, ScreenShareQuality.Standard)!!
         assertEquals(32_000, mic.maxBitrateBps)

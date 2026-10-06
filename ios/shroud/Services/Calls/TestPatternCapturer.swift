@@ -11,8 +11,9 @@ import WebRTC
 /// pixel by pixel on the main thread (unoptimised, in Debug), they took half of it and stuttered
 /// every animation on the call screen while the camera was on.
 nonisolated final class TestPatternCapturer: RTCVideoCapturer, @unchecked Sendable {
-    private static let width = 640
-    private static let height = 480
+    /// The frame size: the camera-quality ladder's ceiling while the pattern stands in.
+    static let width = 640
+    static let height = 480
     /// Six bands of 80 points: the pattern repeats after this many points.
     private static let period = 480
     /// Drawn once per launch, by the first frame.

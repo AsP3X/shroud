@@ -254,9 +254,9 @@ identity keys; the addresses sent after them do not.
   turn its camera on or off at any time (next section). Turning the microphone off disables its
   track and sends `media_state`, so the other side shows a muted mark.
 - Voice is Opus, mono, about 32 kbps, with in-band error correction and silence suppression.
-  Video stays at most 720p30 and about 1.2 Mbps, and gives up frame rate and detail together
-  when the link is tight. Speech is sent ahead of video. The microphone is captured as speech
-  (echo cancellation, noise suppression, and gain control on both clients).
+  Video goes out at up to 1080p30, stepping down and back up with the link ("Camera quality"
+  below). Speech is sent ahead of video. The microphone is captured as speech (echo cancellation,
+  noise suppression, and gain control on both clients).
 - **ICE restart**: when the connection is `failed`, or `disconnected` for 4 s, the caller sends a
   new offer with `restart: true` (at most one every 10 s); the callee asks with `restart`.
   A `failed` link switches that device to the TURN relay for this restart and every later one,
@@ -270,6 +270,65 @@ identity keys; the addresses sent after them do not.
   connect directly; an answer refused that way isn't sent, so the account's other devices keep
   ringing.
 - If no media connects within 30 s of the answer, the device hangs up ("Couldn't connect").
+
+## Camera quality
+
+Each side decides only what its own camera sends, so nothing about it goes on the wire and an
+older app on the other end is unaffected. The same ladder runs on every client
+(`web/src/calls/videoQuality.ts`, iOS `CallVideoQuality.swift`, Android `CallVideoQuality.kt`).
+
+- **Capture.** The camera opens at up to 1080p and 30 fps (the size nearest 1920×1080). The encoder
+  shrinks it to the rung below (`scaleResolutionDownBy`); our own picture stays full size. A
+  webcam whose 1080p runs below 25 fps is opened at 720p instead (web), and a camera switch
+  re-sizes the shrink and the top rung to the new camera.
+- **The ladder.**
+
+  | Rung | Longer side | fps | Most bits per second | Room the link needs to keep it |
+  | --- | --- | --- | --- | --- |
+  | 1080p | 1920 | 30 | 3.8 Mbps | 2 Mbps |
+  | 720p | 1280 | 30 | 2.2 Mbps | 1.1 Mbps |
+  | 540p | 960 | 30 | 1.2 Mbps | 600 kbps |
+  | 360p | 640 | 30 | 600 kbps | 300 kbps |
+  | 270p | 480 | 20 | 300 kbps | 150 kbps |
+  | 180p | 320 | 15 | 150 kbps | — |
+
+  A call starts at 720p, or lower when the camera is smaller; the camera's own size is the top
+  rung (a 720p webcam never goes to 1080p).
+- **Readings.** Every 2 s while the call is connected and the camera goes out at full size, the
+  camera's sender stats give the link's bandwidth estimate (`availableOutgoingBitrate` on the
+  selected candidate pair, less 50 kbps for speech), the loss the other side reports
+  (`fractionLost`), and what holds the encoder back (`qualityLimitationReason`). The first three
+  readings of a call, and the first two after each change, are skipped while the link and the
+  encoder settle.
+- **Down.** Two readings in a row where the encoder is short of bits (`bandwidth`) and the
+  estimate is below the rung's minimum go straight to the highest rung the estimate fits. Two in
+  a row with 10 % loss or more go down one rung. A low estimate alone is no reason: while the
+  camera sends less than the link could carry, the estimate only grows as far as what is sent.
+- **Up.** One rung at a time, after 4 clean readings in a row (8 s): under 3 % loss, and an
+  encoder held back by neither processor nor bandwidth. Going up does not wait for the estimate
+  to show room (it would not, for the reason above): the higher cap makes WebRTC probe the link,
+  and a try the link cannot carry steps back down. An upgrade that has to step down again within
+  30 s doubles the wait for the next one, up to about a minute; one that holds resets it. On a
+  clean link a call reaches 1080p about 14 s in.
+- **Within a rung** WebRTC keeps adapting on its own (`balanced`: frame rate and detail
+  together), so a sudden drop is covered before the next reading.
+- **Starting bitrate.** The iPhone and Android tell the bandwidth estimator to start at 1 Mbps
+  (`setBweMinBitrateBps` / `setBitrate`) instead of WebRTC's 300 kbps, so a call is sharp from its
+  first seconds. Browsers have no way to set it; the web ramps up from WebRTC's default.
+- **Codec.** Both sides list H.264 first on the camera's section, in the offer and in the answer
+  (`cameraVideoSdp` / `CallSdp.withCameraVideo` / Android's equivalent), so it is what goes out
+  whoever offers: phones and Macs encode it in hardware, where VP8, which browsers list first,
+  runs in software and runs out of processor at these sizes. A browser without H.264 keeps its
+  own order. Each side also declares at least H.264 level 4.0 there (`h264Level`): a sender may
+  hold its frame rate to the level the receiver declares (the iPhone's encoder does), and the
+  3.1 that browsers declare carries 1080p at only about 13 fps. Every client decodes 1080p30, so
+  4.0 is true; it states what that side receives, not what it sends.
+- **Sharing a screen** puts the camera on a thumbnail's worth instead (below), never more than its
+  rung, and the ladder waits; it picks up again at the same rung when sharing stops. A camera that
+  is off or paused by the system, and a link that is reconnecting, are not read either: a camera
+  that sends nothing would read as a clean link.
+- Firefox reports neither the bandwidth estimate nor the encoder's limitation: there the camera
+  steps down on loss only, and WebRTC's own adaptation within the rung does the rest.
 
 ## Switching between voice and video
 
@@ -349,7 +408,7 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
 - **Codec.** Both sides list VP8 first on the screen's picture section, in the offer and in the
   answer (`screenVideoSdp` / `CallSdp.withScreenVideo`), so VP8 is what goes out there whoever
   offers: an iPhone shares from the background, where its hardware H.264 encoder may not run, and
-  VP8 is encoded in software. The camera's section keeps each client's own order.
+  VP8 is encoded in software. The camera's section puts H.264 first ("Camera quality").
 - **Resolution and frame rate.** Like Discord, the sharer picks both before sharing or while it
   runs (on the web from a small arrow on the Share button's shoulder; on the iPhone in the menu
   that Share opens): 720p, 1080p or Source (the screen's own pixels), and 15,
@@ -378,7 +437,7 @@ can share at once. Like video, it needs no new offer: ICE, DTLS and the sound ar
   is tight (`maintain-resolution`). At 60 fps it was picked for motion (a game, a video): the web
   hints `motion`, and both give up some detail and some frames in turn (`balanced`). Either way it
   goes behind speech and ahead of the camera. While a side shares, its camera
-  drops to a thumbnail's worth (about 350 kbps, half size, 15 fps), since the other side shows it
+  drops to a thumbnail's worth (at most 350 kbps, 640 pixels on its longer side, 15 fps), since the other side shows it
   as a tile. The screen's sound is Opus in stereo at about 128 kbps, never silenced (`usedtx=0`),
   set in its own section's `a=fmtp` so the microphone keeps its speech settings.
 - **Showing theirs.** Their screen fills the call from its first frame, fitted whole on black; their

@@ -13,7 +13,9 @@ import {
   callErrorText,
   cameraErrorText,
   cameraOnlyFailure,
+  cameraVideoSdp,
   endedText,
+  h264Level,
   incomingStaysInBanner,
   isLive,
   linkState,
@@ -275,6 +277,70 @@ check(readSignal("media_state", { t: "media", mic: true, camera: false, screen: 
   check(screenVideoSdp(tuned) === tuned, "a second pass changes nothing");
   const older = sdp.split("\r\nm=video")[0] + "\r\n";
   check(screenVideoSdp(older) === older, "an sdp without the screen's section is unchanged");
+}
+{
+  // A browser's order: VP8 first, H.264 later in two profiles.
+  const sdp = [
+    "v=0",
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+    "a=rtpmap:111 opus/48000/2",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 127",
+    "a=rtpmap:96 VP8/90000",
+    "a=rtpmap:97 rtx/90000",
+    "a=rtpmap:102 H264/90000",
+    "a=rtpmap:103 rtx/90000",
+    "a=rtpmap:127 H264/90000",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 127",
+    "a=rtpmap:96 VP8/90000",
+    "a=rtpmap:97 rtx/90000",
+    "a=rtpmap:102 H264/90000",
+    "a=rtpmap:103 rtx/90000",
+    "a=rtpmap:127 H264/90000",
+    "",
+  ].join("\r\n");
+  const tuned = cameraVideoSdp(screenVideoSdp(sdp));
+  const mlines = tuned.split("\r\n").filter((line) => line.startsWith("m=video"));
+  check(mlines[0] === "m=video 9 UDP/TLS/RTP/SAVPF 102 127 96 97 103", `H.264 leads the camera's section (${mlines[0]})`);
+  check(mlines[1] === "m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 127", "the screen keeps VP8 first");
+  check(cameraVideoSdp(tuned) === tuned, "a second pass changes nothing");
+  const noH264 = sdp.replace(/H264/g, "VP9");
+  check(cameraVideoSdp(noH264) === noH264, "without H.264 the camera's section is unchanged");
+  const voiceOnly = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n";
+  check(cameraVideoSdp(voiceOnly) === voiceOnly, "an sdp without video is unchanged");
+}
+{
+  // The H.264 level each side declares for the camera: at least 4.0 (1080p30).
+  check(h264Level("42e01f") === "42e028", "3.1 is raised to 4.0");
+  check(h264Level("640C1F") === "640C28", "the profile part keeps its case");
+  check(h264Level("640c34") === "640c34", "a higher level stays");
+  check(h264Level("42e028") === "42e028", "4.0 stays");
+  check(h264Level("42e0") === "42e0" && h264Level("zzzzzz") === "zzzzzz", "a malformed value is left alone");
+  const sdp = [
+    "v=0",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96 102 127 103",
+    "a=rtpmap:96 VP8/90000",
+    "a=rtpmap:102 H264/90000",
+    "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+    "a=rtpmap:127 H264/90000",
+    "a=fmtp:127 profile-level-id=640c34;packetization-mode=1",
+    "a=rtpmap:103 rtx/90000",
+    "a=fmtp:103 apt=102",
+    "m=video 9 UDP/TLS/RTP/SAVPF 96 102",
+    "a=rtpmap:96 VP8/90000",
+    "a=rtpmap:102 H264/90000",
+    "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+    "",
+  ].join("\r\n");
+  const tuned = cameraVideoSdp(sdp);
+  const lines = tuned.split("\r\n");
+  check(lines[1] === "m=video 9 UDP/TLS/RTP/SAVPF 102 127 96 103", `H.264 first (${lines[1]})`);
+  check(lines[4] === "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e028", `the camera's 3.1 becomes 4.0 (${lines[4]})`);
+  check(lines[6] === "a=fmtp:127 profile-level-id=640c34;packetization-mode=1", "a higher level stays");
+  check(lines[8] === "a=fmtp:103 apt=102", "rtx is untouched");
+  check(lines[12].endsWith("profile-level-id=42e01f"), "the screen's section keeps its level");
+  check(cameraVideoSdp(tuned) === tuned, "a second pass changes nothing");
+  const lf = sdp.replace(/\r\n/g, "\n");
+  check(cameraVideoSdp(lf) === tuned.replace(/\r\n/g, "\n"), "LF line endings are kept");
 }
 
 check(screenErrorText({ name: "NotAllowedError", message: "Permission denied" }) === null, "a closed picker says nothing");

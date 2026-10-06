@@ -348,6 +348,82 @@ export function voiceSdp(sdp: string): string {
 }
 
 /**
+ * One codec first in the `place`-th video section (0 the camera's, 1 the screen's), keeping the
+ * order of everything else. An SDP without that section, or without that codec, is unchanged.
+ */
+function codecFirst(sdp: string, place: number, codec: string): string {
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(/\r\n|\n/);
+  const starts = lines.flatMap((line, index) => (/^m=video[ \t]/i.test(line) ? [index] : []));
+  if (starts.length <= place) return lines.join(eol);
+  const from = starts[place];
+  let to = lines.findIndex((line, index) => index > from && /^m=/i.test(line));
+  if (to < 0) to = lines.length;
+  const rtpmap = new RegExp(`^a=rtpmap:(\\d+) ${codec}/90000`, "i");
+  const wanted = new Set(
+    lines.slice(from, to).flatMap((line) => {
+      const match = rtpmap.exec(line);
+      return match ? [match[1]] : [];
+    }),
+  );
+  if (wanted.size === 0) return lines.join(eol);
+  const parts = lines[from].split(" ");
+  // m=video <port> <proto> <payload types…>
+  const types = parts.slice(3);
+  lines[from] = [...parts.slice(0, 3), ...types.filter((pt) => wanted.has(pt)), ...types.filter((pt) => !wanted.has(pt))].join(" ");
+  return lines.join(eol);
+}
+
+/** H.264 level 4.0 (`level_idc` 0x28): 1080p at 30 fps. */
+const H264_LEVEL_1080P = 0x28;
+
+/**
+ * A `profile-level-id` (six hex digits: profile, constraints, level) raised to at least level 4.0;
+ * anything else is unchanged. A sender may hold its frame rate to the level the receiver declares
+ * (the iPhone's H.264 encoder does), and browsers declare 3.1, which carries 1080p at only about 13
+ * fps. Every client here decodes 1080p30, so declaring 4.0 is true; it says what this side can
+ * receive and changes nothing about what it sends.
+ */
+export function h264Level(profileLevelId: string): string {
+  if (!/^[0-9a-f]{6}$/i.test(profileLevelId)) return profileLevelId;
+  const level = parseInt(profileLevelId.slice(4), 16);
+  return level >= H264_LEVEL_1080P ? profileLevelId : profileLevelId.slice(0, 4) + H264_LEVEL_1080P.toString(16);
+}
+
+/**
+ * H.264 first on the camera's picture (the first video section). Phones and Macs encode it in
+ * hardware; VP8, which a browser lists first, is encoded in software there and runs out of
+ * processor at the sizes the camera now goes out at. Both sides put it first in their own
+ * descriptions, so it is what either one sends whoever offers; the H.264 profiles keep their own
+ * order. Each H.264 entry declares at least level 4.0 (`h264Level`), so 1080p goes out at 30 fps.
+ * An SDP without that section, or without H.264 (a browser without it), is unchanged.
+ */
+export function cameraVideoSdp(sdp: string): string {
+  const ordered = codecFirst(sdp, 0, "H264");
+  const eol = ordered.includes("\r\n") ? "\r\n" : "\n";
+  const lines = ordered.split(/\r\n|\n/);
+  const from = lines.findIndex((line) => /^m=video[ \t]/i.test(line));
+  if (from < 0) return ordered;
+  let to = lines.findIndex((line, index) => index > from && /^m=/i.test(line));
+  if (to < 0) to = lines.length;
+  const h264 = new Set(
+    lines.slice(from, to).flatMap((line) => {
+      const match = /^a=rtpmap:(\d+) H264\/90000/i.exec(line);
+      return match ? [match[1]] : [];
+    }),
+  );
+  for (let index = from + 1; index < to; index++) {
+    const match = /^a=fmtp:(\d+)[ \t]/i.exec(lines[index]);
+    if (!match || !h264.has(match[1])) continue;
+    lines[index] = lines[index].replace(
+      /(^|[ \t;])(profile-level-id=)([0-9a-f]+)/i,
+      (_, before: string, key: string, value: string) => before + key + h264Level(value),
+    );
+  }
+  return lines.join(eol);
+}
+
+/**
  * VP8 first on the screen's picture (the second video section; the first is the camera). A
  * phone shares its screen from the background, where its hardware H.264 encoder may not run; VP8
  * is encoded in software everywhere. Both sides put it first in their own descriptions, so it is
@@ -355,25 +431,7 @@ export function voiceSdp(sdp: string): string {
  * unchanged.
  */
 export function screenVideoSdp(sdp: string): string {
-  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
-  const lines = sdp.split(/\r\n|\n/);
-  const starts = lines.flatMap((line, index) => (/^m=video[ \t]/i.test(line) ? [index] : []));
-  if (starts.length < 2) return lines.join(eol);
-  const from = starts[1];
-  let to = lines.findIndex((line, index) => index > from && /^m=/i.test(line));
-  if (to < 0) to = lines.length;
-  const vp8 = new Set(
-    lines.slice(from, to).flatMap((line) => {
-      const match = /^a=rtpmap:(\d+) VP8\/90000/i.exec(line);
-      return match ? [match[1]] : [];
-    }),
-  );
-  if (vp8.size === 0) return lines.join(eol);
-  const parts = lines[from].split(" ");
-  // m=video <port> <proto> <payload types…>
-  const types = parts.slice(3);
-  lines[from] = [...parts.slice(0, 3), ...types.filter((pt) => vp8.has(pt)), ...types.filter((pt) => !vp8.has(pt))].join(" ");
-  return lines.join(eol);
+  return codecFirst(sdp, 1, "VP8");
 }
 
 /**
