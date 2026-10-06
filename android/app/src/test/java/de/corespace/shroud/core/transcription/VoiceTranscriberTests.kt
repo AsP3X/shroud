@@ -12,6 +12,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -92,6 +94,17 @@ class VoiceTranscriberTests {
         assertEquals(tracking, rig.duringTranscribe?.messageId)
         assertEquals(1.0, rig.duringTranscribe?.fractionCompleted ?: 0.0, 0.0)
         assertEquals(TranscriptionInstallState.Idle, rig.voice.install.value)
+    }
+
+    @Test
+    fun theDecodeRunsOffTheCallersThread() = runTest {
+        // Callers are on the main thread; decoding a minute-long note there froze the app for seconds.
+        val caller = Thread.currentThread()
+        var decodedOn: Thread? = null
+        val rig = rig(decode = { _, _ -> decodedOn = Thread.currentThread(); FloatArray(16_000 * 8) })
+        rig.voice.transcribe(byteArrayOf(1, 2), "audio/mp4")
+        assertNotNull(decodedOn)
+        assertNotSame(caller, decodedOn)
     }
 
     @Test

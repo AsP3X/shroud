@@ -1,10 +1,13 @@
 package de.corespace.shroud.core.transcription
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.UUID
+import kotlin.coroutines.CoroutineContext
 
 /**
  * 16 kHz mono PCM from a voice-note container. Throws when [bytes] cannot be decoded.
@@ -23,6 +26,9 @@ fun interface Pcm16kSource {
  * are chat words carried on the request; whisper.cpp does not prompt with them (§9.4).
  * A locked history key does not throw: the note is still decoded, and the memory writes nothing.
  * Audio, text and language stats stay on the device. The only network is the model download.
+ *
+ * Callers are on the main thread (the composer and the bubbles): the audio decode and resample run on
+ * [compute] and the sealed stats write on [io], so a long note does not freeze the app.
  */
 class VoiceTranscriber(
     private val session: TranscriptionSession,
@@ -31,6 +37,8 @@ class VoiceTranscriber(
     private val nativeLoaded: Boolean,
     private val decode: Pcm16kSource,
     private val installs: TranscriptionModelInstall = TranscriptionModelInstall(),
+    private val compute: CoroutineContext = Dispatchers.Default,
+    private val io: CoroutineContext = Dispatchers.IO,
 ) : VoiceTranscription {
     override val isAvailable: StateFlow<Boolean> = MutableStateFlow(nativeLoaded)
     override val install: StateFlow<TranscriptionInstallState> = installs.state
@@ -87,7 +95,7 @@ class VoiceTranscriber(
             }
             installs.transcribing()
             val pcm = try {
-                decode.decodeMono16k(audio, mime)
+                withContext(compute) { decode.decodeMono16k(audio, mime) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -108,7 +116,7 @@ class VoiceTranscriber(
             val heard = output.languageProbability
             if (code != null && heard != null && text.isNotEmpty()) {
                 val weight = VoiceTranscript.learningWeight(duration, heard)
-                if (weight > 0.0) memory.record(code, conversationId, weight)
+                if (weight > 0.0) withContext(io) { memory.record(code, conversationId, weight) }
             }
             return text
         } finally {
