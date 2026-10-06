@@ -135,6 +135,7 @@ class FakeVoicePlayer : VoicePlayer {
     var currentSpeed = 1f
     var stops = 0
     override var positionMs: Long = 0L
+    override val isAdvancing: Boolean get() = playing
     val seeks = ArrayList<Long>()
 
     override fun load(data: ByteArray) {

@@ -192,6 +192,7 @@ internal class DeviceBubbleServices(override val context: Context, scope: Corout
         override fun seekTo(positionMs: Long) = Unit
         override fun setSpeed(rate: Float) = Unit
         override val positionMs: Long = 0L
+        override val isAdvancing: Boolean = false
         override fun stop() = Unit
     }
 }

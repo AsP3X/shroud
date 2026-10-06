@@ -152,7 +152,7 @@ internal fun VoiceLockedBar(
             )
             VoiceWaveformView(
                 samples = levels,
-                progress = 0f,
+                progress = { 0f },
                 playedColor = colors.accent,
                 remainingColor = colors.accent.copy(alpha = 0.55f),
                 modifier = Modifier.weight(1f).height(24.dp),

@@ -26,7 +26,14 @@ class VoicePlaybackCoordinatorTest {
     private val noteB = byteArrayOf(4, 5, 6)
     private val player = FakeVoicePlayer()
 
-    private fun TestScope.coordinator() = VoicePlaybackCoordinator(player, backgroundScope)
+    /** The estimate's clock, in ns: still unless a test moves it. */
+    private var clockNs = 0L
+
+    private fun TestScope.coordinator() = VoicePlaybackCoordinator(player, backgroundScope, nanoTime = { clockNs })
+
+    private fun advanceClock(ms: Long) {
+        clockNs += ms * 1_000_000
+    }
 
     @Test
     fun toggleLoadsTheNoteAndPlaysItWhenReady() = runTest {
@@ -57,6 +64,107 @@ class VoicePlaybackCoordinatorTest {
         assertEquals(0.0, playback.progress(b), 0.0)
         assertEquals(1.0, playback.displayTime(a, fallbackMs = 9_999), 0.0)
         assertEquals(4.2, playback.displayTime(b, fallbackMs = 4_200), 0.0)
+    }
+
+    @Test
+    fun theLivePlayheadReadsThePlayerBetweenTicks() = runTest {
+        val playback = coordinator()
+        playback.toggle(a, noteA)
+        assertEquals("nothing to read before the note is ready", 0.0, playback.liveProgress(a), 0.0)
+        player.ready(4_000)
+        player.positionMs = 1_000
+        assertEquals("no tick yet: the state still says 0", 0.0, playback.progress(a), 0.0)
+        assertEquals(0.25, playback.liveProgress(a), 0.0)
+        assertEquals(0.0, playback.liveProgress(b), 0.0)
+
+        // Paused, it is the state's position — the player may still report a stale one.
+        playback.pause()
+        player.positionMs = 3_000
+        assertEquals(0.25, playback.liveProgress(a), 0.0)
+        playback.seek(a, noteA, 0.5)
+        assertEquals(0.5, playback.liveProgress(a), 0.0)
+    }
+
+    @Test
+    fun theLivePlayheadRunsOnBetweenThePlayersReports() = runTest {
+        val playback = coordinator()
+        playback.toggle(a, noteA)
+        player.ready(4_000)
+        player.positionMs = 1_000
+        assertEquals(0.25, playback.liveProgress(a), 1e-9)
+
+        // ExoPlayer reports every ~250 ms; the frames in between move on with the clock.
+        advanceClock(100)
+        assertEquals(1_100.0 / 4_000, playback.liveProgress(a), 1e-9)
+
+        // At 1.5× from where it stood.
+        playback.cycleRate()
+        advanceClock(100)
+        assertEquals(1_250.0 / 4_000, playback.liveProgress(a), 1e-9)
+
+        // A report behind the estimate restarts it there, but the playhead never steps back.
+        player.positionMs = 1_200
+        assertEquals(1_250.0 / 4_000, playback.liveProgress(a), 1e-9)
+        advanceClock(100)
+        assertEquals(1_350.0 / 4_000, playback.liveProgress(a), 1e-9)
+
+        // A player that stops reporting is not run past by more than the cap.
+        advanceClock(10_000)
+        assertEquals((1_200 + VoicePlaybackCoordinator.MAX_ESTIMATE_MS * 1.5) / 4_000, playback.liveProgress(a), 1e-9)
+    }
+
+    @Test
+    fun theLivePlayheadHoldsWhileThePlayerIsNotMoving() = runTest {
+        val playback = coordinator()
+        playback.toggle(a, noteA)
+        player.ready(4_000)
+        player.positionMs = 1_000
+        playback.liveProgress(a)
+        // Buffering, or a transient focus loss: the state still says playing, the player does not move.
+        player.playing = false
+        advanceClock(500)
+        assertEquals(0.25, playback.liveProgress(a), 1e-9)
+        player.playing = true
+        advanceClock(100)
+        assertEquals(1_100.0 / 4_000, playback.liveProgress(a), 1e-9)
+    }
+
+    @Test
+    fun pausingKeepsTheEstimateAndASeekBackStartsItOver() = runTest {
+        val playback = coordinator()
+        playback.toggle(a, noteA)
+        player.ready(4_000)
+        player.positionMs = 1_000
+        playback.liveProgress(a)
+        advanceClock(200)
+
+        // Paused where the playhead stood, not at the player's older report.
+        playback.pause()
+        assertEquals(1.2, playback.state.value.currentTime, 1e-9)
+        assertEquals(0.3, playback.liveProgress(a), 1e-9)
+
+        // Resumed: the late report does not pull the playhead back.
+        playback.resume()
+        assertEquals(0.3, playback.liveProgress(a), 1e-9)
+
+        // A seek backwards is a jump, not a correction: the playhead follows it.
+        playback.seek(a, noteA, 0.1)
+        assertEquals(0.1, playback.liveProgress(a), 1e-9)
+        advanceClock(100)
+        assertEquals(500.0 / 4_000, playback.liveProgress(a), 1e-9)
+    }
+
+    @Test
+    fun theTickerWritesTheEstimate() = runTest {
+        val playback = coordinator()
+        playback.toggle(a, noteA)
+        player.ready(4_000)
+        player.positionMs = 1_000
+        advanceTimeBy(VoicePlaybackCoordinator.TICK_MS + 1)
+        assertEquals(1.0, playback.state.value.currentTime, 1e-9)
+        advanceClock(100)
+        advanceTimeBy(VoicePlaybackCoordinator.TICK_MS)
+        assertEquals(1.1, playback.state.value.currentTime, 1e-9)
     }
 
     @Test

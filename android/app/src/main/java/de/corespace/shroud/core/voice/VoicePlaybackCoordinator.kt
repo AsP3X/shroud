@@ -40,7 +40,9 @@ data class VoicePlaybackState(
  * duration, a pending seek and autoplay are applied when the player reports ready (iOS's
  * `AVAudioPlayer(data:)` knows the duration synchronously, `:141-155`). End of playback comes from the
  * player (`STATE_ENDED`) instead of the ticker noticing `isPlaying` dropped (`:176-182`); the 33 ms
- * ticker still drives [VoicePlaybackState.currentTime].
+ * ticker still drives [VoicePlaybackState.currentTime]. ExoPlayer refreshes its position only when its
+ * playback loop wakes (about every 250 ms for audio), where `AVAudioPlayer.currentTime` is exact, so
+ * the position in between is estimated from the clock and the speed ([liveProgress]).
  *
  * Stopped by: a new note, [stopIfActive] (bubble gone while paused, message deleted —
  * [artifactSink] `onPurged`, `MessagingController.swift:1969`), chats locking (`onSensitiveMemoryLocked`),
@@ -54,6 +56,8 @@ class VoicePlaybackCoordinator(
     private val player: VoicePlayer,
     private val scope: CoroutineScope,
     private val tickMs: Long = TICK_MS,
+    /** Monotonic clock for the position estimate; tests drive it by hand. */
+    private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private val mutableState = MutableStateFlow(VoicePlaybackState())
     val state: StateFlow<VoicePlaybackState> = mutableState.asStateFlow()
@@ -67,6 +71,16 @@ class VoicePlaybackCoordinator(
     private var pendingFraction = 0.0
     private var wantsPlay = false
     private var ticker: Job? = null
+
+    /**
+     * The position estimate between the player's reports: the last position it reported, where the
+     * estimate stood and when (clock ns), and the furthest position shown since the last jump (a seek,
+     * a pause, a new note), so a late report never steps the playhead back.
+     */
+    private var reportedMs = -1L
+    private var baseMs = 0.0
+    private var baseAt = 0L
+    private var shownMs = 0.0
 
     init {
         player.listener = object : VoicePlayer.Listener {
@@ -84,6 +98,19 @@ class VoicePlaybackCoordinator(
         val s = mutableState.value
         if (s.activeId != id || s.duration <= 0) return 0.0
         return min(1.0, max(0.0, s.currentTime / s.duration))
+    }
+
+    /**
+     * [id]'s position (0…1) right now: estimated from the player's last report while it plays, else
+     * [progress]. The bubble's playhead redraws from this every frame; [state] only moves at 30 Hz and
+     * the player's own position in ~250 ms steps, both visible as jumps on a 60–120 Hz screen. A seek
+     * shows at once (the player reports its target).
+     */
+    fun liveProgress(id: UUID): Double {
+        val s = mutableState.value
+        if (s.activeId != id || s.duration <= 0) return 0.0
+        val seconds = if (ready && s.isPlaying) livePositionMs() / 1000.0 else s.currentTime
+        return min(1.0, max(0.0, seconds / s.duration))
     }
 
     fun isActive(id: UUID): Boolean = mutableState.value.activeId == id
@@ -114,9 +141,10 @@ class VoicePlaybackCoordinator(
         wantsPlay = false
         stopTicker()
         if (mutableState.value.activeId == null) return
+        // The estimate, not the player's last report: that can be 250 ms old and would step the playhead back.
+        val position = if (ready && mutableState.value.isPlaying) livePositionMs() / 1000.0 else mutableState.value.currentTime
         player.pause()
-        val position = if (ready) player.positionMs / 1000.0 else mutableState.value.currentTime
-        update { it.copy(isPlaying = false, currentTime = position) }
+        update { it.copy(isPlaying = false, currentTime = clampToDuration(position)) }
     }
 
     /** Resumes the active note at the sticky rate (`:80-90`). */
@@ -125,6 +153,7 @@ class VoicePlaybackCoordinator(
         wantsPlay = true
         update { it.copy(isPlaying = true) }
         if (!ready) return
+        restartEstimate(mutableState.value.currentTime * 1000)
         player.setSpeed(mutableState.value.rate)
         player.play()
         startTicker()
@@ -145,6 +174,7 @@ class VoicePlaybackCoordinator(
         if (duration <= 0) return
         val positionMs = (duration * clamped * 1000).roundToLong()
         player.seekTo(positionMs)
+        restartEstimate(positionMs.toDouble())
         update { it.copy(currentTime = positionMs / 1000.0) }
     }
 
@@ -152,6 +182,11 @@ class VoicePlaybackCoordinator(
     fun cycleRate() {
         val index = RATES.indexOf(mutableState.value.rate).let { if (it < 0) 0 else it }
         val next = RATES[(index + 1) % RATES.size]
+        // The estimate so far ran at the old speed; it goes on from where it stands at the new one.
+        if (ready && mutableState.value.isPlaying) {
+            baseMs = livePositionMs()
+            baseAt = nanoTime()
+        }
         update { it.copy(rate = next) }
         if (ready && mutableState.value.isPlaying) player.setSpeed(next)
     }
@@ -164,6 +199,7 @@ class VoicePlaybackCoordinator(
         pendingFraction = 0.0
         stopTicker()
         player.stop()
+        restartEstimate(0.0)
         update { it.copy(activeId = null, isPlaying = false, currentTime = 0.0, duration = 0.0) }
     }
 
@@ -219,6 +255,7 @@ class VoicePlaybackCoordinator(
         val startMs = if (duration > 0) (duration * pendingFraction * 1000).roundToLong() else 0L
         pendingFraction = 0.0
         if (startMs > 0) player.seekTo(startMs)
+        restartEstimate(startMs.toDouble())
         update { it.copy(duration = duration, currentTime = startMs / 1000.0, playedIds = it.playedIds + id) }
         if (wantsPlay) {
             player.setSpeed(mutableState.value.rate)
@@ -235,14 +272,16 @@ class VoicePlaybackCoordinator(
         stopTicker()
         player.pause()
         player.seekTo(0)
+        restartEstimate(0.0)
         update { it.copy(isPlaying = false, currentTime = 0.0) }
     }
 
     private fun handleSystemPause() {
         if (!mutableState.value.isPlaying) return
+        val position = if (ready) livePositionMs() / 1000.0 else mutableState.value.currentTime
         wantsPlay = false
         stopTicker()
-        update { it.copy(isPlaying = false, currentTime = player.positionMs / 1000.0) }
+        update { it.copy(isPlaying = false, currentTime = clampToDuration(position)) }
     }
 
     /** 30 Hz is enough for a smooth playhead (`:169-185`). */
@@ -252,8 +291,8 @@ class VoicePlaybackCoordinator(
             while (isActive) {
                 delay(tickMs)
                 if (!ready || !mutableState.value.isPlaying) return@launch
-                val position = player.positionMs / 1000.0
-                update { it.copy(currentTime = position) }
+                val position = livePositionMs() / 1000.0
+                update { it.copy(currentTime = clampToDuration(position)) }
             }
         }
     }
@@ -261,6 +300,35 @@ class VoicePlaybackCoordinator(
     private fun stopTicker() {
         ticker?.cancel()
         ticker = null
+    }
+
+    /**
+     * Where the playing note is now, in ms. A new report from the player — or a player that is not
+     * moving (buffering, a transient focus loss) — restarts the estimate there; in between it runs on
+     * at the playback speed, at most [MAX_ESTIMATE_MS] past the report, and never below what it showed.
+     */
+    private fun livePositionMs(): Double {
+        val reported = player.positionMs
+        val now = nanoTime()
+        if (reported != reportedMs || !player.isAdvancing) {
+            reportedMs = reported
+            baseMs = reported.toDouble()
+            baseAt = now
+        }
+        val elapsedMs = min((now - baseAt) / 1_000_000.0, MAX_ESTIMATE_MS)
+        shownMs = max(shownMs, baseMs + elapsedMs * mutableState.value.rate)
+        return shownMs
+    }
+
+    /** The position jumped to [positionMs] (a seek, a pause or resume, a new note): the estimate starts over there. */
+    private fun restartEstimate(positionMs: Double) {
+        reportedMs = -1L
+        shownMs = positionMs
+    }
+
+    private fun clampToDuration(seconds: Double): Double {
+        val duration = mutableState.value.duration
+        return if (duration > 0) min(seconds, duration) else seconds
     }
 
     /** Equality-guarded write (plan §1.1 rule 3). */
@@ -277,6 +345,9 @@ class VoicePlaybackCoordinator(
 
         /** Playhead refresh while playing (`:174`). */
         const val TICK_MS = 33L
+
+        /** How far the position estimate may run past the player's last report: well over its ~250 ms refresh. */
+        const val MAX_ESTIMATE_MS = 1_000.0
 
         /** `1×`, `1.5×`, `2×`: whole rates without decimals, else one decimal (`VoiceMessageBubble.swift:479-507`). */
         fun rateLabel(rate: Float): String {

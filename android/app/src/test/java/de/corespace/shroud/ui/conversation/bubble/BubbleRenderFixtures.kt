@@ -266,6 +266,7 @@ internal class ReadyVoicePlayer(private val durationMs: Long = 18_000, override 
     override fun pause() = Unit
     override fun seekTo(positionMs: Long) = Unit
     override fun setSpeed(rate: Float) = Unit
+    override val isAdvancing: Boolean = false
     override fun stop() = Unit
 }
 

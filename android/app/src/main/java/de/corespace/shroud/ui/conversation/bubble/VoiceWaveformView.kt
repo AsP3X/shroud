@@ -28,11 +28,14 @@ import kotlin.math.min
  * Shows only as many bars as the width holds, newest last ([VoiceWaveformRender.visibleCount]): a live
  * recording's window can be longer than the readout it sits in. Bars are [barWidth] wide, [spacing]
  * apart, at least [minHeight] tall, vertically centred, capsule-ended. Hidden from TalkBack.
+ *
+ * [progress] is read while drawing, so a playhead that moves every frame redraws the bars without
+ * recomposing anything.
  */
 @Composable
 fun VoiceWaveformView(
     samples: List<Float>,
-    progress: Float,
+    progress: () -> Float,
     playedColor: Color,
     remainingColor: Color,
     modifier: Modifier = Modifier,
@@ -49,11 +52,12 @@ fun VoiceWaveformView(
         if (count <= 0) return@Canvas
         val first = samples.size - count
         val radius = CornerRadius(bar / 2f, bar / 2f)
+        val played = progress().toDouble()
         for (index in 0 until count) {
             val height = VoiceWaveformRender.barHeight(samples[first + index], size.height, floorHeight)
             val x = index * (bar + gap)
             val left = if (rtl) size.width - x - bar else x
-            val fraction = VoiceWaveformRender.playedFraction(index, count, progress.toDouble())
+            val fraction = VoiceWaveformRender.playedFraction(index, count, played)
             val color = when {
                 fraction >= 1f -> playedColor
                 fraction <= 0f -> remainingColor

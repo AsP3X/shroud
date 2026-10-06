@@ -49,8 +49,14 @@ interface VoicePlayer {
     /** Playback speed; pitch is kept (Sonic), like `AVAudioPlayer.enableRate`. */
     fun setSpeed(rate: Float)
 
-    /** The current position of the loaded note. */
+    /**
+     * The current position of the loaded note. ExoPlayer refreshes it only when its playback loop
+     * wakes, about every 250 ms for audio; [VoicePlaybackCoordinator.liveProgress] fills in between.
+     */
     val positionMs: Long
+
+    /** Whether the position is moving right now: playing, not buffering, not held by a transient focus loss. */
+    val isAdvancing: Boolean
 
     /** Unloads the note. */
     fun stop()
@@ -145,6 +151,8 @@ class ExoVoicePlayer(context: Context) : VoicePlayer {
     }
 
     override val positionMs: Long get() = if (playerLazy.isInitialized()) player.currentPosition else 0L
+
+    override val isAdvancing: Boolean get() = playerLazy.isInitialized() && player.isPlaying
 
     override fun stop() {
         awaitingReady = false

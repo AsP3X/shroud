@@ -36,11 +36,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -207,13 +209,15 @@ object VoiceBubbleMath {
         Duration.between(createdAt, now).toMillis() < VoiceTranscriptDisclosure.ARRIVAL_WINDOW_MS
 }
 
-/** What one voice bubble reads of the app-wide player, so the others do not recompose on its ticks. */
+/**
+ * What one voice bubble reads of the app-wide player, so the others do not recompose on its ticks.
+ * No position: the playhead is read while drawing and the footer time through its own derived state,
+ * so the playing bubble does not recompose on the 30 Hz ticks either.
+ */
 @Immutable
 private data class VoiceRowPlayback(
     val isActive: Boolean,
     val isPlaying: Boolean,
-    val progress: Double,
-    val elapsedSeconds: Double?,
     val rate: Float,
     val hasPlayed: Boolean,
 ) {
@@ -223,8 +227,6 @@ private data class VoiceRowPlayback(
             return VoiceRowPlayback(
                 isActive = active,
                 isPlaying = active && state.isPlaying,
-                progress = if (active && state.duration > 0) min(1.0, max(0.0, state.currentTime / state.duration)) else 0.0,
-                elapsedSeconds = if (active) state.currentTime else null,
                 rate = state.rate,
                 hasPlayed = id in state.playedIds,
             )
@@ -288,8 +290,35 @@ internal fun VoiceMessageBubble(parts: BubbleParts, context: BubbleContext, serv
     val durationMs = VoiceBubbleMath.durationMs(message.durationMs, resolvedDurationMs)
     val needsAudio = !message.hasFullMedia && message.mediaObjectId != null && !message.deleted
     val isLoading = needsAudio && !loadFailed
-    val progress = scrubProgress ?: playback.progress
     val showsUnplayedDot = !isMine && !playback.hasPlayed
+
+    // The playhead (`:97-99`), read only while the waveform draws. While the note plays it is asked of
+    // the coordinator every frame ([VoicePlaybackCoordinator.liveProgress]) — the 30 Hz state and the
+    // player's ~250 ms position steps both show on a 60–120 Hz screen — and a scrub or a seek redraws
+    // the bars without recomposing the bubble. The coordinator is read directly, so the
+    // frame a scrub lets go already shows the seek instead of the state from before it. Only the
+    // active note watches the player's state: the others stay at 0 and do not redraw on its ticks.
+    val frameClock = remember(id) { mutableLongStateOf(0L) }
+    LaunchedEffect(id, playback.isPlaying) {
+        if (!playback.isPlaying) return@LaunchedEffect
+        while (true) withFrameNanos { frameClock.longValue = it }
+    }
+    val playhead: () -> Double = {
+        scrubProgress ?: if (!playback.isActive) {
+            0.0
+        } else {
+            frameClock.longValue
+            playbackState.value
+            services.playback.liveProgress(id)
+        }
+    }
+    // Rolls once a second; its own derived state keeps the ticks between from recomposing the bubble.
+    val elapsedTime by remember(id, playbackState, durationMs) {
+        derivedStateOf {
+            val state = playbackState.value
+            VoiceTimeFormat.duration(if (state.activeId == id) state.currentTime else durationMs / 1000.0)
+        }
+    }
 
     // Sizing (`:118-166`).
     val waveformWidth = VoiceBubbleMath.waveformWidth(durationMs, parts.maxBubbleWidth.value)
@@ -524,7 +553,7 @@ internal fun VoiceMessageBubble(parts: BubbleParts, context: BubbleContext, serv
                         Row(horizontalArrangement = Arrangement.spacedBy(VoiceBubbleMath.TRANSCRIPT_BUTTON_GAP.dp), verticalAlignment = Alignment.CenterVertically) {
                             ScrubbableWaveform(
                                 samples = samples,
-                                progress = progress,
+                                progress = playhead,
                                 played = played,
                                 remaining = remaining,
                                 width = waveformWidth.dp,
@@ -552,7 +581,7 @@ internal fun VoiceMessageBubble(parts: BubbleParts, context: BubbleContext, serv
                             }
                         }
                         VoiceFooter(
-                            time = VoiceTimeFormat.duration(playback.elapsedSeconds ?: (durationMs / 1000.0)),
+                            time = elapsedTime,
                             metaColor = metaColor,
                             showsUnplayedDot = showsUnplayedDot,
                             speed = if (playback.isActive) rateLabel else null,
@@ -652,17 +681,18 @@ private fun PlayButton(isMine: Boolean, glyph: PlayGlyph, enabled: Boolean, onCl
 /**
  * The waveform, 26 dp tall with a full-height target (`VoiceMessageBubble.swift:364-399`). Only the
  * loaded note scrubs: a drag from touch-down moves the playhead live, the release seeks. Any other note
- * leaves the drag to swipe-to-reply and the list (nothing is consumed).
+ * leaves the drag to swipe-to-reply and the list (nothing is consumed). A drag cut off before its
+ * release scrubs to `null`, handing the playhead back to the player.
  */
 @Composable
 private fun ScrubbableWaveform(
     samples: List<Float>,
-    progress: Double,
+    progress: () -> Double,
     played: Color,
     remaining: Color,
     width: Dp,
     enabled: Boolean,
-    onScrub: (Double) -> Unit,
+    onScrub: (Double?) -> Unit,
     onSeek: (Double) -> Unit,
 ) {
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -680,20 +710,27 @@ private fun ScrubbableWaveform(
                 val down = awaitFirstDown()
                 down.consume()
                 var last = down.position.x
-                scrub(fraction(last))
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    if (change.positionChange() != Offset.Zero) change.consume()
-                    last = change.position.x
-                    if (!change.pressed) {
-                        change.consume()
-                        seek(fraction(last))
-                        return@awaitEachGesture
-                    }
+                var settled = false
+                try {
                     scrub(fraction(last))
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.positionChange() != Offset.Zero) change.consume()
+                        last = change.position.x
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        scrub(fraction(last))
+                    }
+                    settled = true
+                    seek(fraction(last))
+                } finally {
+                    // Cut off mid-drag — the touch cancelled, or the note stopped and took the gesture
+                    // away: the playhead goes back to the player instead of staying under the finger.
+                    if (!settled) scrub(null)
                 }
-                seek(fraction(last))
             }
         }
     } else {
@@ -701,7 +738,7 @@ private fun ScrubbableWaveform(
     }
     VoiceWaveformView(
         samples = samples,
-        progress = progress.toFloat(),
+        progress = { progress().toFloat() },
         playedColor = played,
         remainingColor = remaining,
         modifier = Modifier.width(width).height(26.dp).then(gesture),
