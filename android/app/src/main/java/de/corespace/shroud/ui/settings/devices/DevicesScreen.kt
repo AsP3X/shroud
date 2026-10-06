@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.devices.DeviceNoun
 import de.corespace.shroud.core.messaging.ChatListFormatting
+import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.DEVICE_LIMIT
@@ -115,11 +116,7 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
     val count = state.rows?.size
     LaunchedEffect(count) { count?.let { currentOnCount?.invoke(it) } }
     val noun = remember(context) { DeviceNoun.current(context) }
-    val clock = container.clock
-    val is24h = DateFormat.is24HourFormat(context)
-    // The app's locale as Compose observes it: a language change re-renders the time labels.
-    val locale = LocalConfiguration.current.locales[0]
-    val timeLabel: (Instant) -> String = { ChatListFormatting.timeLabel(it, clock.now(), ZoneId.systemDefault(), locale, is24h) }
+    val timeLabel = rememberDeviceTimeLabel(container.clock)
 
     var pendingRevoke by remember { mutableStateOf<DeviceRow?>(null) }
     var showRevokeAllConfirm by remember { mutableStateOf(false) }
@@ -506,6 +503,19 @@ private fun CapacityRow(count: Int) {
             }
         }
     }
+}
+
+/**
+ * The rows' time label ("9:37", "Yesterday", "12 Mar 2025": `ChatListFormatting.timeLabel`), shared with
+ * Log In's device-limit card. Reads the app's locale as Compose observes it, so a language change
+ * re-renders the labels.
+ */
+@Composable
+internal fun rememberDeviceTimeLabel(clock: AppClock): (Instant) -> String {
+    val context = LocalContext.current
+    val is24h = DateFormat.is24HourFormat(context)
+    val locale = LocalConfiguration.current.locales[0]
+    return { ChatListFormatting.timeLabel(it, clock.now(), ZoneId.systemDefault(), locale, is24h) }
 }
 
 /** `createdAt.formatted(date: .long, time: .shortened)` (`DevicesView.swift:651`): ICU long date, short time. */

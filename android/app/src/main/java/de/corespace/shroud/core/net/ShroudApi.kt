@@ -66,14 +66,16 @@ class ShroudApi(internal val client: ApiClient) {
 
     /**
      * `POST /auth/login` (`AuthService.swift:37-54`). [deviceId]: this phone's earlier device row on
-     * the account (the anchor), or null for a new one — sent as JSON `null`.
+     * the account (the anchor), or null for a new one — sent as JSON `null`. [replaceDeviceId]: the
+     * device to log out when every slot is signed in, once the phrase checked out and the user agreed
+     * to the `409 DEVICE_LIMIT` answer's [ApiError.deviceLimit]; null otherwise.
      */
-    suspend fun login(username: String, password: String, deviceId: UUID?): AuthSessionResponse {
+    suspend fun login(username: String, password: String, deviceId: UUID?, replaceDeviceId: UUID? = null): AuthSessionResponse {
         val name = de.corespace.shroud.core.auth.UsernameHash.normalize(username)
         return client.post(
             "auth/login",
             null,
-            LoginRequest(de.corespace.shroud.core.auth.UsernameHash.digest(name), password, deviceId),
+            LoginRequest(de.corespace.shroud.core.auth.UsernameHash.digest(name), password, deviceId, replaceDeviceId),
             LoginRequest.serializer(),
             AuthSessionResponse.serializer(),
         )

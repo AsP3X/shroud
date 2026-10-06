@@ -117,7 +117,10 @@ object DevicesCopy {
 
     /** "Last active 9:37" / "Linked Yesterday" (`DevicesView.swift:455-460`); [timeLabel] = `ChatListFormatting.timeLabel`. */
     fun lastActive(device: DeviceRow, timeLabel: (Instant) -> String): String =
-        device.lastSeenAt?.let { "Last active ${timeLabel(it)}" } ?: "Linked ${timeLabel(device.createdAt)}"
+        device.lastSeenAt?.let { lastActiveAt(it, timeLabel) } ?: "$LINKED ${timeLabel(device.createdAt)}"
+
+    /** "Last active 9:37" — also Log In's device-limit card, so both read the same. */
+    fun lastActiveAt(lastSeenAt: Instant, timeLabel: (Instant) -> String): String = "$LAST_ACTIVE ${timeLabel(lastSeenAt)}"
 
     /** "OTHER DEVICES" or "OTHER DEVICES — n" before upper-casing (`DevicesView.swift:176`). */
     fun otherDevicesHeader(count: Int): String = if (count == 0) OTHER_DEVICES else "$OTHER_DEVICES — $count"
@@ -131,7 +134,7 @@ object DevicesCopy {
     /** The footer under the capacity meter (`DevicesView.swift:385-394`). */
     fun capacityFooter(count: Int): String {
         if (isFull(count)) {
-            return "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it is refused until you remove one here."
+            return "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it asks for your password and 12-word phrase, then offers to log out the one used least recently."
         }
         val left = DEVICE_LIMIT - count
         return "You can sign in on $left more ${if (left == 1) "device" else "devices"}. A logged-out device stays listed until it signs in again or you remove it."

@@ -107,14 +107,16 @@ nonisolated struct IdentityKeyMaterial: Sendable {
 
     /// Returns true when `words` derive the same identity public key as this material.
     func matchesMnemonic(_ words: [String]) -> Bool {
-        do {
-            let seed = try BIP39Seed.seed(fromMnemonic: words)
-            let agreementSeed = Self.hkdf(seed: seed, info: "shroud-identity-x25519", length: 32)
-            let agreement = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: agreementSeed)
-            return agreement.publicKey.rawRepresentation == identityPublicKeyData
-        } catch {
-            return false
-        }
+        (try? Self.identityPublicKeyData(fromMnemonic: words)) == identityPublicKeyData
+    }
+
+    /// The X25519 identity public key `words` derive — what the server publishes as the
+    /// account's `identity_key`. Throws `BIP39Seed.SeedError` for words that aren't a phrase.
+    static func identityPublicKeyData(fromMnemonic words: [String]) throws -> Data {
+        let seed = try BIP39Seed.seed(fromMnemonic: words)
+        let agreementSeed = hkdf(seed: seed, info: "shroud-identity-x25519", length: 32)
+        let agreement = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: agreementSeed)
+        return agreement.publicKey.rawRepresentation
     }
 
     static func hkdf(seed: Data, info: String, length: Int) -> Data {

@@ -28,6 +28,9 @@ struct LogInFlowView: View {
     @State private var newPhraseWords: [String] = []
     @State private var wroteDownNewPhrase = false
     @State private var toast: Toast?
+    /// Every device slot is signed in: the login waiting for the phrase, and the sheet offering
+    /// to log out the oldest device once the phrase checked out.
+    @State private var deviceLimit = DeviceLimitConfirmation()
     @FocusState private var focusedField: Field?
 
     private enum Phase {
@@ -129,6 +132,19 @@ struct LogInFlowView: View {
             await checkWhetherAccountHasAPhrase()
         }
         .toast($toast)
+        .sheet(isPresented: Binding(
+            get: { deviceLimit.isPresented },
+            set: { if !$0 { deviceLimit.cancel() } }
+        )) {
+            if let device = deviceLimit.device {
+                DeviceLimitSheet(
+                    device: device,
+                    isLoggingOut: deviceLimit.isLoggingOut,
+                    onConfirm: { Task { await confirmDeviceLimit() } },
+                    onCancel: { deviceLimit.cancel() }
+                )
+            }
+        }
         // The error appears above the button while focus stays on it: say it out loud.
         .onChange(of: errorMessage) { _, message in
             if let message {
@@ -149,6 +165,8 @@ struct LogInFlowView: View {
                     focusedField = nil
                     leaveNewPhrase()
                     accountHasNoPhrase = false
+                    // A login waiting on the device limit has no session to end: just drop it.
+                    deviceLimit.reset()
                     phase = .credentials
                 }
             }
@@ -167,7 +185,8 @@ struct LogInFlowView: View {
     }
 
     // Human: Green confirmation strip that grows in below the nav once credentials are accepted.
-    // Agent: READS signedInUsername (local state only); collapses to zero height in the credentials state.
+    // Agent: READS signedInUsername (local state only); collapses to zero height in the credentials
+    // state and while a device-limit login is pending (no session yet).
     private var signedInBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
@@ -186,9 +205,14 @@ struct LogInFlowView: View {
         .padding(.vertical, 8)
         .background(Theme.successBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .opacity(isCredentialsPhase ? 0 : 1)
-        .frame(maxHeight: isCredentialsPhase ? 0 : nil)
+        .opacity(showsSignedInBanner ? 1 : 0)
+        .frame(maxHeight: showsSignedInBanner ? nil : 0)
         .clipped()
+    }
+
+    /// A login waiting on the device limit has no session yet: no "Signed in" until the retry.
+    private var showsSignedInBanner: Bool {
+        !isCredentialsPhase && !deviceLimit.isPending
     }
 
     // Human: Persistent brand mark that morphs shield→key; matches Welcome logo for the zoom transition landing.
@@ -704,18 +728,53 @@ struct LogInFlowView: View {
 
         do {
             try await sessionController.login(username: username, password: password)
-            // Stay on this screen — RootView must not treat session alone as messaging unlock.
-            // The credentials card hides without resigning its field: drop the keyboard here.
-            focusedField = nil
-            withAnimation(Motion.respecting(reduceMotion, Motion.standard)) {
-                phase = .encryptionPhrase
-            }
+            continueAfterLogin()
+        } catch let limit as DeviceLimitError {
+            // Every device slot is signed in. On to the phrase step without a session: only a
+            // phrase that derives the account's key asks to log a device out.
+            deviceLimit.begin(limit, username: username, password: password)
+            continueAfterLogin()
         } catch {
             errorMessage = SessionController.userMessage(for: error)
         }
     }
 
-    // Human: Phrase unlock is local crypto; server session already established.
+    // Human: "Log Out and Continue" — the same login again, naming the device to log out, then
+    // the rest of the phrase step with the words already checked.
+    // Agent: CALLS SessionController.login(replacingDeviceID:) via DeviceLimitConfirmation; a
+    // different `oldest_device` keeps the sheet open, any other failure goes inline.
+    private func confirmDeviceLimit() async {
+        let outcome = await deviceLimit.confirm { username, password, deviceID in
+            try await sessionController.login(
+                username: username,
+                password: password,
+                replacingDeviceID: deviceID
+            )
+        }
+        switch outcome {
+        case let .loggedIn(words):
+            await completePhraseUnlock(words: words)
+        case .phraseMismatch:
+            errorMessage = CryptoController.userMessage(for: CryptoControllerError.phraseDoesNotMatchAccount)
+        case let .failed(message):
+            errorMessage = message
+        case .anotherDevice, nil:
+            break
+        }
+    }
+
+    private func continueAfterLogin() {
+        // Stay on this screen — RootView must not treat session alone as messaging unlock.
+        // The credentials card hides without resigning its field: drop the keyboard here.
+        focusedField = nil
+        withAnimation(Motion.respecting(reduceMotion, Motion.standard)) {
+            phase = .encryptionPhrase
+        }
+    }
+
+    // Human: Phrase unlock is local crypto; server session already established — or, at the
+    // device limit, not yet: then the phrase is only checked against the account's key here, and
+    // the sheet asks before the login that needs a device logged out.
     // Agent: CALLS CryptoController.unlockWithPhrase then unlockMessages; never uploads phraseWords.
     private func submitPhraseUnlock() async {
         guard canUnlockWithPhrase else {
@@ -724,6 +783,27 @@ struct LogInFlowView: View {
                 : "Enter all 12 words of your encryption phrase."
             return
         }
+
+        let words = (creatingPhrase ? newPhraseWords : phraseWords)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+
+        if deviceLimit.isPending {
+            errorMessage = nil
+            focusedField = nil
+            do {
+                try deviceLimit.checkPhrase(words)
+            } catch {
+                errorMessage = CryptoController.userMessage(for: error)
+            }
+            return
+        }
+        await completePhraseUnlock(words: words)
+    }
+
+    /// The phrase step's work once a session exists: unlock (or set up) the keys with `words`
+    /// and open the chats. Shared by the plain submit and the device-limit retry.
+    private func completePhraseUnlock(words: [String]) async {
         guard let userID = sessionController.userID,
               let token = sessionController.bearerToken
         else {
@@ -736,10 +816,6 @@ struct LogInFlowView: View {
         isSubmitting = true
         errorMessage = nil
         defer { isSubmitting = false }
-
-        let words = (creatingPhrase ? newPhraseWords : phraseWords)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty }
 
         do {
             try await cryptoController.unlockWithPhrase(

@@ -134,6 +134,28 @@ class ShroudApiTest {
     }
 
     @Test
+    fun theDeviceLimitRetrySendsTheDeviceToLogOut() = runTest {
+        val oldest = UUID.fromString("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+        server.enqueue(
+            MockResponse(
+                code = 409,
+                body = """{"error":{"code":"DEVICE_LIMIT","message":"full"},"oldest_device":{"id":"$oldest","created_at":"2025-03-12T08:30:00Z"}}""",
+            ),
+        )
+        server.enqueue(ok(session))
+        val limit = runCatching { api.login("noah", "pw", anchor) }.exceptionOrNull() as ApiError.Server
+        assertEquals(oldest, limit.deviceLimit?.oldestDevice?.id)
+        api.login("noah", "pw", anchor, replaceDeviceId = oldest)
+        val first = jsonOf(server.takeRequest()).jsonObject
+        val retry = jsonOf(server.takeRequest()).jsonObject
+        // A plain login names no device; the retry keeps the anchor and adds the one the user saw.
+        assertEquals("null", first["replace_device_id"].toString())
+        assertEquals(first["device_id"], retry["device_id"])
+        assertEquals(first["username_hash"], retry["username_hash"])
+        assertEquals(oldest.toString(), retry["replace_device_id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun errorEnvelopeBecomesServerError() = runTest {
         server.enqueue(MockResponse(code = 401, body = """{"error":{"code":"INVALID_CREDENTIALS","message":"Invalid username or password."}}"""))
         val error = runCatching { api.login("noah", "bad", null) }.exceptionOrNull() as ApiError.Server

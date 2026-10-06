@@ -2186,6 +2186,21 @@ button.reply-quote { cursor: pointer; }
 .btn-destructive:hover:not(:disabled) { filter: brightness(1.1); }
 .modal-actions { display: flex; gap: 8px; }
 .modal-actions .btn { flex: 1; height: 42px; font-size: var(--fs-md); }
+/* Login, every device slot signed in: "Log out your oldest device?" (components/auth/DeviceLimitDialog). */
+.dev-limit .set-card { background: var(--surface-1); }
+.modal p.dev-limit-note { font-size: var(--fs-xs); }
+.dev-spinner.on-danger {
+  width: 14px; height: 14px; margin-right: 8px;
+  border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff;
+}
+.btn-destructive[aria-disabled="true"] { cursor: default; }
+.btn-destructive[aria-disabled="true"]:hover { filter: none; }
+/* At phone width "Log Out and Continue" doesn't fit half the row: stack, the action on top
+   like the other stacked confirmations (Delete for everyone), Cancel under it. */
+@media (max-width: 440px) {
+  .dev-limit .modal-actions { flex-direction: column-reverse; }
+  .dev-limit .modal-actions .btn { flex: 0 0 auto; }
+}
 .mini-btn.ghost.danger { color: var(--danger); }
 
 .segmented {

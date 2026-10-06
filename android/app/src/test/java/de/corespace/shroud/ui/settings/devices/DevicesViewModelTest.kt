@@ -310,7 +310,7 @@ class DevicesViewModelTest {
             "You can sign in on 1 more device. A logged-out device stays listed until it signs in again or you remove it.",
             DevicesCopy.capacityFooter(4),
         )
-        val full = "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it is refused until you remove one here."
+        val full = "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it asks for your password and 12-word phrase, then offers to log out the one used least recently."
         assertEquals(full, DevicesCopy.capacityFooter(5))
         assertEquals(full, DevicesCopy.capacityFooter(6))
         assertEquals("4 of 5", DevicesCopy.capacityValue(4))

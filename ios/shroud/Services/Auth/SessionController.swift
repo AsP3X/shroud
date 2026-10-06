@@ -77,8 +77,13 @@ final class SessionController {
         resetAuthenticationFailures()
     }
 
-    func login(username: String, password: String) async throws {
-        session = try await authService.login(username: username, password: password)
+    /// `replacingDeviceID` logs that device out to make room (see `AuthService.login`).
+    func login(username: String, password: String, replacingDeviceID: UUID? = nil) async throws {
+        session = try await authService.login(
+            username: username,
+            password: password,
+            replacingDeviceID: replacingDeviceID
+        )
         sessionValidated = true
         resetAuthenticationFailures()
     }
@@ -217,6 +222,9 @@ final class SessionController {
             case .decoding:
                 return "Could not read the server response."
             }
+        }
+        if let limit = error as? DeviceLimitError {
+            return limit.message
         }
         if error as? PeerIdentityError == .changed {
             return "This contact's encryption key changed. Verify their safety number before sending."

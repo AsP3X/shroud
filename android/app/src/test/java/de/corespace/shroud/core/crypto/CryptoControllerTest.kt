@@ -197,6 +197,21 @@ class CryptoControllerTest {
     }
 
     @Test
+    fun aFullAccountsPhraseIsCheckedAgainstTheKeyOfItsDeviceLimitAnswer() = runBlocking<Unit> {
+        // Log In on a full account: no session, so no request; nothing stored or unlocked either way.
+        crypto.checkPhrase(words, abandonKey)
+        val other = runCatching { crypto.checkPhrase(otherWords, abandonKey) }.exceptionOrNull()
+        assertTrue(other.toString(), other is CryptoException.PhraseDoesNotMatchAccount)
+        val unreadableKey = runCatching { crypto.checkPhrase(words, "not base64!") }.exceptionOrNull()
+        assertTrue(unreadableKey is CryptoException.PhraseDoesNotMatchAccount)
+        val invalid = runCatching { crypto.checkPhrase(List(12) { "abandon" }, abandonKey) }.exceptionOrNull()
+        assertTrue(invalid.toString(), invalid is Bip39.PhraseException.InvalidChecksum)
+        assertEquals(0, server.requestCount)
+        assertNull(crypto.unlockedUserId.value)
+        assertFalse(identityStore.hasRecord())
+    }
+
+    @Test
     fun signUpNeverReplacesAnotherPhrasesPublishedKey() = runBlocking<Unit> {
         server.enqueue(MockResponse(code = 200, body = identity("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")))
         val error = runCatching { crypto.establishFromSignup(words, session) }.exceptionOrNull()

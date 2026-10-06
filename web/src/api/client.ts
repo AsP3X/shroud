@@ -379,7 +379,12 @@ export const api = {
     });
     return withLocalUsername(session, name);
   },
-  login: async (username: string, password: string, deviceId?: string | null) => {
+  /**
+   * `replaceDeviceId`: the device the user agreed to log out when every slot is taken (a `409
+   * DEVICE_LIMIT` names it in `oldest_device`, see `deviceLimit.ts`). The server ignores it
+   * while a slot is free.
+   */
+  login: async (username: string, password: string, deviceId?: string | null, replaceDeviceId?: string | null) => {
     const name = normalizeUsername(username);
     const session = await request<Session>("/auth/login", {
       method: "POST",
@@ -387,6 +392,7 @@ export const api = {
         username_hash: usernameHashB64(name),
         password,
         ...(deviceId && UUID_RE.test(deviceId) ? { device_id: deviceId } : {}),
+        ...(replaceDeviceId ? { replace_device_id: replaceDeviceId } : {}),
       }),
     });
     return withLocalUsername(session, name);

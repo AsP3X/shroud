@@ -3,11 +3,14 @@ package de.corespace.shroud.ui.onboarding
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.CryptoException
 import de.corespace.shroud.core.net.ApiError
+import de.corespace.shroud.core.net.OldestDeviceDto
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
+import java.util.UUID
 
 /**
  * Log In's rules and requests (`LogInFlowView.swift:50-74, 404-408, 699-754`; settings-lock addendum
@@ -113,6 +116,75 @@ class LogInTest {
     }
 
     @Test
+    fun aFullAccountWaitsForThePhraseThenLogsTheOldestOut() = runTest {
+        services.loginFailures += deviceLimit(OLDEST)
+        assertEquals(LogInActions.Outcome.DeviceLimit(OLDEST, KEY), actions.logIn("alice", "pw") { true })
+        assertEquals(null, services.session.value)
+        // The phrase against the 409's key, no session and no request.
+        assertEquals(LogInActions.Outcome.Done, actions.checkPhrase(twelve, KEY))
+        assertEquals(twelve, services.lastWords)
+        // The same credentials again, naming the device the user saw.
+        assertEquals(LogInActions.Outcome.Done, actions.logIn("alice", "pw", OLDEST.id) { true })
+        assertEquals(listOf("login:alice", "check:$KEY", "login:alice:replace=${OLDEST.id}"), services.calls)
+    }
+
+    @Test
+    fun aWrongPhraseIsThePhraseStepsError() = runTest {
+        services.checkError = CryptoException.PhraseDoesNotMatchAccount()
+        assertEquals(LogInActions.Outcome.Failed("That phrase doesn’t match this account on this device."), actions.checkPhrase(twelve, KEY))
+        assertEquals("That phrase doesn’t match this account on this device.", LogInRules.WRONG_PHRASE)
+    }
+
+    @Test
+    fun withoutAKeyOrADeviceTheLimitStaysInline() = runTest {
+        // No `identity_key` (no device published keys): the phrase can't be checked first.
+        services.loginFailures += deviceLimit(OLDEST, identityKey = null)
+        assertEquals(LogInActions.Outcome.Failed("full"), actions.logIn("alice", "pw") { true })
+        // No `oldest_device` (a server from before it): today's inline message.
+        services.loginFailures += ApiError.from(409, """{"error":{"code":"DEVICE_LIMIT","message":"This account already has the maximum number of devices (5). Remove a device and try again."}}""")
+        assertEquals(
+            LogInActions.Outcome.Failed("This account already has the maximum number of devices (5). Remove a device and try again."),
+            actions.logIn("alice", "pw") { true },
+        )
+        services.loginFailures += ApiError.Server("RATE_LIMITED", "Too many requests. Try again later.", 429)
+        assertEquals(LogInActions.Outcome.Failed("Too many requests. Try again later."), actions.logIn("alice", "pw", OLDEST.id) { true })
+    }
+
+    @Test
+    fun aRefusedRetryKeepsAskingOnlyAboutTheCheckedKey() {
+        val asking = PendingDeviceLimit(OLDEST, KEY, twelve)
+        val next = OldestDeviceDto(UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), Instant.parse("2025-06-01T10:00:00Z"))
+        // Full again with another oldest device: the dialog stays and shows it.
+        assertEquals(
+            LogInRules.ReplaceRefused(PendingDeviceLimit(next, KEY, twelve), null),
+            LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.DeviceLimit(next, KEY)),
+        )
+        // The account's key changed: the checked phrase no longer matches — no dialog, the wrong-phrase error.
+        assertEquals(
+            LogInRules.ReplaceRefused(PendingDeviceLimit(next, "b3RoZXI="), LogInRules.WRONG_PHRASE),
+            LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.DeviceLimit(next, "b3RoZXI=")),
+        )
+        // Anything else closes the dialog with its message; Unlock checks and asks again.
+        assertEquals(
+            LogInRules.ReplaceRefused(PendingDeviceLimit(OLDEST, KEY), "The request timed out."),
+            LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.Failed("The request timed out.")),
+        )
+        assertFalse(LogInRules.afterReplaceRefused(asking, LogInActions.Outcome.Failed("x")).limit!!.asking)
+    }
+
+    @Test
+    fun theDeviceLimitWords() {
+        val timeLabel: (Instant) -> String = { "9:37" }
+        assertEquals("Last active 9:37", DeviceLimitCopy.lastActive(Instant.EPOCH, timeLabel))
+        assertEquals("Never active", DeviceLimitCopy.lastActive(null, timeLabel))
+        assertEquals("Linked 12 March 2025", DeviceLimitCopy.linked(Instant.EPOCH) { "12 March 2025" })
+        assertEquals(
+            "Your account is logged in on 5 devices, the most it can have. To log in here, Shroud logs out the one you used least recently:",
+            DeviceLimitCopy.MESSAGE,
+        )
+    }
+
+    @Test
     fun aDeniedLocalNetworkStopsBothRequests() = runTest {
         assertEquals(LogInActions.Outcome.Failed(LocalNetworkAccess.DENIED_MESSAGE), actions.logIn("alice", "pw") { false })
         services.login("alice", "pw")
@@ -174,5 +246,24 @@ class LogInTest {
     @Test
     fun pasteFailureCopy() {
         assertEquals("The clipboard doesn’t hold a valid 12-word phrase.", PASTE_FAILED)
+    }
+
+    companion object {
+        val OLDEST = OldestDeviceDto(
+            UUID.fromString("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
+            Instant.parse("2025-03-12T08:30:00Z"),
+            Instant.parse("2026-10-01T17:05:00Z"),
+        )
+
+        /** The account's published identity key in [deviceLimit] (any Base64; the fake checks nothing). */
+        const val KEY = "mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ="
+
+        /** The server's `409 DEVICE_LIMIT` naming [oldest] and [identityKey] (`error.rs` `ErrorBody`). */
+        fun deviceLimit(oldest: OldestDeviceDto, identityKey: String? = KEY): ApiError {
+            val seen = oldest.lastSeenAt?.let { ",\"last_seen_at\":\"$it\"" }.orEmpty()
+            val device = "{\"id\":\"${oldest.id}\",\"created_at\":\"${oldest.createdAt}\"$seen}"
+            val key = identityKey?.let { ",\"identity_key\":\"$it\"" }.orEmpty()
+            return ApiError.from(409, "{\"error\":{\"code\":\"DEVICE_LIMIT\",\"message\":\"full\"},\"oldest_device\":$device$key}")
+        }
     }
 }

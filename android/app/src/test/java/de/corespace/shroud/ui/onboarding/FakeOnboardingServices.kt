@@ -7,6 +7,7 @@ import de.corespace.shroud.core.crypto.TestWordlist
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.util.UUID
 
 /**
  * [OnboardingServices] for the onboarding JVM tests: records every request, signs in on
@@ -21,8 +22,17 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
     var localNetworkNeeded = false
     var registerError: Throwable? = null
     var loginError: Throwable? = null
+
+    /** Answers for the next logins, one each, before [loginError]: a full account's 409, then success. */
+    val loginFailures = ArrayDeque<Throwable>()
+
+    /** Held open while set: the login waits for it (a busy state to look at). */
+    var loginGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var establishError: Throwable? = null
     var unlockError: Throwable? = null
+
+    /** Thrown by [checkPhrase]: a wrong phrase for a full account's identity key. */
+    var checkError: Throwable? = null
     var afterFailure = SessionController.Validation.Offline
     var hasNoKey = false
 
@@ -45,10 +55,18 @@ internal class FakeOnboardingServices(override val bip39: Bip39 = TestWordlist.b
         return signIn(username, "new-$registered")
     }
 
-    override suspend fun login(username: String, password: String): Session {
-        calls += "login:${SessionController.normalize(username)}"
+    override suspend fun login(username: String, password: String, replaceDeviceId: UUID?): Session {
+        calls += "login:${SessionController.normalize(username)}" + (replaceDeviceId?.let { ":replace=$it" } ?: "")
+        loginGate?.await()
+        loginFailures.removeFirstOrNull()?.let { throw it }
         loginError?.let { throw it }
         return signIn(username, "device")
+    }
+
+    override suspend fun checkPhrase(words: List<String>, identityKey: String) {
+        calls += "check:$identityKey"
+        lastWords = words
+        checkError?.let { throw it }
     }
 
     override fun sessionAfterFailure(): SessionController.Validation = afterFailure

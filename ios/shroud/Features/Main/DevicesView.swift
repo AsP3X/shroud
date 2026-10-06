@@ -387,7 +387,7 @@ struct DevicesView: View {
     private func capacityFooter(count: Int) -> String {
         let limit = DevicesService.deviceLimit
         if count >= limit {
-            return "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it is refused until you remove one here."
+            return "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it asks for your password and 12-word phrase, then offers to log out the one used least recently."
         }
         let left = limit - count
         return "You can sign in on \(left) more \(left == 1 ? "device" : "devices"). A logged-out device stays listed until it signs in again or you remove it."
@@ -856,7 +856,9 @@ enum DeviceKind: Equatable {
     }
 }
 
-private struct DeviceIconTile: View {
+/// The rounded kind tile of a device row; a nil label is the grey "unknown" computer.
+/// Agent: Internal for the login's `DeviceLimitSheet`, which can't open device names.
+struct DeviceIconTile: View {
     let label: DeviceNameSeal.Label?
     let size: CGFloat
 

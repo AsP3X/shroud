@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 /**
  * The server session (`ios/shroud/Services/Auth/SessionController.swift`; settings-lock §13).
@@ -114,12 +115,16 @@ class SessionController(
      * Signs in (`login`, `:80-84`; `AuthService.swift:38-54`), reusing this phone's device row on the
      * account when it had one. An anchor that is not a canonical UUID (never written by [adopt]) is
      * not sent: the server then makes a new row.
+     *
+     * [replaceDeviceId] logs that device out to make room when every slot is signed in — the
+     * oldest device of the previous attempt's [ApiError.deviceLimit], once the phrase checked out and
+     * the user agreed. The retry sends the same anchor, read the same way.
      */
-    suspend fun login(username: String, password: String): Session {
+    suspend fun login(username: String, password: String, replaceDeviceId: UUID? = null): Session {
         val name = UsernameHash.normalize(username)
         val anchor = state.value?.takeIf { it.username == name }?.deviceId
             ?: withContext(io) { store.anchorFor(name) }
-        return adopt(api.login(name, password, Ids.parse(anchor)), name)
+        return adopt(api.login(name, password, Ids.parse(anchor), replaceDeviceId), name)
     }
 
     /** What [validate] found. */

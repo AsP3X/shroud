@@ -61,7 +61,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Sessions | Opaque token; store **hash** only; `Authorization: Bearer`; bound to `device_id` |
 | Session lifetime | **No time expiry**; end on logout, device delete, password-change (others), account delete |
 | Devices | Max **5** per account; name only **sealed** by the account's devices (`PUT /devices/:id/name`), never in the clear |
-| Device limit | New device when full → reuse the longest-idle device with no live session (its keys, push tokens, notification settings and PIN guard are dropped); `DEVICE_LIMIT` only when every device is signed in |
+| Device limit | New device when full → reuse the longest-idle device with no live session (its keys, push tokens, notification settings and PIN guard are dropped); `DEVICE_LIMIT` only when every device is signed in, naming the least recently active one; a retry with `replace_device_id` set to it removes that device (as `DELETE /devices/:id`) once the user agreed |
 | Returning device | Optional `device_id` on login: reuse if owned by user; else new device (cap applies) |
 
 ### Crypto and keys
@@ -700,7 +700,8 @@ Success:
 {
   "username": "alice",
   "password": "correct-horse-battery",
-  "device_id": "<uuid>"
+  "device_id": "<uuid>",
+  "replace_device_id": "<uuid>"
 }
 ```
 
@@ -709,8 +710,21 @@ Success:
 | `username` | yes | |
 | `password` | yes | |
 | `device_id` | no | Reuse if owned by user; else new device |
+| `replace_device_id` | no | Only used when every device slot is signed in: the `oldest_device.id` of a `DEVICE_LIMIT` answer the user agreed to sign out. Ignored while a slot is free |
 
 Success body: same as register, plus `device.sealed_name` (Base64) when the reused device has one. Reusing a device revokes its previous session (one live session per device) and closes that session's WebSocket.
+
+**Full account.** With 5 devices and none idle, the answer is `409 DEVICE_LIMIT` with the device a retry may sign out — the least recently active one (`COALESCE(last_seen_at, created_at)`). Its sealed name is left out: the device logging in has no phrase yet to open it.
+
+```json
+{
+  "error": { "code": "DEVICE_LIMIT", "message": "…" },
+  "oldest_device": { "id": "<uuid>", "created_at": "<ts>", "last_seen_at": "<ts>" },
+  "identity_key": "<b64>"
+}
+```
+
+`identity_key` is the account's published identity key (as `GET /keys/identity/:user_id`), absent while no device has published keys. Clients first take the encryption phrase and check that it derives this key; only then do they ask the user to confirm signing that device out, and repeat the login with `replace_device_id`. A wrong phrase, or no `identity_key` to check it against, never offers the sign-out. The device is removed exactly like `DELETE /devices/:id` (its socket closes with `DEVICE_REMOVED`, a wake push makes it wipe itself) and the login gets a new device. If that device is already gone and the account is full again, the answer is another `DEVICE_LIMIT` naming the next one, so nothing the user didn't confirm is signed out.
 
 #### `POST /auth/logout` → `204`
 
@@ -807,7 +821,7 @@ The web client wraps its vault key under PIN **and** a server-held pepper, so a 
 | `PASSWORD_TOO_SHORT` | Fewer than 8 characters |
 | `PASSWORD_TOO_COMMON` | On embedded denylist |
 | `INVALID_CREDENTIALS` | Failed login (no user enumeration) |
-| `DEVICE_LIMIT` | Would exceed 5 devices and all 5 are signed in |
+| `DEVICE_LIMIT` | Would exceed 5 devices and all 5 are signed in; carries `oldest_device` (see `POST /auth/login`) |
 | `UNAUTHORIZED` | Missing / invalid / revoked token |
 | `DEVICE_REMOVED` | The token's device was removed from the account (401); the client wipes itself |
 | `FORBIDDEN` | Authenticated but not allowed |

@@ -63,6 +63,18 @@ sealed class ApiError(message: String) : Exception(message) {
     val isNotFound: Boolean get() = this is Server && status == 404
 
     /**
+     * A login's `409 DEVICE_LIMIT` with what it carries ([DeviceLimitDto]): every slot is signed
+     * in, and a retry with `replace_device_id` takes the oldest device's place. Null for every other
+     * error; its fields are null when the server didn't send them (an older server, or no published
+     * identity key to check the phrase against).
+     */
+    val deviceLimit: DeviceLimitDto?
+        get() = (this as? Server)
+            ?.takeIf { it.status == 409 && it.code == ErrorCodes.DEVICE_LIMIT }
+            ?.body
+            ?.let(DeviceLimitDto::fromErrorBody)
+
+    /**
      * What a screen shows: the server's own message, the transport text, or the decoding text
      * (`SessionController.swift:203-218`).
      */

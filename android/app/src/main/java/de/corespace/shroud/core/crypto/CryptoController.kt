@@ -298,6 +298,20 @@ class CryptoController(
     }
 
     /**
+     * Log In on a full account, before any device is offered for sign-out: is [words] the phrase
+     * of [identityKey] (Base64, the account's published identity key from the login's `409
+     * DEVICE_LIMIT`)? There is no session yet, so nothing is fetched and nothing is stored.
+     * Invalid words throw their [Bip39.PhraseException]; another phrase throws
+     * [CryptoException.PhraseDoesNotMatchAccount] — the phrase step's usual errors.
+     */
+    suspend fun checkPhrase(words: List<String>, identityKey: String) {
+        val validated = bip39.validate(words)
+        val key = B64.decodeStrict(identityKey)
+        val matches = key != null && withContext(compute) { IdentityKeyMaterial.phraseMatches(bip39, validated, key) }
+        if (!matches) throw CryptoException.PhraseDoesNotMatchAccount()
+    }
+
+    /**
      * Drops the keys from memory (backgrounding, Log Out; `lock`, `:221-231`). The stored identity
      * and vault stay unless [wipeStore], which deletes both. [needsHistoryUnlock] says whether an
      * identity is still stored — by the record's existence, since an Android lock can run while the

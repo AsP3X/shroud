@@ -262,6 +262,31 @@ class SessionControllerTest {
     }
 
     @Test
+    fun theDeviceLimitRetryKeepsTheAnchorAndNamesTheDeviceToLogOut() = runTest {
+        val oldest = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        server.enqueue(
+            MockResponse(
+                code = 409,
+                body = """{"error":{"code":"DEVICE_LIMIT","message":"full"},"oldest_device":{"id":"$oldest","created_at":"2025-03-12T08:30:00Z"}}""",
+            ),
+        )
+        server.enqueue(MockResponse(code = 200, body = session()))
+        val st = store()
+        st.save(Session("old", USER_ID.lowercase(), "noah", null, ANCHOR))
+        st.clear()
+        val c = controller(st)
+        val limit = runCatching { c.login("noah", "pw") }.exceptionOrNull() as ApiError
+        assertNull(c.session.value)
+        c.login("noah", "pw", limit.deviceLimit!!.oldestDevice!!.id)
+        val first = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        val retry = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        assertEquals("\"$ANCHOR\"", first["device_id"].toString())
+        assertEquals(first["device_id"], retry["device_id"])
+        assertEquals("\"$oldest\"", retry["replace_device_id"].toString())
+        assertEquals("tok", c.session.value?.token)
+    }
+
+    @Test
     fun anAnchorThatIsNotAUuidIsNotSent() = runTest {
         server.enqueue(MockResponse(code = 200, body = session()))
         val st = store()

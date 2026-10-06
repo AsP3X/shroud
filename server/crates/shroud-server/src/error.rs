@@ -5,13 +5,33 @@ use axum::{
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Top-level error envelope returned to API clients.
 #[derive(Debug, Serialize)]
 pub struct ErrorBody {
     pub error: ErrorDetail,
+    /// `DEVICE_LIMIT` only: the device a login retried with `replace_device_id` would sign out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oldest_device: Option<OldestDevice>,
+    /// `DEVICE_LIMIT` only: the account's published identity key (Base64), for the client to
+    /// check the encryption phrase before it offers to sign a device out. Absent while no device
+    /// of the account has published keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_key: Option<String>,
+}
+
+/// The account's least recently active device, offered for sign-out when every device slot is
+/// signed in. Its sealed name stays out: the device logging in has no phrase yet to open it.
+#[derive(Debug, Clone, Serialize)]
+pub struct OldestDevice {
+    pub id: Uuid,
+    pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<DateTime<Utc>>,
 }
 
 /// Safe, user-facing error fields — no stack traces or internal details.
@@ -32,6 +52,15 @@ pub enum AppError {
         status: StatusCode,
         code: &'static str,
         message: String,
+    },
+
+    /// Every device slot is signed in; the body names the device a login may sign out instead.
+    #[error(
+        "This account already has the maximum number of devices (5). Remove a device and try again."
+    )]
+    DeviceLimit {
+        oldest_device: OldestDevice,
+        identity_key: Option<String>,
     },
 
     /// Rate limit exceeded; `retry_after_secs` drives the `Retry-After` response header.
@@ -91,11 +120,10 @@ impl AppError {
         }
     }
 
-    pub fn device_limit() -> Self {
-        Self::Api {
-            status: StatusCode::CONFLICT,
-            code: "DEVICE_LIMIT",
-            message: "This account already has the maximum number of devices (5). Remove a device and try again.".into(),
+    pub fn device_limit(oldest_device: OldestDevice, identity_key: Option<String>) -> Self {
+        Self::DeviceLimit {
+            oldest_device,
+            identity_key,
         }
     }
 
@@ -228,12 +256,21 @@ impl AppError {
                 code: self.code().into(),
                 message: self.client_message(),
             },
+            oldest_device: match self {
+                Self::DeviceLimit { oldest_device, .. } => Some(oldest_device.clone()),
+                _ => None,
+            },
+            identity_key: match self {
+                Self::DeviceLimit { identity_key, .. } => identity_key.clone(),
+                _ => None,
+            },
         }
     }
 
     fn status(&self) -> StatusCode {
         match self {
             Self::Api { status, .. } => *status,
+            Self::DeviceLimit { .. } => StatusCode::CONFLICT,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -242,6 +279,7 @@ impl AppError {
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Api { code, .. } => code,
+            Self::DeviceLimit { .. } => "DEVICE_LIMIT",
             Self::RateLimited { .. } => "RATE_LIMITED",
             Self::Internal(_) => "INTERNAL_ERROR",
         }
@@ -251,6 +289,7 @@ impl AppError {
     fn client_message(&self) -> String {
         match self {
             Self::Api { message, .. } => message.clone(),
+            Self::DeviceLimit { .. } => self.to_string(),
             Self::RateLimited { .. } => "Too many requests. Try again later.".into(),
             // Human: Internal errors get a generic message; details stay in server logs only.
             Self::Internal(_) => "An unexpected error occurred.".into(),
@@ -269,12 +308,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
         let retry_after = self.retry_after_secs();
-        let body = ErrorBody {
-            error: ErrorDetail {
-                code: self.code().into(),
-                message: self.client_message(),
-            },
-        };
+        let body = self.body();
 
         let code = self.code();
         if status.is_server_error() {

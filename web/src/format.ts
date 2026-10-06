@@ -59,6 +59,13 @@ export function fullTimestamp(iso: string): string {
   return at.toLocaleString([], { dateStyle: "long", timeStyle: "short" });
 }
 
+/** Date only, long style ("12 March 2025"): when a device was linked. */
+export function longDate(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  return at.toLocaleDateString([], { dateStyle: "long" });
+}
+
 export type Presence = { online: boolean; lastSeenAt: string | null };
 
 export function presenceLabel(presence: Presence | undefined): string {

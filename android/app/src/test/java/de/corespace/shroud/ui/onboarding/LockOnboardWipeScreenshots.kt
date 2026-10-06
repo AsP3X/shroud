@@ -17,6 +17,7 @@ import de.corespace.shroud.core.keys.UnlockMethod
 import de.corespace.shroud.core.keys.VaultState
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ServerConfiguration
+import de.corespace.shroud.testing.FakeAppClock
 import de.corespace.shroud.ui.components.ComposeHarness
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.components.ShroudSheet
@@ -294,6 +295,33 @@ class LockOnboardWipeScreenshots {
 
         val overLock = logIn(FakeOnboardingServices().signedIn())
         overLock.save("login-phrase-over-lock-screen")
+    }
+
+    /** "Log out your oldest device?" over the checked phrase step, light, dark and busy, the device last seen yesterday. */
+    @Test
+    fun logInDeviceLimitStates() {
+        val clock = FakeAppClock(java.time.Instant.parse("2026-10-02T09:00:00Z").toEpochMilli())
+        fun full(dark: Boolean, busy: Boolean, name: String) {
+            val services = FakeOnboardingServices()
+            services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+            val ui = hosts.host(dark = dark) { OverlayHost { LogInContent(services, onBack = {}, onSignUp = {}, clock = clock) } }
+            ui.type(ui.field("Username"), "noah")
+            ui.type(ui.field("Password"), "secret")
+            ui.click(ui.button("Log In"))
+            // A full account: the phrase step first; the question only once the phrase checked out.
+            services.bip39.generate().forEachIndexed { i, word -> ui.type(ui.tagged("login.word${i + 1}"), word) }
+            ui.click(ui.button("Unlock Messages"))
+            if (busy) {
+                services.loginGate = CompletableDeferred()
+                ui.click(ui.button("Log Out and Continue"))
+            }
+            ui.save(name)
+            services.loginGate?.complete(Unit)
+        }
+        full(dark = false, busy = false, "v2-login-device-limit")
+        full(dark = true, busy = false, "v2-login-device-limit-dark")
+        full(dark = false, busy = true, "v2-login-device-limit-busy")
+        full(dark = true, busy = true, "v2-login-device-limit-busy-dark")
     }
 
     @Test

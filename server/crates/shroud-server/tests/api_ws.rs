@@ -553,6 +553,48 @@ async fn removing_a_device_closes_its_socket() {
     let _ = server.await;
 }
 
+/// Human: A login that the user let sign out a device to make room removes that device the
+/// same way the Devices list does: its socket closes with DEVICE_REMOVED right away.
+#[tokio::test]
+async fn a_login_replacing_a_device_closes_its_socket() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping a_login_replacing_a_device_closes_its_socket: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let mut two = alice_on_two_devices(&client, addr, addr).await;
+    for _ in 2..shroud_server::auth::MAX_DEVICES_PER_USER {
+        log_in(&client, addr, &two.alice, None).await;
+    }
+
+    let replaced = client
+        .post(format!("http://{addr}/api/v1/auth/login"))
+        .json(&json!({
+            "username_hash": shroud_server::auth::username_hash_b64(&two.alice),
+            "password": PASSWORD,
+            "replace_device_id": two.laptop_id,
+        }))
+        .send()
+        .await
+        .expect("login");
+    assert_eq!(replaced.status(), reqwest::StatusCode::OK);
+    send_text(&client, addr, &two.bob_token, &two.alice_id).await;
+
+    assert_removed(&mut two.laptop).await;
+    assert!(
+        next_of_type(&mut two.phone, "message.new", Duration::from_secs(5))
+            .await
+            .is_some()
+    );
+
+    let _ = two.phone.close(None).await;
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
 /// Human: Changing the password signs every other session out; their sockets close with
 /// them, and the device that changed it keeps its own.
 #[tokio::test]

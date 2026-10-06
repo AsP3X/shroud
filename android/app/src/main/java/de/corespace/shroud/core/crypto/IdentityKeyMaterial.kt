@@ -56,20 +56,7 @@ class IdentityKeyMaterial private constructor(
     fun agreement(peerPublic: ByteArray): ByteArray = Primitives.x25519(agreementPrivateKey, peerPublic)
 
     /** Same account key as [words] would derive? (`matchesMnemonic`, `IdentityKeyMaterial.swift:108-118`). */
-    fun matches(bip39: Bip39, words: List<String>): Boolean {
-        val seed = try {
-            bip39.seed(words)
-        } catch (_: Exception) {
-            return false
-        }
-        val agreementSeed = hkdf(seed, "shroud-identity-x25519", 32)
-        try {
-            return ctEquals(Primitives.x25519Public(agreementSeed), agreementPublic)
-        } finally {
-            seed.fill(0)
-            agreementSeed.fill(0)
-        }
-    }
+    fun matches(bip39: Bip39, words: List<String>): Boolean = phraseMatches(bip39, words, agreementPublic)
 
     /** Overwrites every private value. The object is unusable afterwards. */
     fun wipe() {
@@ -82,6 +69,26 @@ class IdentityKeyMaterial private constructor(
 
     companion object {
         private val SALT = "shroud-v1".toByteArray()
+
+        /**
+         * Would [words] derive the X25519 identity public key [publicKey]? (`matchesMnemonic`; web
+         * `identity.ts`): the HKDF `shroud-identity-x25519` key's public half, compared in constant
+         * time. Unreadable words are no match.
+         */
+        fun phraseMatches(bip39: Bip39, words: List<String>, publicKey: ByteArray): Boolean {
+            val seed = try {
+                bip39.seed(words)
+            } catch (_: Exception) {
+                return false
+            }
+            val agreementSeed = hkdf(seed, "shroud-identity-x25519", 32)
+            try {
+                return ctEquals(Primitives.x25519Public(agreementSeed), publicKey)
+            } finally {
+                seed.fill(0)
+                agreementSeed.fill(0)
+            }
+        }
 
         fun establish(
             bip39: Bip39,

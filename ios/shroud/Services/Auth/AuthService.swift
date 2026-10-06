@@ -33,7 +33,16 @@ nonisolated struct AuthService: Sendable {
     }
 
     /// Logs in and stores the session; reuses `device_id` when Keychain still has one.
-    func login(username: String, password: String) async throws -> SessionStore.Session {
+    ///
+    /// Throws `DeviceLimitError` when every device slot is signed in. Once the phrase checked out
+    /// against its `identityKey`, calling again with `replacingDeviceID` set to its
+    /// `oldestDevice.id` logs that device out to make room; the `device_id` anchor is read the
+    /// same way, so the retry sends the same one.
+    func login(
+        username: String,
+        password: String,
+        replacingDeviceID: UUID? = nil
+    ) async throws -> SessionStore.Session {
         let normalizedUsername = try UsernameHash.normalize(username)
         let existing = sessionStore.load()
         let reusedDeviceID = existing?.deviceID
@@ -41,14 +50,39 @@ nonisolated struct AuthService: Sendable {
         let body = LoginRequest(
             usernameHash: UsernameHash.digest(normalizedUsername),
             password: password,
-            deviceId: reusedDeviceID
+            deviceId: reusedDeviceID,
+            replaceDeviceId: replacingDeviceID
         )
-        let response: AuthSessionResponse = try await client.post(
-            "auth/login",
-            body: body,
-            as: AuthSessionResponse.self
+        let (status, data) = try await client.response(
+            "POST",
+            path: "auth/login",
+            jsonBody: try JSONEncoder.api.encode(body)
         )
+        let response = try Self.loginAnswer(status: status, data: data)
         return try persist(response, username: normalizedUsername)
+    }
+
+    /// A login's answer: the session, or `DeviceLimitError` for a `409 DEVICE_LIMIT` that names
+    /// the device to log out and the identity key to check the phrase against. Without either
+    /// (an older server, or an account that never published keys) no phrase check is possible,
+    /// so it stays a plain `APIError`, shown inline as before.
+    static func loginAnswer(status: Int, data: Data) throws -> AuthSessionResponse {
+        if status == 409,
+           let limit = try? JSONDecoder.api.decode(DeviceLimitResponse.self, from: data),
+           limit.error.code == DeviceLimitError.code,
+           let oldest = limit.oldestDevice,
+           let identityKey = limit.identityKey.flatMap({ Data(base64Encoded: $0) }),
+           !identityKey.isEmpty {
+            throw DeviceLimitError(oldestDevice: oldest, identityKey: identityKey, message: limit.error.message)
+        }
+        guard (200 ..< 300).contains(status) else {
+            throw APIError.from(data: data, statusCode: status)
+        }
+        do {
+            return try JSONDecoder.api.decode(AuthSessionResponse.self, from: data)
+        } catch {
+            throw APIError.decoding
+        }
     }
 
     /// Clears the Keychain session immediately, then best-effort server revoke in the background.

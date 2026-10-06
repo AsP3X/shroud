@@ -80,13 +80,14 @@ class OnboardingServiceTest {
         var logged = false
         var established = false
         var unlocked = false
+        var checked = false
         val service = service(
             register = { name, password ->
                 registered = name == "Noah" && password == "secret"
                 session
             },
-            login = { name, password ->
-                logged = name == "Noah" && password == "secret"
+            login = { name, password, replace ->
+                logged = name == "Noah" && password == "secret" && replace == null
                 session
             },
             after = { SessionController.Validation.Offline },
@@ -97,12 +98,14 @@ class OnboardingServiceTest {
                 unlocked = words == listOf("gamma") && current == session
             },
             secure = { true },
+            check = { words, key -> checked = words == listOf("delta") && key == "a2V5" },
         )
         assertSame(session, service.register("Noah", "secret"))
         assertSame(session, service.login("Noah", "secret"))
         service.establishFromSignup(listOf("alpha"), session)
         service.unlockWithPhrase(listOf("gamma"), session)
-        assertTrue(registered && logged && established && unlocked)
+        service.checkPhrase(listOf("delta"), "a2V5")
+        assertTrue(registered && logged && established && unlocked && checked)
         assertEquals(SessionController.Validation.Offline, service.sessionAfterFailure())
         assertTrue(service.hasScreenLock())
         assertFalse(service(secure = { false }).hasScreenLock())
@@ -147,7 +150,8 @@ class OnboardingServiceTest {
     private fun service(
         fetch: suspend (String, UUID) -> IdentityKeyResponse = { _, _ -> IdentityKeyResponse(user, device, 1, "abc") },
         register: suspend (String, String) -> Session = { _, _ -> session },
-        login: suspend (String, String) -> Session = { _, _ -> session },
+        login: suspend (String, String, UUID?) -> Session = { _, _, _ -> session },
+        check: suspend (List<String>, String) -> Unit = { _, _ -> },
         after: () -> SessionController.Validation = { SessionController.Validation.Valid },
         establish: suspend (List<String>, Session) -> Unit = { _, _ -> },
         unlock: suspend (List<String>, Session) -> Unit = { _, _ -> },
@@ -156,6 +160,7 @@ class OnboardingServiceTest {
     ) = ShroudOnboardingService(
         registerAccount = register,
         loginAccount = login,
+        checkAccountPhrase = check,
         afterFailure = after,
         establish = establish,
         unlockPhrase = unlock,

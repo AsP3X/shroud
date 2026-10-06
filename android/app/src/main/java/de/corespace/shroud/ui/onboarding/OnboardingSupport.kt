@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 /**
  * What Sign Up and Log In need from the rest of the app — the session, the phrase helpers, the
@@ -56,8 +57,14 @@ interface OnboardingServices {
     /** `POST /auth/register` ([OnboardingService.register]). */
     suspend fun register(username: String, password: String): Session
 
-    /** `POST /auth/login` ([OnboardingService.login]). */
-    suspend fun login(username: String, password: String): Session
+    /**
+     * `POST /auth/login` ([OnboardingService.login]); [replaceDeviceId] logs out the device a
+     * `409 DEVICE_LIMIT` named, once the user agreed.
+     */
+    suspend fun login(username: String, password: String, replaceDeviceId: UUID? = null): Session
+
+    /** A full account's phrase against the `409`'s identity key, before any session ([OnboardingService.checkPhrase]). */
+    suspend fun checkPhrase(words: List<String>, identityKey: String)
 
     /** What became of the session after a failed authenticated request ([OnboardingService.sessionAfterFailure]). */
     fun sessionAfterFailure(): SessionController.Validation
@@ -108,7 +115,9 @@ class ContainerOnboardingServices(
     override fun hasScreenLock(): Boolean = onboarding.hasScreenLock()
     override fun needsLocalNetworkPermission(): Boolean = onboarding.needsLocalNetworkPermission()
     override suspend fun register(username: String, password: String): Session = onboarding.register(username, password)
-    override suspend fun login(username: String, password: String): Session = onboarding.login(username, password)
+    override suspend fun login(username: String, password: String, replaceDeviceId: UUID?): Session =
+        onboarding.login(username, password, replaceDeviceId)
+    override suspend fun checkPhrase(words: List<String>, identityKey: String) = onboarding.checkPhrase(words, identityKey)
     override fun sessionAfterFailure(): SessionController.Validation = onboarding.sessionAfterFailure()
     override suspend fun establishFromSignup(words: List<String>, session: Session) = onboarding.establishFromSignup(words, session)
     override suspend fun unlockWithPhrase(words: List<String>, session: Session) = onboarding.unlockWithPhrase(words, session)

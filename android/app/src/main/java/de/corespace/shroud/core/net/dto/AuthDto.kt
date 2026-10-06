@@ -7,6 +7,8 @@ import de.corespace.shroud.core.net.wire.UuidSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.UseSerializers
+import kotlinx.serialization.json.Json
+import java.time.Instant
 import java.util.UUID
 
 // Auth — iOS `Services/API/AuthModels.swift`; server `routes/auth.rs`. api-realtime §5.1.
@@ -26,7 +28,51 @@ data class LoginRequest(
     val password: String,
     /** The device this phone had on the account, so a re-login reuses its row; `null` is sent as `null`. */
     @SerialName("device_id") val deviceId: UUID?,
+    /**
+     * The device to log out when every slot is signed in: the [DeviceLimitDto.oldestDevice] of a
+     * `409 DEVICE_LIMIT` answer, sent only once the phrase checked out and the user agreed (server
+     * `routes/auth.rs`). Ignored while a slot is free.
+     */
+    @SerialName("replace_device_id") val replaceDeviceId: UUID? = null,
 )
+
+/**
+ * The account's least recently active device, beside the envelope of a login's `409 DEVICE_LIMIT`
+ * (server `error.rs` `OldestDevice`). Its sealed name is not sent: a phone that is only logging in
+ * has no phrase yet to open it, so the dates are all that tell it apart. `last_seen_at` is omitted
+ * for a device that never was active.
+ */
+@Serializable
+data class OldestDeviceDto(
+    val id: UUID,
+    @SerialName("created_at") val createdAt: Instant,
+    @SerialName("last_seen_at") val lastSeenAt: Instant? = null,
+)
+
+/**
+ * What a login's `409 DEVICE_LIMIT` carries beside the envelope (server `error.rs` `ErrorBody`):
+ * the device a retry with `replace_device_id` would log out, and the account's published identity
+ * key (standard Base64, as `GET /keys/identity/{user}` sends it) so the phrase can be checked before
+ * that is offered. The key is absent while no device of the account has published keys; both are
+ * absent from an older server.
+ */
+@Serializable
+data class DeviceLimitDto(
+    @SerialName("oldest_device") val oldestDevice: OldestDeviceDto? = null,
+    @SerialName("identity_key") val identityKey: String? = null,
+) {
+    companion object {
+        private val bodyJson = Json { ignoreUnknownKeys = true }
+
+        /** The extra fields of a `DEVICE_LIMIT` error body; null when it is unreadable. */
+        fun fromErrorBody(body: String): DeviceLimitDto? = try {
+            bodyJson.decodeFromString(serializer(), body)
+        } catch (_: IllegalArgumentException) {
+            // SerializationException is an IllegalArgumentException.
+            null
+        }
+    }
+}
 
 /** `AuthModels.swift:39-50`. */
 @Serializable

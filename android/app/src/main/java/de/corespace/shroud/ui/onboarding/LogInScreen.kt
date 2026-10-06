@@ -72,8 +72,12 @@ import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.crypto.Bip39
 import de.corespace.shroud.core.crypto.CryptoController
+import de.corespace.shroud.core.crypto.CryptoException
+import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.Haptic
+import de.corespace.shroud.core.model.SystemAppClock
 import de.corespace.shroud.core.net.ApiError
+import de.corespace.shroud.core.net.OldestDeviceDto
 import de.corespace.shroud.ui.components.Appear
 import de.corespace.shroud.ui.components.BrandLogoMark
 import de.corespace.shroud.ui.components.BrandTileBackground
@@ -112,6 +116,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 private enum class Phase { Credentials, Phrase }
 
@@ -132,6 +137,11 @@ private enum class Phase { Credentials, Phrase }
  * identity is not on this phone (a log-in left at its phrase step), so the shell's root is Welcome
  * and "Sign Up" / a different account would need that session ended first. Over the lock screen it
  * never shows: Back returns there, as on iOS (L1).
+ *
+ * When every device slot of the account is signed in, the server names the least recently active
+ * one. The phrase step comes first, without a session, and is checked against the account's
+ * published key; only a right phrase asks to log that device out ([DeviceLimitDialog]), and only
+ * then is the login retried and the phrase step finished with the same words.
  */
 @Composable
 fun LogInScreen(
@@ -141,7 +151,7 @@ fun LogInScreen(
     onLogOut: () -> Unit = {},
     onUnlocked: () -> Unit = {},
 ) {
-    LogInContent(rememberOnboardingServices(container), onBack, onSignUp, onUnlocked, onLogOut)
+    LogInContent(rememberOnboardingServices(container), onBack, onSignUp, onUnlocked, onLogOut, container.clock)
 }
 
 /** Sequential pair reveal (`EncryptionPhraseReveal.start`): one at a time, cancelled by the next or by [cancel]. */
@@ -173,6 +183,7 @@ internal fun LogInContent(
     onSignUp: () -> Unit,
     onUnlocked: () -> Unit = {},
     onLogOut: () -> Unit = {},
+    clock: AppClock = SystemAppClock,
 ) {
     val colors = ShroudTheme.colors
     val context = LocalContext.current
@@ -196,6 +207,10 @@ internal fun LogInContent(
     val actions = remember(services) { LogInActions(services) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Every device slot is signed in: the login waits, in memory only, until the phrase checked out
+    // and the user agreed to log out the oldest device. No session meanwhile.
+    var deviceLimit by remember { mutableStateOf<PendingDeviceLimit?>(null) }
+    var replacingDevice by remember { mutableStateOf(false) }
     // "I never got a 12-word phrase" (`:22-29`): offered once the server said KEYS_REQUIRED.
     var accountHasNoPhrase by remember { mutableStateOf(false) }
     var creatingPhrase by remember { mutableStateOf(false) }
@@ -258,19 +273,32 @@ internal fun LogInContent(
         if (!hasNone) leaveNewPhrase()
     }
 
+    fun toPhraseStep() {
+        // Signed in is not unlocked: stay here for the phrase (`:706-712`).
+        focus.clearFocus()
+        phase = Phase.Phrase
+    }
+
+    fun loggedIn() {
+        committed[0] = true
+        autofill?.commit()
+    }
+
     fun submitCredentials() {
         if (!canSubmitCredentials) return
         submitting = true
         error = null
         scope.launch {
             try {
-                when (val outcome = actions.logIn(username, password, localNetwork::ensure)) {
+                when (val outcome = actions.logIn(username, password, ensureLocalNetwork = localNetwork::ensure)) {
                     LogInActions.Outcome.Done -> {
-                        committed[0] = true
-                        autofill?.commit()
-                        // Signed in is not unlocked: stay here for the phrase (`:706-712`).
-                        focus.clearFocus()
-                        phase = Phase.Phrase
+                        loggedIn()
+                        toPhraseStep()
+                    }
+                    // A full account: the phrase first, without a session; the question comes after it.
+                    is LogInActions.Outcome.DeviceLimit -> {
+                        deviceLimit = PendingDeviceLimit(outcome.oldest, outcome.identityKey)
+                        toPhraseStep()
                     }
                     is LogInActions.Outcome.Failed -> error = outcome.message
                     LogInActions.Outcome.SessionExpired, LogInActions.Outcome.SessionEnded -> Unit
@@ -278,6 +306,23 @@ internal fun LogInContent(
             } finally {
                 submitting = false
             }
+        }
+    }
+
+    // The phrase step's ending, shared by a plain login and one that logged out the oldest device.
+    suspend fun completePhrase(chosen: List<String>) {
+        when (val outcome = actions.unlock(chosen, localNetwork::ensure)) {
+            LogInActions.Outcome.Done -> onUnlocked()
+            is LogInActions.Outcome.Failed -> error = outcome.message
+            // No session any more (`:725-734`): back to the credentials, which open a new one.
+            LogInActions.Outcome.SessionExpired -> {
+                error = LogInActions.SESSION_EXPIRED
+                phase = Phase.Credentials
+            }
+            // The session's auth listener ended it; the root shows why (the wipe overlay, then Welcome).
+            LogInActions.Outcome.SessionEnded -> Unit
+            // Only a login answers with the device limit.
+            is LogInActions.Outcome.DeviceLimit -> Unit
         }
     }
 
@@ -290,21 +335,55 @@ internal fun LogInContent(
         submitting = true
         error = null
         val chosen = LogInRules.wordsToSubmit(if (creatingPhrase) newPhrase else words)
+        val pending = deviceLimit
         scope.launch {
             try {
-                when (val outcome = actions.unlock(chosen, localNetwork::ensure)) {
-                    LogInActions.Outcome.Done -> onUnlocked()
-                    is LogInActions.Outcome.Failed -> error = outcome.message
-                    // No session any more (`:725-734`): back to the credentials, which open a new one.
-                    LogInActions.Outcome.SessionExpired -> {
-                        error = LogInActions.SESSION_EXPIRED
-                        phase = Phase.Credentials
+                if (pending == null) {
+                    completePhrase(chosen)
+                } else {
+                    // The phrase against the 409's key, on this phone: a wrong one asks nothing.
+                    when (val outcome = actions.checkPhrase(chosen, pending.identityKey)) {
+                        LogInActions.Outcome.Done -> deviceLimit = pending.copy(verifiedWords = chosen)
+                        is LogInActions.Outcome.Failed -> error = outcome.message
+                        else -> Unit
                     }
-                    // The session's auth listener ended it; the root shows why (the wipe overlay, then Welcome).
-                    LogInActions.Outcome.SessionEnded -> Unit
                 }
             } finally {
                 submitting = false
+            }
+        }
+    }
+
+    // "Log Out and Continue": the same login again, logging out the device the user saw, then the
+    // phrase step's ending with the words already checked.
+    fun replaceOldestDevice() {
+        val pending = deviceLimit ?: return
+        val chosen = pending.verifiedWords ?: return
+        if (replacingDevice) return
+        replacingDevice = true
+        scope.launch {
+            var signedIn = false
+            try {
+                val outcome = actions.logIn(username, password, pending.oldest.id, localNetwork::ensure)
+                if (outcome == LogInActions.Outcome.Done) {
+                    signedIn = true
+                    loggedIn()
+                    submitting = true
+                    deviceLimit = null
+                } else {
+                    val next = LogInRules.afterReplaceRefused(pending, outcome)
+                    deviceLimit = next.limit
+                    if (next.error != null) error = next.error
+                }
+            } finally {
+                replacingDevice = false
+            }
+            if (signedIn) {
+                try {
+                    completePhrase(chosen)
+                } finally {
+                    submitting = false
+                }
             }
         }
     }
@@ -340,8 +419,10 @@ internal fun LogInContent(
     val back: (() -> Unit)? = when {
         !isCredentials && !startedSignedIn -> {
             {
-                // The phrase step's error belongs to the phrase step (`:143-153`).
+                // The phrase step's error belongs to the phrase step (`:143-153`); a pending device
+                // limit has no session to end, it is just dropped.
                 error = null
+                deviceLimit = null
                 focus.clearFocus()
                 leaveNewPhrase()
                 accountHasNoPhrase = false
@@ -385,7 +466,8 @@ internal fun LogInContent(
                     .padding(top = 10.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                AnimatedVisibility(!isCredentials, enter = fadeIn(Motion.standard()) + expandVertically(Motion.standard()), exit = fadeOut(Motion.fade()) + shrinkVertically(Motion.standard())) {
+                // Not while a full account's login waits for the phrase: there is no session yet.
+                AnimatedVisibility(!isCredentials && deviceLimit == null, enter = fadeIn(Motion.standard()) + expandVertically(Motion.standard()), exit = fadeOut(Motion.fade()) + shrinkVertically(Motion.standard())) {
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -526,6 +608,14 @@ internal fun LogInContent(
         }
         ToastHost(toast)
     }
+    DeviceLimitDialog(
+        device = deviceLimit?.takeIf { it.asking }?.oldest,
+        busy = replacingDevice,
+        clock = clock,
+        onConfirm = ::replaceOldestDevice,
+        // Cancel keeps the phrase as typed and says nothing; Unlock asks again.
+        onCancel = { if (!replacingDevice) deviceLimit = deviceLimit?.copy(verifiedWords = null) },
+    )
 }
 
 /** "The clipboard doesn’t hold a valid 12-word phrase." (`:525`). */
@@ -536,7 +626,12 @@ internal const val PASTE_FAILED = "The clipboard doesn’t hold a valid 12-word 
  * apart from drawing so they run on the JVM. Main-confined.
  *
  * - [logIn]: `POST /auth/login` (the name trimmed and lower-cased, the anchored device id). A
- *   session alone never opens the chats: the screen moves on to the phrase.
+ *   session alone never opens the chats: the screen moves on to the phrase. A full account's
+ *   `409 DEVICE_LIMIT` with its oldest device and published identity key is [Outcome.DeviceLimit];
+ *   without either (an older server, an account with no keys) the phrase can't be checked first, so
+ *   it stays its inline message. The retry passes that device as `replaceDeviceId`.
+ * - [checkPhrase]: a full account's phrase against that identity key, on this phone, before the
+ *   question is asked — a full account never costs a device unless password and phrase are right.
  * - [unlock]: the phrase opens the vault on this phone (`CryptoController.unlockWithPhrase`; it
  *   never leaves the phone). No session any more → [Outcome.SessionExpired]. A failure that ended the
  *   session (a 401 streak, `DEVICE_REMOVED`) is the session bridge's to announce — the wipe overlay
@@ -547,22 +642,48 @@ internal class LogInActions(private val services: OnboardingServices) {
     sealed interface Outcome {
         data object Done : Outcome
         data class Failed(val message: String) : Outcome
+
+        /** Every device slot is signed in; logging in here would log out [oldest]. [identityKey] checks the phrase. */
+        data class DeviceLimit(val oldest: OldestDeviceDto, val identityKey: String) : Outcome
         data object SessionExpired : Outcome
         data object SessionEnded : Outcome
     }
 
-    suspend fun logIn(username: String, password: String, ensureLocalNetwork: suspend () -> Boolean): Outcome = try {
+    suspend fun logIn(
+        username: String,
+        password: String,
+        replaceDeviceId: UUID? = null,
+        ensureLocalNetwork: suspend () -> Boolean,
+    ): Outcome = try {
         if (!ensureLocalNetwork()) {
             Outcome.Failed(LocalNetworkAccess.DENIED_MESSAGE)
         } else {
-            services.login(username, password)
+            services.login(username, password, replaceDeviceId)
             Outcome.Done
         }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {
-        // "Invalid username or password.", the device limit, rate limits, transport text (`:713-715`).
-        Outcome.Failed(SessionController.userMessage(e))
+        val limit = (e as? ApiError)?.deviceLimit
+        val oldest = limit?.oldestDevice
+        val identityKey = limit?.identityKey
+        if (oldest != null && identityKey != null) {
+            Outcome.DeviceLimit(oldest, identityKey)
+        } else {
+            // "Invalid username or password.", a device limit without what the phrase check needs,
+            // rate limits, transport text (`:713-715`).
+            Outcome.Failed(SessionController.userMessage(e))
+        }
+    }
+
+    /** [words] against a full account's [identityKey], no request: [Outcome.Done] or the phrase step's error. */
+    suspend fun checkPhrase(words: List<String>, identityKey: String): Outcome = try {
+        services.checkPhrase(words, identityKey)
+        Outcome.Done
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        Outcome.Failed(CryptoController.userMessage(e))
     }
 
     suspend fun unlock(words: List<String>, ensureLocalNetwork: suspend () -> Boolean): Outcome {
@@ -604,6 +725,19 @@ internal class LogInActions(private val services: OnboardingServices) {
     }
 }
 
+/**
+ * A login refused because every device slot is signed in, held in memory (the password stays in the
+ * screen's fields, never stored) while the phrase step runs without a session. [verifiedWords] is
+ * set once the phrase matched [identityKey]: the dialog asks about [oldest] while it is.
+ */
+internal data class PendingDeviceLimit(
+    val oldest: OldestDeviceDto,
+    val identityKey: String,
+    val verifiedWords: List<String>? = null,
+) {
+    val asking: Boolean get() = verifiedWords != null
+}
+
 /** The pure rules of the Log In screen (`LogInFlowView.swift:50-74, 404-408, 720-742`), tested on the JVM. */
 internal object LogInRules {
     /** `signedInUsername` (`:50-56`): the session's name, else the typed one, else "user". */
@@ -635,6 +769,29 @@ internal object LogInRules {
 
     /** Trimmed, lower-cased, no empties (`:740-742`). */
     fun wordsToSubmit(words: List<String>): List<String> = words.map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+
+    /** What [afterReplaceRefused] leaves: the pending limit (null drops it) and the phrase step's error, if any. */
+    data class ReplaceRefused(val limit: PendingDeviceLimit?, val error: String?)
+
+    /**
+     * The retry with `replace_device_id` did not sign in. Full again with another oldest device:
+     * the dialog stays and shows that one — unless the account's identity key changed, which the
+     * checked phrase no longer matches: the wrong-phrase error, no dialog. Any other failure closes
+     * the dialog with its message; Unlock checks and asks again.
+     */
+    fun afterReplaceRefused(pending: PendingDeviceLimit, outcome: LogInActions.Outcome): ReplaceRefused = when (outcome) {
+        is LogInActions.Outcome.DeviceLimit ->
+            if (outcome.identityKey == pending.identityKey) {
+                ReplaceRefused(pending.copy(oldest = outcome.oldest), null)
+            } else {
+                ReplaceRefused(PendingDeviceLimit(outcome.oldest, outcome.identityKey), WRONG_PHRASE)
+            }
+        is LogInActions.Outcome.Failed -> ReplaceRefused(pending.copy(verifiedWords = null), outcome.message)
+        else -> ReplaceRefused(pending.copy(verifiedWords = null), null)
+    }
+
+    /** The phrase step's wrong-phrase error (`CryptoException.PhraseDoesNotMatchAccount`). */
+    val WRONG_PHRASE: String = CryptoController.userMessage(CryptoException.PhraseDoesNotMatchAccount())
 
     /** The primary button's title (`:405-407`). */
     fun primaryTitle(isCredentials: Boolean, submitting: Boolean, creatingPhrase: Boolean): String = when {

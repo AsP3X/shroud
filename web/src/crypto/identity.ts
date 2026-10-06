@@ -83,11 +83,14 @@ export function historyKeyFromMnemonic(mnemonicWords: string[]): Uint8Array {
   return hkdfShroud(mnemonicToSeed(mnemonicWords), "shroud-history-aes", 32);
 }
 
+/** The phrase's X25519 identity public key alone — what the account publishes (`identity_key`). */
+export function identityKeyFromMnemonic(mnemonicWords: string[]): Uint8Array {
+  return x25519.getPublicKey(hkdfShroud(mnemonicToSeed(mnemonicWords), "shroud-identity-x25519", 32));
+}
+
 export function matchesMnemonic(material: IdentityMaterial, words: string[]): boolean {
   try {
-    const seed = mnemonicToSeed(words);
-    const agreementPrivate = hkdfShroud(seed, "shroud-identity-x25519", 32);
-    return bytesToHex(x25519.getPublicKey(agreementPrivate)) === bytesToHex(material.agreementPublic);
+    return bytesToHex(identityKeyFromMnemonic(words)) === bytesToHex(material.agreementPublic);
   } catch {
     return false;
   }

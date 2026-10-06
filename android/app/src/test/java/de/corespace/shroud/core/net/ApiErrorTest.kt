@@ -120,6 +120,44 @@ class ApiErrorTest {
         assertEquals("The connection to the server failed. Try again.", ApiError.Transport("The connection to the server failed. Try again.").userMessage)
     }
 
+    @Test
+    fun aFullAccountsLoginAnswerNamesItsOldestDeviceAndKey() {
+        // Server `error.rs` `ErrorBody`: `oldest_device` and `identity_key` beside the envelope, `last_seen_at` omitted when null.
+        val body = """
+        {
+          "error": { "code": "DEVICE_LIMIT", "message": "This account already has the maximum number of devices (5). Remove a device and try again." },
+          "oldest_device": { "id": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE", "created_at": "2025-03-12T08:30:00Z", "last_seen_at": "2026-10-01T17:05:42.123456Z" },
+          "identity_key": "mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ="
+        }
+        """
+        val limit = ApiError.from(409, body).deviceLimit!!
+        val oldest = limit.oldestDevice!!
+        assertEquals(java.util.UUID.fromString("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), oldest.id)
+        assertEquals(Instant.parse("2025-03-12T08:30:00Z"), oldest.createdAt)
+        assertEquals(Instant.parse("2026-10-01T17:05:42.123456Z"), oldest.lastSeenAt)
+        assertEquals("mTuaX8n1TBpa7jCzFg2HyYcLPjB5ZW7YJ8YUtlmaayQ=", limit.identityKey)
+
+        // Never active, and an account without published keys: no `last_seen_at`, no `identity_key`.
+        val bare = """{"error":{"code":"DEVICE_LIMIT","message":"x"},"oldest_device":{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","created_at":"2025-03-12T08:30:00Z"}}"""
+        assertNull(ApiError.from(409, bare).deviceLimit!!.oldestDevice!!.lastSeenAt)
+        assertNull(ApiError.from(409, bare).deviceLimit!!.identityKey)
+    }
+
+    @Test
+    fun onlyALoginsDeviceLimitCarriesIt() {
+        // An older server sends only the envelope: nothing beside it, so Log In keeps its inline message.
+        val old = ApiError.from(409, """{"error":{"code":"DEVICE_LIMIT","message":"This account already has the maximum number of devices (5). Remove a device and try again."}}""")
+        assertNull(old.deviceLimit!!.oldestDevice)
+        assertNull(old.deviceLimit!!.identityKey)
+        assertEquals("This account already has the maximum number of devices (5). Remove a device and try again.", old.userMessage)
+        val extra = ""","oldest_device":{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","created_at":"2025-03-12T08:30:00Z"},"identity_key":"a2V5"}"""
+        // Only a 409 DEVICE_LIMIT counts; an unreadable device is none.
+        assertNull(ApiError.from(409, """{"error":{"code":"USERNAME_TAKEN","message":"x"}""" + extra).deviceLimit)
+        assertNull(ApiError.from(400, """{"error":{"code":"DEVICE_LIMIT","message":"x"}""" + extra).deviceLimit)
+        assertNull(ApiError.from(409, """{"error":{"code":"DEVICE_LIMIT","message":"x"},"oldest_device":{"id":"nope"}}""").deviceLimit)
+        assertNull(ApiError.Transport("offline").deviceLimit)
+    }
+
     /** The catalogue of api-realtime §3.2, spelled as the server spells it (`error.rs`). */
     @Test
     fun errorCodesMatchTheServer() {

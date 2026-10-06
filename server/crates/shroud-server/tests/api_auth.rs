@@ -683,6 +683,113 @@ async fn login_at_device_cap_reclaims_an_idle_device() {
     assert_eq!(status["otpk_count"], 0);
 }
 
+#[tokio::test]
+async fn login_at_device_cap_signs_out_the_oldest_device_once_agreed() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping login_at_device_cap_signs_out_the_oldest_device_once_agreed: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let (oldest_token, _, oldest) = register_user(&app, &username, &password).await;
+    for _ in 1..shroud_server::auth::MAX_DEVICES_PER_USER {
+        let login = login_request(&app, &username, &password).await;
+        assert_eq!(login.status(), StatusCode::OK);
+    }
+    let login_with = |replace: Value| {
+        let body = json!({
+            "username_hash": shroud_server::auth::username_hash_b64(&username),
+            "password": password,
+            "replace_device_id": replace,
+        });
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+    };
+
+    // Every device is signed in: the refusal names the least recently active one.
+    let refused = login_request(&app, &username, &password).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let refused = json_body(refused).await;
+    assert_eq!(refused["error"]["code"], "DEVICE_LIMIT");
+    assert_eq!(refused["oldest_device"]["id"], oldest.as_str());
+    assert!(refused["oldest_device"]["created_at"].is_string());
+    assert!(refused["oldest_device"].get("sealed_name").is_none());
+    // No device has published keys yet, so there is no identity to check a phrase against.
+    assert!(refused.get("identity_key").is_none());
+
+    // Once one has, the refusal carries the key the phrase must derive.
+    let identity = BASE64.encode([0x42_u8; 32]);
+    let bundle = authed(
+        &app,
+        "PUT",
+        "/api/v1/keys/bundle",
+        &oldest_token,
+        Some(json!({
+            "registration_id": 7,
+            "identity_key": identity,
+            "signed_pre_key": {
+                "key_id": 1,
+                "public_key": identity,
+                "signature": BASE64.encode([0x42_u8; 64]),
+            },
+        })),
+    )
+    .await;
+    assert_eq!(bundle.status(), StatusCode::NO_CONTENT);
+    let refused = login_request(&app, &username, &password).await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let refused = json_body(refused).await;
+    assert_eq!(refused["identity_key"], identity.as_str());
+
+    // A device the user never agreed to (or one already gone) signs nobody out.
+    let unknown = login_with(json!(Uuid::new_v4())).await.expect("response");
+    assert_eq!(unknown.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(unknown).await["oldest_device"]["id"],
+        oldest.as_str()
+    );
+
+    // Agreed: the oldest device is removed and the login gets a fresh one.
+    let replaced = login_with(json!(oldest)).await.expect("response");
+    assert_eq!(replaced.status(), StatusCode::OK);
+    let replaced = json_body(replaced).await;
+    let new_device = replaced["device"]["id"].as_str().unwrap().to_string();
+    assert_ne!(new_device, oldest);
+    let new_token = replaced["token"].as_str().unwrap().to_string();
+
+    // The signed-out device is told it was removed, so it wipes itself.
+    let me = authed(&app, "GET", "/api/v1/auth/me", &oldest_token, None).await;
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(me).await["error"]["code"], "DEVICE_REMOVED");
+
+    let list = authed(&app, "GET", "/api/v1/devices", &new_token, None).await;
+    assert_eq!(list.status(), StatusCode::OK);
+    let list = json_body(list).await;
+    let ids: Vec<&str> = list["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|device| device["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len() as i64, shroud_server::auth::MAX_DEVICES_PER_USER);
+    assert!(!ids.contains(&oldest.as_str()));
+    assert!(ids.contains(&new_device.as_str()));
+
+    // Retrying with the same, now removed, id asks again about the next oldest device.
+    let again = login_with(json!(oldest)).await.expect("response");
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+    let again = json_body(again).await;
+    assert_ne!(again["oldest_device"]["id"], oldest.as_str());
+}
+
 /// Sends one authenticated request and returns the response.
 #[tokio::test]
 async fn device_names_are_kept_sealed_only() {

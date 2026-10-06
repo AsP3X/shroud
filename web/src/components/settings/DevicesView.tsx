@@ -17,12 +17,10 @@ import { DEVICE_NAME_MAX_BYTES, normalizeDeviceName, openDeviceName, type Device
 import { loadIdentity } from "../../crypto/store";
 import { saveDeviceName } from "../../deviceNaming";
 import { fullTimestamp, listTimestamp } from "../../format";
+import { DEVICE_LIMIT } from "../../deviceLimit";
 import { CopyButton } from "../CopyButton";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsGroup, SettingsNote } from "./SettingsRow";
-
-/** Mirrors `MAX_DEVICES_PER_USER` on the server; the list is the only place to get back under it. */
-const DEVICE_LIMIT = 5;
 
 /**
  * What a removal does, server side included — shared by both confirmations. Same wording as
@@ -67,7 +65,8 @@ function deviceKind(label: DeviceLabel | null): DeviceKind {
   return { label: "Unknown", Icon: MonitorSmartphone, tint: "var(--text-secondary)" };
 }
 
-function DeviceTile({ label, size = 30 }: { label: DeviceLabel | null; size?: number }) {
+/** Also the login's "Log out your oldest device?" card, with no label: the "Unknown" glyph. */
+export function DeviceTile({ label, size = 30 }: { label: DeviceLabel | null; size?: number }) {
   const { Icon, tint } = deviceKind(label);
   return (
     <span
@@ -452,7 +451,7 @@ export function DevicesView({
         {/* At the cap the server hands a new sign-in the longest-idle device nobody is signed
             in on, and refuses only when every device is live. */}
         {full
-          ? "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it is refused until you remove one here."
+          ? "Your account is at the limit. A new sign-in takes over a device that has been logged out; if every device is still signed in, it asks for your password and 12-word phrase, then offers to log out the one used least recently."
           : `You can sign in on ${left} more ${left === 1 ? "device" : "devices"}. A logged-out device stays listed until it signs in again or you remove it.`}
       </SettingsNote>
 

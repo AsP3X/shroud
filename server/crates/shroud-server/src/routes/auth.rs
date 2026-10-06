@@ -16,7 +16,7 @@ use crate::auth::{
     MAX_DEVICES_PER_USER, decode_username_hash, generate_share_code, hash_password,
     issue_session_token, parse_username_hash, verify_password,
 };
-use crate::error::AppError;
+use crate::error::{AppError, OldestDevice};
 use crate::rate_limit::budgets;
 use crate::state::AppState;
 
@@ -65,6 +65,9 @@ pub struct LoginRequest {
     pub username_hash: String,
     pub password: String,
     pub device_id: Option<Uuid>,
+    /// The device to sign out when every slot is signed in: the `oldest_device` of the
+    /// `DEVICE_LIMIT` answer, sent once the user agreed. Ignored while a slot is free.
+    pub replace_device_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,7 +245,10 @@ pub async fn login(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
-    let device_id = resolve_login_device(&mut tx, user.id, body.device_id).await?;
+    let LoginDevice {
+        id: device_id,
+        replaced,
+    } = resolve_login_device(&mut tx, user.id, body.device_id, body.replace_device_id).await?;
 
     // Human: One live token per device — revoke any prior active sessions on this device.
     let revoked_sessions: Vec<Uuid> = sqlx::query_scalar(
@@ -271,6 +277,23 @@ pub async fn login(
         .close_sessions(user.id, &revoked_sessions)
         .await;
 
+    // The device signed out to make room learns it now, as when it is removed from the list:
+    // its socket is told DEVICE_REMOVED, and without one a push wakes it to wipe itself.
+    let replaced_device = match replaced {
+        Some(replaced) => {
+            state
+                .realtime
+                .close_sessions(user.id, &replaced.revoked.sessions)
+                .await;
+            state
+                .push
+                .wake_removed_devices(replaced.revoked.wake.into_iter().collect())
+                .await;
+            Some(replaced.id)
+        }
+        None => None,
+    };
+
     // A device signing in again keeps the name its account sealed for it; a reclaimed one has none.
     let sealed_name: Option<Vec<u8>> =
         sqlx::query_scalar(r#"SELECT sealed_name FROM devices WHERE id = $1"#)
@@ -282,6 +305,7 @@ pub async fn login(
     tracing::info!(
         user_id = %user.id,
         device_id = %device_id,
+        replaced_device_id = ?replaced_device,
         "auth.login ok"
     );
 
@@ -748,11 +772,23 @@ async fn create_session(
     Ok(())
 }
 
+/// The device a login lands on, and the device it signed out to make room, if any.
+struct LoginDevice {
+    id: Uuid,
+    replaced: Option<ReplacedDevice>,
+}
+
+struct ReplacedDevice {
+    id: Uuid,
+    revoked: crate::routes::devices::RevokedDevice,
+}
+
 async fn resolve_login_device(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
     requested_device_id: Option<Uuid>,
-) -> Result<Uuid, AppError> {
+    replace_device_id: Option<Uuid>,
+) -> Result<LoginDevice, AppError> {
     if let Some(device_id) = requested_device_id {
         let owned: Option<Uuid> = sqlx::query_scalar(
             r#"
@@ -771,7 +807,7 @@ async fn resolve_login_device(
                 .execute(&mut **tx)
                 .await
                 .map_err(|err| AppError::Internal(format!("touch device failed: {err}")))?;
-            return Ok(id);
+            return Ok(LoginDevice { id, replaced: None });
         }
         // Unknown, foreign or removed device_id → treat as new device (subject to cap).
     }
@@ -813,13 +849,87 @@ async fn resolve_login_device(
         .await
         .map_err(|err| AppError::Internal(format!("find idle device failed: {err}")))?;
 
-        let Some(id) = idle else {
-            return Err(AppError::device_limit());
+        if let Some(id) = idle {
+            reset_reclaimed_device(tx, id).await?;
+            return Ok(LoginDevice { id, replaced: None });
+        }
+
+        // Human: Every device is signed in. The login names the least recently active one and
+        // signs it out only once the user has agreed to that very device; when the one they
+        // agreed to is gone already, they are asked again about whichever is oldest now.
+        // Clients ask only after the encryption phrase checked out against `identity_key`, so
+        // nobody without their phrase loses a working device to a login they can't finish.
+        // Signing out means removing: a device still holding its id would otherwise sign back
+        // in onto the slot, so it wipes itself exactly as when removed from the Devices list.
+        let replace = match replace_device_id {
+            Some(id) => sqlx::query_scalar::<_, Uuid>(
+                r#"SELECT id FROM devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL"#,
+            )
+            .bind(id)
+            .bind(user_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("replaced device lookup failed: {err}")))?,
+            None => None,
         };
-        reset_reclaimed_device(tx, id).await?;
-        return Ok(id);
+        let Some(replace) = replace else {
+            let (id, created_at, last_seen_at) =
+                sqlx::query_as::<_, (Uuid, DateTime<Utc>, Option<DateTime<Utc>>)>(
+                    r#"
+                    SELECT id, created_at, last_seen_at FROM devices
+                    WHERE user_id = $1 AND revoked_at IS NULL
+                    ORDER BY COALESCE(last_seen_at, created_at), created_at
+                    LIMIT 1
+                    "#,
+                )
+                .bind(user_id)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(|err| AppError::Internal(format!("find oldest device failed: {err}")))?;
+            // The same key `GET /keys/identity/:user_id` serves peers: the phrase derives it, so
+            // the client can tell a wrong phrase before anything is signed out.
+            let identity_key: Option<Vec<u8>> = sqlx::query_scalar(
+                r#"
+                SELECT ik.public_key
+                FROM devices d
+                INNER JOIN device_identity_keys ik ON ik.device_id = d.id
+                WHERE d.user_id = $1 AND d.revoked_at IS NULL
+                ORDER BY d.last_seen_at DESC NULLS LAST, d.created_at DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(user_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("find identity key failed: {err}")))?;
+            return Err(AppError::device_limit(
+                OldestDevice {
+                    id,
+                    created_at,
+                    last_seen_at,
+                },
+                identity_key.map(|key| BASE64.encode(key)),
+            ));
+        };
+        let revoked = crate::routes::devices::revoke_device(tx, replace).await?;
+        let id = insert_login_device(tx, user_id).await?;
+        return Ok(LoginDevice {
+            id,
+            replaced: Some(ReplacedDevice {
+                id: replace,
+                revoked,
+            }),
+        });
     }
 
+    let id = insert_login_device(tx, user_id).await?;
+    Ok(LoginDevice { id, replaced: None })
+}
+
+async fn insert_login_device(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<Uuid, AppError> {
     let device_id = Uuid::new_v4();
     sqlx::query(
         r#"

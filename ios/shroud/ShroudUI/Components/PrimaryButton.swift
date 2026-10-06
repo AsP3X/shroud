@@ -9,6 +9,8 @@ struct PrimaryButton: View {
     var showsArrow = true
     /// Shows an inline spinner and blocks taps while work is in flight.
     var isLoading = false
+    /// Fill and glow. `Theme.danger` for a destructive confirmation.
+    var tint: Color = Theme.accent
     let action: () -> Void
 
     var body: some View {
@@ -31,9 +33,9 @@ struct PrimaryButton: View {
             .foregroundStyle(Color.white)
             .frame(maxWidth: .infinity)
             .frame(height: 54)
-            .background(Theme.accent)
+            .background(tint)
             .clipShape(Capsule())
-            .shadow(color: Theme.accent.opacity(0.25), radius: 20, y: 8)
+            .shadow(color: tint.opacity(0.25), radius: 20, y: 8)
             .animation(Motion.snappy, value: isLoading)
             .animation(Motion.snappy, value: title)
         }

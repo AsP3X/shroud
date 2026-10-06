@@ -62,16 +62,19 @@ class OnboardingSupportTest {
         val session = services.register("Alice", "pw-1")
         assertEquals(core.session, session)
         assertEquals(core.session, services.login("alice", "pw-2"))
+        // The device-limit retry forwards the device to log out.
+        services.login("alice", "pw-3", java.util.UUID.fromString("33333333-3333-3333-3333-333333333333"))
         core.validation = SessionController.Validation.DeviceRemoved
         assertEquals(SessionController.Validation.DeviceRemoved, services.sessionAfterFailure())
         services.establishFromSignup(listOf("a", "b"), session)
         services.unlockWithPhrase(listOf("c"), session)
+        services.checkPhrase(listOf("d"), "a2V5")
         core.noKey = true
         assertTrue(services.accountHasNoKey(session))
         core.keyError = ApiError.Transport("offline")
         assertTrue(runCatching { services.accountHasNoKey(session) }.exceptionOrNull() is ApiError.Transport)
         assertEquals(
-            listOf("register:Alice:pw-1", "login:alice:pw-2", "establish:a b", "unlock:c", "identity", "identity"),
+            listOf("register:Alice:pw-1", "login:alice:pw-2", "login:alice:pw-3:33333333-3333-3333-3333-333333333333", "establish:a b", "unlock:c", "check:d:a2V5", "identity", "identity"),
             core.calls,
         )
         // `keys.cryptoController.hasLocalIdentity` (K1), as asked.
@@ -98,9 +101,13 @@ class OnboardingSupportTest {
             return session
         }
 
-        override suspend fun login(username: String, password: String): Session {
-            calls += "login:$username:$password"
+        override suspend fun login(username: String, password: String, replaceDeviceId: java.util.UUID?): Session {
+            calls += "login:$username:$password" + (replaceDeviceId?.let { ":$it" } ?: "")
             return session
+        }
+
+        override suspend fun checkPhrase(words: List<String>, identityKey: String) {
+            calls += "check:${words.joinToString(" ")}:$identityKey"
         }
 
         override fun sessionAfterFailure(): SessionController.Validation = validation

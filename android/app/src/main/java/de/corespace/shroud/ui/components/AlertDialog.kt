@@ -90,25 +90,31 @@ data class AlertField(
 /**
  * The dialog's confirming button; [destructive] draws it in `danger`, [enabled] false dims it to
  * 0.45. [closesAlert] false leaves closing to [onClick] (the update offer stays up when its link
- * cannot open).
+ * cannot open). [isLoading] puts a spinner before the title and holds the dialog: Back, the dim
+ * and Cancel do nothing until it ends (the caller sets the busy title, "Logging Out…").
  */
 data class AlertButton(
     val title: String,
     val destructive: Boolean = false,
     val enabled: Boolean = true,
     val closesAlert: Boolean = true,
+    val isLoading: Boolean = false,
     val onClick: () -> Unit,
 )
 
 /**
  * A centred dialog drawn by the app (iOS `.alert`; settings-lock §2.4). By decision C22 / P13c it
  * is only for input — destructive confirmations use [ActionSheet] — so its uses are "Rename Device"
- * (`DevicesView.swift:728-748`, settings-lock §4.6) and the root's "Update available" offer.
+ * (`DevicesView.swift:728-748`, settings-lock §4.6) and the root's "Update available" offer. The one
+ * destructive exception is Log In's "Log out your oldest device?": it shows a device card ([body])
+ * and stays up, busy, while its request runs, which an action sheet (closed before its action) can't.
  *
  * Human: A rounded card fades and grows in (0.94 → 1) over a dim: bold [title], grey [message],
  * the [field] (focused, keyboard up), then Cancel and the [primary] button side by side. Back, a
  * tap on the dim or Cancel close it; the keyboard's Done does what [primary] does while it is
- * enabled. A null [cancelTitle] leaves [primary] alone, full width (an "OK" notice).
+ * enabled. A null [cancelTitle] leaves [primary] alone, full width (an "OK" notice). [body] sits
+ * under the message; [stackedButtons] puts [primary] full width over Cancel, for titles too long to
+ * share a row.
  *
  * Agent: [visible] is the caller's state; [onDismiss] asks to hide it. [primary] calls [onDismiss]
  * first, then its own `onClick` (an iOS alert button always closes the alert), unless its
@@ -124,34 +130,38 @@ fun ShroudAlertDialog(
     primary: AlertButton,
     onDismiss: () -> Unit,
     cancelTitle: String? = "Cancel",
+    stackedButtons: Boolean = false,
+    body: (@Composable () -> Unit)? = null,
 ) {
     val visibility = rememberOverlayTransition(visible)
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     val shown = remember { ShownAlert() }
-    if (visible) shown.content = AlertContent(title, message, field, primary, cancelTitle)
+    if (visible) shown.content = AlertContent(title, message, field, primary, cancelTitle, stackedButtons, body)
+    // Busy: every way out waits for the request (read when asked, so the newest state counts).
+    val dismissIfIdle: () -> Unit = { if (visibility.targetState && shown.content?.primary?.isLoading != true) currentOnDismiss() }
 
-    OverlayLayer(active = visibility.isOverlayUp, onDismissRequest = { if (visibility.targetState) currentOnDismiss() }) {
+    OverlayLayer(active = visibility.isOverlayUp, onDismissRequest = dismissIfIdle) {
         val content = shown.content ?: return@OverlayLayer
         val colors = ShroudTheme.colors
         val palette = ShroudTheme.colors
         val reduceMotion = ShroudTheme.reduceMotion
         val transition = rememberTransition(visibility, label = "alert")
-        val back by rememberOverlayBack(enabled = visible) { currentOnDismiss() }
-        val dismiss: () -> Unit = { if (visibility.targetState) currentOnDismiss() }
+        val back by rememberOverlayBack(enabled = visible, onBack = dismissIfIdle)
+        val busy = content.primary.isLoading
         val confirm: () -> Unit = {
-            if (visibility.targetState && content.primary.enabled) {
+            if (visibility.targetState && content.primary.enabled && !busy) {
                 if (content.primary.closesAlert) currentOnDismiss()
                 content.primary.onClick()
             }
         }
 
-        Box(Modifier.fillMaxSize().overlayPane(content.title, onDismiss = dismiss)) {
+        Box(Modifier.fillMaxSize().overlayPane(content.title, onDismiss = dismissIfIdle)) {
             transition.AnimatedVisibility(visible = { it }, enter = fadeIn(Motion.scrim()), exit = fadeOut(Motion.scrim())) {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .background(palette.sheetScrim)
-                        .dismissOnTap(openedAt = 0L, onDismiss = dismiss),
+                        .dismissOnTap(openedAt = 0L, onDismiss = dismissIfIdle),
                 )
             }
             Box(
@@ -191,25 +201,40 @@ fun ShroudAlertDialog(
                         if (content.field != null) {
                             AlertTextField(content.field, onDone = confirm)
                         }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (content.cancelTitle != null) {
-                                AlertCapsule(
-                                    title = content.cancelTitle,
-                                    fill = colors.accentSoft,
-                                    textColor = colors.accentText,
-                                    enabled = true,
-                                    onClick = dismiss,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                        content.body?.invoke()
+                        val primaryButton: @Composable (Modifier) -> Unit = { modifier ->
                             AlertCapsule(
                                 title = content.primary.title,
                                 fill = if (content.primary.destructive) colors.danger else colors.accent,
                                 textColor = Color.White,
                                 enabled = content.primary.enabled,
                                 onClick = confirm,
-                                modifier = Modifier.weight(1f),
+                                modifier = modifier,
+                                isLoading = busy,
                             )
+                        }
+                        val cancelButton: @Composable (Modifier) -> Unit = { modifier ->
+                            if (content.cancelTitle != null) {
+                                AlertCapsule(
+                                    title = content.cancelTitle,
+                                    fill = colors.accentSoft,
+                                    textColor = colors.accentText,
+                                    enabled = !busy,
+                                    onClick = dismissIfIdle,
+                                    modifier = modifier,
+                                )
+                            }
+                        }
+                        if (content.stackedButtons) {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                primaryButton(Modifier.fillMaxWidth())
+                                cancelButton(Modifier.fillMaxWidth())
+                            }
+                        } else {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                cancelButton(Modifier.weight(1f))
+                                primaryButton(Modifier.weight(1f))
+                            }
                         }
                     }
                 }
@@ -238,6 +263,8 @@ private data class AlertContent(
     val field: AlertField?,
     val primary: AlertButton,
     val cancelTitle: String?,
+    val stackedButtons: Boolean,
+    val body: (@Composable () -> Unit)?,
 )
 
 private class ShownAlert {
@@ -258,19 +285,32 @@ private fun alertExit(reduceMotion: Boolean): ExitTransition =
         fadeOut(Motion.fade()) + scaleOut(Motion.snappy(), targetScale = 0.94f, transformOrigin = TransformOrigin.Center)
     }
 
-/** 48 high capsule, 17 SemiBold; disabled at 0.45 (settings-lock §2.4). */
+/**
+ * 48 high capsule, 17 SemiBold; disabled at 0.45 (settings-lock §2.4). Loading: an 18 dp spinner in
+ * the text colour 8 before the title, full strength, not pressable.
+ */
 @Composable
-private fun AlertCapsule(title: String, fill: Color, textColor: Color, enabled: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    Box(
+private fun AlertCapsule(
+    title: String,
+    fill: Color,
+    textColor: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    isLoading: Boolean = false,
+) {
+    Row(
         modifier
-            .alpha(if (enabled) 1f else AlertMetrics.DISABLED_ALPHA)
-            .pressable(enabled = enabled, scale = 0.97f, onClick = onClick, role = Role.Button)
+            .alpha(if (enabled || isLoading) 1f else AlertMetrics.DISABLED_ALPHA)
+            .pressable(enabled = enabled && !isLoading, scale = 0.97f, onClick = onClick, role = Role.Button)
             .heightIn(min = AlertMetrics.ButtonHeight)
             .clip(CircleShape)
             .background(fill)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        contentAlignment = Alignment.Center,
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (isLoading) Spinner(textColor, size = 18.dp)
         ShroudText(text = title, style = inter(17f, FontWeight.SemiBold), color = textColor, textAlign = TextAlign.Center, maxLines = 2)
     }
 }

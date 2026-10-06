@@ -12,7 +12,10 @@ import androidx.test.core.app.ApplicationProvider
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.crypto.CryptoException
 import de.corespace.shroud.core.net.ApiError
+import de.corespace.shroud.core.net.OldestDeviceDto
 import de.corespace.shroud.ui.components.ComposeHarness
+import de.corespace.shroud.ui.components.OverlayHost
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,6 +25,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.Instant
+import java.util.UUID
 
 /**
  * Log In on a fake K2, read and driven the way TalkBack and the keyboard do (`LogInFlowView.swift`;
@@ -97,6 +102,177 @@ class LogInScreenTest {
         ui.click(ui.button("Log In"))
         assertTrue(ui.shows("Invalid username or password."))
         assertTrue(ui.shows("Welcome Back"))
+    }
+
+    // ---- A full account: "Log out your oldest device?" ----
+
+    /** In the app's overlay layer, as the shell hosts it: the dialog hides the screen from TalkBack. */
+    private fun overlaid() = hosts.host {
+        OverlayHost { LogInContent(services, onBack = { backs++ }, onSignUp = { signUps++ }, onUnlocked = { unlocked++ }, onLogOut = { loggedOut++ }) }
+    }
+
+    private fun ComposeHarness.logInAsAlice() {
+        type(field("Username"), "alice")
+        type(field("Password"), "pw")
+        click(button("Log In"))
+    }
+
+    private fun ComposeHarness.showsTextStartingWith(prefix: String) =
+        unmergedNodes().any { node -> node.config.getOrNull(SemanticsProperties.Text)?.any { it.text.startsWith(prefix) } == true }
+
+    /** The phrase step after a full account's 409: twelve words typed and Unlock pressed. */
+    private fun ComposeHarness.enterPhrase(phrase: List<String>) {
+        phrase.forEachIndexed { i, word -> type(tagged("login.word${i + 1}"), word) }
+        click(button("Unlock Messages"))
+    }
+
+    @Test
+    fun aFullAccountMovesOnToThePhraseWithoutASession() {
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        // The phrase first: no dialog, no inline error, no session (so no `GET keys/identity`).
+        assertTrue(ui.shows("Enter Encryption Phrase"))
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        assertFalse(ui.shows("full"))
+        assertEquals(null, services.session.value)
+        assertFalse(ui.shows("Signed in as @alice"))
+        assertEquals(listOf("login:alice"), services.calls)
+    }
+
+    @Test
+    fun aWrongPhraseAsksNothingAndSendsNothing() {
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.checkError = CryptoException.PhraseDoesNotMatchAccount()
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        assertTrue(ui.shows(LogInRules.WRONG_PHRASE))
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        assertEquals(listOf("login:alice", "check:${LogInTest.KEY}"), services.calls)
+        assertEquals(0, unlocked)
+    }
+
+    @Test
+    fun aRightPhraseAsksThenLogsTheOldestOutAndUnlocksWithTheSameWords() {
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        val phrase = services.bip39.generate()
+        ui.enterPhrase(phrase)
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE))
+        assertTrue(ui.shows(DeviceLimitCopy.MESSAGE))
+        assertTrue(ui.shows(DeviceLimitCopy.NOTE))
+        assertTrue(ui.showsTextStartingWith("Last active "))
+        assertTrue(ui.showsTextStartingWith("Linked "))
+        assertTrue(ui.button("Cancel").isEnabled)
+        // The phrase step under it is out of TalkBack's reach.
+        assertFalse(ui.hasButton("Unlock Messages"))
+        val gate = CompletableDeferred<Unit>()
+        services.loginGate = gate
+        ui.click(ui.button("Log Out and Continue"))
+        // Busy: "Logging Out…" with its spinner, and no way out of the dialog meanwhile.
+        assertTrue(ui.shows(DeviceLimitCopy.CONFIRMING))
+        assertFalse(ui.button(DeviceLimitCopy.CONFIRMING).isEnabled)
+        assertFalse(ui.button("Cancel").isEnabled)
+        gate.complete(Unit)
+        ui.waitUntil { unlocked == 1 }
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        // Signed in now: the banner comes back.
+        assertTrue(ui.shows("Signed in as @alice"))
+        // The phrase step's own ending, with the words already checked — not asked for again.
+        assertEquals(
+            listOf("login:alice", "check:${LogInTest.KEY}", "login:alice:replace=${LogInTest.OLDEST.id}", "unlock:device"),
+            services.calls,
+        )
+        assertEquals(phrase, services.lastWords)
+    }
+
+    @Test
+    fun cancelStaysOnThePhraseWithTheWordsAndUnlockAsksAgain() {
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        val phrase = services.bip39.generate()
+        ui.enterPhrase(phrase)
+        ui.click(ui.button("Cancel"))
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        assertTrue(ui.shows("Enter Encryption Phrase"))
+        assertEquals(phrase, words(ui))
+        assertFalse(ui.shows(LogInRules.WRONG_PHRASE))
+        assertEquals(listOf("login:alice", "check:${LogInTest.KEY}"), services.calls)
+        ui.click(ui.button("Unlock Messages"))
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE))
+        assertEquals(listOf("login:alice", "check:${LogInTest.KEY}", "check:${LogInTest.KEY}"), services.calls)
+    }
+
+    @Test
+    fun aRetryThatFindsTheAccountFullAgainShowsTheNewOldest() {
+        val next = OldestDeviceDto(UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), Instant.parse("2025-06-01T10:00:00Z"))
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += LogInTest.deviceLimit(next)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        assertFalse(ui.shows(DeviceLimitCopy.NEVER_ACTIVE))
+        ui.click(ui.button("Log Out and Continue"))
+        // Still open, idle again, now about the device the server named next.
+        assertTrue(ui.shows(DeviceLimitCopy.TITLE))
+        assertTrue(ui.shows(DeviceLimitCopy.NEVER_ACTIVE))
+        assertTrue(ui.button("Log Out and Continue").isEnabled)
+        ui.click(ui.button("Log Out and Continue"))
+        ui.waitUntil { unlocked == 1 }
+        assertEquals(
+            listOf(
+                "login:alice",
+                "check:${LogInTest.KEY}",
+                "login:alice:replace=${LogInTest.OLDEST.id}",
+                "login:alice:replace=${next.id}",
+                "unlock:device",
+            ),
+            services.calls,
+        )
+    }
+
+    @Test
+    fun anotherErrorOnTheRetryClosesTheDialogAndShowsOnThePhraseStep() {
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        services.loginFailures += ApiError.Transport("The request timed out.")
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.enterPhrase(services.bip39.generate())
+        ui.click(ui.button("Log Out and Continue"))
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        assertTrue(ui.shows("The request timed out."))
+        assertTrue(ui.shows("Enter Encryption Phrase"))
+        assertEquals(0, unlocked)
+    }
+
+    @Test
+    fun backFromTheWaitingPhraseStepDropsTheLimit() {
+        services.loginFailures += LogInTest.deviceLimit(LogInTest.OLDEST)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        ui.click(ui.button("Back"))
+        assertTrue(ui.shows("Welcome Back"))
+        assertEquals(0, backs)
+        // A fresh attempt, no session to have ended.
+        ui.click(ui.button("Log In"))
+        assertEquals(listOf("login:alice", "login:alice", "identity"), services.calls)
+    }
+
+    @Test
+    fun aLimitWithoutAKeyOrADeviceKeepsTheInlineError() {
+        services.loginError = LogInTest.deviceLimit(LogInTest.OLDEST, identityKey = null)
+        val ui = overlaid()
+        ui.logInAsAlice()
+        assertTrue(ui.shows("full"))
+        assertTrue(ui.shows("Welcome Back"))
+        services.loginError = ApiError.from(409, """{"error":{"code":"DEVICE_LIMIT","message":"This account already has the maximum number of devices (5). Remove a device and try again."}}""")
+        ui.click(ui.button("Log In"))
+        assertTrue(ui.shows("This account already has the maximum number of devices (5). Remove a device and try again."))
+        assertFalse(ui.shows(DeviceLimitCopy.TITLE))
+        assertFalse(ui.shows("Enter Encryption Phrase"))
     }
 
     @Test
