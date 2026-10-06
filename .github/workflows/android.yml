@@ -103,8 +103,11 @@ jobs:
               exit 1
             fi
             "$analyzer" manifest print "$apk" > "$RUNNER_TEMP/manifest.xml"
-            if grep -E 'com\.google\.android\.gms|com\.google\.android\.c2dm|com\.google\.firebase' "$RUNNER_TEMP/manifest.xml"; then
-              echo "::error::the release manifest mentions Google services ($abi)"
+            # The UnifiedPush embedded FCM distributor names com.google.android.gms (to see whether
+            # Play Services is installed) and receives the public C2DM broadcast;
+            # verifyNoGoogleServices allows both. Firebase is what may not appear.
+            if grep -E 'com\.google\.firebase' "$RUNNER_TEMP/manifest.xml"; then
+              echo "::error::the release manifest mentions Firebase ($abi)"
               exit 1
             fi
           done
