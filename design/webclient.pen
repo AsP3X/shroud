@@ -64524,6 +64524,49 @@
                 },
                 {
                   "type": "frame",
+                  "id": "CQwCT",
+                  "name": "Control Center Stage",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fBYWS",
+                      "name": "Disc",
+                      "width": 62,
+                      "height": 62,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 31,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "o5CTtQ",
+                          "name": "Glyph",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "scan-face",
+                          "library": "lucide",
+                          "fill": "#111111"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "oiyds",
+                      "name": "Label",
+                      "fill": "#FFFFFFDB",
+                      "content": "Center",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
                   "id": "Xg24p",
                   "name": "Control End",
                   "layout": "vertical",
@@ -73579,6 +73622,49 @@
                       "name": "Label",
                       "fill": "#FFFFFFDB",
                       "content": "Video",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Cccwr",
+                  "name": "Control Center Stage",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "H85keg",
+                      "name": "Disc",
+                      "width": 58,
+                      "height": 58,
+                      "fill": "#FFFFFF",
+                      "cornerRadius": 29,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "CGXn9",
+                          "name": "Glyph",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "scan-face",
+                          "library": "lucide",
+                          "fill": "#111111"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "bs36C",
+                      "name": "Label",
+                      "fill": "#FFFFFFDB",
+                      "content": "Center",
                       "fontFamily": "$font-ui",
                       "fontSize": 12,
                       "fontWeight": "600"

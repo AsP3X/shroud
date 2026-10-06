@@ -53,6 +53,23 @@ class CallPreferencesTest {
     }
 
     @Test
+    fun centerStageIsOnUntilTurnedOffAndAWipeDropsTheWrite() {
+        val file = FakeSharedPreferences()
+        val seal = StorageSeal()
+        val prefs = CallPreferences(file, seal, null)
+        assertTrue(prefs.centerStage.value)
+        prefs.setCenterStage(false)
+        assertFalse(file.getBoolean("calls.centerStage", true))
+        assertFalse(CallPreferences(file, StorageSeal(), null).centerStage.value)
+        seal.seal()
+        prefs.setCenterStage(true)
+        assertFalse(file.getBoolean("calls.centerStage", true))
+        assertFalse(prefs.centerStage.value)
+        file.edit().clear().apply()
+        assertTrue(prefs.centerStage.value)
+    }
+
+    @Test
     fun theRelaySwitchIsSecurityPreferences() {
         val file = FakeSharedPreferences()
         val security = SecurityPreferences(file, StorageSeal())

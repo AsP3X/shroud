@@ -2,6 +2,7 @@ package de.corespace.shroud.core.calls
 
 import de.corespace.shroud.core.auth.Session
 import de.corespace.shroud.core.calls.crypto.CallCrypto
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.crypto.hexToBytes
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.model.Ids
@@ -180,6 +181,18 @@ internal class FakeEngine(private val name: String) : CallMediaEngine {
     }
 
     override fun switchCamera() = Unit
+
+    /** Every view [setPeerView] was told, in order, and Center Stage as last set. */
+    val peerViews = ArrayList<CallView?>()
+    var centerStage: Boolean? = null
+
+    override fun setPeerView(view: CallView?) {
+        peerViews += view
+    }
+
+    override fun setCenterStage(on: Boolean) {
+        centerStage = on
+    }
 
     override fun awaitRemoteFrame() {
         awaitRemoteFrames++

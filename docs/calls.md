@@ -209,7 +209,7 @@ compared, the call says so. Comparing it does not delay the call.
 | `sdp_answer` | `{"t":"answer","sdp":"…","n":1,"ek":"…"}` — `ek` on the first answer only |
 | `ice_candidate` | `{"t":"ice","cs":[{"candidate":"…","sdpMid":"0","sdpMLineIndex":0}],"n":2}` |
 | `renegotiate` | `{"t":"restart","n":3}`: the callee asks the caller for an ICE restart |
-| `media_state` | `{"t":"media","mic":true,"camera":false,"screen":false,"n":4}`: what the sender sends now; `camera` switches the call between voice and video, `screen` says whether it shares its screen (absent from apps that predate screen sharing) |
+| `media_state` | `{"t":"media","mic":true,"camera":false,"screen":false,"view":{"w":1179,"h":2556},"n":4}`: what the sender sends now; `camera` switches the call between voice and video, `screen` says whether it shares its screen (absent from apps that predate screen sharing), `view` the size of the area that shows the other side's camera, in device pixels, while it fills that area (absent while it shows their whole picture, and from apps that predate it; "Framing and Center Stage") |
 
 Candidates are batched (up to ~100 ms) to keep requests down. Candidates that arrive before the
 remote description is set wait for it.
@@ -292,8 +292,13 @@ older app on the other end is unaffected. The same ladder runs on every client
   | 270p | 480 | 20 | 300 kbps | 150 kbps |
   | 180p | 320 | 15 | 150 kbps | — |
 
-  A call starts at 720p, or lower when the camera is smaller; the camera's own size is the top
-  rung (a 720p webcam never goes to 1080p).
+  A call starts at 720p, or lower when the picture is smaller. The picture's pixels set the top
+  rung: the highest rung whose 16:9 pixel count (1920×1080 for 1080p) it has, give or take a
+  quarter, whatever its shape (a 720p webcam never goes to 1080p; a framed 886×1920 cut reaches
+  it, a squat 1080×810 one reaches 720p). The encoder shrinks any shape to the rung's pixel count
+  (`scaleResolutionDownBy` = √(picture pixels ÷ rung pixels), never below 1). The link's rung is
+  kept apart from that top: a picture that turns smaller for a while (their view turned sideways)
+  holds the rung down only while it lasts.
 - **Readings.** Every 2 s while the call is connected and the camera goes out at full size, the
   camera's sender stats give the link's bandwidth estimate (`availableOutgoingBitrate` on the
   selected candidate pair, less 50 kbps for speech), the loss the other side reports
@@ -329,6 +334,64 @@ older app on the other end is unaffected. The same ladder runs on every client
   that sends nothing would read as a clean link.
 - Firefox reports neither the bandwidth estimate nor the encoder's limitation: there the camera
   steps down on loss only, and WebRTC's own adaptation within the rung does the rest.
+
+## Framing and Center Stage
+
+Our camera goes out cut to the shape the other side shows it in, from the camera's full
+resolution, and with Center Stage on the cut follows the faces in it. The same geometry runs on
+every client (`web/src/calls/framing.ts`, iOS `CallFraming.swift`, Android `CallFraming.kt`); only
+the face detector differs.
+
+- **Their view.** A phone fills its screen with our picture and crops whatever does not fit, so a
+  wide webcam frame used to lose two thirds of its width and the rest was enlarged several times.
+  Each side now says, in `media_state` `view` (`{w, h}`, device pixels), how large the area that
+  shows the other camera is while it fills it: the full call screen on the iPhone, iPad and
+  Android, and on the web while the window is 900 px wide or less (wider windows show the whole
+  picture, `object-fit: contain`, and send no `view`); while their screen is shared and their
+  camera is the small tile beside it, the tile's size. A measure of no size (a screen being laid
+  out) is ignored; a call that starts on a screen already measured takes the last measure. It is sent with every `media_state`, and a
+  new one goes out when that area's shape changes by more than 3 % (rotation, a resized window),
+  at most every 500 ms. A `w` or `h` that is not a whole number from 1 to 10 000 is ignored (the
+  rest of the signal still counts). Older apps send none and ignore ours.
+- **The cut.** The sender cuts its camera to the shape of their `view` (or keeps its own shape
+  when they sent none), between 0.4 (a tall phone) and 2.5 wide per 1 high, as large as the camera
+  allows, and sends it at most 1920 pixels on its longer side (`outputSize`). The camera-quality
+  ladder then shrinks that output to its rung ("Camera quality"). A 4K webcam seen on a phone
+  goes out as a 1080×1920 cut of its full height instead of a 1080p frame the phone enlarges.
+- **Capture.** The web opens the camera at up to 4K (3840×2160) where it frames, stepping down to
+  1440p, 1080p and 720p while the camera delivers fewer than 25 frames a second at a size. The
+  iPhone and Android keep their camera at the size nearest 1920×1080.
+- **Center Stage** (on by default, per device: web `localStorage` `shroud.centerStage`, iOS
+  `UserDefaults` `calls.centerStage`, Android `calls.centerStage`): about five times a second a
+  face detector looks at the camera (web: YuNet, `web/src/calls/models/`, on the ONNX runtime the app
+  already ships; iPhone: Vision; Android: the platform's `android.media.FaceDetector`), on the
+  device, and nothing about the faces leaves it. The cut then frames them (`targetCrop`): their
+  box fills 30 % of its height (head and shoulders) and at most 60 % of its width (several
+  people), with their middle 42 % from its top, never tighter than 1.25 times enlargement of the
+  output nor 2.5 times zoom of the picture, and always inside it. It glides there (`Framer`):
+  about 0.35 s to pan, 0.6 s to zoom, ignoring moves under 6 % of the cut; a face lost for under
+  1.5 s holds the cut, and after that it goes back to the whole picture. With Center Stage off
+  (or no faces) the cut is the whole picture in their shape.
+- **Where.** The web frames in a worker (`MediaStreamTrackProcessor` and a track generator), so a
+  call in a background tab keeps its picture; a browser without those (Firefox, Safari) sends the
+  camera as it comes, at up to 1080p, and offers no Center Stage. A framed picture that has not
+  shown a frame after 5 s of the camera actually running (a paused camera does not count), or
+  that stops while the camera still runs, gives way to the camera itself for the rest of that
+  camera's life. The iPhone and Android cut each camera frame before
+  the video source (`CallCameraFramer.swift`, `CallCamera.kt`): Android with
+  `VideoFrame.Buffer.cropAndScale`, never copying; the iPhone crops without copying while the cut
+  is the output's own size, and scales a zoomed cut into a buffer of its own, because WebRTC would
+  later re-crop a buffer that is cropped and scaled at once with the wrong coordinates. Where the
+  camera frames by itself (Apple's Center Stage on iPads and newer front cameras), the iPhone
+  uses that instead of Vision and cuts only the shape, but only while the system reports it
+  active (`isCenterStageActive`); otherwise Vision frames. Apple's switch is global, so the call
+  camera holds it only while it runs (control mode `cooperative`, put back when the camera
+  stops), and the two switches agree on start: a change made in Control Center since the last
+  call wins, otherwise ours is applied (`CallCenterStage.agreed`). Our own picture shows what goes
+  out.
+- **The switch.** Center Stage is a button next to the call's camera controls while our camera
+  is on and the device can frame: on the iPhone, iPad and Android a glass circle with the
+  Share button, on the web a control in the call bar.
 
 ## Switching between voice and video
 

@@ -50,6 +50,10 @@ export type CallView = {
   /** This call can carry our video. False only with an older app on the other side. */
   canVideo: boolean;
   canSwitchCamera: boolean;
+  /** Center Stage follows faces in our camera (kept per browser; docs/calls.md, "Framing and Center Stage"). */
+  centerStage: boolean;
+  /** Center Stage can be switched now: our camera is on and this browser frames it. */
+  canCenterStage: boolean;
   /** The self-view shows a front camera, so it is mirrored. */
   mirrorSelf: boolean;
   /** What the other side says it sends (`media_state`). */
@@ -299,7 +303,13 @@ export type Signal =
   | { t: "answer"; sdp: string; n: number; ek?: string }
   | { t: "ice"; cs: IceCandidateJson[]; n: number }
   | { t: "restart"; n: number }
-  | { t: "media"; mic: boolean; camera: boolean; screen?: boolean; n: number };
+  | { t: "media"; mic: boolean; camera: boolean; screen?: boolean; view?: CallViewSize; n: number };
+
+/**
+ * The size of the area that shows the other side's camera while it fills that area, in device
+ * pixels (`media_state` `view`; docs/calls.md, "Framing and Center Stage").
+ */
+export type CallViewSize = { w: number; h: number };
 
 /** A signal's body before the sender numbers it. */
 export type SignalBody =
@@ -307,7 +317,7 @@ export type SignalBody =
   | { t: "answer"; sdp: string; ek?: string }
   | { t: "ice"; cs: IceCandidateJson[] }
   | { t: "restart" }
-  | { t: "media"; mic: boolean; camera: boolean; screen: boolean };
+  | { t: "media"; mic: boolean; camera: boolean; screen: boolean; view?: CallViewSize };
 
 const SIGNAL_TYPE: Record<Signal["t"], CallSignalType> = {
   offer: "sdp_offer",
@@ -583,9 +593,28 @@ export function readSignal(signalType: string, value: Record<string, unknown>): 
       if (typeof value.mic !== "boolean" || typeof value.camera !== "boolean") return null;
       // Absent from an app that cannot share or show a screen; anything else but a boolean is wrong.
       if (value.screen !== undefined && typeof value.screen !== "boolean") return null;
-      return { t, mic: value.mic, camera: value.camera, ...(value.screen !== undefined ? { screen: value.screen } : {}), n };
+      {
+        // A view that is not two whole numbers from 1 to 10 000 is left out; the rest still counts.
+        const view = readViewSize(value.view);
+        return {
+          t,
+          mic: value.mic,
+          camera: value.camera,
+          ...(value.screen !== undefined ? { screen: value.screen } : {}),
+          ...(view ? { view } : {}),
+          n,
+        };
+      }
   }
   return null;
+}
+
+/** A `media_state` `view`, when it is one: whole numbers of pixels from 1 to 10 000. */
+export function readViewSize(raw: unknown): CallViewSize | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { w, h } = raw as { w?: unknown; h?: unknown };
+  const fits = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 10_000;
+  return fits(w) && fits(h) ? { w, h } : null;
 }
 
 /** The `n` values each sending device has used, so a signal delivered twice counts once. */

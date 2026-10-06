@@ -93,6 +93,14 @@ final class CallController {
     private(set) var remoteScreenLive = false
     /// The resolution and frame rate our screen goes out at, in every call from this phone.
     private(set) var screenShareQuality = ScreenShareQuality.saved
+    /// Center Stage: our camera's cut follows the faces in it (docs/calls.md, "Framing and Center
+    /// Stage"). On by default, kept on this phone.
+    private(set) var centerStageEnabled = CallCenterStage.saved
+    /// The area that shows their camera (the whole call screen, or their camera's tile while their
+    /// shared screen fills it), in device pixels, as the call screen last measured it: our
+    /// `media_state` `view`. Not observed: nothing on screen reads it, so a rotation or a resize
+    /// never re-renders the call screen through it.
+    @ObservationIgnored private var videoArea: CallViewSize?
 
     /// One call in the Calls tab.
     ///
@@ -216,6 +224,14 @@ final class CallController {
         /// What CallKit was last told: a video call or not.
         var reportedVideo: Bool?
         var noticeTask: Task<Void, Never>?
+        /// The `view` our last `media_state` carried, and when that went out.
+        var sentView: CallViewSize?
+        var lastMediaSent: ContinuousClock.Instant?
+        /// A `media_state` for a new view shape, held until 500 ms after the last one.
+        var viewSend: Task<Void, Never>?
+        /// The area that shows our camera on their side (their `view`); nil: our camera keeps
+        /// its own shape.
+        var peerView: CallViewSize?
 
         init(generation: Int, role: CallCrypto.Role) {
             self.generation = generation
@@ -238,6 +254,13 @@ final class CallController {
         CallAudio.setUp()
         ensureCallKit()
         engine.screenQuality = screenShareQuality
+        engine.setCenterStage(centerStageEnabled)
+        // The person changed Apple's Center Stage in Control Center: the switch follows.
+        engine.onSystemCenterStage = { [weak self] on in
+            guard let self, on != self.centerStageEnabled else { return }
+            self.centerStageEnabled = on
+            CallCenterStage.saved = on
+        }
         // The call keeps the socket when the chats lock or the app backgrounds, and opens it
         // for a ring that woke a locked phone. Messaging forwards nothing: both would run.
         RealtimeClient.shared.setListener(.call) { [weak self] event in
@@ -1081,9 +1104,16 @@ final class CallController {
         case .restartRequest:
             guard machine.role == .caller else { return }
             restartIce(machine)
-        case let .media(mic, camera, screen):
+        case let .media(mic, camera, screen, view):
             // The latest wins: the server's kept copy can arrive after a newer one.
             guard machine.mediaOrder.isNewer(parsed.n, from: from), var call = active else { return }
+            // Our camera goes out in the shape they show it in; without a view, in its own. A
+            // shape within a few percent of the one in use keeps it (the cut does not start over
+            // for a window being dragged).
+            if CallFraming.shapeChanged(machine.peerView?.framingSize, view?.framingSize) {
+                machine.peerView = view
+                engine.setPeerView(view?.framingSize)
+            }
             let cameraWasOn = !call.remoteCameraOff
             let screenWasOn = call.remoteSharingScreen
             // An app that knows screens always says whether it shares one; an older one never does.
@@ -1277,11 +1307,69 @@ final class CallController {
     }
 
     /// What we send now. A camera the system paused counts as off: they see our face, not a still.
-    /// `screen` always goes along: it also tells them this app can show theirs.
+    /// `screen` always goes along: it also tells them this app can show theirs. So does `view`,
+    /// the area their camera fills here, so they cut it to that shape.
     private func sendMedia(_ machine: Machine) {
         guard machine.negotiated, let call = active else { return }
         let camera = call.isVideoEnabled && engine.isCameraOn && !machine.cameraPaused
-        send(.media(mic: !call.isMuted, camera: camera, screen: call.isSharingScreen), machine)
+        send(.media(mic: !call.isMuted, camera: camera, screen: call.isSharingScreen, view: videoArea), machine)
+        machine.sentView = videoArea
+        machine.lastMediaSent = .now
+    }
+
+    /// The least time between a `media_state` and the next one sent for a new view shape.
+    nonisolated static let viewSendGap: Duration = .milliseconds(500)
+
+    /// The call screen measured the area that shows their camera (the whole screen, or their
+    /// camera's tile over their shared screen), in device pixels. A shape far enough from the one
+    /// they have (`CallFraming.shapeChanged`: a rotation, an iPad window resized, their screen
+    /// coming up) goes out in a new `media_state`, at most every 500 ms; the size itself rides
+    /// along with every one. A measurement outside 1…10 000 (a passing 0 mid-layout) is no area:
+    /// the last one stands, so no `media_state` goes out without a view for it.
+    func setVideoArea(width: Int, height: Int) {
+        guard let area = CallViewSize(w: width, h: height), area != videoArea else { return }
+        videoArea = area
+        if let machine, current(machine) { sendViewIfChanged(machine) }
+    }
+
+    /// Sends a new view shape now, or once 500 ms have passed since the last `media_state`; a
+    /// shape that changes again meanwhile goes out once, as it is by then. Before the call is
+    /// negotiated nothing goes: its first `media_state` (`markNegotiated`) carries the area.
+    private func sendViewIfChanged(_ machine: Machine) {
+        guard machine.negotiated, machine.viewSend == nil,
+              let wait = Self.viewSendWait(
+                  sent: machine.sentView,
+                  area: videoArea,
+                  sinceLastMedia: machine.lastMediaSent.map { ContinuousClock.now - $0 }
+              )
+        else { return }
+        guard wait > .zero else {
+            sendMedia(machine)
+            return
+        }
+        machine.viewSend = Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self, self.current(machine) else { return }
+            machine.viewSend = nil
+            self.sendViewIfChanged(machine)
+        }
+    }
+
+    /// How long a `media_state` for the area waits: nil when their view's shape is near enough to
+    /// the one they were last sent (`CallFraming.shapeChanged`), else until 500 ms after the last
+    /// `media_state` (`.zero`: now; none sent yet: now).
+    nonisolated static func viewSendWait(sent: CallViewSize?, area: CallViewSize?, sinceLastMedia: Duration?) -> Duration? {
+        guard CallFraming.shapeChanged(sent?.framingSize, area?.framingSize) else { return nil }
+        guard let since = sinceLastMedia, since < viewSendGap else { return .zero }
+        return viewSendGap - since
+    }
+
+    /// Center Stage on or off, kept for the next call too; a camera that is on follows at once.
+    func setCenterStage(_ on: Bool) {
+        guard on != centerStageEnabled else { return }
+        centerStageEnabled = on
+        CallCenterStage.saved = on
+        engine.setCenterStage(on)
     }
 
     private func send(_ signal: CallSignal, _ machine: Machine) {
@@ -1690,6 +1778,7 @@ final class CallController {
         machine.restartTimer?.cancel()
         machine.batchTimer?.cancel()
         machine.noticeTask?.cancel()
+        machine.viewSend?.cancel()
     }
 
     private func teardownMedia() {
@@ -2164,6 +2253,33 @@ extension CallController: CallKitManagerDelegate {
     func callKitReset() {
         guard let machine else { return }
         finish(machine, text: nil, notify: .hangup, status: "ended", close: .none)
+    }
+}
+
+/// The Center Stage switch, kept on this phone (UserDefaults: a preference, not a secret); on
+/// until it is turned off.
+nonisolated enum CallCenterStage {
+    static let key = "calls.centerStage"
+    /// Where the last call camera left Apple's Center Stage switch (`CallCamera`).
+    static let systemLeftKey = "calls.centerStage.systemLeft"
+
+    static var saved: Bool {
+        get { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+
+    /// Apple's Center Stage switch as the last call camera left it; nil before the first.
+    static var systemLeft: Bool? {
+        get { UserDefaults.standard.object(forKey: systemLeftKey) as? Bool }
+        set { UserDefaults.standard.set(newValue, forKey: systemLeftKey) }
+    }
+
+    /// What both switches take when a call camera takes Apple's Center Stage: Apple's, when it is
+    /// no longer where a call camera left it (the person turned it in Control Center since), else
+    /// ours. Before any call camera left it, ours.
+    static func agreed(ours: Bool, system: Bool, systemLeft: Bool?) -> Bool {
+        guard let systemLeft, system != systemLeft else { return ours }
+        return system
     }
 }
 

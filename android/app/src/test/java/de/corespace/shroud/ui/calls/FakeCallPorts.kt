@@ -65,6 +65,12 @@ internal class FakeCallPorts(
     override fun setScreenShareQuality(quality: ScreenShareQuality) {
         calls += "quality:${quality.resolution.raw}:${quality.frameRate}"
     }
+    override fun setCenterStage(on: Boolean) {
+        calls += "centerStage:$on"
+    }
+    override fun setOwnView(width: Int, height: Int) {
+        calls += "ownView:${width}x$height"
+    }
     override suspend fun localAudioLevel(): Float? = null
     override fun safetyNumberForActiveCall(): String? = safetyNumber
     override fun confirmSafety() {

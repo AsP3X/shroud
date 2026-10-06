@@ -598,6 +598,14 @@ object ShroudIcons {
         "M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z")
     }
 
+    /** Lucide `square-user`. */
+    val SquareUser: ImageVector by lazy {
+        icon("SquareUser", 24f, true,
+        "M5.0,3.0h14.0a2.0,2.0 0 0 1 2.0,2.0v14.0a2.0,2.0 0 0 1 -2.0,2.0h-14.0a2.0,2.0 0 0 1 -2.0,-2.0v-14.0a2.0,2.0 0 0 1 2.0,-2.0z",
+        "M9.0,10.0a3.0,3.0 0 1,0 6.0,0a3.0,3.0 0 1,0 -6.0,0",
+        "M7 21v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2")
+    }
+
     /** Lucide `trash-2`. */
     val Trash2: ImageVector by lazy {
         icon("Trash2", 24f, true,

@@ -87,14 +87,22 @@ class CallMediaPlanTest {
             CaptureChoice(1280, 960, 30_000),
             nearestCapture(listOf(CaptureChoice(640, 480, 30_000), CaptureChoice(1280, 960, 30_000))),
         )
-        assertEquals(1920, sentLong(CaptureChoice(1920, 1080, 30)))
-        assertEquals(1920, sentLong(CaptureChoice(1920, 1440, 30)))
-        assertEquals(1920, sentLong(CaptureChoice(3840, 2160, 30)))
-        assertEquals(1280, sentLong(CaptureChoice(1280, 960, 30)))
-        // The video source crops to 16:9 and shrinks a larger capture in 3/4 steps until it fits.
-        assertEquals(1536, sentLong(CaptureChoice(2048, 1536, 30)))
-        assertEquals(1920, sentLong(CaptureChoice(2560, 1440, 30)))
-        assertEquals(0, sentLong(CaptureChoice(0, 0, 30)))
+        // Before the first frame: the camera's own shape, at most 1080p on its longer side.
+        assertEquals(FrameSize(1920, 1080), framedSize(FrameSize(1920, 1080), null))
+        assertEquals(FrameSize(1920, 1440), framedSize(FrameSize(1920, 1440), null))
+        assertEquals(FrameSize(1920, 1080), framedSize(FrameSize(3840, 2160), null))
+        assertEquals(FrameSize(1280, 960), framedSize(FrameSize(1280, 960), null))
+        assertEquals(FrameSize(1920, 1440), framedSize(FrameSize(2048, 1536), null))
+        assertNull(framedSize(FrameSize(0, 0), null))
+        // ... and cut for their view when they already sent one: a portrait phone's view of a
+        // phone held upright gets the whole upright picture, not a sliver of a landscape one.
+        val phone = FrameSize(1179, 2556)
+        val upright = uprightCapture(1920, 1080, portrait = true)
+        assertEquals(FrameSize(1080, 1920), upright)
+        assertEquals(FrameSize(886, 1920), framedSize(upright, phone))
+        assertEquals(5, ceilingFor(framedSize(upright, phone)))
+        assertEquals(FrameSize(1920, 1080), uprightCapture(1920, 1080, portrait = false))
+        assertEquals(FrameSize(1920, 1080), uprightCapture(1080, 1920, portrait = false))
         assertEquals(30, captureFps(60_000))
         assertEquals(30, captureFps(30_000))
         assertEquals(15, captureFps(15_000))
@@ -122,7 +130,8 @@ class CallMediaPlanTest {
         assertEquals(DEGRADE_BALANCED, motion.degradation)
 
         // The camera starts at 720p; from a 1080p capture the encoder shrinks it by 1.5.
-        val camera = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, captureLong = 1920)!!
+        val fhd = FrameSize(1920, 1080)
+        val camera = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, capture = fhd)!!
         assertEquals(2_200_000, camera.maxBitrateBps)
         assertEquals(30, camera.maxFramerate)
         assertEquals(1.5, camera.scaleResolutionDownBy)
@@ -131,22 +140,28 @@ class CallMediaPlanTest {
         assertEquals(DEGRADE_BALANCED, camera.degradation)
 
         // Each rung of the ladder.
-        val top = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[5], 1920)!!
+        val top = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[5], fhd)!!
         assertEquals(3_800_000, top.maxBitrateBps)
         assertEquals(1.0, top.scaleResolutionDownBy)
-        val bottom = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[0], 1920)!!
+        val bottom = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[0], fhd)!!
         assertEquals(150_000, bottom.maxBitrateBps)
         assertEquals(15, bottom.maxFramerate)
         assertEquals(6.0, bottom.scaleResolutionDownBy)
 
         // While the screen is shared, a tile's worth whatever the rung.
-        val tile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, CAMERA_LADDER[5], 1920)!!
+        val tile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, CAMERA_LADDER[5], fhd)!!
         assertEquals(350_000, tile.maxBitrateBps)
         assertEquals(15, tile.maxFramerate)
         assertEquals(3.0, tile.scaleResolutionDownBy)
-        assertEquals(2.0, senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, captureLong = 1280)!!.scaleResolutionDownBy)
+        assertEquals(
+            2.0,
+            senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, capture = FrameSize(1280, 720))!!.scaleResolutionDownBy,
+        )
+        // A tall cut for a phone goes out at the rung's pixels in its own shape.
+        val tall = senderTune("shroud-video", "video", screenOn = false, ScreenShareQuality.Standard, CAMERA_LADDER[4], FrameSize(886, 1920))!!
+        assertEquals(kotlin.math.sqrt(886.0 * 1920 / (1280 * 720)), tall.scaleResolutionDownBy!!, 1e-9)
         // A camera the link had pushed below the tile stays there while the screen is shared.
-        val lowTile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, CAMERA_LADDER[1], 1920)!!
+        val lowTile = senderTune("shroud-video", "video", screenOn = true, ScreenShareQuality.Standard, CAMERA_LADDER[1], fhd)!!
         assertEquals(300_000, lowTile.maxBitrateBps)
         assertEquals(15, lowTile.maxFramerate)
         assertEquals(4.0, lowTile.scaleResolutionDownBy)

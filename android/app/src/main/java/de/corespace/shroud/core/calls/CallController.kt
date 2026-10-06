@@ -5,10 +5,13 @@ import de.corespace.shroud.core.auth.SessionController
 import de.corespace.shroud.core.calls.crypto.CallCrypto
 import de.corespace.shroud.core.calls.crypto.CallCryptoException
 import de.corespace.shroud.core.calls.crypto.CallSignalKeys
+import de.corespace.shroud.core.calls.media.FrameSize
+import de.corespace.shroud.core.calls.media.shapeChanged
 import de.corespace.shroud.core.calls.signal.CallEndReason
 import de.corespace.shroud.core.calls.signal.CallMediaOrder
 import de.corespace.shroud.core.calls.signal.CallSdp
 import de.corespace.shroud.core.calls.signal.CallSignal
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.Entropy
 import de.corespace.shroud.core.crypto.Primitives
@@ -96,7 +99,9 @@ class CallController(
     private val deviceNoun: () -> String = { "phone" },
     private val screenCaptureSupported: () -> Boolean = { true },
 ) : ActiveCallProbe {
-    private val uiState = MutableStateFlow(CallUiState(screenShareQuality = preferences.screenShareQuality.value))
+    private val uiState = MutableStateFlow(
+        CallUiState(screenShareQuality = preferences.screenShareQuality.value, centerStage = preferences.centerStage.value),
+    )
     private val historyState = MutableStateFlow(CallHistoryState())
     private val errorState = MutableStateFlow<String?>(null)
     private val mediaStarting = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -135,6 +140,12 @@ class CallController(
 
     private val callbacks = EngineCallbacks()
 
+    /**
+     * The size of the area that shows their camera on our screen, in pixels ([setOwnView]): it goes
+     * out with every `media_state` (`view`) so their camera is cut to it. Kept from call to call.
+     */
+    private var ownView: CallView? = null
+
     init {
         // The call keeps the socket when the chats lock or the app backgrounds, and opens it for a
         // ring that woke a locked phone (CC:241-246).
@@ -152,6 +163,12 @@ class CallController(
             }
         }
         scope.launch { preferences.screenShareQuality.collect { q -> uiState.update { it.copy(screenShareQuality = q) } } }
+        scope.launch {
+            preferences.centerStage.collect { on ->
+                uiState.update { it.copy(centerStage = on) }
+                engine?.setCenterStage(on)
+            }
+        }
     }
 
     // ---- Public state ----
@@ -201,6 +218,7 @@ class CallController(
         this.system = system
         engine.setCallbacks(callbacks)
         engine.screenQuality = uiState.value.screenShareQuality
+        engine.setCenterStage(uiState.value.centerStage)
         uiState.update { it.copy(eglContext = null) }
     }
 
@@ -930,6 +948,12 @@ class CallController(
         if (signal.screen != null) m.peerShowsScreens = true
         val updated = call.copy(remoteMicMuted = !signal.mic, remoteCameraOff = !signal.camera, remoteSharingScreen = signal.screen == true)
         active = updated
+        // Our camera goes out in the shape they show it in; none said is their whole picture. A
+        // shape within a few percent of the one in use keeps it (no restart of the cut).
+        if (shapeChanged(m.peerView?.size(), signal.view?.size())) {
+            m.peerView = signal.view
+            engine?.setPeerView(signal.view)
+        }
         if (signal.camera != cameraWasOn) {
             // Their picture shows again from its first new frame, never a stale one.
             uiState.update { it.copy(remoteVideoLive = false) }
@@ -1124,13 +1148,55 @@ class CallController(
 
     /**
      * What we send now (CC:1260-1266). A camera the system paused counts as off: they see our face,
-     * not a still. `screen` always goes along: it also tells them this app can show theirs.
+     * not a still. `screen` always goes along: it also tells them this app can show theirs; so
+     * does `view`, the size of the area their camera fills here ([setOwnView]).
      */
     private fun sendMedia(m: Machine) {
         if (!m.negotiated) return
         val call = active ?: return
         val camera = call.isVideoEnabled && engine?.isCameraOn == true && !m.cameraPaused
-        send(CallSignal.Media(mic = !call.isMuted, camera = camera, screen = call.isSharingScreen), m)
+        m.viewTask?.cancel()
+        m.viewTask = null
+        m.sentView = ownView
+        m.lastMediaAt = clock.elapsedMillis()
+        send(CallSignal.Media(mic = !call.isMuted, camera = camera, screen = call.isSharingScreen, view = ownView), m)
+    }
+
+    /**
+     * The call screen measured the area their camera fills, in pixels (docs/calls.md, "Framing and
+     * Center Stage"): every `media_state` carries it from now on, and a shape more than 3 % off the
+     * one they were last sent ([shapeChanged]: a rotation) goes out in a new one at once, at most
+     * every [VIEW_GAP_MS]; changes in between wait and go out as one. A side of 0 or beyond
+     * [CallView.MAX] is no measurement (a layout pass before the screen has a size) and is ignored:
+     * the last view stays, so no `media_state` ever goes out without one once we had it.
+     */
+    fun setOwnView(width: Int, height: Int) {
+        if (width !in 1..CallView.MAX || height !in 1..CallView.MAX) return
+        val view = CallView(width, height)
+        if (view == ownView) return
+        ownView = view
+        val m = machine ?: return
+        if (!current(m) || !m.negotiated || m.viewTask != null) return
+        if (!shapeChanged(m.sentView?.size(), view.size())) return
+        val last = m.lastMediaAt
+        val wait = if (last == null) 0L else VIEW_GAP_MS - (clock.elapsedMillis() - last)
+        if (wait <= 0) {
+            sendMedia(m)
+            return
+        }
+        m.viewTask = m.scope.launch {
+            delay(wait)
+            m.viewTask = null
+            if (current(m) && shapeChanged(m.sentView?.size(), ownView?.size())) sendMedia(m)
+        }
+    }
+
+    /** Center Stage on or off, kept for the next calls too; the camera follows at once. */
+    fun setCenterStage(on: Boolean) {
+        if (uiState.value.centerStage == on) return
+        preferences.setCenterStage(on)
+        uiState.update { it.copy(centerStage = on) }
+        engine?.setCenterStage(on)
     }
 
     /** Numbers, seals and queues one signal in order (CC:1268-1302). */
@@ -1975,6 +2041,16 @@ class CallController(
         /** Their app can show a screen: its `media_state` carries `screen`. */
         var peerShowsScreens = false
 
+        /** The view their camera is cut to, from their `media_state` (null: their whole picture). */
+        var peerView: CallView? = null
+
+        /** The view our last `media_state` carried, and when it went ([AppClock.elapsedMillis]). */
+        var sentView: CallView? = null
+        var lastMediaAt: Long? = null
+
+        /** A new view waiting for [VIEW_GAP_MS] since the last `media_state`. */
+        var viewTask: Job? = null
+
         /** Our screen capture runs and is on its section (iOS `broadcasting`); its first frame may not be out yet. */
         var capturing = false
 
@@ -2038,6 +2114,10 @@ class CallController(
         const val DELIVER_ATTEMPTS = 3
         const val FINGERPRINT_RETRY_MS = 400L
         const val NOTICE_MS = 6_000L
+
+        /** A new shape of our view goes out at most this often (docs/calls.md, "Framing and Center Stage"). */
+        const val VIEW_GAP_MS = 500L
+
         const val ENDING_VISIBLE_MS = 2_000L
         const val ERROR_VISIBLE_MS = 4_000L
         const val FINISHED_MEMORY = 20
@@ -2067,3 +2147,6 @@ class CallController(
         fun formatBefore(cursor: Instant): String = BEFORE_FORMAT.format(cursor.plusMillis(1).truncatedTo(ChronoUnit.MILLIS))
     }
 }
+
+/** A `view` as the framing geometry reads it. */
+private fun CallView.size(): FrameSize = FrameSize(w, h)

@@ -16,7 +16,7 @@ export type LicensedPackage = {
   version: string;
   /** SPDX expression from the package's own manifest. */
   license: string;
-  source: "npm" | "crates.io";
+  source: "npm" | "crates.io" | "model";
   /** Index into `texts`, or `null` when the package ships no license file. */
   text: number | null;
 };
@@ -26,6 +26,19 @@ export type LicensesFile = { packages: LicensedPackage[]; texts: string[] };
 
 const LICENSE_FILE = /^(licen[sc]e|copying|notice)([-_.].*)?$/i;
 const TLS_DIR = "src/linkPreview/tls";
+/**
+ * Machine-learning models bundled as files, each in a folder with its LICENSE: the face detector
+ * for Center Stage (src/calls/faceWorker.ts).
+ */
+const MODELS: { dir: string; file: string; name: string; version: string; license: string }[] = [
+  {
+    dir: "src/calls/models",
+    file: "face_detection_yunet_2023mar.onnx",
+    name: "YuNet face detector (libfacedetection)",
+    version: "2023mar",
+    license: "MIT",
+  },
+];
 
 /*
  * MIT packages published without a license file: the text of their repository's LICENSE. A
@@ -141,7 +154,9 @@ export function bundleLicenses(root: string): { page: Plugin; worker: () => Plug
       const packages = new Map<string, LicensedPackage>();
       const roots = new Set<string>();
       let tlsBundled = false;
+      const modelsBundled = new Set<string>();
       for (const id of moduleIds) {
+        for (const model of MODELS) if (id.split("?")[0].endsWith(`/${model.dir}/${model.file}`)) modelsBundled.add(model.file);
         const dir = packageRoot(id);
         if (dir) roots.add(dir);
         else if (id.split("?")[0].includes(`/${TLS_DIR}/`)) tlsBundled = true;
@@ -178,6 +193,19 @@ export function bundleLicenses(root: string): { page: Plugin; worker: () => Plug
             });
           }
         }
+      }
+
+      for (const model of MODELS) {
+        if (!modelsBundled.has(model.file)) continue;
+        const text = licenseText(join(root, model.dir));
+        if (text == null) this.warn(`model ${model.name} has no license file`);
+        packages.set(`model:${model.name}@${model.version}`, {
+          name: model.name,
+          version: model.version,
+          license: model.license,
+          source: "model",
+          text: addText(text),
+        });
       }
 
       const file: LicensesFile = {

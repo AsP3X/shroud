@@ -42,6 +42,9 @@ final class CallMediaEngine: NSObject {
     var onLocalFrame: (() -> Void)?
     /// The system paused our camera (true) or let it go on (false).
     var onCameraPaused: ((Bool) -> Void)?
+    /// The person turned Apple's Center Stage on or off in Control Center (cameras that frame
+    /// people by themselves): the switch follows.
+    var onSystemCenterStage: ((Bool) -> Void)?
     var onRemoteScreen: ((RTCVideoTrack?) -> Void)?
     /// The first frame of their shared screen since `awaitRemoteScreenFrame()`.
     var onRemoteScreenFrame: (() -> Void)?
@@ -88,6 +91,16 @@ final class CallMediaEngine: NSObject {
     /// off, or the call ends.
     private var cameraPaused = false
     private var camera: CallCamera?
+    /// Between the camera (or the test pattern) and the video source: cuts each frame to what
+    /// goes out (docs/calls.md, "Framing and Center Stage"). WebRTC holds it weakly; kept here.
+    private var framer: CameraFramer?
+    /// The size of the area that shows our camera on their side (`media_state` `view`), device
+    /// pixels; nil when they did not say (our camera keeps its own shape). Per call.
+    private var peerView: CallFraming.Size?
+    /// Center Stage: the cut follows the faces in our camera. Kept from call to call.
+    private(set) var centerStage = true
+    /// What the framer last sent on (upright): the size that reaches the encoder.
+    private var framedSize: CallFraming.Size?
     #if DEBUG && targetEnvironment(simulator)
     private var testPattern: TestPatternCapturer?
     #endif
@@ -329,25 +342,48 @@ final class CallMediaEngine: NSObject {
         remoteFrames.arm()
     }
 
-    /// A camera track and what feeds it: the device camera, or the simulator's test pattern.
-    /// Up to 1080p30 goes in; the encoder sends a rung of the ladder below that
-    /// (`CallVideoQuality`), and our own picture stays full size.
+    /// A camera track and what feeds it: the device camera, or the simulator's test pattern,
+    /// through the framer. The camera opens at up to 1080p30; the framer cuts it to the shape
+    /// they show it in, at most 1080p (`CallFraming.outputSize`), and the encoder sends a rung of
+    /// the ladder below that (`CallVideoQuality`). Our own picture shows the cut at full size.
+    ///
+    /// Agent: the source is not asked to adapt (`adaptOutputFormat`): it would crop every cut to
+    /// 16:9 or 9:16. Without it the source passes frames on as they come (a cropped
+    /// `RTCCVPixelBuffer` keeps its crop) and shrinks them only when WebRTC itself asks to, for a
+    /// busy encoder or a tight link.
     private func makeVideoTrack() -> RTCVideoTrack? {
         guard CallCamera.isAvailable || Self.simulatorPattern else { return nil }
         let source = Self.factory.videoSource()
-        source.adaptOutputFormat(toWidth: 1920, height: 1080, fps: 30)
         let track = Self.factory.videoTrack(with: source, trackId: "shroud-video")
+        let framer = CameraFramer(source: source, centerStage: centerStage)
+        framer.setPeerView(peerView)
+        framer.setOnOutputSize { [weak self, weak framer] size in
+            guard let self, let framer, self.framer === framer else { return }
+            framedSize = size
+            tuneSenders()
+        }
+        self.framer = framer
         if CallCamera.isAvailable {
-            let camera = CallCamera(source: source)
+            let camera = CallCamera(delegate: framer)
+            camera.setCenterStage(centerStage)
             camera.onPaused = { [weak self] paused in
                 guard let self else { return }
                 cameraPaused = paused
                 onCameraPaused?(paused)
             }
+            camera.onSystemCenterStage = { [weak self] on in
+                guard let self else { return }
+                setCenterStage(on)
+                onSystemCenterStage?(on)
+            }
+            // Faces are looked for here whenever Apple's Center Stage is not framing.
+            camera.onSystemFraming = { [weak framer] active in
+                framer?.setSystemFraming(active)
+            }
             self.camera = camera
         } else {
             #if DEBUG && targetEnvironment(simulator)
-            testPattern = TestPatternCapturer(delegate: source)
+            testPattern = TestPatternCapturer(delegate: framer)
             #endif
         }
         track.add(localFrames)
@@ -360,10 +396,26 @@ final class CallMediaEngine: NSObject {
         cameraOn = true
         cameraPaused = false
         localFrames.arm()
+        // A new run of the camera: the cut starts from the whole picture.
+        framer?.restart()
         camera?.start()
         #if DEBUG && targetEnvironment(simulator)
         testPattern?.start()
         #endif
+    }
+
+    /// Their `view` (device pixels), or nil: our camera goes out cut to that shape, or in its own.
+    func setPeerView(_ view: CallFraming.Size?) {
+        guard view != peerView else { return }
+        peerView = view
+        framer?.setPeerView(view)
+    }
+
+    /// Center Stage on or off: Apple's, where the camera frames people by itself, or ours.
+    func setCenterStage(_ on: Bool) {
+        centerStage = on
+        framer?.setCenterStage(on)
+        camera?.setCenterStage(on)
     }
 
     /// Direct paths first. After `failed`, the next gathering uses only the TURN relay.
@@ -570,7 +622,11 @@ final class CallMediaEngine: NSObject {
     func switchCamera() {
         guard cameraOn else { return }
         camera?.switchCamera()
-        // The other camera may open at another size: the ladder's ceiling and the shrink follow.
+        // The other camera's picture: the cut starts from the whole of it, and faces found in the
+        // last one are dropped (both may give the same size).
+        framer?.restart()
+        // The other camera may open at another size: the ladder's ceiling and the shrink follow
+        // (again once the framer has its first frame).
         tuneSenders()
     }
 
@@ -584,6 +640,10 @@ final class CallMediaEngine: NSObject {
         testPattern?.stop()
         testPattern = nil
         #endif
+        framer?.setOnOutputSize(nil)
+        framer = nil
+        framedSize = nil
+        peerView = nil
         cameraOn = false
         cameraPaused = false
         videoTransceiver = nil
@@ -656,7 +716,7 @@ final class CallMediaEngine: NSObject {
     private func tuneSenders() {
         guard let connection = peerConnection else { return }
         let capture = captureSize
-        cameraQuality.setCapture(capture.map { max($0.width, $0.height) })
+        cameraQuality.setCapture(width: capture?.width, height: capture?.height)
         let cameraShape = CallVideoQuality.cameraEncoding(
             screenOn ? CallVideoQuality.tileOf(cameraQuality.rung) : cameraQuality.rung,
             width: capture?.width,
@@ -692,9 +752,13 @@ final class CallMediaEngine: NSObject {
         }
     }
 
-    /// What our camera captures at: the device camera's chosen format, or the simulator's test
-    /// pattern. Nil while unknown (the encoder then sends it as it is).
+    /// What reaches the encoder from our camera: the framer's cut once it has sent a frame on,
+    /// before that the device camera's chosen format or the simulator's test pattern. Nil while
+    /// unknown (the encoder then sends it as it is).
     private var captureSize: (width: Int, height: Int)? {
+        if let size = framedSize {
+            return (Int(size.width), Int(size.height))
+        }
         if let size = camera?.captureSize {
             return (Int(size.width), Int(size.height))
         }

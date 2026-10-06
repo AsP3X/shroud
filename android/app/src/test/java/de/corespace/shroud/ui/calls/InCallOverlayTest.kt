@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.calls
 
 import android.app.Application
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -109,7 +110,46 @@ class InCallOverlayTest {
         ui.click("Turn video on")
         ui.click("Turn speaker on")
         ui.click("End")
-        assertEquals(listOf("toggleMute", "toggleVideo", "toggleSpeaker", "hangup"), ports.calls.filter { !it.startsWith("eglContext") })
+        assertEquals(
+            listOf("toggleMute", "toggleVideo", "toggleSpeaker", "hangup"),
+            ports.calls.filter { !it.startsWith("eglContext") && !it.startsWith("ownView") },
+        )
+    }
+
+    /** The call screen's size is the area their camera fills: it goes to them as our `view`, once per size. */
+    @Test
+    fun theCallScreenReportsItsSizeAsOurView() {
+        val ports = FakeCallPorts(CallFixtures.call(CallPhase.Active))
+        val ui = overlay(ports)
+        val views = ports.calls.filter { it.startsWith("ownView:") }
+        assertEquals(ports.calls.toString(), 1, views.size)
+        val (width, height) = views.single().removePrefix("ownView:").split("x").map(String::toInt)
+        assertTrue(views.single(), width > 0 && height > 0)
+        // Nothing new on a recomposition that keeps the size.
+        ports.ui.value = ports.ui.value.copy(active = ports.ui.value.active!!.copy(isMuted = true))
+        ui.idle()
+        assertEquals(ports.calls.toString(), 1, ports.calls.count { it.startsWith("ownView:") })
+    }
+
+    /** Center Stage: one switch, its state said, a tap turns it the other way and nothing else. */
+    @Test
+    fun centerStageIsASwitchThatSaysItsState() {
+        var on = true
+        val touches = mutableListOf<String>()
+        val ui = ComposeHarness {
+            CenterStageControl(on = on, onToggle = { touches += "toggle" }, onTouch = { touches += "touch" })
+        }.also { harness = it }
+        val node = ui.node("Center Stage")
+        assertEquals("On", node.config.getOrNull(SemanticsProperties.StateDescription))
+        assertEquals(Role.Switch, node.config.getOrNull(SemanticsProperties.Role))
+        ui.click("Center Stage")
+        assertEquals(listOf("touch", "toggle"), touches)
+        ui.close()
+        on = false
+        val off = ComposeHarness {
+            CenterStageControl(on = on, onToggle = {}, onTouch = {})
+        }.also { harness = it }
+        assertEquals("Off", off.node("Center Stage").config.getOrNull(SemanticsProperties.StateDescription))
     }
 
     @Test

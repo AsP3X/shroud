@@ -26,6 +26,24 @@ nonisolated struct IceCandidatePayload: Codable, Equatable, Sendable {
     }
 }
 
+/// The size of the area that shows the other side's camera while it fills it, in device pixels
+/// (`media_state` `view`; docs/calls.md, "Framing and Center Stage"). Each side cuts its camera to
+/// the shape the other reports.
+nonisolated struct CallViewSize: Equatable, Sendable {
+    let w: Int
+    let h: Int
+
+    /// What a `w` or `h` may be on the wire; anything else is no view at all.
+    static let range = 1...10_000
+
+    /// Nil unless both sides are in `range`.
+    init?(w: Int, h: Int) {
+        guard Self.range.contains(w), Self.range.contains(h) else { return nil }
+        self.w = w
+        self.h = h
+    }
+}
+
 /// What one sealed signal says (docs/calls.md, "Plaintext").
 nonisolated enum CallSignal: Equatable, Sendable {
     /// `ephemeral` is the sender's fresh X25519 public key, on the first offer only.
@@ -36,8 +54,10 @@ nonisolated enum CallSignal: Equatable, Sendable {
     /// The callee asks the caller for an ICE restart.
     case restartRequest
     /// What the sender sends now: the other side shows a muted mark or the avatar. `screen` is
-    /// whether it shares its screen; nil from an app that cannot share or show one.
-    case media(mic: Bool, camera: Bool, screen: Bool? = nil)
+    /// whether it shares its screen; nil from an app that cannot share or show one. `view` is the
+    /// area that shows the receiver's camera on the sender's side; nil from an app that predates
+    /// it, or while it shows the whole picture.
+    case media(mic: Bool, camera: Bool, screen: Bool? = nil, view: CallViewSize? = nil)
 
     enum ParseError: Error, Equatable {
         case malformed
@@ -87,10 +107,11 @@ nonisolated enum CallSignal: Equatable, Sendable {
             }
         case .restartRequest:
             break
-        case let .media(mic, camera, screen):
+        case let .media(mic, camera, screen, view):
             object["mic"] = mic
             object["camera"] = camera
             if let screen { object["screen"] = screen }
+            if let view { object["view"] = ["w": view.w, "h": view.h] }
         }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
@@ -134,7 +155,8 @@ nonisolated enum CallSignal: Equatable, Sendable {
             signal = .media(
                 mic: Self.bool(object["mic"]) ?? true,
                 camera: Self.bool(object["camera"]) ?? false,
-                screen: Self.bool(screen)
+                screen: Self.bool(screen),
+                view: Self.view(object["view"])
             )
         default:
             throw ParseError.malformed
@@ -150,6 +172,26 @@ nonisolated enum CallSignal: Equatable, Sendable {
         case let number as NSNumber: number.intValue
         default: nil
         }
+    }
+
+    /// A `view` of whole numbers from 1 to 10 000; anything else counts as none and leaves the
+    /// rest of the signal standing (docs/calls.md, "Framing and Center Stage").
+    private static func view(_ value: Any?) -> CallViewSize? {
+        guard let object = value as? [String: Any],
+              let w = wholeNumber(object["w"]),
+              let h = wholeNumber(object["h"])
+        else { return nil }
+        return CallViewSize(w: w, h: h)
+    }
+
+    /// A JSON number without a fraction; not a boolean (which `NSNumber` also carries).
+    private static func wholeNumber(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID()
+        else { return nil }
+        let double = number.doubleValue
+        guard double.isFinite, double == double.rounded(), abs(double) <= 1e9 else { return nil }
+        return Int(double)
     }
 
     /// Absent is an older peer. Present but not 32 bytes rejects the signal.

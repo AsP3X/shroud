@@ -64,11 +64,22 @@ nonisolated enum CallVideoQuality {
     static let lossDown = 0.10
     static let lossUp = 0.03
 
-    /// The rung index for a capture whose longer side is `long`: the highest that needs no upscaling.
-    static func ceiling(for long: Int?) -> Int {
-        guard let long, long > 0 else { return startRung }
+    /// A rung's pixels: its longer side by its shorter, 16:9 (1920×1080 for 1080p).
+    static func rungPixels(_ rung: CameraRung) -> Int {
+        rung.long * Int((Double(rung.long) * 9 / 16).rounded())
+    }
+
+    /// The top rung for a picture of `width` × `height`: the highest whose pixels it has, give or
+    /// take a quarter; unknown (or empty): `startRung`.
+    ///
+    /// By pixels rather than by the longer side, since a framed picture takes the other side's
+    /// shape ("Framing and Center Stage"): a tall 886×1920 cut has 1080p's pixels near enough, and
+    /// a squat 1080×810 one 720p's, though its longer side is only 1080.
+    static func ceiling(width: Int?, height: Int?) -> Int {
+        let pixels = (width ?? 0) * (height ?? 0)
+        guard pixels > 0 else { return startRung }
         var top = 0
-        for (index, rung) in ladder.enumerated() where Double(rung.long) <= Double(long) * 1.05 {
+        for (index, rung) in ladder.enumerated() where Double(rungPixels(rung)) <= Double(pixels) * 1.25 {
             top = index
         }
         return top
@@ -84,13 +95,14 @@ nonisolated enum CallVideoQuality {
     }
 
     /// What the encoder is told for a rung: its bitrate, its frame rate, and how far to shrink a
-    /// capture of `width` × `height` (unknown: sent as it is).
+    /// picture of `width` × `height` to the rung's pixels (any shape keeps its shape and gets the
+    /// rung's pixel count; unknown: sent as it is).
     static func cameraEncoding(_ rung: CameraRung, width: Int?, height: Int?) -> CameraEncoding {
-        let long = max(width ?? 0, height ?? 0)
+        let pixels = (width ?? 0) * (height ?? 0)
         return CameraEncoding(
             maxBitrate: rung.maxBitrate,
             maxFramerate: rung.fps,
-            scaleResolutionDownBy: long > 0 ? max(1, Double(long) / Double(rung.long)) : 1
+            scaleResolutionDownBy: pixels > 0 ? max(1, (Double(pixels) / Double(rungPixels(rung))).squareRoot()) : 1
         )
     }
 
@@ -164,9 +176,13 @@ nonisolated struct CameraSample: Equatable, Sendable {
     var loss: Double?
 }
 
-/// The camera's rung for one call; `sample` moves it.
+/// The camera's rung for one call; `sample` moves it. The link's rung (`index`) is kept apart
+/// from the picture's top rung (`ceiling`): a picture that turns smaller for a while (their view
+/// turned sideways) holds the rung down only while it lasts, and the link's rung comes back with it.
 nonisolated struct CameraQuality: Sendable {
-    private(set) var rungIndex: Int
+    /// The link's rung.
+    private var index: Int
+    /// The picture's top rung.
     private var ceiling: Int
     private var low = 0
     private var high = 0
@@ -175,24 +191,29 @@ nonisolated struct CameraQuality: Sendable {
     /// Readings since the last step up, until it has held.
     private var sinceUp: Int?
 
-    init(captureLong: Int? = nil) {
-        ceiling = CallVideoQuality.ceiling(for: captureLong)
-        rungIndex = min(CallVideoQuality.startRung, ceiling)
+    /// A call's ladder, for a picture of `width` × `height` (unknown: 720p at the top).
+    init(width: Int? = nil, height: Int? = nil) {
+        ceiling = CallVideoQuality.ceiling(width: width, height: height)
+        index = CallVideoQuality.startRung
     }
 
+    /// The rung that goes out: the link's, no higher than the picture's top rung.
     var rung: CameraRung {
         CallVideoQuality.ladder[rungIndex]
     }
 
-    /// The camera opened at a new size (another camera, or the first): no rung above it. True
-    /// when that brought the rung down.
+    var rungIndex: Int {
+        min(index, ceiling)
+    }
+
+    /// The picture going out has a new size (another camera, their view): its top rung. True when
+    /// the rung that goes out changed. An unknown or empty size changes nothing.
     @discardableResult
-    mutating func setCapture(_ long: Int?) -> Bool {
-        guard let long, long != 0 else { return false }
-        ceiling = CallVideoQuality.ceiling(for: long)
-        guard rungIndex > ceiling else { return false }
-        rungIndex = ceiling
-        return true
+    mutating func setCapture(width: Int?, height: Int?) -> Bool {
+        guard (width ?? 0) * (height ?? 0) > 0 else { return false }
+        let before = rungIndex
+        ceiling = CallVideoQuality.ceiling(width: width, height: height)
+        return rungIndex != before
     }
 
     /// The camera went off, out as a tile, or the system paused it: the next readings start
@@ -217,6 +238,7 @@ nonisolated struct CameraQuality: Sendable {
             settle -= 1
             return false
         }
+        let current = rungIndex
         let budget = sample.estimate.map { $0 - CallVideoQuality.audioReserveBps }
         let starved = sample.limitation == .bandwidth && budget.map { $0 < Double(rung.minBitrate) } == true
         let lossy = sample.loss.map { $0 >= CallVideoQuality.lossDown } ?? false
@@ -224,8 +246,8 @@ nonisolated struct CameraQuality: Sendable {
         var down: Int?
         // As far down as the estimate needs, at once; loss steps down one.
         if starved, let budget { down = CallVideoQuality.fitting(budget) }
-        if lossy { down = max(0, min(down ?? rungIndex, rungIndex - 1)) }
-        if let down, down < rungIndex {
+        if lossy { down = max(0, min(down ?? current, current - 1)) }
+        if let down, down < current {
             high = 0
             low += 1
             if low < CallVideoQuality.downAfter { return false }
@@ -238,7 +260,7 @@ nonisolated struct CameraQuality: Sendable {
         low = 0
 
         // Not the estimate: it grows only as far as what is sent (see the type's comment).
-        let clean = rungIndex < ceiling
+        let clean = current < ceiling
             && sample.limitation != .cpu
             && sample.limitation != .bandwidth
             && (sample.loss.map { $0 < CallVideoQuality.lossUp } ?? true)
@@ -248,13 +270,13 @@ nonisolated struct CameraQuality: Sendable {
         }
         high += 1
         if high < upAfter { return false }
-        move(to: rungIndex + 1)
+        move(to: current + 1)
         sinceUp = 0
         return true
     }
 
     private mutating func move(to index: Int) {
-        rungIndex = index
+        self.index = index
         low = 0
         high = 0
         settle = CallVideoQuality.settle

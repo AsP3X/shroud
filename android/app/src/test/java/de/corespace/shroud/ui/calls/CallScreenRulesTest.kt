@@ -2,6 +2,7 @@ package de.corespace.shroud.ui.calls
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.IntSize
 import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.calls.CallUiState
 import de.corespace.shroud.core.calls.ScreenShareQuality
@@ -97,6 +98,25 @@ class CallScreenRulesTest {
         assertFalse(CallScreenRules.showsSpeaking(call.copy(isMuted = true)))
         assertFalse(CallScreenRules.showsSpeaking(call.copy(phase = CallPhase.Connecting)))
         assertEquals("anna is muted", CallScreenRules.mutedText("anna"))
+    }
+
+    /**
+     * Our `view` is the area that shows their camera (docs/calls.md, "Framing and Center Stage"):
+     * the call screen, or the small tile while their screen is up and their camera sits beside it.
+     */
+    @Test
+    fun ourViewIsWhereTheirCameraShows() {
+        val screen = IntSize(1080, 2400)
+        val tile = IntSize(248, 374)
+        val flags = CallScreenRules.flags(CallUiState(), call, false, false)
+        val camera = flags.copy(showsRemoteVideo = true)
+        val cameraAndScreen = camera.copy(showsRemoteScreen = true)
+        assertFalse(CallScreenRules.theirCameraIsTile(camera, hasTrack = true))
+        assertTrue(CallScreenRules.theirCameraIsTile(cameraAndScreen, hasTrack = true))
+        assertFalse("no track, no tile", CallScreenRules.theirCameraIsTile(cameraAndScreen, hasTrack = false))
+        assertFalse("their camera off: nothing in the tile", CallScreenRules.theirCameraIsTile(flags.copy(showsRemoteScreen = true), true))
+        assertEquals(screen, CallScreenRules.theirCameraArea(screen, tile, cameraIsTile = false))
+        assertEquals(tile, CallScreenRules.theirCameraArea(screen, tile, cameraIsTile = true))
     }
 
     @Test

@@ -13,8 +13,9 @@ import {
   peerKeyVerified,
   storedPeerKey,
 } from "../crypto/peerIdentity";
+import { frameCamera, framingSupported } from "./cameraFraming";
 import { CallController, type CallEnv, type IdentityKeys } from "./controller";
-import type { CallPeer } from "./logic";
+import type { CallPeer, CallViewSize } from "./logic";
 import { alwaysRelaysCalls } from "./relay";
 import type { ScreenQuality } from "./screenQuality";
 import { publishCallView } from "./store";
@@ -178,6 +179,8 @@ const env: CallEnv = {
       .map((device) => device.deviceId),
   createPeer: (config) => new RTCPeerConnection(config),
   alwaysRelay: alwaysRelaysCalls,
+  framingSupported,
+  frameCamera,
   createStream: (tracks) => new MediaStream(tracks),
   now: () => Date.now(),
   setTimeout: (run, ms) => window.setTimeout(run, ms),
@@ -333,6 +336,16 @@ export function toggleCallScreen(): void {
 /** The resolution and frame rate for sharing our screen; while we share, it applies at once. */
 export function setCallScreenQuality(quality: ScreenQuality): void {
   controller.setScreenQuality(quality);
+}
+
+/** Center Stage on or off, in this call and the next ones from this browser. */
+export function setCallCenterStage(on: boolean): void {
+  controller.setCenterStage(on);
+}
+
+/** The size of the area that shows their camera while it fills it, or null (docs/calls.md). */
+export function setCallView(view: CallViewSize | null): void {
+  controller.setView(view);
 }
 
 export function setCallMinimized(minimized: boolean): void {

@@ -5,6 +5,7 @@ import de.corespace.shroud.core.calls.crypto.CallCrypto
 import de.corespace.shroud.core.calls.crypto.CallCryptoException
 import de.corespace.shroud.core.calls.crypto.CallSignalKeys
 import de.corespace.shroud.core.calls.signal.CallSignal
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.crypto.Primitives
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.Ids
@@ -827,5 +828,90 @@ class CallControllerTest {
         override suspend fun hangup(token: String, callId: UUID): CallDto = error("unexpected")
         override suspend fun heartbeat(token: String, callId: UUID): CallDto = error("unexpected")
         override suspend fun signal(token: String, callId: UUID, signalType: String, payload: String): Unit = error("unexpected")
+    }
+
+    // ---- Framing and Center Stage (docs/calls.md) ----
+
+    /** Our view goes out with every media state; a new shape at once, but at most every 500 ms. */
+    @Test
+    fun ourViewGoesOutAndANewShapeAtMostEveryHalfSecond() = world { world ->
+        val (alice, bob) = connect(world)
+        fun aliceStates() = world.signals.count { it.type == "media_state" && it.from == alice.deviceId }
+        assertTrue("no view said, none used", bob.engine.peerViews.isEmpty())
+        world.advance(CallController.VIEW_GAP_MS)
+        val before = aliceStates()
+        alice.controller.setOwnView(1179, 2556)
+        world.settle()
+        assertEquals(before + 1, aliceStates())
+        assertEquals(listOf<CallView?>(CallView(1179, 2556)), bob.engine.peerViews)
+
+        // A few pixels are no new shape: nothing goes out for it.
+        alice.controller.setOwnView(1180, 2540)
+        world.settle()
+        assertEquals(before + 1, aliceStates())
+
+        // Turned within half a second of the last: it waits, and a second change meanwhile goes with it.
+        alice.controller.setOwnView(2556, 1179)
+        world.settle()
+        assertEquals(before + 1, aliceStates())
+        world.advance(CallController.VIEW_GAP_MS / 2)
+        alice.controller.setOwnView(2560, 1180)
+        world.settle()
+        assertEquals(before + 1, aliceStates())
+        world.advance(CallController.VIEW_GAP_MS / 2)
+        assertEquals(before + 2, aliceStates())
+        assertEquals(listOf<CallView?>(CallView(1179, 2556), CallView(2560, 1180)), bob.engine.peerViews)
+
+        // Every media state carries it: a mute changes no view on their side.
+        backgroundScope.launch { alice.controller.toggleMute() }
+        world.settle()
+        assertEquals(before + 3, aliceStates())
+        assertTrue(bob.call!!.remoteMicMuted)
+        assertEquals(2, bob.engine.peerViews.size)
+
+        // A measurement of 0 or out of range (a layout pass before the screen has a size) is no
+        // measurement: nothing goes out for it, and the next media state still carries our view.
+        alice.controller.setOwnView(0, 0)
+        alice.controller.setOwnView(1179, 0)
+        alice.controller.setOwnView(CallView.MAX + 1, 2556)
+        world.settle()
+        world.advance(CallController.VIEW_GAP_MS)
+        assertEquals(before + 3, aliceStates())
+        backgroundScope.launch { alice.controller.toggleMute() }
+        world.settle()
+        assertEquals(before + 4, aliceStates())
+        assertFalse(bob.call!!.remoteMicMuted)
+        assertEquals(listOf<CallView?>(CallView(1179, 2556), CallView(2560, 1180)), bob.engine.peerViews)
+    }
+
+    /** A view measured before the call is in its first media state. */
+    @Test
+    fun aViewMeasuredBeforeTheCallGoesWithTheFirstMediaState() = world { world ->
+        val alice = world.device("alice", world.aliceId)
+        val bob = world.device("bob", world.bobId)
+        alice.controller.setOwnView(1080, 2400)
+        linked(world, alice, bob)
+        place(world, alice, bob)
+        accept(world, bob)
+        world.advance(CallController.ICE_BATCH_MS)
+        assertEquals(listOf<CallView?>(CallView(1080, 2400)), bob.engine.peerViews)
+        assertTrue(alice.engine.peerViews.isEmpty())
+    }
+
+    @Test
+    fun centerStageIsOnByDefaultKeptAndReachesTheEngine() = world { world ->
+        val alice = world.device("alice", world.aliceId)
+        world.settle()
+        assertEquals(true, alice.engine.centerStage)
+        assertTrue(alice.controller.ui.value.centerStage)
+        alice.controller.setCenterStage(false)
+        world.settle()
+        assertEquals(false, alice.engine.centerStage)
+        assertFalse(alice.controller.ui.value.centerStage)
+        assertFalse(alice.preferences.centerStage.value)
+        alice.controller.setCenterStage(true)
+        world.settle()
+        assertEquals(true, alice.engine.centerStage)
+        assertTrue(alice.preferences.centerStage.value)
     }
 }

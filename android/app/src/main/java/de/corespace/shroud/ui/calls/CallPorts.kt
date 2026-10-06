@@ -60,6 +60,16 @@ interface CallPorts {
     fun onScreenCaptureConsent(grant: ScreenCaptureGrant?)
     fun setScreenShareQuality(quality: ScreenShareQuality)
 
+    /** Center Stage on or off (`CallController.setCenterStage`), kept for the next calls. */
+    fun setCenterStage(on: Boolean)
+
+    /**
+     * The area their camera fills, in pixels (`CallController.setOwnView`): the call screen, or the
+     * tile while it sits beside their screen. Their camera is cut to its shape. Called only when
+     * it changes.
+     */
+    fun setOwnView(width: Int, height: Int)
+
     /** 0…1 from the sender's stats; null without media (`CallController.localAudioLevel`). */
     suspend fun localAudioLevel(): Float?
     fun safetyNumberForActiveCall(): String?
@@ -98,6 +108,8 @@ class ContainerCallPorts(private val container: AppContainer) : CallPorts {
     override fun toggleScreenShare(): ShareAction = controller.toggleScreenShare()
     override fun onScreenCaptureConsent(grant: ScreenCaptureGrant?) = controller.onScreenCaptureConsent(grant)
     override fun setScreenShareQuality(quality: ScreenShareQuality) = controller.setScreenShareQuality(quality)
+    override fun setCenterStage(on: Boolean) = controller.setCenterStage(on)
+    override fun setOwnView(width: Int, height: Int) = controller.setOwnView(width, height)
     override suspend fun localAudioLevel(): Float? = controller.localAudioLevel()
     override fun safetyNumberForActiveCall(): String? = controller.safetyNumberForActiveCall()
     override fun confirmSafety() = controller.confirmSafety()

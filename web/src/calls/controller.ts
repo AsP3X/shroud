@@ -56,6 +56,7 @@ import {
   type CallPeer,
   type CallPhase,
   type CallView,
+  type CallViewSize,
   type IceCandidateJson,
   type Signal,
   type SignalBody,
@@ -70,6 +71,9 @@ import {
   screenVideoConstraints,
   type ScreenQuality,
 } from "./screenQuality";
+import type { FramedCamera } from "./cameraFraming";
+import { loadCenterStage, saveCenterStage } from "./centerStage";
+import { shapeChanged, type Size } from "./framing";
 import {
   CameraQuality,
   QUALITY_SAMPLE_MS,
@@ -178,6 +182,16 @@ export type CallEnv = {
    * network's address (calls/relay.ts). Absent means direct paths first.
    */
   alwaysRelay?(): boolean;
+  /**
+   * Our camera framed: cut to their view and, with Center Stage, following faces
+   * (cameraFraming.ts). Absent, or null for a camera, where this browser cannot frame.
+   */
+  /** This browser frames the camera (`frameCamera` gives one), so it is opened at up to 4K. */
+  framingSupported?(): boolean;
+  frameCamera?(
+    camera: MediaStreamTrack,
+    options: { view: Size | null; follow: boolean; onSize: () => void; onFollowChange: () => void; onStall: () => void },
+  ): FramedCamera | null;
 };
 
 /**
@@ -189,6 +203,23 @@ const VIDEO: MediaTrackConstraints = {
   height: { ideal: 1080 },
   frameRate: { ideal: 30, max: 30 },
 };
+/**
+ * Where the camera is framed (docs/calls.md, "Framing and Center Stage"): up to 4K, so a cut to a
+ * phone's tall view, or one zoomed in on a face, still has its pixels.
+ */
+const FRAMED_VIDEO: MediaTrackConstraints = {
+  width: { ideal: 3840 },
+  height: { ideal: 2160 },
+  frameRate: { ideal: 30, max: 30 },
+};
+/** Their view of our camera is told at most this often while it changes (a window being resized). */
+const VIEW_MS = 500;
+/** The sizes a camera steps down through while it runs below 25 fps at one: 1440p, 1080p, 720p. */
+const SMOOTHER = [
+  { width: 2560, height: 1440 },
+  { width: 1920, height: 1080 },
+  { width: 1280, height: 720 },
+];
 const AUDIO: MediaTrackConstraints = {
   echoCancellation: true,
   noiseSuppression: true,
@@ -225,6 +256,7 @@ type TimerKey =
   | "batchTimer"
   | "noticeTimer"
   | "cameraTimer"
+  | "viewTimer"
   | "endTimer";
 /** What a section carries: by kind, then by place (docs/calls.md, "Screen sharing"). */
 type Section = "mic" | "camera" | "screen" | "screenSound";
@@ -280,6 +312,13 @@ type Call = {
   quality: CameraQuality;
   /** A stats reading is on its way; the next tick waits for it. */
   sampling: boolean;
+  /** Our camera as it goes out: framed to their view (null where this browser cannot frame). */
+  framed: FramedCamera | null;
+  /** Their view of our camera (`media_state` `view`), or null: our camera's own shape. */
+  peerView: Size | null;
+  /** Our view of their camera, sent in every `media_state`; and the one they last heard. */
+  myView: CallViewSize | null;
+  sentView: CallViewSize | null;
   /** The open camera (also while its picture fades out after Video went off). */
   camera: MediaStreamTrack | null;
   /** The browser or the system paused the camera (another app took it, the page went away). */
@@ -381,17 +420,25 @@ function peerConfig(servers: RTCIceServer[], relay: boolean): RTCConfiguration {
 }
 
 /**
- * A camera whose 1080p runs slower than 25 fps (some webcams) is opened at 720p instead: a smooth
- * 720p looks better than a stuttering 1080p at every rung. Browsers pick the mode nearest the
- * `ideal`s, which can be such a slow 1080p.
+ * A camera whose large size runs slower than 25 fps (many webcams give 4K or 1080p at 5 to 15) is
+ * stepped down until it runs smoothly, down to 720p: a smooth picture looks better than a
+ * stuttering sharp one at every rung. Browsers pick the mode nearest the `ideal`s, which can be
+ * such a slow one.
  */
 async function smoothCamera(track: MediaStreamTrack | null | undefined): Promise<void> {
   if (!track || typeof track.getSettings !== "function" || typeof track.applyConstraints !== "function") return;
-  const { width = 0, height = 0, frameRate } = track.getSettings();
-  if (frameRate === undefined || frameRate >= 25 || Math.max(width, height) <= 1280) return;
-  await track
-    .applyConstraints({ width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } })
-    .catch(() => undefined);
+  for (const size of SMOOTHER) {
+    const { width = 0, height = 0, frameRate } = track.getSettings();
+    if (frameRate === undefined || frameRate >= 25 || Math.max(width, height) <= 1280) return;
+    if (Math.max(width, height) <= size.width) continue;
+    const narrowed = await track
+      .applyConstraints({ width: { ideal: size.width }, height: { ideal: size.height }, frameRate: { ideal: 30, max: 30 } })
+      .then(
+        () => true,
+        () => false,
+      );
+    if (!narrowed) return;
+  }
 }
 
 /** Opus as each audio section needs it (speech on the microphone's, music on the screen's),
@@ -433,7 +480,12 @@ type Sharing = { screen: RTCRtpSender | null; sound: RTCRtpSender | null; on: bo
  * ahead of the camera and behind speech: up to 30 fps it keeps its sharpness and gives up frames
  * when the link is tight, at 60 it gives up some of each. Its sound at about 128 kbps.
  */
-function tuneSenders(pc: RTCPeerConnection, sharing: Sharing, camera: CameraRung): void {
+function tuneSenders(
+  pc: RTCPeerConnection,
+  sharing: Sharing,
+  camera: CameraRung,
+  cameraSize: { width?: number; height?: number },
+): void {
   if (typeof pc.getSenders !== "function") return;
   for (const sender of pc.getSenders()) {
     const track = sender.track;
@@ -458,7 +510,7 @@ function tuneSenders(pc: RTCPeerConnection, sharing: Sharing, camera: CameraRung
         encoding.priority = "high";
         encoding.networkPriority = "high";
       } else if (track.kind === "video") {
-        const shape = cameraEncoding(sharing.on ? tileOf(camera) : camera, track.getSettings?.() ?? {});
+        const shape = cameraEncoding(sharing.on ? tileOf(camera) : camera, cameraSize);
         encoding.maxBitrate = shape.maxBitrate;
         encoding.maxFramerate = shape.maxFramerate;
         encoding.scaleResolutionDownBy = shape.scaleResolutionDownBy;
@@ -484,6 +536,10 @@ export class CallController {
   private readonly finished: string[] = [];
   /** How our screen goes out, in every call from this browser (screenQuality.ts). */
   private screenQuality: ScreenQuality = loadScreenQuality();
+  /** The last size of the area that shows their camera, measured by the call screen (`setView`). */
+  private lastView: CallViewSize | null = null;
+  /** Center Stage, in every call from this browser (centerStage.ts). */
+  private centerStage = loadCenterStage();
 
   constructor(private readonly env: CallEnv) {}
 
@@ -623,16 +679,16 @@ export class CallController {
     const oldDevice = old.getSettings?.().deviceId;
     let wanted: MediaTrackConstraints;
     if (facing === "user" || facing === "environment") {
-      wanted = { ...VIDEO, facingMode: { exact: facing === "user" ? "environment" : "user" } };
+      wanted = { ...this.video(), facingMode: { exact: facing === "user" ? "environment" : "user" } };
     } else {
       const ids = await this.env.cameras().catch(() => [] as string[]);
       const next = ids.length > 1 ? ids[(ids.indexOf(oldDevice ?? "") + 1) % ids.length] : undefined;
-      wanted = next ? { ...VIDEO, deviceId: { exact: next } } : { ...VIDEO };
+      wanted = next ? { ...this.video(), deviceId: { exact: next } } : { ...this.video() };
     }
     // Phones open one camera at a time: the old one closes first.
     old.stop();
     let fresh: MediaStreamTrack | null = null;
-    for (const constraints of [wanted, oldDevice ? { ...VIDEO, deviceId: { exact: oldDevice } } : VIDEO]) {
+    for (const constraints of [wanted, oldDevice ? { ...this.video(), deviceId: { exact: oldDevice } } : this.video()]) {
       try {
         fresh = (await this.env.getUserMedia({ video: constraints })).getVideoTracks()[0] ?? null;
         await smoothCamera(fresh);
@@ -652,12 +708,10 @@ export class CallController {
       return;
     }
     fresh.enabled = true;
-    await call.video?.sender.replaceTrack(fresh).catch(() => undefined);
-    if (this.gone(call)) {
-      fresh.stop();
-      return;
-    }
+    // Framed before it goes out, so they never see the new camera uncut for a moment.
     this.useCamera(call, fresh);
+    await call.video?.sender.replaceTrack(this.outgoing(call)).catch(() => undefined);
+    if (this.gone(call)) return;
     // The other camera may capture at another size: a new ceiling, and a new shrink to the rung.
     this.tune(call);
     this.publish(call);
@@ -677,7 +731,7 @@ export class CallController {
       this.publish(call);
       let failure: unknown = null;
       try {
-        track = (await this.env.getUserMedia({ video: { ...VIDEO, facingMode: "user" } })).getVideoTracks()[0] ?? null;
+        track = (await this.env.getUserMedia({ video: { ...this.video(), facingMode: "user" } })).getVideoTracks()[0] ?? null;
         await smoothCamera(track);
       } catch (err) {
         failure = err;
@@ -693,7 +747,7 @@ export class CallController {
       }
     }
     track.enabled = true;
-    const sent = await video.sender.replaceTrack(track).then(
+    const sent = await video.sender.replaceTrack(track === call.camera ? this.outgoing(call) : track).then(
       () => true,
       () => false,
     );
@@ -741,7 +795,11 @@ export class CallController {
     }, CAMERA_RELEASE_MS);
   }
 
-  /** Makes `track` our camera (null: none), and the local stream to match. */
+  /**
+   * Makes `track` our camera (null: none), framed where this browser can, and the local stream to
+   * match: our own picture shows what goes out. A section already sending the camera itself
+   * moves to the framed track.
+   */
   private useCamera(call: Call, track: MediaStreamTrack | null): void {
     const old = call.camera;
     if (old && old !== track) {
@@ -750,11 +808,17 @@ export class CallController {
       old.onended = null;
       old.stop();
     }
+    if (old !== track) {
+      call.framed?.stop();
+      call.framed = track ? this.frame(call, track) : null;
+    }
     call.camera = track;
     call.cameraMuted = track?.muted === true;
+    const out = this.outgoing(call);
     const audio = call.local?.getAudioTracks() ?? [];
-    call.local = this.env.createStream(track ? [...audio, track] : audio);
+    call.local = this.env.createStream(out ? [...audio, out] : audio);
     if (!track) return;
+    if (out !== track && call.video?.sender.track === track) void call.video.sender.replaceTrack(out).catch(() => undefined);
     call.mirrorSelf = facingOf(track) !== "environment";
     track.onmute = () => this.cameraPaused(call, track, true);
     track.onunmute = () => this.cameraPaused(call, track, false);
@@ -773,6 +837,68 @@ export class CallController {
     call.cameraMuted = paused;
     if (call.cameraOn) this.sendMediaState(call);
     this.publish(call);
+  }
+
+  /** The camera constraints: up to 4K where the camera is framed, 1080p where it is not. */
+  private video(): MediaTrackConstraints {
+    return this.env.framingSupported?.() ? FRAMED_VIDEO : VIDEO;
+  }
+
+  /** `track` framed for this call, or null where this browser cannot frame it. */
+  private frame(call: Call, track: MediaStreamTrack): FramedCamera | null {
+    const framed =
+      this.env.frameCamera?.(track, {
+        view: call.peerView,
+        follow: this.centerStage,
+        onSize: () => {
+          if (!this.gone(call) && call.framed === framed) this.tune(call);
+        },
+        onFollowChange: () => {
+          if (!this.gone(call) && call.framed === framed) this.publish(call);
+        },
+        onStall: () => {
+          // No frame came out: the camera goes out as it comes.
+          if (this.gone(call) || call.framed !== framed || !framed) return;
+          framed.stop();
+          call.framed = null;
+          const camera = call.camera;
+          if (camera && call.video?.sender.track === framed.track) void call.video.sender.replaceTrack(camera).catch(() => undefined);
+          const audio = call.local?.getAudioTracks() ?? [];
+          call.local = this.env.createStream(camera ? [...audio, camera] : audio);
+          this.tune(call);
+          this.publish(call);
+        },
+      }) ?? null;
+    return framed;
+  }
+
+  /** Center Stage on or off, in this call and the next ones from this browser. */
+  setCenterStage(on: boolean): void {
+    this.centerStage = on;
+    saveCenterStage(on);
+    const call = this.live();
+    if (!call) return;
+    call.framed?.setFollow(on);
+    this.publish(call);
+  }
+
+  /**
+   * The size of the area that shows their camera while it fills it (device pixels), or null while
+   * it shows their whole picture. They hear of a new shape in our next `media_state`, at most every
+   * 500 ms (docs/calls.md, "Framing and Center Stage").
+   */
+  setView(view: CallViewSize | null): void {
+    this.lastView = view;
+    const call = this.call;
+    if (!call || call.phase === "ended") return;
+    call.myView = view;
+    const asSize = (v: CallViewSize | null) => (v ? { width: v.w, height: v.h } : null);
+    if (!shapeChanged(asSize(call.sentView), asSize(view)) || call.viewTimer !== null) return;
+    call.viewTimer = this.env.setTimeout(() => {
+      call.viewTimer = null;
+      if (this.gone(call)) return;
+      if (shapeChanged(asSize(call.sentView), asSize(call.myView))) this.sendMediaState(call);
+    }, VIEW_MS);
   }
 
   /** Our video can go out in this call: its section was offered both ways (every current app does). */
@@ -918,8 +1044,8 @@ export class CallController {
 
   private tune(call: Call): void {
     if (!call.pc) return;
-    const settings = call.camera?.getSettings?.();
-    call.quality.setCapture(Math.max(settings?.width ?? 0, settings?.height ?? 0));
+    const settings = this.cameraSize(call);
+    call.quality.setCapture(settings);
     tuneSenders(
       call.pc,
       {
@@ -929,7 +1055,18 @@ export class CallController {
         quality: this.screenQuality,
       },
       call.quality.rung,
+      settings,
     );
+  }
+
+  /** What reaches the encoder: the framed output's size, or the camera's own. */
+  private cameraSize(call: Call): { width?: number; height?: number } {
+    return call.framed?.size() ?? call.camera?.getSettings?.() ?? {};
+  }
+
+  /** What goes out on our video section: the framed camera, or the camera itself. */
+  private outgoing(call: Call): MediaStreamTrack | null {
+    return call.framed?.track ?? call.camera;
   }
 
   /**
@@ -1189,6 +1326,12 @@ export class CallController {
       video: null,
       quality: new CameraQuality(),
       sampling: false,
+      framed: null,
+      peerView: null,
+      // The call screen measures only when it is laid out anew: a call that follows another on the
+      // same screen starts from the last measure.
+      myView: this.lastView,
+      sentView: null,
       camera: null,
       cameraMuted: false,
       cameraPending: false,
@@ -1230,6 +1373,7 @@ export class CallController {
       batchTimer: null,
       noticeTimer: null,
       cameraTimer: null,
+      viewTimer: null,
       endTimer: null,
       heartbeat: null,
       ringCheck: null,
@@ -1390,7 +1534,7 @@ export class CallController {
     try {
       if (call.modality === "video") {
         try {
-          stream = await this.env.getUserMedia({ audio: AUDIO, video: { ...VIDEO, facingMode: "user" } });
+          stream = await this.env.getUserMedia({ audio: AUDIO, video: { ...this.video(), facingMode: "user" } });
           await smoothCamera(stream.getVideoTracks()[0]);
         } catch (err) {
           // Blocked or missing camera: the call can still go on with sound.
@@ -1457,8 +1601,9 @@ export class CallController {
     // Every call carries a video section both ways, with or without a camera on it yet, so
     // either side can turn video on or off later without another offer. The caller's comes
     // from here; the callee takes the one the offer brings (answerOffer).
-    if (call.camera && local) {
-      const sender = pc.addTrack(call.camera, local);
+    const outgoing = this.outgoing(call);
+    if (outgoing && local) {
+      const sender = pc.addTrack(outgoing, local);
       call.video = pc.getTransceivers().find((t) => t.sender === sender) ?? null;
     } else if (call.role === "caller") {
       call.video = pc.addTransceiver("video", { direction: "sendrecv", streams: local ? [local] : [] });
@@ -1693,6 +1838,13 @@ export class CallController {
           // An app that knows screens always says whether it shares one; an older one never does.
           if (signal.screen !== undefined) call.peerShows = true;
           call.remoteScreen = signal.screen === true;
+          {
+            const view = signal.view ? { width: signal.view.w, height: signal.view.h } : null;
+            if (shapeChanged(call.peerView, view)) {
+              call.peerView = view;
+              call.framed?.setView(view);
+            }
+          }
           this.publish(call);
           return;
       }
@@ -1820,7 +1972,14 @@ export class CallController {
   private sendMediaState(call: Call): void {
     if (!call.negotiated) return;
     const camera = call.cameraOn && call.camera !== null && !call.cameraMuted;
-    this.send(call, { t: "media", mic: call.micOn, camera, screen: call.display !== null });
+    call.sentView = call.myView;
+    this.send(call, {
+      t: "media",
+      mic: call.micOn,
+      camera,
+      screen: call.display !== null,
+      ...(call.myView ? { view: call.myView } : {}),
+    });
   }
 
   /* --- media and the connection ------------------------------------------------------------ */
@@ -2080,6 +2239,7 @@ export class CallController {
       "batchTimer",
       "noticeTimer",
       "cameraTimer",
+      "viewTimer",
     ] as const) {
       this.stop(call, key);
     }
@@ -2108,6 +2268,8 @@ export class CallController {
       camera.onended = null;
       camera.stop();
     }
+    call.framed?.stop();
+    call.framed = null;
     for (const track of call.display?.getTracks() ?? []) track.onended = null;
     stopTracks(call.local);
     stopTracks(call.remote);
@@ -2221,6 +2383,8 @@ export class CallController {
       cameraPending: call.cameraPending,
       canVideo: this.videoSendable(call),
       canSwitchCamera: call.canSwitchCamera,
+      centerStage: this.centerStage,
+      canCenterStage: call.cameraOn && call.framed !== null && call.framed.canFollow(),
       mirrorSelf: call.mirrorSelf,
       remoteMic: call.remoteMic,
       remoteCamera: call.remoteCamera,

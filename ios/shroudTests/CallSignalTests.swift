@@ -93,6 +93,55 @@ struct CallSignalTests {
         }
     }
 
+    /// `view` (docs/calls.md, "Framing and Center Stage"): written only when there is one, with
+    /// sorted keys, and read back.
+    @Test
+    func theViewIsWrittenOnlyWhenThereIsOne() throws {
+        let view = try #require(CallViewSize(w: 1179, h: 2556))
+        let plaintext = try CallSignal.media(mic: true, camera: false, screen: false, view: view).plaintext(n: 4)
+        #expect(String(decoding: plaintext, as: UTF8.self)
+            == #"{"camera":false,"mic":true,"n":4,"screen":false,"t":"media","view":{"h":2556,"w":1179}}"#)
+        let parsed = try CallSignal.parse(plaintext, signalType: "media_state")
+        #expect(parsed.signal == .media(mic: true, camera: false, screen: false, view: view))
+        let without = try CallSignal.media(mic: true, camera: true, screen: false).plaintext(n: 5)
+        let written = try JSONSerialization.jsonObject(with: without) as? [String: Any]
+        #expect(written?["view"] == nil)
+        // The web's example in docs/calls.md.
+        let web = Data(#"{"t":"media","mic":true,"camera":false,"screen":false,"view":{"w":1179,"h":2556},"n":4}"#.utf8)
+        #expect(try CallSignal.parse(web, signalType: "media_state").signal == .media(mic: true, camera: false, screen: false, view: view))
+    }
+
+    /// A `view` that is not an object of whole numbers from 1 to 10 000 counts as none: the rest
+    /// of the signal still counts.
+    @Test(arguments: [
+        #""view":{"w":0,"h":2556}"#,
+        #""view":{"w":1179,"h":10001}"#,
+        #""view":{"w":-5,"h":2556}"#,
+        #""view":{"w":1179.5,"h":2556}"#,
+        #""view":{"w":"1179","h":2556}"#,
+        #""view":{"w":true,"h":2556}"#,
+        #""view":{"w":1179}"#,
+        #""view":[1179,2556]"#,
+        #""view":"1179x2556""#,
+        #""view":null"#,
+        #""view":{"w":1e30,"h":2556}"#,
+    ])
+    func aBadViewIsIgnored(view: String) throws {
+        let data = Data(#"{"t":"media","mic":false,"camera":true,"screen":false,\#(view),"n":3}"#.utf8)
+        let parsed = try CallSignal.parse(data, signalType: "media_state")
+        #expect(parsed.signal == .media(mic: false, camera: true, screen: false, view: nil))
+        #expect(parsed.n == 3)
+    }
+
+    @Test
+    func theViewsLimitsAreIncluded() throws {
+        let data = Data(#"{"t":"media","mic":true,"camera":true,"view":{"w":1,"h":10000},"n":2}"#.utf8)
+        #expect(try CallSignal.parse(data, signalType: "media_state").signal
+            == .media(mic: true, camera: true, screen: nil, view: CallViewSize(w: 1, h: 10_000)))
+        #expect(CallViewSize(w: 0, h: 5) == nil)
+        #expect(CallViewSize(w: 5, h: 10_001) == nil)
+    }
+
     @Test
     func anEphemeralKeyRoundTripsAndABadOneDoesNot() throws {
         let key = Data(repeating: 7, count: 32)

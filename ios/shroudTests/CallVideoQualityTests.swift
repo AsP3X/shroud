@@ -32,22 +32,35 @@ struct CallVideoQualityTests {
 
     @Test
     func whereACallStarts() {
-        #expect(CameraQuality(captureLong: 1920).rung.name == "720p")
-        #expect(CameraQuality(captureLong: 1280).rung.name == "720p")
-        #expect(CameraQuality(captureLong: 640).rung.name == "360p")
-        #expect(CameraQuality(captureLong: nil).rung.name == "720p")
-        #expect(CallVideoQuality.ceiling(for: 1920) == 5)
-        #expect(CallVideoQuality.ceiling(for: 1280) == 4)
-        #expect(CallVideoQuality.ceiling(for: 1300) == 4)
-        // A capture a little under 1080p still reaches it.
-        #expect(CallVideoQuality.ceiling(for: 1880) == 5)
+        #expect(CameraQuality(width: 1920, height: 1080).rung.name == "720p", "a 1080p camera starts at 720p")
+        #expect(CameraQuality(width: 1280, height: 720).rung.name == "720p", "a 720p camera starts at 720p")
+        #expect(CameraQuality(width: 640, height: 480).rung.name == "360p", "a small camera starts at its own size")
+        #expect(CameraQuality().rung.name == "720p", "an unknown camera starts at 720p")
+    }
+
+    @Test
+    func theCeilingIsThePicturesPixels() {
+        #expect(CallVideoQuality.ceiling(width: 1920, height: 1080) == 5)
+        #expect(CallVideoQuality.ceiling(width: 1280, height: 720) == 4)
+        #expect(CallVideoQuality.ceiling(width: 1300, height: 730) == 4)
+        #expect(CallVideoQuality.ceiling(width: 1880, height: 1058) == 5, "a capture a little under 1080p still reaches it")
+        #expect(CallVideoQuality.ceiling(width: 886, height: 1920) == 5, "a tall cut with nearly 1080p's pixels reaches it")
+        #expect(
+            CallVideoQuality.ceiling(width: 1080, height: 810) == 4,
+            "a squat one with 720p's pixels reaches 720p, though its longer side is 1080"
+        )
+        #expect(CallVideoQuality.ceiling(width: 498, height: 1080) == 3, "a narrow cut from a 1080p camera: 540p")
+        #expect(CallVideoQuality.ceiling(width: nil, height: nil) == 4, "an unknown size: 720p")
+        #expect(CallVideoQuality.ceiling(width: 0, height: 0) == 4, "an empty size: 720p")
+        #expect(CallVideoQuality.rungPixels(CallVideoQuality.ladder[5]) == 1920 * 1080)
+        #expect(CallVideoQuality.rungPixels(CallVideoQuality.ladder[0]) == 320 * 180)
     }
 
     // MARK: - Stepping up
 
     @Test
     func cleanReadingsStepUpAfterTheStartSettles() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         #expect(feed(&quality, Self.good, 3).isEmpty, "the first three readings settle")
         #expect(feed(&quality, Self.good, 3).isEmpty, "three clean readings are not yet enough")
         #expect(feed(&quality, Self.good, 1).first == "1080p", "the fourth goes up to 1080p")
@@ -56,27 +69,27 @@ struct CallVideoQualityTests {
 
     @Test
     func a720pCameraNeverGoesAbove720p() {
-        var quality = CameraQuality(captureLong: 1280)
+        var quality = CameraQuality(width: 1280, height: 720)
         #expect(feed(&quality, Self.good, 30).isEmpty)
     }
 
     @Test
     func goingUpDoesNotWaitForTheEstimate() {
         // A camera sending less than the link could carry: the estimate stays near what it sends.
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         let low = CameraSample(estimate: 400_000, limitation: CameraLimitation.none, loss: 0)
         #expect(feed(&quality, low, 7).first == "1080p")
     }
 
     @Test
     func withoutAnEstimateOrALimitationCleanReadingsStillGoUp() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         #expect(feed(&quality, Self.none, 7).first == "1080p")
     }
 
     @Test
     func aBusyEncoderOrALossyLinkDoesNotGoUp() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         #expect(feed(&quality, with(Self.good, limitation: CameraLimitation.cpu), 30).isEmpty, "a busy processor does not go up")
         #expect(feed(&quality, with(Self.good, limitation: CameraLimitation.bandwidth), 30).isEmpty, "an encoder short of bits does not go up")
         #expect(quality.rung.name == "720p", "nor down while the estimate has room")
@@ -92,7 +105,7 @@ struct CallVideoQualityTests {
 
     @Test
     func twoStarvedReadingsGoDownAsFarAsTheEstimateNeeds() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 3)
         #expect(feed(&quality, Self.tight, 1).isEmpty, "one starved reading is not enough")
         #expect(feed(&quality, Self.tight, 1).first == "360p", "two go down as far as the estimate needs at once")
@@ -101,7 +114,7 @@ struct CallVideoQualityTests {
 
     @Test
     func aLowEstimateAloneDoesNotStepDown() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 3)
         #expect(feed(&quality, with(Self.tight, limitation: CameraLimitation.none), 2).isEmpty)
         #expect(quality.rung.name == "720p", "the encoder is not short of bits")
@@ -109,7 +122,7 @@ struct CallVideoQualityTests {
 
     @Test
     func starvedReadingsMustComeInARow() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 3)
         _ = quality.sample(Self.tight)
         _ = quality.sample(Self.good)
@@ -118,7 +131,7 @@ struct CallVideoQualityTests {
 
     @Test
     func lossStepsDownOneRungAtATime() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 3)
         let lossy = with(Self.good, loss: 0.15)
         #expect(feed(&quality, lossy, 2).first == "540p", "loss steps down one rung")
@@ -128,7 +141,7 @@ struct CallVideoQualityTests {
 
     @Test
     func aStarvedLinkGoesToTheBottom() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 3)
         let starved = CameraSample(estimate: 40_000, limitation: .bandwidth, loss: 0.5)
         #expect(feed(&quality, starved, 2).first == "180p", "a starved link goes to the bottom")
@@ -140,7 +153,7 @@ struct CallVideoQualityTests {
 
     @Test
     func anUpgradeThatDoesNotHoldWaitsLongerNextTime() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 7)
         #expect(quality.rung.name == "1080p", "up to 1080p")
         let short = CameraSample(estimate: 1_500_000, limitation: .bandwidth, loss: 0)
@@ -158,20 +171,26 @@ struct CallVideoQualityTests {
     // MARK: - The camera's size
 
     @Test
-    func theCamerasSizeIsTheCeiling() {
-        var quality = CameraQuality(captureLong: 1920)
+    func thePicturesSizeIsTheCeiling() {
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 7)
-        let smaller = quality.setCapture(1280)
-        #expect(smaller && quality.rung.name == "720p", "a smaller camera brings the rung down to it")
-        let larger = quality.setCapture(1920)
-        #expect(!larger && quality.rung.name == "720p", "a larger one only lifts the ceiling")
-        let unknown = quality.setCapture(0)
+        let smaller = quality.setCapture(width: 1280, height: 720)
+        #expect(smaller && quality.rung.name == "720p", "a smaller picture brings the rung down to it")
+        let larger = quality.setCapture(width: 1920, height: 1080)
+        #expect(larger && quality.rung.name == "1080p", "and the link's rung comes back with a larger one")
+        let unknown = quality.setCapture(width: 0, height: 0)
         #expect(!unknown, "an unknown size changes nothing")
+        let sideways = quality.setCapture(width: 1080, height: 810)
+        #expect(sideways && quality.rung.name == "720p", "their view turned sideways for a while")
+        feed(&quality, Self.good, 30)
+        #expect(quality.rung.name == "720p", "the rung stays at the picture's top while it lasts")
+        let upright = quality.setCapture(width: 886, height: 1920)
+        #expect(upright && quality.rung.name == "1080p", "and is back at once when it ends")
     }
 
     @Test
     func afterAPauseTheCountStartsAgain() {
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         feed(&quality, Self.good, 6)
         quality.pause()
         #expect(feed(&quality, Self.good, 5).isEmpty, "after a pause the count starts again")
@@ -181,7 +200,7 @@ struct CallVideoQualityTests {
     @Test
     func aPauseBeforeTheFirstReadingKeepsTheOpeningSettle() {
         // A voice call whose camera comes on later: the ladder was paused from the start.
-        var quality = CameraQuality(captureLong: 1920)
+        var quality = CameraQuality(width: 1920, height: 1080)
         quality.pause()
         quality.pause()
         #expect(feed(&quality, Self.good, 6).isEmpty, "a pause before the first reading keeps the opening settle")
@@ -199,6 +218,9 @@ struct CallVideoQualityTests {
         #expect(CallVideoQuality.cameraEncoding(ladder[4], width: 1080, height: 1920).scaleResolutionDownBy == Double(1.5))
         // Never enlarged.
         #expect(CallVideoQuality.cameraEncoding(ladder[5], width: 1280, height: 720).scaleResolutionDownBy == Double(1))
+        // A tall cut keeps its shape at the rung's pixels.
+        let tall = CallVideoQuality.cameraEncoding(ladder[4], width: 886, height: 1920).scaleResolutionDownBy
+        #expect(abs(tall - (Double(886 * 1920) / Double(1280 * 720)).squareRoot()) < 1e-9)
         // An unknown size is sent as it is.
         #expect(CallVideoQuality.cameraEncoding(ladder[0], width: nil, height: nil).scaleResolutionDownBy == Double(1))
         let tile = CallVideoQuality.cameraEncoding(CallVideoQuality.tileOf(ladder[4]), width: 1920, height: 1080)

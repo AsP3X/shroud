@@ -408,6 +408,44 @@ class FakePeer {
 
 type WireSignal = { callId: string; from: string; to: string; type: CallSignalType; payload: string };
 
+/** A framed camera as cameraFraming.ts makes one, recording what it is told. */
+class FakeFramed {
+  readonly track = new FakeTrack("video");
+  readonly views: ({ width: number; height: number } | null)[] = [];
+  readonly follows: boolean[] = [];
+  stopped = false;
+  constructor(
+    readonly camera: FakeTrack,
+    readonly options: {
+      view: { width: number; height: number } | null;
+      follow: boolean;
+      onSize: () => void;
+      onFollowChange: () => void;
+      onStall: () => void;
+    },
+  ) {
+    this.track.size = { width: 1080, height: 1920 };
+    this.views.push(options.view);
+    this.follows.push(options.follow);
+  }
+  size() {
+    return this.track.size;
+  }
+  canFollow() {
+    return true;
+  }
+  setView(view: { width: number; height: number } | null) {
+    this.views.push(view);
+  }
+  setFollow(on: boolean) {
+    this.follows.push(on);
+  }
+  stop() {
+    this.stopped = true;
+    this.track.readyState = "ended";
+  }
+}
+
 class Device {
   readonly controller: CallController;
   view: CallView | null = null;
@@ -451,6 +489,9 @@ class Device {
   /** Settings → Privacy → Always relay calls. */
   alwaysRelay = false;
   cameras = ["cam-front", "cam-back"];
+  /** This browser frames its camera (cameraFraming.ts); what it framed. */
+  framing = false;
+  readonly framed: FakeFramed[] = [];
 
   constructor(
     readonly user: User,
@@ -522,6 +563,13 @@ class Device {
       },
       createStream: (tracks) => new FakeStream(tracks as unknown as FakeTrack[]) as unknown as MediaStream,
       alwaysRelay: () => this.alwaysRelay,
+      framingSupported: () => this.framing,
+      frameCamera: (camera, options) => {
+        if (!this.framing) return null;
+        const framed = new FakeFramed(camera as unknown as FakeTrack, options);
+        this.framed.push(framed);
+        return framed as unknown as ReturnType<NonNullable<CallEnv["frameCamera"]>>;
+      },
       now: () => clock.now,
       setTimeout: (run, ms) => clock.set(run, ms, null),
       clearTimeout: (id) => clock.clear(id),
@@ -1778,6 +1826,91 @@ const ICE = 150;
     `a 15 fps 1080p is narrowed to 720p (${JSON.stringify(camera?.applied)})`,
   );
   check(b1.peer.videoSender?.track?.applied.length === 0, "a smooth 1080p is left alone");
+  a1.controller.hangup();
+  await clock.advance(4_000);
+}
+
+/* --- framing: their view, Center Stage, and a framing that stalls ------------------------------ */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  a1.framing = true;
+  b1.framing = true;
+  await connect(clock, a1, b1, "video");
+  const framed = a1.framed[0];
+  check(Boolean(framed) && a1.peer.videoSender?.track === framed.track, "the framed camera goes out");
+  check(a1.view?.localStream?.getVideoTracks()[0] === (framed.track as unknown as MediaStreamTrack), "and our picture shows it");
+  const asked = a1.streams[0]?.getVideoTracks()[0] as unknown as FakeTrack | undefined;
+  check(asked === framed.camera, "framed from the camera itself");
+  check(a1.view?.canCenterStage === true && a1.view.centerStage === true, "Center Stage on, and offered");
+  const tuned = a1.peer.tuned.filter((t) => t.kind === "video").at(-1);
+  check(tuned?.scale === 1.5, `the encoder shrinks the framed size to the rung (${tuned?.scale})`);
+
+  // Bob's phone fills its screen with alice's picture: he says how large it is.
+  b1.controller.setView({ w: 1179, h: 2556 });
+  await clock.advance(499);
+  check(framed.views.length === 1, "not before 500 ms");
+  await clock.advance(1);
+  await clock.advance(0);
+  check(JSON.stringify(framed.views.at(-1)) === JSON.stringify({ width: 1179, height: 2556 }), `alice cuts to his view (${JSON.stringify(framed.views)})`);
+  b1.controller.setView({ w: 1180, h: 2550 });
+  await clock.advance(1_000);
+  check(framed.views.length === 2, "a few pixels are no new shape");
+  b1.controller.setView({ w: 2556, h: 1179 });
+  b1.controller.setView({ w: 2560, h: 1180 });
+  await clock.advance(1_000);
+  check(JSON.stringify(framed.views.at(-1)) === JSON.stringify({ width: 2560, height: 1180 }) && framed.views.length === 3, "turned sideways: once, coalesced, the latest size");
+  b1.controller.toggleMute();
+  await clock.advance(0);
+  check(framed.views.length === 3, "every media_state carries the view, but the same shape changes nothing");
+  b1.controller.setView(null);
+  await clock.advance(1_000);
+  check(framed.views.at(-1) === null, "a window that shows the whole picture: her own shape again");
+
+  // Center Stage off and on again, kept for the next call.
+  a1.controller.setCenterStage(false);
+  check(framed.follows.at(-1) === false && a1.view?.centerStage === false, "Center Stage off");
+  a1.controller.setCenterStage(true);
+  check(framed.follows.at(-1) === true, "and on");
+
+  // A camera switch frames the new camera; the old framing stops.
+  await a1.controller.switchCamera();
+  const second = a1.framed[1];
+  check(framed.stopped && Boolean(second) && a1.peer.videoSender?.track === second.track, "a new camera is framed in its place");
+  check(second.views[0] === null, "with their current view");
+
+  // The framed track never shows a frame: the camera goes out as it comes.
+  second.options.onStall();
+  await clock.advance(0);
+  check(second.stopped && a1.peer.videoSender?.track === second.camera, "a stalled framing gives the camera back");
+  check(a1.view?.canCenterStage === false, "and Center Stage is not offered");
+  a1.controller.hangup();
+  await clock.advance(4_000);
+  check(second.stopped, "nothing left running");
+}
+{
+  // The call screen measured before the call: the first media_state already carries the view.
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  a1.framing = true;
+  b1.controller.setView({ w: 1179, h: 2556 });
+  await connect(clock, a1, b1, "video");
+  check(
+    JSON.stringify(a1.framed[0]?.views.at(-1)) === JSON.stringify({ width: 1179, height: 2556 }),
+    `a view measured before the call reaches the other side (${JSON.stringify(a1.framed[0]?.views)})`,
+  );
+  a1.controller.hangup();
+  await clock.advance(4_000);
+}
+{
+  // A browser that cannot frame: the camera as before, 1080p at most, no Center Stage.
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  const b1 = new Device(bob, "b1", server, clock);
+  await connect(clock, a1, b1, "video");
+  check(a1.framed.length === 0 && a1.view?.canCenterStage === false, "no framing");
   a1.controller.hangup();
   await clock.advance(4_000);
 }

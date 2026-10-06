@@ -87,12 +87,23 @@ export type CameraSample = {
   loss: number | null;
 };
 
-/** The rung index for a capture whose longer side is `long`: the highest that needs no upscaling. */
-export function ceilingFor(long: number | null | undefined): number {
-  if (!long || long <= 0) return CAMERA_START;
+/** A rung's pixels: its longer side by its shorter, 16:9 (1920×1080 for 1080p). */
+export function rungPixels(rung: CameraRung): number {
+  return rung.long * Math.round((rung.long * 9) / 16);
+}
+
+/**
+ * The top rung for a picture of `size`: the highest whose pixels it has, give or take a quarter.
+ * By pixels rather than by the longer side, since a framed picture takes the other side's shape
+ * ("Framing and Center Stage"): a tall 886×1920 cut has 1080p's pixels near enough, and a squat
+ * 1080×810 one 720p's, though its longer side is only 1080.
+ */
+export function ceilingFor(size: { width?: number; height?: number } | null | undefined): number {
+  const pixels = (size?.width ?? 0) * (size?.height ?? 0);
+  if (pixels <= 0) return CAMERA_START;
   let top = 0;
   CAMERA_LADDER.forEach((rung, index) => {
-    if (rung.long <= long * 1.05) top = index;
+    if (rungPixels(rung) <= pixels * 1.25) top = index;
   });
   return top;
 }
@@ -106,7 +117,11 @@ function fitting(budget: number): number {
   return top;
 }
 
-/** The camera's rung for one call; `sample` moves it. */
+/**
+ * The camera's rung for one call; `sample` moves it. The link's rung (`index`) is kept apart from
+ * the picture's top rung (`ceiling`): a picture that turns smaller for a while (their view turned
+ * sideways) holds the rung down only while it lasts, and the link's rung comes back with it.
+ */
 export class CameraQuality {
   private index: number;
   private ceiling: number;
@@ -117,26 +132,26 @@ export class CameraQuality {
   /** Readings since the last step up, until it has held. */
   private sinceUp: number | null = null;
 
-  constructor(captureLong?: number | null) {
-    this.ceiling = ceilingFor(captureLong);
-    this.index = Math.min(CAMERA_START, this.ceiling);
+  constructor(capture?: { width?: number; height?: number } | null) {
+    this.ceiling = ceilingFor(capture);
+    this.index = CAMERA_START;
   }
 
+  /** The rung that goes out: the link's, no higher than the picture's top rung. */
   get rung(): CameraRung {
-    return CAMERA_LADDER[this.index];
+    return CAMERA_LADDER[this.rungIndex];
   }
 
   get rungIndex(): number {
-    return this.index;
+    return Math.min(this.index, this.ceiling);
   }
 
-  /** The camera opened at a new size (another camera, or the first): no rung above it. */
-  setCapture(long: number | null | undefined): boolean {
-    if (!long) return false;
-    this.ceiling = ceilingFor(long);
-    if (this.index <= this.ceiling) return false;
-    this.index = this.ceiling;
-    return true;
+  /** The picture going out has a new size (another camera, their view): its top rung. True when the rung changed. */
+  setCapture(size: { width?: number; height?: number } | null | undefined): boolean {
+    if ((size?.width ?? 0) * (size?.height ?? 0) <= 0) return false;
+    const before = this.rungIndex;
+    this.ceiling = ceilingFor(size);
+    return this.rungIndex !== before;
   }
 
   /**
@@ -159,6 +174,7 @@ export class CameraQuality {
       this.settle -= 1;
       return false;
     }
+    const current = this.rungIndex;
     const budget = sample.estimate === null ? null : sample.estimate - AUDIO_RESERVE_BPS;
     const starved = sample.limitation === "bandwidth" && budget !== null && budget < this.rung.minBitrate;
     const lossy = sample.loss !== null && sample.loss >= LOSS_DOWN;
@@ -166,8 +182,8 @@ export class CameraQuality {
     let down: number | null = null;
     // As far down as the estimate needs, at once; loss steps down one.
     if (starved && budget !== null) down = fitting(budget);
-    if (lossy) down = Math.max(0, Math.min(down ?? this.index, this.index - 1));
-    if (down !== null && down < this.index) {
+    if (lossy) down = Math.max(0, Math.min(down ?? current, current - 1));
+    if (down !== null && down < current) {
       this.high = 0;
       this.low += 1;
       if (this.low < DOWN_AFTER) return false;
@@ -180,7 +196,7 @@ export class CameraQuality {
     this.low = 0;
 
     const clean =
-      this.index < this.ceiling &&
+      current < this.ceiling &&
       sample.limitation !== "cpu" &&
       sample.limitation !== "bandwidth" &&
       (sample.loss === null || sample.loss < LOSS_UP);
@@ -190,7 +206,7 @@ export class CameraQuality {
     }
     this.high += 1;
     if (this.high < this.upAfter) return false;
-    this.move(this.index + 1);
+    this.move(current + 1);
     this.sinceUp = 0;
     return true;
   }
@@ -203,16 +219,19 @@ export class CameraQuality {
   }
 }
 
-/** What the encoder is told for a rung: its bitrate, its frame rate, and how far to shrink. */
+/**
+ * What the encoder is told for a rung: its bitrate, its frame rate, and how far to shrink the
+ * picture to the rung's pixels (any shape keeps its shape and gets the rung's pixel count).
+ */
 export function cameraEncoding(
   rung: CameraRung,
   capture: { width?: number; height?: number },
 ): { maxBitrate: number; maxFramerate: number; scaleResolutionDownBy: number } {
-  const long = Math.max(capture.width ?? 0, capture.height ?? 0);
+  const pixels = (capture.width ?? 0) * (capture.height ?? 0);
   return {
     maxBitrate: rung.maxBitrate,
     maxFramerate: rung.fps,
-    scaleResolutionDownBy: long > 0 ? Math.max(1, long / rung.long) : 1,
+    scaleResolutionDownBy: pixels > 0 ? Math.max(1, Math.sqrt(pixels / rungPixels(rung))) : 1,
   };
 }
 

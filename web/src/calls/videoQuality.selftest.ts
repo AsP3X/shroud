@@ -19,6 +19,8 @@ function check(ok: boolean, what: string): void {
 }
 
 const good: CameraSample = { estimate: 6_000_000, limitation: "none", loss: 0 };
+const fhd = { width: 1920, height: 1080 };
+const hd = { width: 1280, height: 720 };
 const none: CameraSample = { estimate: null, limitation: null, loss: null };
 
 /** Feeds `sample` `times` times; the rung names it passed through. */
@@ -29,36 +31,40 @@ function feed(quality: CameraQuality, sample: CameraSample, times: number): stri
 }
 
 /* --- where a call starts --- */
-check(new CameraQuality(1920).rung.name === "720p", "a 1080p camera starts at 720p");
-check(new CameraQuality(1280).rung.name === "720p", "a 720p camera starts at 720p");
-check(new CameraQuality(640).rung.name === "360p", "a small camera starts at its own size");
+check(new CameraQuality(fhd).rung.name === "720p", "a 1080p camera starts at 720p");
+check(new CameraQuality(hd).rung.name === "720p", "a 720p camera starts at 720p");
+check(new CameraQuality({ width: 640, height: 480 }).rung.name === "360p", "a small camera starts at its own size");
 check(new CameraQuality(null).rung.name === "720p", "an unknown camera starts at 720p");
-check(ceilingFor(1920) === 5 && ceilingFor(1280) === 4 && ceilingFor(1300) === 4, "the ceiling is the camera's size");
-check(ceilingFor(1880) === 5, "a capture a little under 1080p still reaches it");
+check(ceilingFor(fhd) === 5 && ceilingFor(hd) === 4 && ceilingFor({ width: 1300, height: 730 }) === 4, "the ceiling is the camera's size");
+check(ceilingFor({ width: 1880, height: 1058 }) === 5, "a capture a little under 1080p still reaches it");
+check(ceilingFor({ width: 886, height: 1920 }) === 5, "a tall cut with nearly 1080p's pixels reaches it");
+check(ceilingFor({ width: 1080, height: 810 }) === 4, "a squat one with 720p's pixels reaches 720p, though its longer side is 1080");
+check(ceilingFor({ width: 498, height: 1080 }) === 3, "a narrow cut from a 1080p camera: 540p");
+check(ceilingFor(null) === 4 && ceilingFor({ width: 0, height: 0 }) === 4, "an unknown size: 720p");
 
 /* --- stepping up --- */
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   check(feed(quality, good, 3).length === 0, "the first three readings settle");
   check(feed(quality, good, 3).length === 0, "three clean readings are not yet enough");
   check(feed(quality, good, 1)[0] === "1080p", "the fourth goes up to 1080p");
   check(feed(quality, good, 20).length === 0, "1080p is the top");
 }
 {
-  const quality = new CameraQuality(1280);
+  const quality = new CameraQuality(hd);
   check(feed(quality, good, 30).length === 0, "a 720p camera never goes above 720p");
 }
 {
   // A camera sending less than the link could carry: the estimate stays near what it sends.
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   check(feed(quality, { estimate: 400_000, limitation: "none", loss: 0 }, 7)[0] === "1080p", "going up does not wait for the estimate");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   check(feed(quality, none, 7)[0] === "1080p", "without an estimate or a limitation, clean readings still go up");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   check(feed(quality, { ...good, limitation: "cpu" }, 30).length === 0, "a busy processor does not go up");
   check(feed(quality, { ...good, limitation: "bandwidth" }, 30).length === 0, "an encoder short of bits does not go up");
   check(quality.rung.name === "720p", "nor down while the estimate has room");
@@ -73,27 +79,27 @@ check(ceilingFor(1880) === 5, "a capture a little under 1080p still reaches it")
 /* --- stepping down --- */
 const tight: CameraSample = { estimate: 500_000, limitation: "bandwidth", loss: 0 };
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 3);
   check(feed(quality, tight, 1).length === 0, "one starved reading is not enough");
   check(feed(quality, tight, 1)[0] === "360p", "two go down as far as the estimate needs at once");
   check(feed(quality, tight, 10).length === 0, "and stay where the estimate fits");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 3);
   check(feed(quality, { ...tight, limitation: "none" }, 2).length === 0, "a low estimate alone does not step down");
   check(quality.rung.name === "720p", "the encoder is not short of bits");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 3);
   quality.sample(tight);
   quality.sample(good);
   check(feed(quality, tight, 1).length === 0, "starved readings must come in a row");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 3);
   const lossy: CameraSample = { ...good, loss: 0.15 };
   check(feed(quality, lossy, 2)[0] === "540p", "loss steps down one rung");
@@ -101,7 +107,7 @@ const tight: CameraSample = { estimate: 500_000, limitation: "bandwidth", loss: 
   check(feed(quality, lossy, 2)[0] === "360p", "then steps again");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 3);
   const starved: CameraSample = { estimate: 40_000, limitation: "bandwidth", loss: 0.5 };
   check(feed(quality, starved, 2)[0] === "180p", "a starved link goes to the bottom");
@@ -111,7 +117,7 @@ const tight: CameraSample = { estimate: 500_000, limitation: "bandwidth", loss: 
 
 /* --- an upgrade that does not hold waits longer next time --- */
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 7);
   check(quality.rung.name === "1080p", "up to 1080p");
   const short: CameraSample = { estimate: 1_500_000, limitation: "bandwidth", loss: 0 };
@@ -127,14 +133,18 @@ const tight: CameraSample = { estimate: 500_000, limitation: "bandwidth", loss: 
 
 /* --- the camera's size --- */
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 7);
-  check(quality.setCapture(1280) && quality.rung.name === "720p", "a smaller camera brings the rung down to it");
-  check(!quality.setCapture(1920) && quality.rung.name === "720p", "a larger one only lifts the ceiling");
-  check(!quality.setCapture(0), "an unknown size changes nothing");
+  check(quality.setCapture(hd) && quality.rung.name === "720p", "a smaller picture brings the rung down to it");
+  check(quality.setCapture(fhd) && quality.rung.name === "1080p", "and the link's rung comes back with a larger one");
+  check(!quality.setCapture({ width: 0, height: 0 }), "an unknown size changes nothing");
+  check(quality.setCapture({ width: 1080, height: 810 }) && quality.rung.name === "720p", "their view turned sideways for a while");
+  feed(quality, good, 30);
+  check(quality.rung.name === "720p", "the rung stays at the picture's top while it lasts");
+  check(quality.setCapture({ width: 886, height: 1920 }) && quality.rung.name === "1080p", "and is back at once when it ends");
 }
 {
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   feed(quality, good, 6);
   quality.pause();
   check(feed(quality, good, 5).length === 0, "after a pause the count starts again");
@@ -142,7 +152,7 @@ const tight: CameraSample = { estimate: 500_000, limitation: "bandwidth", loss: 
 }
 {
   // A voice call whose camera comes on later: the ladder was paused from the start.
-  const quality = new CameraQuality(1920);
+  const quality = new CameraQuality(fhd);
   quality.pause();
   quality.pause();
   check(feed(quality, good, 6).length === 0, "a pause before the first reading keeps the opening settle");
@@ -155,6 +165,8 @@ const tight: CameraSample = { estimate: 500_000, limitation: "bandwidth", loss: 
   check(at720.scaleResolutionDownBy === 1.5 && at720.maxBitrate === 2_200_000 && at720.maxFramerate === 30, "720p from a 1080p camera");
   check(cameraEncoding(CAMERA_LADDER[4], { width: 1080, height: 1920 }).scaleResolutionDownBy === 1.5, "a portrait camera too");
   check(cameraEncoding(CAMERA_LADDER[5], { width: 1280, height: 720 }).scaleResolutionDownBy === 1, "never enlarged");
+  const tall = cameraEncoding(CAMERA_LADDER[4], { width: 886, height: 1920 });
+  check(Math.abs(tall.scaleResolutionDownBy - Math.sqrt((886 * 1920) / (1280 * 720))) < 1e-9, "a tall cut keeps its shape at the rung's pixels");
   check(cameraEncoding(CAMERA_LADDER[0], {}).scaleResolutionDownBy === 1, "an unknown size is sent as it is");
   const tile = cameraEncoding(tileOf(CAMERA_LADDER[4]), { width: 1920, height: 1080 });
   check(tile.scaleResolutionDownBy === 3 && tile.maxBitrate === 350_000 && tile.maxFramerate === 15, "the tile while sharing");

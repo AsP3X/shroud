@@ -26,6 +26,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Shrink,
+  ScanFace,
   SwitchCamera,
   Video,
   VideoOff,
@@ -43,7 +44,9 @@ import {
   dismissCall,
   hangUpCall,
   resumeCallAudio,
+  setCallCenterStage,
   setCallMinimized,
+  setCallView,
   switchCallCamera,
   toggleCallCamera,
   toggleCallMute,
@@ -127,6 +130,30 @@ function statusKey(view: CallView): string {
  * The stream is attached only when it (or `revision`, its tracks) changes: a camera switched back
  * on while the picture is still closing goes on from its last frame, not from black.
  */
+/**
+ * Tells the other side how large the area that shows their camera is while it fills it (`cover`:
+ * the full screen in a window 900 px wide or less, or the tile beside a shared screen), in device
+ * pixels, so they cut their camera to its shape; nothing while it shows their whole picture
+ * (`contain`). docs/calls.md, "Framing and Center Stage".
+ */
+function useViewReport(ref: RefObject<HTMLVideoElement | null>, which: string): void {
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const report = () => {
+      const fills = getComputedStyle(element).objectFit === "cover";
+      const ratio = window.devicePixelRatio || 1;
+      const w = Math.round(element.clientWidth * ratio);
+      const h = Math.round(element.clientHeight * ratio);
+      setCallView(fills && w > 0 && h > 0 ? { w: Math.min(w, 10_000), h: Math.min(h, 10_000) } : null);
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(element);
+    report();
+    return () => observer.disconnect();
+  }, [ref, which]);
+}
+
 function usePicture(stream: MediaStream | null, wanted: boolean, revision: unknown) {
   const ref = useRef<HTMLVideoElement>(null);
   const [shown, setShown] = useState(false);
@@ -771,6 +798,8 @@ function CallScreen({ view }: { view: CallView }) {
   const theirCamera = live && view.remoteVideo && view.remoteCamera && view.remoteStream !== null;
   const remote = usePicture(view.remoteStream, theirCamera && !screenUp, view.remoteVideo);
   const peerTile = usePicture(view.remoteStream, theirCamera && screenUp, view.remoteVideo);
+  // Their camera fills the screen, or the tile while their screen is up.
+  useViewReport(screenUp ? peerTile.ref : remote.ref, screenUp ? "tile" : "screen");
   const self = usePicture(view.localStream, live && view.cameraOn && view.localStream !== null, null);
   const ownScreen = usePicture(view.screenStream, live && view.screenOn && view.screenStream !== null, null);
   const layout = videoLayout(view, self.shown, remote.shown);
@@ -1082,6 +1111,18 @@ function CallScreen({ view }: { view: CallView }) {
             />
             {view.cameraOn && view.canSwitchCamera ? (
               <Control label="Flip" icon={<SwitchCamera size={24} />} onClick={switchCallCamera} />
+            ) : null}
+            {/* Center Stage: our camera follows the faces in it. Only where this browser frames it. */}
+            {view.canCenterStage ? (
+              <Control
+                label="Center"
+                ariaLabel="Center Stage"
+                title={view.centerStage ? "Center Stage is on" : "Center Stage is off"}
+                on={view.centerStage}
+                iconKey={view.centerStage ? "stage-on" : "stage-off"}
+                icon={<ScanFace size={24} />}
+                onClick={() => setCallCenterStage(!view.centerStage)}
+              />
             ) : null}
             {/* Next to the camera, never instead of it. A browser without a screen picker (a
                 phone's) has no button: it can still see theirs. */}

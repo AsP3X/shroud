@@ -1,6 +1,7 @@
 package de.corespace.shroud.ui.calls
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.IntSize
 import de.corespace.shroud.core.calls.ActiveCall
 import de.corespace.shroud.core.calls.CallPhase
 import de.corespace.shroud.core.calls.CallUiState
@@ -134,6 +135,11 @@ object CallScreenRules {
 
     const val SHARE_UNAVAILABLE_HINT = "Not available yet."
 
+    /** The Center Stage switch (docs/calls.md, "Framing and Center Stage"). */
+    const val CENTER_STAGE_LABEL = "Center Stage"
+
+    fun centerStageValue(on: Boolean): String = if (on) "On" else "Off"
+
     /** The sharing pill's words (:360, :384). */
     fun sharingPillText(starting: Boolean): String = if (starting) "Starting…" else "Sharing screen"
 
@@ -174,6 +180,21 @@ object CallScreenRules {
     /** How far the docked name and the shade sit lower: the badge's room and the sharing pill's (:182). */
     fun shadeDrop(badgeRoom: Boolean, sharing: Boolean): Float =
         (if (badgeRoom) CallScreenMetrics.SAFETY_BADGE_RESERVE else 0f) + (if (sharing) CallScreenMetrics.SHARING_INSET else 0f)
+
+    /**
+     * Their camera is the small tile beside their shared screen (the call screen's tiles, top
+     * trailing), not the whole call screen. [hasTrack]: their camera's track is there to show.
+     */
+    fun theirCameraIsTile(flags: CallScreenFlags, hasTrack: Boolean): Boolean =
+        flags.showsRemoteScreen && flags.showsRemoteVideo && hasTrack
+
+    /**
+     * The area that shows their camera, in pixels, reported as our `view` (docs/calls.md, "Framing
+     * and Center Stage"): the call screen ([screen]), or the tile ([tile], its resting size, not
+     * the size it animates through) while their camera is the tile beside their screen.
+     */
+    fun theirCameraArea(screen: IntSize, tile: IntSize, cameraIsTile: Boolean): IntSize =
+        if (cameraIsTile) tile else screen
 }
 
 /** A status line and whether it is the running timer (tabular digits that roll). */

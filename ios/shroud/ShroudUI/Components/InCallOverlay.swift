@@ -18,15 +18,24 @@ import SwiftUI
 /// top-trailing corner (its arrow picks the resolution and frame rate); a red pill at the top
 /// says it is shared and stops it.
 ///
+/// While our camera is on, a Center Stage circle sits beside Share: on, our camera goes out cut
+/// around the faces in it, following them (docs/calls.md, "Framing and Center Stage"). The call
+/// screen's size goes to the other side with every `media_state`, so their camera comes in cut
+/// to the shape it fills here.
+///
 /// A contact whose safety number has not been compared gets an amber "Not verified" badge in the
 /// top-leading corner, opposite Share. It closes down to a round shield after a few seconds and
 /// opens the number in a popover; the docked name sits under it (`safetyBadge(for:number:)`).
 struct InCallOverlay: View {
     @Environment(CallController.self) private var calls
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
     /// Where the face is on screen: their picture opens from it and closes back into it. A
     /// reference, so measuring the face never re-renders the call screen.
     @State private var face = FaceSpot()
+    /// The call screen's size (points), as last measured: what shows their camera unless their
+    /// screen does. A reference, so measuring it never re-renders the call screen.
+    @State private var callScreen = CallScreenSpot()
     /// The call the name block has been placed for, and whether that block is in the corner.
     /// Until the first placement, the corner follows the cameras directly so the opening frame
     /// is already right.
@@ -108,6 +117,20 @@ struct InCallOverlay: View {
         if calls.active != nil { windowDark = true }
     }
 
+    /// Tells the controller the area that shows their camera, in device pixels
+    /// (`theirCameraArea`).
+    private func reportVideoArea(theirScreen: Bool) {
+        let area = Self.theirCameraArea(callScreen: callScreen.size, theirScreen: theirScreen, scale: displayScale)
+        calls.setVideoArea(width: area.width, height: area.height)
+    }
+
+    /// The area that shows their camera, in device pixels: the whole call screen, or while their
+    /// shared screen fills it, their camera's tile beside it.
+    static func theirCameraArea(callScreen: CGSize, theirScreen: Bool, scale: CGFloat) -> (width: Int, height: Int) {
+        let points = theirScreen ? tileSize : callScreen
+        return (Int((points.width * scale).rounded()), Int((points.height * scale).rounded()))
+    }
+
     /// Their picture: their camera is on and its frames arrive (never a black or stale frame).
     private var showsRemoteVideo: Bool {
         calls.remoteVideoTrack != nil && calls.active?.remoteCameraOff == false && calls.remoteVideoLive
@@ -152,6 +175,24 @@ struct InCallOverlay: View {
                 endPoint: .bottom
             )
             .ignoresSafeArea()
+            // The whole screen, where their picture fills: its size in device pixels tells them
+            // the shape to cut their camera to; while their shared screen fills it, their camera's
+            // tile does instead. Handed to the controller, never kept as state, so a rotation or a
+            // resize re-renders nothing here.
+            // Agent: the proxy's size stops at the safe area even here; its insets add the rest.
+            .onGeometryChange(for: CGSize.self) { proxy in
+                let insets = proxy.safeAreaInsets
+                return CGSize(
+                    width: proxy.size.width + insets.leading + insets.trailing,
+                    height: proxy.size.height + insets.top + insets.bottom
+                )
+            } action: { [callScreen] size in
+                callScreen.size = size
+                reportVideoArea(theirScreen: screen)
+            }
+            .onChange(of: screen) { _, shown in
+                reportVideoArea(theirScreen: shown)
+            }
 
             // Mounted for the whole call (hidden while their camera is off), so the picture can
             // open out of the face and close back into it instead of popping in and out.
@@ -283,22 +324,38 @@ struct InCallOverlay: View {
         }
     }
 
-    /// The top-trailing corner: Share, then the pictures under it, theirs above ours while their
-    /// screen fills the rest, ours alone otherwise. Tapping ours flips the camera. Share keeps its
-    /// room while it steps aside over their screen, so the pictures never move for it.
+    /// The top-trailing corner: Share (with Center Stage before it while our camera is on), then
+    /// the pictures under it, theirs above ours while their screen fills the rest, ours alone
+    /// otherwise. Tapping ours flips the camera. The row keeps its room while it steps aside over
+    /// their screen, so the pictures never move for it; Center Stage comes and goes beside Share,
+    /// never above the pictures, so they never move for it either.
     @ViewBuilder
     private func tiles(for call: CallController.ActiveCall, screen: Bool) -> some View {
         let size = screen ? Self.tileSize : Self.selfViewSize
         // Ending, it goes at once but keeps its room, as the controls do.
         let away = chromeAway || call.phase == .ending
+        let framing = showsLocalVideo(call)
         VStack(alignment: .trailing, spacing: 10) {
-            if call.phase != .incomingRinging {
-                shareControl(for: call)
-                    .opacity(away ? 0 : 1)
-                    .animation(.easeOut(duration: 0.25), value: away)
-                    .allowsHitTesting(!away)
-                    .accessibilityHidden(away)
-                    .transition(.opacity)
+            if call.phase != .incomingRinging || framing {
+                // In a container of its own: glass outside one leaves at once, whatever the
+                // transition says. No blending distance, so the two circles never fuse.
+                GlassEffectContainer(spacing: 0) {
+                    HStack(spacing: Self.controlRowSpacing) {
+                        if framing {
+                            centerStageControl()
+                                .transition(.scale(scale: 0.6, anchor: .trailing).combined(with: .opacity))
+                        }
+                        if call.phase != .incomingRinging {
+                            shareControl(for: call)
+                                .transition(.opacity)
+                        }
+                    }
+                }
+                .opacity(away ? 0 : 1)
+                .animation(.easeOut(duration: 0.25), value: away)
+                .allowsHitTesting(!away)
+                .accessibilityHidden(away)
+                .transition(.opacity)
             }
             if screen, showsRemoteVideo, let theirs = calls.remoteVideoTrack {
                 CallVideoView(track: theirs)
@@ -470,6 +527,33 @@ struct InCallOverlay: View {
     }
 
     static let shareControlSize: CGFloat = 40
+    /// Between Center Stage and Share.
+    static let controlRowSpacing: CGFloat = 10
+
+    /// Center Stage, beside Share while our camera is on: a glass circle like it, tinted while
+    /// on. On, our camera goes out cut around the faces in it and follows them; off, it goes out
+    /// whole (in the shape they show it in). Kept on this phone. A button of its own beside the
+    /// pictures, so a tap or a hold on it never reaches our picture's camera flip.
+    private func centerStageControl() -> some View {
+        let on = calls.centerStageEnabled
+        return Button {
+            // A control used over their screen keeps the controls up a while longer.
+            chromeTouch += 1
+            calls.setCenterStage(!on)
+        } label: {
+            Image(systemName: "person.crop.rectangle")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: Self.shareControlSize, height: Self.shareControlSize)
+                .contentShape(Circle())
+                .glassEffect(on ? .regular.tint(Theme.accent).interactive() : .regular.interactive(), in: .circle)
+        }
+        .buttonStyle(PressableButtonStyle(scale: 1, dimming: 0, haptic: .medium))
+        .animation(Motion.snappy, value: on)
+        .accessibilityLabel("Center Stage")
+        .accessibilityValue(on ? "On" : "Off")
+        .accessibilityHint("Keeps your camera framed on you.")
+    }
 
     /// Share Screen or Stop Sharing, chosen in the menu. The system's broadcast picker opens (the
     /// person starts the broadcast there) once the menu has gone: a sheet asked for while the
@@ -1117,4 +1201,10 @@ private struct SafetyNumberPopover: View {
         .padding(16)
         .frame(width: 300)
     }
+}
+
+/// The call screen's size in points, as last measured. A reference, like `FaceSpot`: measuring it
+/// never re-renders the call screen.
+final class CallScreenSpot {
+    var size: CGSize = .zero
 }

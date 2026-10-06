@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.calls
 
 import android.content.Intent
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.net.IceServerDto
 import de.corespace.shroud.core.notifications.NotificationKind
 import kotlinx.coroutines.flow.StateFlow
@@ -92,6 +93,16 @@ interface CallMediaEngine {
     fun startCamera(): Boolean
     fun stopCamera()
     fun switchCamera()
+
+    /**
+     * The size of the area the other side shows our camera in (their `media_state` `view`), or
+     * null when they sent none: our camera goes out cut to that shape (docs/calls.md, "Framing
+     * and Center Stage"). For the running call; a new [start] forgets it.
+     */
+    fun setPeerView(view: CallView?)
+
+    /** Center Stage: our camera's cut follows the faces in it. Kept from call to call. */
+    fun setCenterStage(on: Boolean)
     val isCameraOn: Boolean
     val canSwitchCamera: Boolean
     val usesFrontCamera: Boolean

@@ -142,47 +142,36 @@ fun sdpMLines(sdp: String): List<SdpMLine> {
 }
 
 /**
- * What the camera is opened at, and the most its video source passes on: 1080p30 (ME:1060-1063;
- * docs/calls.md, "Camera quality"). The encoder sends a rung of the ladder below it
- * ([CameraQuality]).
+ * What the camera is opened at (ME:1060-1063; docs/calls.md, "Camera quality"). Each frame then
+ * goes out cut to the other side's shape, at most 1080p ([outputSize], "Framing and Center
+ * Stage"), and the encoder sends a rung of the ladder below that ([CameraQuality]).
  */
 const val CAMERA_CAPTURE_WIDTH = 1920
 const val CAMERA_CAPTURE_HEIGHT = 1080
-const val CAMERA_CAPTURE_FPS = 30
 
 /** The capture size closest to 1920×1080 (ME:1060-1063). */
 fun nearestCapture(formats: List<CaptureChoice>): CaptureChoice? =
     formats.minByOrNull { abs(it.width - CAMERA_CAPTURE_WIDTH) + abs(it.height - CAMERA_CAPTURE_HEIGHT) }
 
 /**
- * The longer side of the picture the encoder should get from [choice], worked out before its
- * first frame arrives (the engine then measures it). The video source crops the capture to 16:9
- * and, past 1920×1080's pixel count, shrinks it in WebRTC's `VideoAdapter` steps (3/4, 1/2, 3/8,
- * 1/4…) until it fits, so a 2048×1536 camera reaches the encoder at 1536×864. It caps the
- * camera's ladder ([CameraQuality.setCapture]).
+ * The picture the encoder gets from a camera picture of [capture] (upright) cut for [view]
+ * ([outputSize]): the ladder's ceiling ([CameraQuality.setCapture]) and the encoder's shrink.
+ * Null for no picture.
  */
-fun sentLong(choice: CaptureChoice): Int {
-    val long = max(choice.width, choice.height)
-    val short = min(choice.width, choice.height)
-    if (long <= 0 || short <= 0) return 0
-    // The adapter's own crop, in float like WebRTC's.
-    val aspect = CAMERA_CAPTURE_WIDTH / CAMERA_CAPTURE_HEIGHT.toFloat()
-    val croppedLong = min(long, (short * aspect).toInt())
-    val croppedShort = min(short, (long / aspect).toInt())
-    val pixels = croppedLong.toLong() * croppedShort
-    val most = CAMERA_CAPTURE_WIDTH.toLong() * CAMERA_CAPTURE_HEIGHT
-    var numerator = 1L
-    var denominator = 1L
-    while (numerator * numerator * pixels / (denominator * denominator) > most) {
-        if (numerator % 3 == 0L && denominator % 2 == 0L) {
-            numerator /= 3
-            denominator /= 2
-        } else {
-            numerator *= 3
-            denominator *= 4
-        }
-    }
-    return (croppedLong * numerator / denominator).toInt()
+fun framedSize(capture: FrameSize, view: FrameSize?): FrameSize? {
+    if (capture.width <= 0 || capture.height <= 0) return null
+    return outputSize(capture, view)
+}
+
+/**
+ * A capture format ([width] × [height], the sensor's own landscape as the enumerator lists it) as
+ * its frames will stand upright, before the first frame says so: portrait on a [portrait] screen
+ * (a phone's cameras are mounted sideways), landscape otherwise.
+ */
+fun uprightCapture(width: Int, height: Int, portrait: Boolean): FrameSize {
+    val long = max(width, height)
+    val short = min(width, height)
+    return if (portrait) FrameSize(short, long) else FrameSize(long, short)
 }
 
 /**
@@ -195,8 +184,8 @@ fun captureFps(maxRate: Int): Int {
 }
 
 /**
- * Speech near 32 kbps first, the camera at its rung of the ladder ([camera], shrunk from a capture
- * whose longer side is [captureLong]; while the screen is up a tile's worth, never more than the
+ * Speech near 32 kbps first, the camera at its rung of the ladder ([camera], shrunk to the rung's
+ * pixels from a picture of [capture]; while the screen is up a tile's worth, never more than the
  * rung, [tileOf]), the screen at [quality] (ME:608-642; docs/calls.md, "Camera quality").
  */
 fun senderTune(
@@ -205,7 +194,7 @@ fun senderTune(
     screenOn: Boolean,
     quality: ScreenShareQuality,
     camera: CameraRung = CAMERA_LADDER[CAMERA_START],
-    captureLong: Int = 0,
+    capture: FrameSize? = null,
 ): SenderTune? {
     if (trackId == SCREEN_TRACK_ID) {
         return SenderTune(
@@ -228,7 +217,7 @@ fun senderTune(
         )
     }
     if (kind == "video") {
-        val shape = cameraEncoding(if (screenOn) tileOf(camera) else camera, width = captureLong)
+        val shape = cameraEncoding(if (screenOn) tileOf(camera) else camera, capture)
         return SenderTune(
             maxBitrateBps = shape.maxBitrate,
             maxFramerate = shape.maxFramerate,

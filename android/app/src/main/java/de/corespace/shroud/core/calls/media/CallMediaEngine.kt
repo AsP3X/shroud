@@ -7,6 +7,7 @@ import de.corespace.shroud.core.calls.IceCandidatePayload
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.Standard
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.calls.signal.CallSdp
 import de.corespace.shroud.core.net.IceServerDto
 import kotlinx.coroutines.Job
@@ -56,8 +57,10 @@ import de.corespace.shroud.core.calls.CallMediaEngine as Engine
  * Our camera goes out at a rung of a ladder from 180p to 1080p that follows the link
  * ([CameraQuality]; docs/calls.md, "Camera quality"; iOS `CallVideoQuality`). While the link is
  * connected, its sender's stats are read every 2 s on the main thread and the rung moves with them.
- * The camera measures its own frames ([CallCamera.captureLong]), so the ladder's ceiling and the
- * encoder's shrink follow what the camera actually delivers, another camera after a switch too.
+ * The camera cuts its own frames to the other side's view ([setPeerView]) and, with Center Stage
+ * on ([setCenterStage]), round the faces in them (docs/calls.md, "Framing and Center Stage"). It
+ * measures that cut ([CallCamera.captureSize]), so the ladder's ceiling and the encoder's shrink
+ * follow what actually goes out: another camera after a switch, and another view, too.
  *
  * Nothing here is logged at info, and a failure never includes an SDP or a candidate address.
  */
@@ -88,6 +91,12 @@ class CallMediaEngine(context: Context) : Engine {
     private var screenVideoSource: VideoSource? = null
     private var camera: CallCamera? = null
     private var screenCapture: ScreenCaptureSource? = null
+
+    /** Their view of our picture for this call ([setPeerView]); the camera reads it per frame. */
+    private var peerView: FrameSize? = null
+
+    /** Center Stage, kept across calls ([setCenterStage]). */
+    private var centerStage = true
 
     private var screenTrack: VideoTrack? = null
     private var cameraOn = false
@@ -337,6 +346,17 @@ class CallMediaEngine(context: Context) : Engine {
         camera?.switchCamera()
     }
 
+    override fun setPeerView(view: CallView?) {
+        val size = view?.let { FrameSize(it.w, it.h) }
+        peerView = size
+        camera?.peerView = size
+    }
+
+    override fun setCenterStage(on: Boolean) {
+        centerStage = on
+        camera?.centerStage = on
+    }
+
     override val isCameraOn: Boolean get() = cameraOn
 
     override val canSwitchCamera: Boolean get() = camera != null && cameraOn
@@ -427,6 +447,7 @@ class CallMediaEngine(context: Context) : Engine {
         camera?.close()
         camera = null
         cameraOn = false
+        peerView = null
         screenOn = false
         remoteFrames.disarm()
         localFrames.disarm()
@@ -471,8 +492,9 @@ class CallMediaEngine(context: Context) : Engine {
 
     private fun makeVideoTrack(): VideoTrack? {
         if (!CallCamera.isAvailable(appContext)) return null
+        // No adaptOutputFormat: its crop to one fixed shape would undo the camera's own cut, which
+        // is at most 1080p already ([outputSize]); the capture runs at 30 fps at most ([captureFps]).
         val source = factory.createVideoSource(false)
-        source.adaptOutputFormat(CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT, CAMERA_CAPTURE_FPS)
         val camera = CallCamera(
             appContext,
             runtime.egl.eglBaseContext,
@@ -485,6 +507,8 @@ class CallMediaEngine(context: Context) : Engine {
             runCatching { source.dispose() }
             return null
         }
+        camera.peerView = peerView
+        camera.centerStage = centerStage
         val track = factory.createVideoTrack(CAMERA_TRACK_ID, source)
         track.addSink(localFrames)
         cameraSource = source
@@ -653,8 +677,8 @@ class CallMediaEngine(context: Context) : Engine {
      */
     private fun tuneSenders() {
         val connection = peer ?: return
-        val captureLong = camera?.captureLong ?: 0
-        quality.setCapture(captureLong)
+        val captureSize = camera?.captureSize
+        quality.setCapture(captureSize)
         val sections = try {
             sections(connection)
         } catch (_: RuntimeException) {
@@ -673,7 +697,7 @@ class CallMediaEngine(context: Context) : Engine {
             } ?: continue
             val id = trackId(track) ?: continue
             val kind = trackKind(track) ?: continue
-            val tune = senderTune(id, kind, screenOn, screenQuality, quality.rung, captureLong) ?: continue
+            val tune = senderTune(id, kind, screenOn, screenQuality, quality.rung, captureSize) ?: continue
             val applied = applyTune(sender, tune) || applyTune(sender, tune)
             if (!applied && id == SCREEN_TRACK_ID) {
                 Log.w(TAG, "Screen sender did not take the new quality")
@@ -740,8 +764,9 @@ class CallMediaEngine(context: Context) : Engine {
     }
 
     /**
-     * Our camera's frames came at a new size (the first ones, another camera), reported on the
-     * camera's thread: a new ceiling and a new shrink, on main, whatever the link or the screen.
+     * Our camera's cut came out at a new size (the first frames, another camera, their new view),
+     * reported on the camera's thread: a new ceiling and a new shrink, on main, whatever the link
+     * or the screen.
      */
     private fun onCaptureSize() {
         val token = liveToken ?: return

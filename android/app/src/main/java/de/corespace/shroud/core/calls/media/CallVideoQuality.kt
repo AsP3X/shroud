@@ -2,6 +2,7 @@ package de.corespace.shroud.core.calls.media
 
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * How sharp our camera goes out, step by step as the link allows (docs/calls.md, "Camera
@@ -98,11 +99,24 @@ data class CameraSample(
     val loss: Double?,
 )
 
-/** The rung index for a capture whose longer side is [long]: the highest that needs no upscaling. */
-fun ceilingFor(long: Int?): Int {
-    if (long == null || long <= 0) return CAMERA_START
+/** A rung's pixels: its longer side by its shorter, 16:9 (1920×1080 for 1080p). */
+fun rungPixels(rung: CameraRung): Long = rung.long.toLong() * Math.round(rung.long * 9 / 16.0)
+
+/** A picture's pixels, 0 when either side is unknown or not positive. */
+private fun pixelsOf(size: FrameSize?): Long =
+    if (size == null || size.width <= 0 || size.height <= 0) 0L else size.width.toLong() * size.height
+
+/**
+ * The top rung for a picture of [size]: the highest whose pixels it has, give or take a quarter.
+ * By pixels rather than by the longer side, since a framed picture takes the other side's shape
+ * ("Framing and Center Stage"): a tall 886×1920 cut has 1080p's pixels near enough, and a squat
+ * 1080×810 one 720p's, though its longer side is only 1080. Unknown: [CAMERA_START].
+ */
+fun ceilingFor(size: FrameSize?): Int {
+    val pixels = pixelsOf(size)
+    if (pixels <= 0) return CAMERA_START
     var top = 0
-    CAMERA_LADDER.forEachIndexed { index, rung -> if (rung.long <= long * 1.05) top = index }
+    CAMERA_LADDER.forEachIndexed { index, rung -> if (rungPixels(rung) <= pixels * 1.25) top = index }
     return top
 }
 
@@ -113,10 +127,15 @@ private fun fitting(budget: Double): Int {
     return top
 }
 
-/** The camera's rung for one call; [sample] moves it. Not thread-safe: the engine uses it on main. */
-class CameraQuality(captureLong: Int? = null) {
-    private var ceiling = ceilingFor(captureLong)
-    private var index = min(CAMERA_START, ceiling)
+/**
+ * The camera's rung for one call; [sample] moves it. The link's rung (`index`) is kept apart from
+ * the picture's top rung (`ceiling`): a picture that turns smaller for a while (their view turned
+ * sideways) holds the rung down only while it lasts, and the link's rung comes back with it.
+ * Not thread-safe: the engine uses it on main.
+ */
+class CameraQuality(capture: FrameSize? = null) {
+    private var index = CAMERA_START
+    private var ceiling = ceilingFor(capture)
     private var low = 0
     private var high = 0
     private var settle = START_SETTLE
@@ -125,17 +144,17 @@ class CameraQuality(captureLong: Int? = null) {
     /** Readings since the last step up, until it has held. */
     private var sinceUp: Int? = null
 
-    val rung: CameraRung get() = CAMERA_LADDER[index]
+    /** The rung that goes out: the link's, no higher than the picture's top rung. */
+    val rung: CameraRung get() = CAMERA_LADDER[rungIndex]
 
-    val rungIndex: Int get() = index
+    val rungIndex: Int get() = min(index, ceiling)
 
-    /** The camera opened at a new size (another camera, or the first): no rung above it. */
-    fun setCapture(long: Int?): Boolean {
-        if (long == null || long == 0) return false
-        ceiling = ceilingFor(long)
-        if (index <= ceiling) return false
-        index = ceiling
-        return true
+    /** The picture going out has a new size (another camera, their view): its top rung. True when the rung changed. */
+    fun setCapture(size: FrameSize?): Boolean {
+        if (pixelsOf(size) <= 0) return false
+        val before = rungIndex
+        ceiling = ceilingFor(size)
+        return rungIndex != before
     }
 
     /**
@@ -162,6 +181,7 @@ class CameraQuality(captureLong: Int? = null) {
             settle -= 1
             return false
         }
+        val current = rungIndex
         val budget = sample.estimate?.let { it - AUDIO_RESERVE_BPS }
         // The budget of an encoder short of bits on a link whose estimate is below the rung.
         val starved = budget?.takeIf { sample.limitation == QualityLimitation.BANDWIDTH && it < rung.minBitrate }
@@ -170,8 +190,8 @@ class CameraQuality(captureLong: Int? = null) {
         var down: Int? = null
         // As far down as the estimate needs, at once; loss steps down one.
         if (starved != null) down = fitting(starved)
-        if (lossy) down = max(0, min(down ?: index, index - 1))
-        if (down != null && down < index) {
+        if (lossy) down = max(0, min(down ?: current, current - 1))
+        if (down != null && down < current) {
             high = 0
             low += 1
             if (low < DOWN_AFTER) return false
@@ -183,7 +203,7 @@ class CameraQuality(captureLong: Int? = null) {
         }
         low = 0
 
-        val clean = index < ceiling &&
+        val clean = current < ceiling &&
             sample.limitation != QualityLimitation.CPU &&
             sample.limitation != QualityLimitation.BANDWIDTH &&
             (sample.loss == null || sample.loss < LOSS_UP)
@@ -193,7 +213,7 @@ class CameraQuality(captureLong: Int? = null) {
         }
         high += 1
         if (high < upAfter) return false
-        move(index + 1)
+        move(current + 1)
         sinceUp = 0
         return true
     }
@@ -206,16 +226,19 @@ class CameraQuality(captureLong: Int? = null) {
     }
 }
 
-/** What the encoder is told for a rung: its bitrate, its frame rate, and how far to shrink. */
+/**
+ * What the encoder is told for a rung: its bitrate, its frame rate, and how far to shrink the
+ * picture to the rung's pixels (any shape keeps its shape and gets the rung's pixel count).
+ */
 data class CameraEncoding(val maxBitrate: Int, val maxFramerate: Int, val scaleResolutionDownBy: Double)
 
-/** The encoding for [rung] from a capture of [width]×[height] (either 0 when unknown). */
-fun cameraEncoding(rung: CameraRung, width: Int = 0, height: Int = 0): CameraEncoding {
-    val long = max(width, height)
+/** The encoding for [rung] from a picture of [capture] (null or 0 when unknown: sent as it is). */
+fun cameraEncoding(rung: CameraRung, capture: FrameSize? = null): CameraEncoding {
+    val pixels = pixelsOf(capture)
     return CameraEncoding(
         maxBitrate = rung.maxBitrate,
         maxFramerate = rung.fps,
-        scaleResolutionDownBy = if (long > 0) max(1.0, long.toDouble() / rung.long) else 1.0,
+        scaleResolutionDownBy = if (pixels > 0) max(1.0, sqrt(pixels.toDouble() / rungPixels(rung))) else 1.0,
     )
 }
 

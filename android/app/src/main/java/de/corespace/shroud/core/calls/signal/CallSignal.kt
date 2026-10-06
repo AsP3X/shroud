@@ -15,6 +15,8 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.math.abs
+import kotlin.math.floor
 
 /**
  * What one sealed signal says — iOS `CallSignal` (`ios/shroud/Services/Calls/CallSignal.swift:30-172`),
@@ -46,9 +48,12 @@ sealed interface CallSignal {
 
     /**
      * What the sender sends now: the other side shows a muted mark or the avatar. [screen] is
-     * whether it shares its screen; null from an app that cannot share or show one.
+     * whether it shares its screen; null from an app that cannot share or show one. [view] is the
+     * size of the area that shows the other side's camera, in device pixels, while it fills that
+     * area; null while it shows their whole picture, and from apps that predate it (docs/calls.md,
+     * "Framing and Center Stage").
      */
-    data class Media(val mic: Boolean, val camera: Boolean, val screen: Boolean? = null) : CallSignal {
+    data class Media(val mic: Boolean, val camera: Boolean, val screen: Boolean? = null, val view: CallView? = null) : CallSignal {
         override val signalType: String get() = CallSignalType.MEDIA_STATE
     }
 
@@ -69,8 +74,9 @@ sealed interface CallSignal {
 
         /**
          * The plaintext JSON, numbered [n] (`CallSignal.swift:69-96`). Keys in sorted order as iOS
-         * writes them (`.sortedKeys`; receivers do not care). `ek` only when present, `screen`
-         * only when known, `sdpMid` only when set; `sdpMLineIndex` always (0 when unknown).
+         * writes them (`.sortedKeys`; receivers do not care), inside `view` too. `ek` only when
+         * present, `screen` and `view` only when known, `sdpMid` only when set; `sdpMLineIndex`
+         * always (0 when unknown).
          */
         fun plaintext(signal: CallSignal, n: Int): ByteArray {
             val body = buildJsonObject {
@@ -116,6 +122,15 @@ sealed interface CallSignal {
                         put("n", n)
                         signal.screen?.let { put("screen", it) }
                         put("t", "media")
+                        signal.view?.let { view ->
+                            put(
+                                "view",
+                                buildJsonObject {
+                                    put("h", view.h)
+                                    put("w", view.w)
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -131,7 +146,8 @@ sealed interface CallSignal {
          * - `ice`: `cs` an array of objects; entries without a non-empty `candidate` dropped;
          *   `sdpMid` a string or null; `sdpMLineIndex` a number, absent 0;
          * - `media`: `mic` default true, `camera` default false; `screen` absent → null, present and
-         *   not a bool → malformed;
+         *   not a bool → malformed; `view` an object whose `w` and `h` are whole numbers from 1 to
+         *   10 000, anything else → null (ignored, never malformed);
          * - an unknown `t` → malformed; a `t` of another type than [signalType] → [ParseException.TypeMismatch].
          *
          * Booleans and numbers read as iOS's `NSNumber` does (`CallSignal.swift:147-171`): a number
@@ -184,12 +200,32 @@ sealed interface CallSignal {
                         mic = obj["mic"].boolValue() ?: true,
                         camera = obj["camera"].boolValue() ?: false,
                         screen = screen,
+                        view = view(obj["view"]),
                     )
                 }
                 else -> throw ParseException.Malformed
             }
             if (signal.signalType != signalType) throw ParseException.TypeMismatch
             return Parsed(signal, n)
+        }
+
+        /** A `media` `view`: `{w, h}` in whole pixels from 1 to [CallView.MAX]; anything else is ignored. */
+        private fun view(value: JsonElement?): CallView? {
+            val obj = value as? JsonObject ?: return null
+            val w = obj["w"].wholeValue() ?: return null
+            val h = obj["h"].wholeValue() ?: return null
+            if (w !in 1..CallView.MAX || h !in 1..CallView.MAX) return null
+            return CallView(w, h)
+        }
+
+        /** A JSON number with no fraction (1179 or 1179.0, as JavaScript's `Number.isInteger`); null otherwise. */
+        private fun JsonElement?.wholeValue(): Int? {
+            val primitive = this as? JsonPrimitive ?: return null
+            if (primitive is JsonNull || primitive.isString || primitive.booleanOrNull != null) return null
+            primitive.content.toIntOrNull()?.let { return it }
+            val number = primitive.content.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
+            if (number != floor(number) || abs(number) > Int.MAX_VALUE) return null
+            return number.toInt()
         }
 
         /** Absent is an older peer; present but not 32 bytes of padded base64 rejects the signal (`CallSignal.swift:155-163`). */
@@ -222,6 +258,17 @@ sealed interface CallSignal {
             primitive.booleanOrNull?.let { return it }
             return primitive.content.toDoubleOrNull()?.let { it != 0.0 }
         }
+    }
+}
+
+/**
+ * The size of the area that shows the other side's camera while it fills it, in device pixels
+ * (`media_state` `view`, docs/calls.md "Framing and Center Stage").
+ */
+data class CallView(val w: Int, val h: Int) {
+    companion object {
+        /** The largest side a `view` may have; larger is ignored. */
+        const val MAX = 10_000
     }
 }
 

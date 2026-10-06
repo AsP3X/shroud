@@ -142,7 +142,7 @@ type LicensedPackage = {
   name: string;
   version: string;
   license: string;
-  source: "npm" | "crates.io";
+  source: "npm" | "crates.io" | "model";
   text: number | null;
 };
 type LicensesFile = { packages: LicensedPackage[]; texts: string[] };
@@ -162,6 +162,7 @@ function isLicensesFile(value: unknown): value is LicensesFile {
 const SOURCES: { source: LicensedPackage["source"]; title: string }[] = [
   { source: "npm", title: "npm packages" },
   { source: "crates.io", title: "Rust crates" },
+  { source: "model", title: "Models" },
 ];
 
 export function LicensesView() {

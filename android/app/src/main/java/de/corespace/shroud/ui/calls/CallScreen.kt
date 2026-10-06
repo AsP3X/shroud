@@ -75,6 +75,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -88,6 +89,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.corespace.shroud.core.calls.ActiveCall
@@ -114,8 +116,10 @@ import kotlinx.coroutines.launch
  * The call screen (iOS `InCallOverlay`, `ios/shroud/ShroudUI/Components/InCallOverlay.swift`;
  * calls §8): always dark. Back to front — the navy stage; their camera opening out of their face
  * ([RevealedVideo]); their shared screen ([SharedScreen]); the top shade under a picture; the stage
- * (face and the name block, [CallStageLayout]) over the control row; the tiles (Share, their
- * camera beside their screen, ours); the "Not verified" badge; the sharing pill.
+ * (face and the name block, [CallStageLayout]) over the control row; the tiles (Share, Center
+ * Stage, their camera beside their screen, ours); the "Not verified" badge; the sharing pill. The
+ * area their camera fills is reported as our `view` ([CallPorts.setOwnView]): the whole screen, or
+ * the tile while their camera sits beside their screen ([CallScreenRules.theirCameraArea]).
  *
  * [focusRequester] sits on the name and the status line: the host moves TalkBack there when a call
  * appears (`RootView.swift:238-243`). Everything here reads [state] and calls [ports]; nothing
@@ -266,6 +270,20 @@ private fun CallScreenContent(
         onDispose { if (keepOn) view.keepScreenOn = false }
     }
 
+    // ---- Our `view`: where their camera shows (docs/calls.md, "Framing and Center Stage") ----
+    // Their camera fills the whole call screen, or the tile beside their screen while that shows:
+    // that area's size goes to them, so their camera is cut to its shape. Only on a new size (the
+    // controller sends a new shape at most every 500 ms), never per frame or recomposition.
+    var screenSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val tileSize = with(density) {
+        IntSize(CallScreenMetrics.tile.width.dp.roundToPx(), CallScreenMetrics.tile.height.dp.roundToPx())
+    }
+    val viewSize = CallScreenRules.theirCameraArea(screenSize, tileSize, CallScreenRules.theirCameraIsTile(flags, state.remoteVideoTrack != null))
+    LaunchedEffect(viewSize) {
+        if (viewSize.width > 0 && viewSize.height > 0) ports.setOwnView(viewSize.width, viewSize.height)
+    }
+
     val sharingInset by animateDpAsState(
         if (flags.sharing) CallScreenMetrics.SHARING_INSET.dp else 0.dp,
         Motion.snappy(),
@@ -277,7 +295,13 @@ private fun CallScreenContent(
     val chromeAlpha by animateFloatAsState(if (flags.chromeAway) 0f else 1f, Motion.easeOut(250), label = "chromeAlpha")
     val blockAlpha by animateFloatAsState(if (blockHidden) 0f else 1f, Motion.reduced(), label = "blockAlpha")
 
-    Box(modifier.fillMaxSize().background(CallColors.stageGradient)) {
+    Box(
+        modifier
+            .fillMaxSize()
+            // The call screen's size: our `view` while their camera fills it (above).
+            .onSizeChanged { size -> screenSize = size }
+            .background(CallColors.stageGradient),
+    ) {
         // 2. Their camera, mounted for the whole call (:156-166).
         state.remoteVideoTrack?.let { track ->
             RevealedVideo(
@@ -707,8 +731,8 @@ private fun ControlRow(
 }
 
 /**
- * The top-trailing corner (`tiles(for:screen:)`, :286-347): Share (not while it rings in), their
- * camera as a tile while their screen fills the view, and ours — 108 × 164, or 90 × 136 beside
+ * The top-trailing corner (`tiles(for:screen:)`, :286-347): Share (not while it rings in), Center
+ * Stage while our camera shows, their camera as a tile while their screen fills the view, and ours — 108 × 164, or 90 × 136 beside
  * their screen — mirrored for the front camera; a tap on ours flips the camera. Tiles grow from
  * the corner (scale 0.8 + fade). Share keeps its room while it steps aside, so the pictures never move.
  */
@@ -743,23 +767,42 @@ private fun Tiles(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            if (call.phase != CallPhase.IncomingRinging) {
-                ShareControl(
-                    call = call,
-                    quality = state.screenShareQuality,
-                    onShare = onShare,
-                    onQuality = ports::setScreenShareQuality,
-                    onTouch = onTouch,
-                    modifier = Modifier
-                        // Ending, it goes at once; over their screen it fades (:292-301).
-                        .graphicsLayer { alpha = if (flags.ending) 0f else chromeAlpha() }
-                        .then(if (away) Modifier.clearAndSetSemantics {} else Modifier),
-                    interactive = !away,
-                )
+            // Center Stage beside Share, to its left, with our own picture: only while our camera
+            // shows (iOS puts it there too). One row, so our picture never moves for it.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                AnimatedVisibility(
+                    visible = call.phase != CallPhase.IncomingRinging && flags.showsLocalVideo && state.localVideoTrack != null,
+                    enter = scaleIn(Motion.standard(), 0.8f, TransformOrigin(1f, 0.5f)) + fadeIn(Motion.standard()),
+                    exit = scaleOut(Motion.standard(), 0.8f, TransformOrigin(1f, 0.5f)) + fadeOut(Motion.standard()),
+                ) {
+                    CenterStageControl(
+                        on = state.centerStage,
+                        onToggle = { ports.setCenterStage(!state.centerStage) },
+                        onTouch = onTouch,
+                        modifier = Modifier
+                            .graphicsLayer { alpha = if (flags.ending) 0f else chromeAlpha() }
+                            .then(if (away) Modifier.clearAndSetSemantics {} else Modifier),
+                        interactive = !away,
+                    )
+                }
+                if (call.phase != CallPhase.IncomingRinging) {
+                    ShareControl(
+                        call = call,
+                        quality = state.screenShareQuality,
+                        onShare = onShare,
+                        onQuality = ports::setScreenShareQuality,
+                        onTouch = onTouch,
+                        modifier = Modifier
+                            // Ending, it goes at once; over their screen it fades (:292-301).
+                            .graphicsLayer { alpha = if (flags.ending) 0f else chromeAlpha() }
+                            .then(if (away) Modifier.clearAndSetSemantics {} else Modifier),
+                        interactive = !away,
+                    )
+                }
             }
             val theirs = state.remoteVideoTrack
             AnimatedVisibility(
-                visible = screen && flags.showsRemoteVideo && theirs != null,
+                visible = CallScreenRules.theirCameraIsTile(flags, theirs != null),
                 enter = scaleIn(Motion.standard(), 0.8f, corner) + fadeIn(Motion.standard()),
                 exit = scaleOut(Motion.standard(), 0.8f, corner) + fadeOut(Motion.standard()),
             ) {

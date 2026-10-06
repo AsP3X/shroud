@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.calls.media
 
 import android.content.Context
+import android.content.res.Configuration
 import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraEnumerationAndroid
@@ -11,13 +12,20 @@ import org.webrtc.EglBase
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoFrame
 import org.webrtc.VideoSource
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The device camera into a call's video source. Camera2 when the device has it, otherwise Camera1,
- * front camera first (calls §5, iOS `CallCamera`). Capture is the format nearest 1920×1080; the
- * video source fits that into 1920×1080 at 30 fps, and the encoder sends a rung of the ladder
- * below it ([CameraQuality], docs/calls.md "Camera quality"). Each frame's size is checked on its
- * way into the source, so [captureLong] follows what the camera really delivers.
+ * front camera first (calls §5, iOS `CallCamera`). Capture is the format nearest 1920×1080.
+ *
+ * Every frame is cut on its way into the source (docs/calls.md, "Framing and Center Stage"): to
+ * the shape the other side shows our picture in ([peerView]; our own shape while they sent none),
+ * at most 1920 pixels on its longer side ([outputSize]), and with [centerStage] on round the faces
+ * [CallFaceFinder] sees, gliding there ([Framer]). The cut is a `cropAndScale` of the camera's
+ * buffer, no copy. The encoder then sends a rung of the ladder below that output ([CameraQuality],
+ * "Camera quality"), so [captureSize] is the output's size as the frames give it. Each start and
+ * each camera switch begins a new generation of the cut ([CameraCut]): the zoom and the faces of
+ * one camera never carry over into the next.
  *
  * The system taking the camera (a phone call, another app) reports paused, and the next frame
  * reports it back. Stopping the camera ourselves does not: the call controller already pauses it
@@ -29,9 +37,15 @@ internal class CallCamera(
     private val eglContext: EglBase.Context,
     private val source: VideoSource,
     private val onPaused: (Boolean) -> Unit,
-    /** [captureLong] changed with the frames, on the camera's thread. */
+    /** [captureSize] changed with the frames, on the camera's thread. */
     private val onCaptureSize: () -> Unit,
 ) {
+    /** The size of the area the other side shows our picture in (their `view`); null: our own shape. */
+    @Volatile var peerView: FrameSize? = null
+
+    /** Center Stage: the cut follows the faces in the picture. */
+    @Volatile var centerStage: Boolean = true
+
     private val appContext = context.applicationContext
     private val enumerator: CameraEnumerator? = openEnumerator(appContext)
     private var capturer: CameraVideoCapturer? = null
@@ -50,19 +64,25 @@ internal class CallCamera(
         private set
 
     /**
-     * The longer side of the picture the encoder gets from this camera, 0 until it first starts:
-     * what the format [start] chose should give ([sentLong]), then what the frames themselves
-     * give once they arrive, which also covers [switchCamera] (the capturer asks the other camera
-     * for the first one's size, and it may open at another). Measured before the video source,
-     * through the same crop and shrink as its 1080p limit: the source's later shrinking for the
-     * encoder (WebRTC's own adaptation within a rung) must not lower the ladder's ceiling.
+     * The picture the encoder gets from this camera, null until it first starts: what the format
+     * [start] chose should give cut for [peerView], then the cut the frames themselves go out in
+     * ([outputSize] of their size and [peerView]), which also covers [switchCamera] (the capturer
+     * asks the other camera for the first one's size, and it may open at another) and a new
+     * [peerView]. The encoder's later shrinking (WebRTC's own adaptation within a rung) must not
+     * lower the ladder's ceiling, so this is measured before the source.
      */
-    @Volatile var captureLong: Int = 0
+    @Volatile var captureSize: FrameSize? = null
         private set
 
-    /** The last frame's size, so [captureLong] is worked out only when it changes. Camera thread. */
-    @Volatile private var frameWidth = 0
-    @Volatile private var frameHeight = 0
+    /**
+     * Bumped by each [start] and each finished camera switch; the camera's thread starts the cut
+     * and the face detector afresh when it sees a new one ([CameraCut]).
+     */
+    private val generation = AtomicInteger()
+
+    // The cut, on the camera's thread only.
+    private val cut = CameraCut()
+    private val faces = CallFaceFinder()
 
     /** The system took the camera (an error, a disconnect) and no frame has come since. */
     val isPaused: Boolean get() = reportedPaused
@@ -82,14 +102,15 @@ internal class CallCamera(
         val capturer = this.capturer ?: enumerator.createCapturer(name, events)?.also { this.capturer = it } ?: return false
         val helper = this.helper ?: SurfaceTextureHelper.create("shroud-camera", eglContext)?.also { this.helper = it } ?: return false
         if (!initialized) {
-            capturer.initialize(helper, appContext, measuring(source.capturerObserver))
+            capturer.initialize(helper, appContext, framing(source.capturerObserver))
             initialized = true
         }
         stopping = false
-        // Before the first frame can arrive, so the frames' own size has the last word.
-        frameWidth = 0
-        frameHeight = 0
-        captureLong = sentLong(choice)
+        generation.incrementAndGet()
+        // Before the first frame can arrive, so the frames' own cut has the last word: the format
+        // as it will stand upright on this screen, cut for their view.
+        val portrait = appContext.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        captureSize = framedSize(uprightCapture(choice.width, choice.height, portrait), peerView)
         return try {
             capturer.startCapture(choice.width, choice.height, captureFps(choice.maxFps))
             deviceName = name
@@ -115,6 +136,7 @@ internal class CallCamera(
     }
 
     fun close() {
+        faces.close()
         stopping = true
         reportedPaused = false
         isRunning = false
@@ -152,7 +174,9 @@ internal class CallCamera(
                 override fun onCameraSwitchDone(isFrontFacing: Boolean) {
                     usesFrontCamera = isFrontFacing
                     deviceName = next
-                    // The other camera's frames may come at another size: [measuring] notes it.
+                    // Another camera: the cut and its faces start again ([framing]), and its
+                    // frames may come at another size, which [framing] notes too.
+                    generation.incrementAndGet()
                 }
 
                 override fun onCameraSwitchError(errorDescription: String?) = Unit
@@ -161,28 +185,65 @@ internal class CallCamera(
         )
     }
 
-    /** Passes every frame on to the source, noting its size first. */
-    private fun measuring(observer: CapturerObserver) = object : CapturerObserver {
+    /**
+     * Passes every frame on to the source, cut (docs/calls.md, "Framing and Center Stage"). On the
+     * camera's thread. The cut is worked out in upright pixels ([Framer]) and taken out of the
+     * buffer in its own orientation ([uprightToBuffer]); the frame keeps its rotation, so the
+     * encoder and our own picture turn it upright as before.
+     */
+    private fun framing(observer: CapturerObserver) = object : CapturerObserver {
         override fun onCapturerStarted(success: Boolean) = observer.onCapturerStarted(success)
 
         override fun onCapturerStopped() = observer.onCapturerStopped()
 
         override fun onFrameCaptured(frame: VideoFrame) {
-            val width = frame.rotatedWidth
-            val height = frame.rotatedHeight
-            if (width != frameWidth || height != frameHeight) {
-                frameWidth = width
-                frameHeight = height
-                val long = sentLong(CaptureChoice(width, height, 0))
-                if (long > 0 && long != captureLong) {
-                    captureLong = long
-                    try {
-                        onCaptureSize()
-                    } catch (_: RuntimeException) {
-                    }
-                }
+            val capture = FrameSize(frame.rotatedWidth, frame.rotatedHeight)
+            if (capture.width < 2 || capture.height < 2) {
+                observer.onFrameCaptured(frame)
+                return
             }
-            observer.onFrameCaptured(frame)
+            val output = outputSize(capture, peerView)
+            val follow = centerStage
+            val camera = generation.get()
+            noteOutput(output)
+            val now = System.nanoTime() / 1_000_000
+            if (cut.frame(camera, capture, output, follow)) faces.reset()
+            faces.take()?.let { found -> cut.faces(found.faces, found.capture, found.generation, now) }
+            val rect = cut.next(now)
+            if (follow) faces.offer(frame, capture, camera, now)
+
+            val buffer = frame.buffer
+            val bufferWidth = buffer.width
+            val bufferHeight = buffer.height
+            val crop = evenCrop(uprightToBuffer(rect, frame.rotation, bufferWidth, bufferHeight), bufferWidth, bufferHeight)
+            val scaled = bufferOriented(output, frame.rotation)
+            val whole = crop.x == 0 && crop.y == 0 && crop.width == bufferWidth && crop.height == bufferHeight
+            if (whole && scaled.width == bufferWidth && scaled.height == bufferHeight) {
+                observer.onFrameCaptured(frame)
+                return
+            }
+            val cropped = try {
+                buffer.cropAndScale(crop.x, crop.y, crop.width, crop.height, scaled.width, scaled.height)
+            } catch (_: RuntimeException) {
+                observer.onFrameCaptured(frame)
+                return
+            }
+            val next = VideoFrame(cropped, frame.rotation, frame.timestampNs)
+            try {
+                observer.onFrameCaptured(next)
+            } finally {
+                next.release()
+            }
+        }
+    }
+
+    /** The cut's size is the ladder's ceiling and the encoder's shrink: a change re-tunes them. */
+    private fun noteOutput(output: FrameSize) {
+        if (output.width <= 0 || output.height <= 0 || output == captureSize) return
+        captureSize = output
+        try {
+            onCaptureSize()
+        } catch (_: RuntimeException) {
         }
     }
 

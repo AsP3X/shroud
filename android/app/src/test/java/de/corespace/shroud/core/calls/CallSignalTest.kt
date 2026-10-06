@@ -8,6 +8,7 @@ import de.corespace.shroud.core.calls.signal.CallMediaOrder
 import de.corespace.shroud.core.calls.signal.CallSdp
 import de.corespace.shroud.core.calls.signal.CallSignal
 import de.corespace.shroud.core.calls.signal.CallSignalSequencer
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.crypto.B64
 import de.corespace.shroud.core.crypto.hexToBytes
 import de.corespace.shroud.core.model.Bytes
@@ -145,6 +146,33 @@ class CallSignalTest {
         // A string is no bool: iOS falls back to the defaults (mic on, camera off).
         assertEquals(CallSignal.Media(mic = true, camera = false), parse("""{"t":"media","mic":"no","camera":"yes","n":12}""", "media_state").signal)
     }
+
+    /** `view`: the area that shows the other side's camera (docs/calls.md, "Framing and Center Stage"). */
+    @Test
+    fun aViewIsWrittenInSortedOrderAndABadOneIsIgnored() {
+        val media = CallSignal.Media(mic = true, camera = true, screen = false, view = CallView(1179, 2556))
+        val text = String(CallSignal.plaintext(media, 4))
+        assertEquals("""{"camera":true,"mic":true,"n":4,"screen":false,"t":"media","view":{"h":2556,"w":1179}}""", text)
+        assertEquals(media, CallSignal.parse(text.toByteArray(), "media_state").signal)
+        // None known, none written.
+        assertNull(Json.parseToJsonElement(String(CallSignal.plaintext(CallSignal.Media(mic = true, camera = true), 5))).jsonObject["view"])
+        // The web's and the iPhone's shape; a whole number written with a fraction is still whole.
+        assertEquals(CallView(1179, 2556), media("""{"t":"media","mic":true,"camera":true,"view":{"w":1179,"h":2556},"n":6}"""))
+        assertEquals(CallView(800, 600), media("""{"t":"media","mic":true,"camera":true,"view":{"w":800.0,"h":6e2},"n":7}"""))
+        assertEquals(CallView(1, 10_000), media("""{"t":"media","mic":true,"camera":true,"view":{"w":1,"h":10000},"n":8}"""))
+        // Anything else is no view, and the rest of the signal still counts.
+        val bad = listOf(
+            "null", "true", "\"1179x2556\"", "[1179,2556]", "{}", """{"w":1179}""", """{"w":0,"h":2556}""",
+            """{"w":-5,"h":2556}""", """{"w":10001,"h":2556}""", """{"w":1179.5,"h":2556}""", """{"w":"1179","h":2556}""",
+            """{"w":true,"h":2556}""", """{"w":1e10,"h":2556}""", """{"w":null,"h":2556}""",
+        )
+        for (view in bad) {
+            val parsed = parse("""{"t":"media","mic":false,"camera":true,"screen":true,"view":$view,"n":9}""", "media_state").signal
+            assertEquals(view, CallSignal.Media(mic = false, camera = true, screen = true, view = null), parsed)
+        }
+    }
+
+    private fun media(json: String): CallView? = (parse(json, "media_state").signal as CallSignal.Media).view
 
     @Test
     fun anEphemeralKeyRoundTripsAndABadOneDoesNot() {

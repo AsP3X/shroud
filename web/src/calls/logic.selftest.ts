@@ -22,6 +22,7 @@ import {
   mediaErrorText,
   fingerprintsMatch,
   readSignal,
+  readViewSize,
   screenErrorText,
   screenSoundSdp,
   screenVideoSdp,
@@ -120,6 +121,8 @@ const base: CallView = {
   cameraPending: false,
   canVideo: true,
   canSwitchCamera: false,
+  centerStage: true,
+  canCenterStage: false,
   mirrorSelf: true,
   remoteMic: true,
   remoteCamera: false,
@@ -347,6 +350,15 @@ check(screenErrorText({ name: "NotAllowedError", message: "Permission denied" })
 check(screenErrorText({ name: "NotAllowedError", message: "Permission denied by system" })?.includes("screen recording") === true, "the system's refusal says what to do");
 check(screenErrorText({ name: "NotReadableError", message: "" })?.includes("couldn’t be captured") === true, "a failed capture");
 check(readSignal("media_state", { t: "media", mic: "no", camera: true, n: 4 }) === null, "flags are booleans");
+{
+  const withView = readSignal("media_state", { t: "media", mic: true, camera: true, screen: false, view: { w: 1179, h: 2556 }, n: 5 });
+  check(withView?.t === "media" && withView.view?.w === 1179 && withView.view.h === 2556, "a media state carries their view");
+  for (const bad of [{ w: 0, h: 10 }, { w: 1.5, h: 10 }, { w: 10_001, h: 10 }, { w: "1179", h: 2556 }, [1179, 2556], null, 7]) {
+    const read = readSignal("media_state", { t: "media", mic: true, camera: false, view: bad, n: 6 });
+    check(read?.t === "media" && read.view === undefined && read.camera === false, `a bad view is left out, the rest counts (${JSON.stringify(bad)})`);
+  }
+  check(JSON.stringify(readViewSize({ w: 10_000, h: 1 })) === JSON.stringify({ w: 10_000, h: 1 }), "the limits count");
+}
 
 const ek = btoa(String.fromCharCode(...new Uint8Array(32)));
 const withKey = readSignal("sdp_offer", { t: "offer", sdp: "v=0", restart: false, ek, n: 1 });

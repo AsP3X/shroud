@@ -45,7 +45,7 @@ LUCIDE = [
     "minimize-2", "monitor-smartphone", "panel-left", "pencil", "phone", "phone-off", "pin", "play", "plus",
     "qr-code", "refresh-cw", "reply", "rotate-ccw", "rotate-ccw-square", "scan", "scan-face",
     "scan-text", "screen-share", "search", "share-2", "shield", "shield-alert", "shield-check",
-    "shield-half", "smartphone", "smile", "square-pen", "trash-2", "triangle-alert", "user-plus",
+    "shield-half", "smartphone", "smile", "square-pen", "square-user", "trash-2", "triangle-alert", "user-plus",
     "video", "video-off", "volume-2", "wifi-off", "x",
 ]
 PHOSPHOR = [
@@ -58,7 +58,7 @@ PHOSPHOR = [
     "gear-six-fill", "gift-fill", "hard-drive-fill", "hard-drives-fill", "heart-fill",
     "image-fill", "info-fill", "key-fill", "laptop-fill", "lock-fill", "lock-simple-fill",
     "lock-simple-open-fill", "map-pin-fill", "microphone-fill", "microphone-slash-fill",
-    "moon-fill", "music-note-fill", "palette-fill", "paper-plane-tilt-fill", "pause-fill",
+    "moon-fill", "music-note-fill", "music-notes-fill", "palette-fill", "paper-plane-tilt-fill", "pause-fill",
     "phone-disconnect-fill", "phone-fill", "play-fill", "seal-check-fill", "shield-check-fill",
     "shield-warning-fill", "smiley-fill", "speaker-high-fill", "speaker-simple-high-fill",
     "speaker-simple-none-fill", "speaker-slash-fill", "stop-fill", "sun-fill", "trash-fill",

@@ -143,6 +143,52 @@ internal fun ShareControl(
 }
 
 /**
+ * Center Stage, under Share while our camera is on (docs/calls.md, "Framing and Center Stage"):
+ * the same 40 dp glass circle, accent while on, with Lucide `square-user` (a person in a frame).
+ * A tap turns it on or off for this call and the next ones ([onToggle]) and keeps the controls up
+ * ([onTouch]). Its own element, apart from our picture, so a tap never flips the camera.
+ */
+@Composable
+internal fun CenterStageControl(
+    on: Boolean,
+    onToggle: () -> Unit,
+    onTouch: () -> Unit,
+    modifier: Modifier = Modifier,
+    interactive: Boolean = true,
+) {
+    val colors = ShroudTheme.colors
+    val tint by animateColorAsState(if (on) colors.accent.copy(alpha = 0.9f) else colors.accent.copy(alpha = 0f), Motion.snappy(), label = "centerStageTint")
+    val toggle = {
+        onTouch()
+        onToggle()
+    }
+    Box(
+        modifier
+            .size(CallScreenMetrics.SHARE_CONTROL.dp)
+            .callGlass(CircleShape, tint = tint.takeIf { it.alpha > 0f })
+            .then(
+                if (interactive) {
+                    Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Switch, onClick = toggle)
+                } else {
+                    Modifier
+                },
+            )
+            .clearAndSetSemantics {
+                contentDescription = CallScreenRules.CENTER_STAGE_LABEL
+                stateDescription = CallScreenRules.centerStageValue(on)
+                role = Role.Switch
+                onClick {
+                    toggle()
+                    true
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        ShroudIcon(ShroudIcons.SquareUser, Color.White, size = 18.dp)
+    }
+}
+
+/**
  * The share menu (design *Screen Share — Share Menu* H6R4MI, 250 wide; `InCallOverlay.swift:430-453`):
  * "Share Screen" or, while sharing, "Stop Sharing" (destructive); "Resolution" 720p / 1080p /
  * Source and "Frame rate" 15 / 30 / 60 fps, the current ones checked. Dark, as everything on the

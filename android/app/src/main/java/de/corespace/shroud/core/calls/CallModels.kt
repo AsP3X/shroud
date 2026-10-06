@@ -67,6 +67,8 @@ data class ActiveCall(
  * @property localVideoLive our camera's frames arrive since it was switched on: our own picture shows.
  * @property remoteScreenLive their screen's frames arrive since they started sharing.
  * @property screenShareQuality the resolution and frame rate our screen goes out at, in every call (persisted).
+ * @property centerStage our camera's cut follows the faces in it, in every call (persisted; docs/calls.md
+ *   "Framing and Center Stage").
  * @property eglContext the engine's EGL context the renderers share (W3-CALLS-MEDIA).
  */
 data class CallUiState(
@@ -80,6 +82,7 @@ data class CallUiState(
     val remoteScreenTrack: VideoTrack? = null,
     val remoteScreenLive: Boolean = false,
     val screenShareQuality: ScreenShareQuality = ScreenShareQuality.Standard,
+    val centerStage: Boolean = true,
     val eglContext: EglBase.Context? = null,
 )
 

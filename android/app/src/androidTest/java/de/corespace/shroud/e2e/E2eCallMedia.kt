@@ -10,6 +10,7 @@ import de.corespace.shroud.core.calls.IceCandidatePayload
 import de.corespace.shroud.core.calls.ScreenCaptureGrant
 import de.corespace.shroud.core.calls.ScreenShareQuality
 import de.corespace.shroud.core.calls.Standard
+import de.corespace.shroud.core.calls.signal.CallView
 import de.corespace.shroud.core.net.IceServerDto
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.webrtc.EglBase
@@ -117,6 +118,8 @@ class E2eCallEngine : CallMediaEngine {
     }
 
     override fun switchCamera() = Unit
+    override fun setPeerView(view: CallView?) = Unit
+    override fun setCenterStage(on: Boolean) = Unit
 
     @Volatile override var isCameraOn = false
         private set
