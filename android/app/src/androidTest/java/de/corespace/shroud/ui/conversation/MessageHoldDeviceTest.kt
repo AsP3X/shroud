@@ -21,6 +21,8 @@ import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.ui.components.OverlayHost
 import de.corespace.shroud.ui.conversation.DeviceThread.PEER
 import de.corespace.shroud.ui.conversation.bubble.LocalBubbleServices
+import de.corespace.shroud.ui.conversation.menu.MessageMenuState
+import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +42,7 @@ import org.junit.runner.RunWith
  * photo, a link, a link preview, a play disc or a reaction chip opens the message menu and its release
  * fires nothing under the finger, while a plain tap on the same point does fire that control (so each
  * case proves its finger landed on the control); a drag starting on a bubble scrolls the thread;
- * swiping left past the threshold replies; Back closes the menu before the chat.
+ * swiping right past the threshold replies; Back closes the menu before the chat.
  *
  * Runs the real thread, rows and bubbles over recording fakes (no engines). Owed to C17, which runs
  * it: `ANDROID_SERIAL=emulator-<port> gw :app:connectedDebugAndroidTest
@@ -128,9 +130,19 @@ class MessageHoldDeviceTest {
         return open
     }
 
+    /**
+     * Runs the menu's drop to its end. The menu stays open while it drops back (`isOpen` covers the
+     * close too), and its hand-over waits on a `delay` in the test clock, which [waitForIdle] doesn't
+     * advance.
+     */
+    private fun finishMenuDrop() {
+        rule.mainClock.advanceTimeBy(Motion.MENU_DROP_MS + MessageMenuState.HAND_OVER_SLACK_MS + 100)
+        rule.waitForIdle()
+    }
+
     private fun closeMenu() {
         rule.runOnIdle { vm.dismissMessageMenu() }
-        rule.waitForIdle()
+        finishMenuDrop()
         assertFalse(menuIsOpen())
     }
 
@@ -177,7 +189,7 @@ class MessageHoldDeviceTest {
     @Test
     fun holdingThePlayDiscOpensTheMenuWithoutPlaying() {
         show(listOf(DeviceThread.voice(0)))
-        val frame = bubble("Voice message")
+        val frame = bubble("voice message")
         // The 38 dp disc sits 10 dp in from the bubble's leading edge, centred on the row.
         val point = Offset(frame.left + dp(10f + 19f), frame.center.y)
         holdOpensTheMenuAndItsReleaseFiresNothing(point, fired = { "mediaBytes" in bubbles.log }, clear = { bubbles.log.clear() })
@@ -206,17 +218,17 @@ class MessageHoldDeviceTest {
     }
 
     @Test
-    fun swipingLeftPastTheThresholdReplies() {
+    fun swipingRightPastTheThresholdReplies() {
         show(listOf(DeviceThread.message(0, text = "reply to me")))
         val frame = bubble("reply to me")
         rule.onRoot().performTouchInput {
-            swipe(start = frame.center, end = frame.center - Offset(dp(30f), 0f), durationMillis = 300)
+            swipe(start = frame.center, end = frame.center + Offset(dp(30f), 0f), durationMillis = 300)
         }
         rule.waitForIdle()
-        assertTrue("short of the 45 dp threshold", compose.log.isEmpty())
+        assertTrue("short of the incoming row's 60 dp threshold", compose.log.isEmpty())
 
         rule.onRoot().performTouchInput {
-            swipe(start = frame.center, end = frame.center - Offset(dp(90f), 0f), durationMillis = 300)
+            swipe(start = frame.center, end = frame.center + Offset(dp(90f), 0f), durationMillis = 300)
         }
         rule.waitForIdle()
         assertEquals(listOf("startReply"), compose.log)
@@ -229,7 +241,7 @@ class MessageHoldDeviceTest {
         hold(bubble("hold me").center)
         assertTrue(menuIsOpen())
         rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
-        rule.waitForIdle()
+        finishMenuDrop()
         assertFalse(menuIsOpen())
         assertEquals("the chat stays", 0, backs)
     }
