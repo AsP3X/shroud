@@ -47,7 +47,8 @@ devices) access before it reaches a LAN or emulator-host server.
   this (not the dex package list) is what catches an obfuscated or vendored copy. All three run as
   part of `check`.
 - CI then lists each release split's dex packages and manifest with `apkanalyzer` and fails on any
-  Google services package that kept its name, or any manifest entry. It also runs
+  Google services package that kept its name, or on Firebase in the manifest (the embedded FCM
+  distributor's Play Services query and C2DM receiver are allowed, as in `verifyNoGoogleServices`). It also runs
   `app/src/main/cpp/check-native.sh` on both splits (16 KB alignment of every `.so`, including
   WebRTC).
 
@@ -185,14 +186,18 @@ installable APKs and no universal APK:
 | `app-arm64-v8a-release.apk` | phones and tablets | `2 * 1000 + versionCode` |
 | `app-x86_64-release.apk` | emulators and Chromebooks | `4 * 1000 + versionCode` |
 
-A phone test build is `./apk.sh` from the repository root. It saves options in `android/.apk.env` (not committed) and copies a signed APK to the folder you choose. `./apk.sh --edit` changes an option. `-PshroudAbi`, `-PshroudVersionCode`, and `-PshroudVersionName` override the same values for one Gradle run. Leave them unset and the build stays the CI default: both CPUs, version name `0.1.0`, version code `1`.
+A phone build is `./apk.sh` from the repository root. It saves options in `android/.apk.env` (not committed) and copies a signed APK to the folder you choose. `./apk.sh --edit` changes an option. `-PshroudAbi`, `-PshroudVersionCode`, and `-PshroudVersionName` override the same values for one Gradle run. Leave them unset and the build stays the CI default: both CPUs, version name `0.1.0`, version code `1`.
 
 Unsigned CI builds use the same names with `-unsigned` before `.apk`. Debug stays one file,
 `app/build/outputs/apk/debug/app-debug.apk`, which the e2e scripts install. `ndk.abiFilters` is
 still those two ABIs. AGP rejects that together with ABI splits unless a universal APK is
 requested, so the universal flag stays on and the release universal output is disabled.
 
-The owner's release key is generated offline and is not in this repo, in CI, or in
+The release key is an RSA 4096 PKCS12 keystore valid for 30 years, made once by `./apk.sh` (signing
+key option 1) at `~/.shroud/shroud-release.p12`; its password is in `android/.apk.env`. Back up both
+offline: Android only installs an update signed with the same key, so losing it means every phone
+has to uninstall Shroud and its data. Builds signed with the old `apk-test.p12` test key don't
+install over release-key builds; uninstall them once. The key is not in this repo, in CI, or in
 `e2e/repro-build.sh`. That script makes a throwaway PKCS12 keystore under `/tmp`, builds the
 signed release APKs twice with the same key, and compares zip entry payloads. It does not print
 the password. v1 signing is off, so a JAR signature timestamp is not in the APK. The v2/v3

@@ -44,7 +44,7 @@ on_error() {
 show_help() {
   cat <<EOF
 
-  ${BOLD}Shroud — Android test APK${NC}
+  ${BOLD}Shroud — Android APK${NC}
 
   ${BOLD}Usage:${NC}
     ./apk.sh                 Build with the saved options (asks the first time)
@@ -66,7 +66,8 @@ show_help() {
     VARIANT         release | debug
     ABI             arm64-v8a (phone) | x86_64 (emulator) | both
     OUTPUT_DIR      folder the finished APK is copied to
-    KEYSTORE        PKCS12 file. The same file lets an update install
+    KEYSTORE        PKCS12 file. The same file lets an update install.
+                    The default is the Shroud release key, ~/.shroud/shroud-release.p12
     KEY_ALIAS       alias inside the keystore
     CLEAN           0 | 1
     VERSION_NAME    shown in Android settings. Starts with a number (1.2.0, 1.2.0-beta)
@@ -77,6 +78,10 @@ show_help() {
     A phone release installs as 2000 + version code. An emulator release
     installs as 4000 + version code. The next file installs over the last
     one only when the code is higher and the signing key is the same.
+
+  ${BOLD}Release key:${NC}
+    Back up the keystore and its password from android/.apk.env together.
+    Without them no new release installs over the last one.
 
   ${BOLD}Environment:${NC}
     NO_COLOR                 disable coloured output
@@ -285,7 +290,8 @@ write_config() {
 # VARIANT         release | debug
 # ABI             arm64-v8a | x86_64 | both
 # OUTPUT_DIR      folder the finished APK is copied to
-# KEYSTORE        PKCS12 file. Keep the same file so updates install.
+# KEYSTORE        PKCS12 file. Keep the same file so updates install. Back it up with the
+#                 passwords below: without both, no release installs over the last one.
 # KEY_ALIAS       alias inside the keystore
 # CLEAN           0 | 1
 # VERSION_NAME    shown in Android settings. Starts with a number (1.2.0, 1.2.0-beta)
@@ -345,51 +351,68 @@ detect_java() {
   printf ''
 }
 
+RELEASE_KEYSTORE="$HOME/.shroud/shroud-release.p12"
+OLD_TEST_KEYSTORE="$HOME/.shroud/apk-test.p12"
+
+# keytool reads the password from the environment, so it never shows in the process list.
 verify_keystore() {
-  "$JAVA_HOME/bin/keytool" -list \
+  SHROUD_KEYSTORE_PASS="$KEYSTORE_PASSWORD" "$JAVA_HOME/bin/keytool" -list \
     -keystore "$KEYSTORE" -storetype PKCS12 \
-    -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" >/dev/null 2>&1
+    -alias "$KEY_ALIAS" -storepass:env SHROUD_KEYSTORE_PASS >/dev/null 2>&1
 }
 
-create_test_key() {
+# SHA-256 of the signing certificate, lowercase hex: what apksigner prints as the
+# "certificate SHA-256 digest".
+cert_sha256() {
+  SHROUD_KEYSTORE_PASS="$KEYSTORE_PASSWORD" "$JAVA_HOME/bin/keytool" -exportcert \
+    -keystore "$KEYSTORE" -storetype PKCS12 \
+    -alias "$KEY_ALIAS" -storepass:env SHROUD_KEYSTORE_PASS 2>/dev/null |
+    openssl dgst -sha256 -r | cut -d' ' -f1
+}
+
+# RSA 4096, valid for 30 years: Android never accepts a new key for an installed app, so this
+# key signs every release for as long as Shroud ships.
+create_release_key() {
   local pass dir
   dir=$(dirname "$KEYSTORE")
   mkdir -p "$dir"
   chmod 700 "$dir"
-  command -v openssl >/dev/null 2>&1 || die "openssl is required to create a test key"
-  pass=$(openssl rand -hex 16)
+  command -v openssl >/dev/null 2>&1 || die "openssl is required to create the release key"
+  pass=$(openssl rand -hex 32)
   KEYSTORE_PASSWORD="$pass"
   KEY_PASSWORD="$pass"
   local err
   err=$(mktemp)
-  if ! "$JAVA_HOME/bin/keytool" -genkeypair \
+  if ! SHROUD_KEYSTORE_PASS="$pass" "$JAVA_HOME/bin/keytool" -genkeypair \
     -keystore "$KEYSTORE" -storetype PKCS12 \
-    -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 3650 \
-    -storepass "$pass" -keypass "$pass" \
-    -dname "CN=Shroud test, O=Shroud, C=US" >"$err" 2>&1; then
+    -alias "$KEY_ALIAS" -keyalg RSA -keysize 4096 -sigalg SHA256withRSA -validity 10958 \
+    -storepass:env SHROUD_KEYSTORE_PASS -keypass:env SHROUD_KEYSTORE_PASS \
+    -dname "CN=Shroud, O=Shroud" >"$err" 2>&1; then
     cat "$err" >&2
     rm -f "$err"
-    die "could not create the test key"
+    die "could not create the release key"
   fi
   rm -f "$err"
   chmod 600 "$KEYSTORE"
-  ok "Signing key created at $KEYSTORE"
-  echo "  Keep this file. A different key means the phone must uninstall Shroud first."
+  ok "Release key created at $KEYSTORE"
+  echo "  Certificate SHA-256: $(cert_sha256)"
+  echo "  Back up this file and the password in android/.apk.env, somewhere safe and offline."
+  echo "  Without them no new release installs over the last one. Phones would have to"
+  echo "  uninstall Shroud, and lose its data, to take a build signed with another key."
 }
 
-choose_test_key() {
-  local default="$HOME/.shroud/apk-test.p12"
-  if [[ "${KEYSTORE:-}" != "$default" ]]; then
+choose_release_key() {
+  if [[ "${KEYSTORE:-}" != "$RELEASE_KEYSTORE" ]]; then
     KEYSTORE_PASSWORD=""
     KEY_PASSWORD=""
   fi
-  KEYSTORE="$default"
+  KEYSTORE="$RELEASE_KEYSTORE"
   KEY_ALIAS="shroud"
-  reuse_or_create_test_key
+  reuse_or_create_release_key
 }
 
-reuse_or_create_test_key() {
-  KEYSTORE="${KEYSTORE:-$HOME/.shroud/apk-test.p12}"
+reuse_or_create_release_key() {
+  KEYSTORE="${KEYSTORE:-$RELEASE_KEYSTORE}"
   KEY_ALIAS="${KEY_ALIAS:-shroud}"
   if [[ -f "$KEYSTORE" && -n "${KEYSTORE_PASSWORD:-}" && -n "${KEY_PASSWORD:-}" ]]; then
     verify_keystore || die "could not open $KEYSTORE. Run ./apk.sh --edit and check the key."
@@ -404,7 +427,7 @@ reuse_or_create_test_key() {
     ok "Signing key reused ($KEYSTORE)"
     return
   fi
-  create_test_key
+  create_release_key
 }
 
 ask_existing_keystore() {
@@ -427,12 +450,12 @@ ask_signing() {
   echo ""
   echo "${BOLD}── Signing key ──${NC}"
   echo "  The same key lets the next APK install over the one already on the phone."
-  echo "  1) Test key, created once and reused"
+  echo "  1) Shroud release key, created once and reused"
   echo "  2) A keystore I already have"
   local choice
   choice=$(prompt "Choice" "1")
   case "$choice" in
-    1) choose_test_key ;;
+    1) choose_release_key ;;
     2) ask_existing_keystore ;;
     *) fail "pick 1 or 2"; return 1 ;;
   esac
@@ -441,7 +464,7 @@ ask_signing() {
 ask_kind() {
   echo ""
   echo "${BOLD}── What do you want to build? ──${NC}"
-  echo "  1) Phone release      official server, arm64 — send this to a friend"
+  echo "  1) Phone release      official server, arm64"
   echo "  2) Emulator release   official server, x86_64"
   echo "  3) Both releases      arm64 and x86_64"
   echo "  4) Debug              local server at 10.0.2.2:8080, for an emulator here"
@@ -466,7 +489,7 @@ ask_clean() {
 print_summary() {
   echo ""
   echo "${CYAN}${BOLD}══════════════════════════════════════════════${NC}"
-  echo "${CYAN}${BOLD}  Shroud — Android test APK${NC}"
+  echo "${CYAN}${BOLD}  Shroud — Android APK${NC}"
   echo "${CYAN}${BOLD}══════════════════════════════════════════════${NC}"
   echo ""
   row "Kind" "$(kind_label)"
@@ -480,6 +503,14 @@ print_summary() {
     row "Previous file" "$LAST_APK"
   fi
   echo ""
+  warn_old_test_key
+}
+
+warn_old_test_key() {
+  [[ "$KEYSTORE" == "$OLD_TEST_KEYSTORE" ]] || return 0
+  warn "this signs with the old test key, not the Shroud release key.
+  Switch with ./apk.sh --edit, 3, then 1. A phone with a test-key build has to uninstall
+  Shroud once before it takes a release-key build."
 }
 
 check_checkout() {
@@ -512,7 +543,7 @@ run_wizard() {
   VERSION_NAME="${VERSION_NAME:-0.1.0}"
   VERSION_CODE="${VERSION_CODE:-1}"
   KEY_ALIAS="${KEY_ALIAS:-shroud}"
-  KEYSTORE="${KEYSTORE:-$HOME/.shroud/apk-test.p12}"
+  KEYSTORE="${KEYSTORE:-$RELEASE_KEYSTORE}"
   KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-}"
   KEY_PASSWORD="${KEY_PASSWORD:-}"
   LAST_APK="${LAST_APK:-}"
@@ -520,7 +551,7 @@ run_wizard() {
 
   echo ""
   echo "${CYAN}${BOLD}══════════════════════════════════════════════${NC}"
-  echo "${CYAN}${BOLD}  Shroud — Android test APK${NC}"
+  echo "${CYAN}${BOLD}  Shroud — Android APK${NC}"
   echo "${CYAN}${BOLD}══════════════════════════════════════════════${NC}"
 
   ask_kind || die "$CONFIG_ERROR"
@@ -711,7 +742,7 @@ build_apk() {
   write_config
 
   echo ""
-  ok "Test APK ready."
+  ok "APK ready."
   local file
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
