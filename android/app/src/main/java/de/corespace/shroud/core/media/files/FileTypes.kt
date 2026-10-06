@@ -8,7 +8,7 @@ import java.util.Locale
 // name cleaning and the copy every client shows. Pure, so the vectors of §9 pin them on the JVM.
 
 /** What kind of document a supported extension is: picks the bubble's glyph (§7). */
-enum class FileCategory { Text, Pdf, Word, Excel, PowerPoint, Image, Video, App }
+enum class FileCategory { Text, Pdf, Word, Excel, PowerPoint, Image, Video, Audio, App }
 
 /**
  * The two warnings of §6: the bubble line (sender and receiver), and the dialog a **received** file
@@ -42,7 +42,7 @@ enum class FileWarning(val bubbleLine: String, val dialogTitle: String, private 
 }
 
 /** The first-bytes check a type gets before any viewer sees it (§4 "Content check before opening"). */
-enum class ContentCheck { Pdf, Zip, Ole, Rtf, PlainText, None }
+enum class ContentCheck { Pdf, Zip, Ole, Rtf, PlainText, Mp3, Aac, M4a, Wav, Flac, Ogg, Aiff, None }
 
 /**
  * One row of the §4 table: the lowercased [extension], the canonical [mime] a receiver opens it as,
@@ -119,6 +119,15 @@ object FileTypes {
         FileType("mkv", "video/x-matroska", FileCategory.Video, null, ContentCheck.None),
         FileType("avi", "video/x-msvideo", FileCategory.Video, null, ContentCheck.None),
         FileType("3gp", "video/3gpp", FileCategory.Video, null, ContentCheck.None),
+        FileType("mp3", "audio/mpeg", FileCategory.Audio, null, ContentCheck.Mp3),
+        FileType("m4a", "audio/mp4", FileCategory.Audio, null, ContentCheck.M4a),
+        FileType("aac", "audio/aac", FileCategory.Audio, null, ContentCheck.Aac),
+        FileType("wav", "audio/wav", FileCategory.Audio, null, ContentCheck.Wav),
+        FileType("flac", "audio/flac", FileCategory.Audio, null, ContentCheck.Flac),
+        FileType("ogg", "audio/ogg", FileCategory.Audio, null, ContentCheck.Ogg),
+        FileType("opus", "audio/ogg", FileCategory.Audio, null, ContentCheck.Ogg),
+        FileType("aif", "audio/aiff", FileCategory.Audio, null, ContentCheck.Aiff),
+        FileType("aiff", "audio/aiff", FileCategory.Audio, null, ContentCheck.Aiff),
         FileType("apk", "application/vnd.android.package-archive", FileCategory.App, FileWarning.App, ContentCheck.Zip),
     )
 
@@ -130,19 +139,27 @@ object FileTypes {
     /** The type of [name] (cleaned here first, so a raw name works too); null = unsupported. */
     fun forName(name: String): FileType? = forExtension(FileNames.extension(FileNames.clean(name)))
 
+    /** The other names providers report for the table's types. */
+    private val PROVIDER_ALIASES = listOf(
+        "text/comma-separated-values", "text/rtf",
+        "audio/x-wav", "audio/wave", "audio/vnd.wave", "audio/x-aiff", "audio/x-m4a", "audio/m4a", "audio/x-aac",
+        "audio/aac-adts", "audio/x-flac", "audio/opus", "application/ogg", "audio/mp3",
+    )
+
     /**
-     * What `ACTION_OPEN_DOCUMENT` may offer (§7 "Attach"): the table's MIME types, plus the two
-     * names Android's own `MimeTypeMap` gives CSV and RTF files, which document providers report
-     * instead — without them those files could not be picked at all. The extension still decides
-     * what is sent.
+     * What `ACTION_OPEN_DOCUMENT` may offer (§7 "Attach"): the table's MIME types, plus the names
+     * Android's own `MimeTypeMap` and the document providers give CSV, RTF and audio files instead
+     * (`text/comma-separated-values`, `audio/x-wav`, `audio/x-aiff`, `application/ogg`, …) —
+     * without them those files could not be picked at all. The extension still decides what is sent.
      */
-    val pickerMimeTypes: Array<String> = (all.map { it.mime } + listOf("text/comma-separated-values", "text/rtf")).distinct().toTypedArray()
+    val pickerMimeTypes: Array<String> = (all.map { it.mime } + PROVIDER_ALIASES).distinct().toTypedArray()
 }
 
 /**
  * §4's content check on the first bytes of a received file: a `.pdf` that is not a PDF, an Office
  * file or APK that is not a zip (or OLE container), an RTF without `{\rtf`, a text file with a NUL
- * byte in its first 8 KiB. Images and videos are left to the platform decoders.
+ * byte in its first 8 KiB, an audio file without its container's magic (§4, §11.4). Images and
+ * videos are left to the platform decoders.
  */
 object FileContentCheck {
     /** How much of the file [matches] needs: 8 KiB, the text rule's window. */
@@ -163,9 +180,22 @@ object FileContentCheck {
             ContentCheck.Ole -> startsWith(head, size, OLE)
             ContentCheck.Rtf -> startsWith(head, size, RTF)
             ContentCheck.PlainText -> (0 until minOf(size, HEAD_BYTES)).none { head[it] == 0.toByte() }
+            ContentCheck.Mp3 -> asciiAt(head, size, 0, "ID3") || (size >= 2 && byte(head, 0) == 0xFF && (byte(head, 1) and 0xE0) == 0xE0)
+            ContentCheck.Aac -> asciiAt(head, size, 0, "ID3") || (size >= 2 && byte(head, 0) == 0xFF && (byte(head, 1) and 0xF6) == 0xF0)
+            ContentCheck.M4a -> asciiAt(head, size, 4, "ftyp")
+            ContentCheck.Wav -> asciiAt(head, size, 0, "RIFF") && asciiAt(head, size, 8, "WAVE")
+            ContentCheck.Flac -> asciiAt(head, size, 0, "fLaC") || asciiAt(head, size, 0, "ID3")
+            ContentCheck.Ogg -> asciiAt(head, size, 0, "OggS")
+            ContentCheck.Aiff -> asciiAt(head, size, 0, "FORM") && (asciiAt(head, size, 8, "AIFF") || asciiAt(head, size, 8, "AIFC"))
             ContentCheck.None -> true
         }
     }
+
+    private fun byte(data: ByteArray, index: Int): Int = data[index].toInt() and 0xFF
+
+    /** [text]'s ASCII bytes at [offset] within the first [size] bytes. */
+    private fun asciiAt(data: ByteArray, size: Int, offset: Int, text: String): Boolean =
+        size >= offset + text.length && text.indices.all { data[offset + it] == text[it].code.toByte() }
 
     private fun startsWith(data: ByteArray, size: Int, prefix: ByteArray): Boolean =
         size >= prefix.size && prefix.indices.all { data[it] == prefix[it] }
@@ -249,7 +279,7 @@ object FileNames {
     private fun isAsciiAlphanumeric(cp: Int): Boolean = cp in 0x30..0x39 || cp in 0x41..0x5A || cp in 0x61..0x7A
 
     /** Rule 3. */
-    private fun isRemoved(cp: Int): Boolean =
+    internal fun isRemoved(cp: Int): Boolean =
         cp in 0x00..0x08 || cp in 0x0E..0x1F || cp in 0x7F..0x9F || cp == 0xAD || cp == 0x061C || cp == 0x180E ||
             cp in 0x200B..0x200F || cp in 0x202A..0x202E || cp in 0x2060..0x2064 || cp in 0x2066..0x206F ||
             cp == 0x2028 || cp == 0x2029 || cp == 0xFEFF || cp in 0xFFF9..0xFFFB
@@ -259,7 +289,7 @@ object FileNames {
         cp == '|'.code || cp == '?'.code || cp == '*'.code
 
     /** Rule 5. */
-    private fun isSpace(cp: Int): Boolean =
+    internal fun isSpace(cp: Int): Boolean =
         cp in 0x09..0x0D || cp == 0x20 || cp == 0xA0 || cp == 0x1680 || cp in 0x2000..0x200A || cp == 0x202F || cp == 0x205F || cp == 0x3000
 }
 

@@ -28,7 +28,7 @@ data class MediaMessagePayload(
     val k: String,
     /** Caption (image, video), on-device transcript (voice) or the whole message text (link). */
     val c: String? = null,
-    /** Duration in milliseconds (voice, video). */
+    /** Duration in milliseconds (voice, video, an audio [KIND_FILE], docs/file-sharing.md §11.2). */
     val d: Int? = null,
     /** Base64 amplitude envelope, one byte (0…255) per bar (voice only). */
     val wf: String? = null,
@@ -44,6 +44,10 @@ data class MediaMessagePayload(
     val n: String? = null,
     /** A PDF [KIND_FILE]'s page count (docs/file-sharing.md §1, §10), when the sender could read it; ≥ 1. */
     val pg: Int? = null,
+    /** An audio [KIND_FILE]'s title tag (docs/file-sharing.md §1, §11.2), cleaned by the sender; receivers clean it again. */
+    val ti: String? = null,
+    /** An audio [KIND_FILE]'s artist tag, as [ti]. */
+    val ar: String? = null,
 ) {
     /**
      * `t == file` (docs/file-sharing.md §1): a file whatever its `mime` says. Every reader asks this
@@ -106,12 +110,14 @@ data class MediaMessagePayload(
         lp?.let { fields["lp"] = it.wire() }
         n?.let { fields["n"] = JsonPrimitive(it) }
         pg?.let { fields["pg"] = JsonPrimitive(it) }
+        ti?.let { fields["ti"] = JsonPrimitive(it) }
+        ar?.let { fields["ar"] = JsonPrimitive(it) }
         return LenientJson.encodeToBytes(JsonObject(fields))
     }
 
     override fun toString(): String =
         "MediaMessagePayload(t=$t, mime=$mime, w=$w, h=$h, d=$d, s=$s, caption=${c != null}, preview=${th != null}, " +
-            "waveform=${wf != null}, reply=${re != null}, link=${lp != null}, name=${n != null}, pages=$pg)"
+            "waveform=${wf != null}, reply=${re != null}, link=${lp != null}, name=${n != null}, pages=$pg, title=${ti != null}, artist=${ar != null})"
 
     companion object {
         const val KIND_IMAGE = "image"
@@ -177,6 +183,8 @@ data class MediaMessagePayload(
                 n = LenientJson.trimmedString(obj["n"]),
                 // Like `th`: read leniently, and anything but a positive count is absent.
                 pg = LenientJson.int(obj["pg"])?.takeIf { it >= 1 },
+                ti = LenientJson.trimmedString(obj["ti"]),
+                ar = LenientJson.trimmedString(obj["ar"]),
             )
         }
     }

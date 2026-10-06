@@ -1,6 +1,8 @@
 package de.corespace.shroud.core.model
 
 import androidx.compose.runtime.Immutable
+import de.corespace.shroud.core.media.files.AudioFileCopy
+import de.corespace.shroud.core.media.files.FileCategory
 import de.corespace.shroud.core.media.files.FileCopy
 import de.corespace.shroud.core.media.files.FileType
 import de.corespace.shroud.core.media.files.FileTypes
@@ -101,7 +103,10 @@ data class ChatMessage(
      * made the sender's `th` (docs/file-sharing.md §10). Null for every other kind and when unknown.
      */
     val pageCount: Int? = null,
-    /** Voice and video duration (iOS `voiceDurationMs`). */
+    /** An audio file's cleaned title and artist tags (`ti`, `ar`, docs/file-sharing.md §11.2); null for every other kind and when absent. */
+    val audioTitle: String? = null,
+    val audioArtist: String? = null,
+    /** Voice and video duration (iOS `voiceDurationMs`); an audio file's `d` (docs/file-sharing.md §11.2). */
     val durationMs: Int? = null,
     /** 0…255 per bar. */
     val voiceWaveform: Bytes? = null,
@@ -156,12 +161,32 @@ val ChatMessage.needsMediaDownload: Boolean
 val ChatMessage.fileType: FileType?
     get() = if (kind == ChatMessageKind.File) fileName?.let(FileTypes::forName) else null
 
+/** A file message of the §4 Audio row (docs/file-sharing.md §11). */
+val ChatMessage.isAudioFile: Boolean
+    get() = fileType?.category == FileCategory.Audio
+
+/**
+ * An audio file's display title (docs/file-sharing.md §11.2): `{ti} – {ar}`, else `ti`, else the
+ * file name. What the reply quote, the chat list and the notification call it.
+ */
+val ChatMessage.audioDisplayTitle: String
+    get() = AudioFileCopy.displayTitle(audioTitle, audioArtist, fileName ?: FileCopy.FILE)
+
 /**
  * What the chat list and a notification say for this message (docs/file-sharing.md §7
- * "Elsewhere"): a file's caption, else its name; every other kind's [ChatMessage.text].
+ * "Elsewhere"): a file's caption, else its name — an audio file's `🎵 {display title}`; every other
+ * kind's [ChatMessage.text].
  */
 val ChatMessage.previewText: String
-    get() = if (kind == ChatMessageKind.File) text.trim().ifEmpty { fileName ?: FileCopy.FILE } else text
+    get() {
+        if (kind != ChatMessageKind.File) return text
+        val caption = text.trim()
+        return when {
+            caption.isNotEmpty() -> caption
+            isAudioFile -> AudioFileCopy.preview(audioDisplayTitle)
+            else -> fileName ?: FileCopy.FILE
+        }
+    }
 
 /**
  * The small JPEG a bubble can draw at once (`displayPreviewData`, `MessagingController.swift:333-336`):
@@ -192,7 +217,7 @@ val ChatMessage.replyReference: MessageReplyReference?
             ChatMessageKind.Image -> MessageReplyReference.Kind.Image
             ChatMessageKind.Video -> MessageReplyReference.Kind.Video
             ChatMessageKind.Voice -> MessageReplyReference.Kind.Voice
-            ChatMessageKind.File -> MessageReplyReference.Kind.File
+            ChatMessageKind.File -> if (isAudioFile) MessageReplyReference.Kind.Audio else MessageReplyReference.Kind.File
             ChatMessageKind.Text, ChatMessageKind.Todo -> MessageReplyReference.Kind.Text
         }
         val snippet = when (kind) {
@@ -200,7 +225,8 @@ val ChatMessage.replyReference: MessageReplyReference?
             ChatMessageKind.Video -> if (text == "Video" || text == "Media") "" else text
             ChatMessageKind.Voice -> ""
             // `x` = the file name (docs/file-sharing.md §1): old builds show it as a text quote.
-            ChatMessageKind.File -> fileName.orEmpty()
+            // An audio file quotes as `k: "audio"` with `x` = its display title (§1, §11.2).
+            ChatMessageKind.File -> if (isAudioFile) audioDisplayTitle else fileName.orEmpty()
             ChatMessageKind.Text, ChatMessageKind.Todo -> text
         }
         return MessageReplyReference(messageId = id, senderUserId = senderUserId, kind = quotedKind, snippet = snippet)

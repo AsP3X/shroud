@@ -10,6 +10,7 @@ import { FileJobError, runFileJob, type FileJob } from "./fileJobs";
 import type { FileWorkerReply } from "./fileWorker";
 import { forgetPdfMemory, rekeyPdfMemory, releasePdfMemory } from "./pdfMemory";
 import { setTransfer } from "./transfers";
+import { rekeyAudioFile, releaseAudioFile, stopAudioFile } from "../voice/audioFilePlayback";
 
 /**
  * Shared files on the web (docs/file-sharing.md §8): nothing is cached. Opening downloads,
@@ -221,6 +222,7 @@ export function adoptSentFile(id: string, file: File): void {
 /** The server re-keys sent messages; the original moves along with the bubble. */
 export function rekeySentFile(fromId: string, toId: string): void {
   rekeyPdfMemory(fromId, toId);
+  rekeyAudioFile(fromId, toId);
   const file = sentFiles.get(key(fromId));
   if (!file) return;
   sentFiles.delete(key(fromId));
@@ -236,6 +238,8 @@ export function releaseFile(messageId: string): void {
   loads.delete(id);
   sentFiles.delete(id);
   releasePdfMemory(id);
+  // A deleted audio file stops playing (docs/file-sharing.md §11.5).
+  releaseAudioFile(id);
   if (opened?.id === id) replaceOpened(null);
   else emit();
 }
@@ -248,5 +252,7 @@ export function forgetFiles(): void {
   sentFiles.clear();
   // The PDF renders and pages (docs/file-sharing.md §10) go with the files they came from.
   forgetPdfMemory();
+  // The playing audio file and its object URL go with them (§11.5).
+  stopAudioFile();
   replaceOpened(null);
 }

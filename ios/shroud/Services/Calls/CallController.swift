@@ -1965,6 +1965,7 @@ final class CallController {
     private func takeMicrophone() {
         NotificationCenter.default.post(name: .shroudCallMediaStarting, object: nil)
         VoicePlaybackCoordinator.shared.stop()
+        AudioFilePlayer.shared.stop()
     }
 
     private func publishLocalPreview(modality: CallModality, machine: Machine) {

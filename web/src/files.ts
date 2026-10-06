@@ -5,7 +5,7 @@
  */
 import { formatBytes } from "./format";
 
-export type FileCategory = "text" | "pdf" | "word" | "excel" | "powerpoint" | "image" | "video" | "app";
+export type FileCategory = "text" | "pdf" | "word" | "excel" | "powerpoint" | "image" | "video" | "audio" | "app";
 
 /** §6: shown on the bubble, and asked about before a received file leaves the browser. */
 export type FileWarning = "app" | "macros";
@@ -78,6 +78,15 @@ const TABLE: [string, FileCategory, string, FileWarning | null][] = [
   ["mkv", "video", "video/x-matroska", null],
   ["avi", "video", "video/x-msvideo", null],
   ["3gp", "video", "video/3gpp", null],
+  ["mp3", "audio", "audio/mpeg", null],
+  ["m4a", "audio", "audio/mp4", null],
+  ["aac", "audio", "audio/aac", null],
+  ["wav", "audio", "audio/wav", null],
+  ["flac", "audio", "audio/flac", null],
+  ["ogg", "audio", "audio/ogg", null],
+  ["opus", "audio", "audio/ogg", null],
+  ["aif", "audio", "audio/aiff", null],
+  ["aiff", "audio", "audio/aiff", null],
   ["apk", "app", "application/vnd.android.package-archive", "app"],
 ];
 
@@ -207,6 +216,34 @@ const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
 const OLE_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const RTF_MAGIC = [..."{\\rtf"].map((c) => c.charCodeAt(0));
 const PDF_MAGIC = [..."%PDF-"].map((c) => c.charCodeAt(0));
+const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
+const ID3_MAGIC = ascii("ID3");
+
+/** §4's audio rows: a container's magic, or an MPEG / ADTS frame sync for the raw streams. */
+function audioContentMatches(ext: string, head: Uint8Array): boolean {
+  const id3 = startsWith(head, ID3_MAGIC);
+  const sync = (mask: number, want: number) => head.length >= 2 && head[0] === 0xff && (head[1] & mask) === want;
+  switch (ext) {
+    case "mp3":
+      return id3 || sync(0xe0, 0xe0);
+    case "aac":
+      return id3 || sync(0xf6, 0xf0);
+    case "m4a":
+      return startsWith(head, ascii("ftyp"), 4);
+    case "wav":
+      return startsWith(head, ascii("RIFF")) && startsWith(head, ascii("WAVE"), 8);
+    case "flac":
+      return id3 || startsWith(head, ascii("fLaC"));
+    case "ogg":
+    case "opus":
+      return startsWith(head, ascii("OggS"));
+    case "aif":
+    case "aiff":
+      return startsWith(head, ascii("FORM")) && (startsWith(head, ascii("AIFF"), 8) || startsWith(head, ascii("AIFC"), 8));
+    default:
+      return false;
+  }
+}
 
 /** How many leading bytes `contentMatches` looks at (the text check's 8 KiB). */
 export const CONTENT_CHECK_BYTES = 8 * 1024;
@@ -219,8 +256,9 @@ function startsWith(bytes: Uint8Array, magic: number[], at = 0): boolean {
 
 /**
  * Whether a received file's first bytes fit its extension (§4). `head` is the start of the file,
- * up to `CONTENT_CHECK_BYTES`. Images and videos pass: the browser's decoders refuse what they
- * can't read. An unsupported extension never matches.
+ * up to `CONTENT_CHECK_BYTES`. Audio files need their container's magic or a frame sync. Images
+ * and videos pass: the browser's decoders refuse what they can't read. An unsupported extension
+ * never matches.
  */
 export function contentMatches(ext: string, head: Uint8Array): boolean {
   const type = TYPES.get(ext.toLowerCase());
@@ -233,6 +271,7 @@ export function contentMatches(ext: string, head: Uint8Array): boolean {
   if (ZIP_TYPES.has(type.ext)) return startsWith(head, ZIP_MAGIC);
   if (OLE_TYPES.has(type.ext)) return startsWith(head, OLE_MAGIC);
   if (type.ext === "rtf") return startsWith(head, RTF_MAGIC);
+  if (type.category === "audio") return audioContentMatches(type.ext, head);
   if (type.category === "text") {
     const end = Math.min(head.length, CONTENT_CHECK_BYTES);
     for (let i = 0; i < end; i++) if (head[i] === 0) return false;

@@ -107,6 +107,15 @@ extension ReplyQuoteContent {
                 thumbnail: nil,
                 symbolName: "waveform"
             )
+        case .file where original.isAudioFile:
+            // An audio file by its display title (§11.2), as the sealed snippet carries it.
+            return ReplyQuoteContent(
+                author: author,
+                text: original.audioDisplayTitle,
+                isStandIn: false,
+                thumbnail: nil,
+                symbolName: "music.note"
+            )
         case .file:
             // A file is quoted by its name, as the sealed snippet (`x`) carries it.
             return ReplyQuoteContent(
@@ -134,6 +143,7 @@ extension ReplyQuoteContent {
         case .video: "video.fill"
         case .voice: "waveform"
         case .file: "doc.fill"
+        case .audio: "music.note"
         }
     }
 }

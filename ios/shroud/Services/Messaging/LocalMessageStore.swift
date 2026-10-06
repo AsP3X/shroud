@@ -112,6 +112,10 @@ struct LocalMessageStore: Sendable {
         var fileName: String? = nil
         /// A PDF's page count (`pg`). Optional like `fileName`.
         var filePageCount: Int? = nil
+        /// An audio file's cleaned title and artist tags (`ti`, `ar`). Optional like `fileName`;
+        /// its duration is `voiceDurationMs`.
+        var fileTitle: String? = nil
+        var fileArtist: String? = nil
 
         @MainActor
         static func from(_ message: MessagingController.ChatMessage) -> StoredMessage {
@@ -139,7 +143,9 @@ struct LocalMessageStore: Sendable {
                 reactions: message.reactions.isEmpty ? nil : message.reactions,
                 createdAtWire: message.createdAtWire,
                 fileName: message.fileName,
-                filePageCount: message.filePageCount
+                filePageCount: message.filePageCount,
+                fileTitle: message.fileTitle,
+                fileArtist: message.fileArtist
             )
         }
 
@@ -201,7 +207,9 @@ struct LocalMessageStore: Sendable {
                 reactions: reactions ?? [],
                 fileName: fileName,
                 fileStored: fileStored,
-                filePageCount: filePageCount
+                filePageCount: filePageCount,
+                fileTitle: fileTitle,
+                fileArtist: fileArtist
             )
         }
     }

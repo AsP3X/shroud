@@ -54,7 +54,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var k: String
     /// Optional caption (images/videos) or on-device transcript (voice).
     var c: String?
-    /// Duration in milliseconds (voice / video).
+    /// Duration in milliseconds (voice / video / an audio file).
     var d: Int?
     /// Base64 amplitude envelope, one byte (0…255) per bar (voice only).
     /// Optional so payloads written before waveforms existed still decode.
@@ -72,6 +72,12 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var n: String? = nil
     /// Page count of a PDF file message, when the sender could read it (`docs/file-sharing.md` §10).
     var pg: Int? = nil
+    /// Title tag of an audio file message (`docs/file-sharing.md` §11.2), as sent. The sender
+    /// cleaned it; receivers clean it again (`AudioFileText.cleanTag`). The duration rides in `d`
+    /// and the cover art in `th`.
+    var ti: String? = nil
+    /// Artist tag of an audio file message, like `ti`.
+    var ar: String? = nil
 
     static let kindImage = "image"
     static let kindVoice = "voice"
@@ -115,6 +121,11 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     /// A text message with a large link-preview image (see `kindLink`).
     var isLink: Bool {
         t == Self.kindLink && lp != nil
+    }
+
+    /// An audio file's duration (`d`, §11.2): only a positive one counts.
+    var audioDurationMs: Int? {
+        d.flatMap { $0 >= 1 ? $0 : nil }
     }
 
     /// Decoded preview JPEG, if present.
@@ -165,7 +176,9 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:)),
             lp: (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:)),
             n: rawString(object["n"]),
-            pg: int(object["pg"]).flatMap { $0 >= 1 ? $0 : nil }
+            pg: int(object["pg"]).flatMap { $0 >= 1 ? $0 : nil },
+            ti: rawString(object["ti"]),
+            ar: rawString(object["ar"])
         )
     }
 
@@ -187,6 +200,8 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         if let lp { object["lp"] = lp.wireObject }
         if let n { object["n"] = n }
         if let pg { object["pg"] = pg }
+        if let ti { object["ti"] = ti }
+        if let ar { object["ar"] = ar }
         return try JSONSerialization.data(withJSONObject: object)
     }
 
@@ -199,7 +214,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         return nil
     }
 
-    /// A string kept as sent: a file name's spaces are the name's own (cleaning trims them).
+    /// A string kept as sent: a file name's or a tag's spaces are its own (cleaning trims them).
     private static func rawString(_ value: Any?) -> String? {
         guard let string = value as? String, !string.isEmpty else { return nil }
         return string

@@ -30,6 +30,7 @@ import de.corespace.shroud.core.net.CallModality
 import de.corespace.shroud.core.net.ConversationDeleteScope
 import de.corespace.shroud.core.net.MessageDeleteScope
 import de.corespace.shroud.core.net.PresenceDto
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
 import de.corespace.shroud.ui.components.AvatarPalette
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastState
@@ -112,7 +113,12 @@ interface ConversationBackend {
 
     /** Opens a tapped link in a Custom Tab (`LinkOpener`, C32); false when nothing could open it. */
     fun openLink(url: String): Boolean
+
+    /** Stops voice notes and audio files (the chat leaves the screen, a call starts). */
     fun stopVoicePlayback()
+
+    /** The audio-file player behind the now-playing bar (docs/file-sharing.md §11.6); null where there is none. */
+    val audioFiles: AudioFilePlaybackCoordinator? get() = null
 
     companion object {
         /**
@@ -181,7 +187,12 @@ private class ContainerConversationBackend(
 
     override fun openLink(url: String): Boolean = container.links.openLink(activityContext, url)
 
-    override fun stopVoicePlayback() = container.voice.playback.stop()
+    override fun stopVoicePlayback() {
+        container.voice.playback.stop()
+        container.voice.audioFiles.stop()
+    }
+
+    override val audioFiles: AudioFilePlaybackCoordinator get() = container.voice.audioFiles
 }
 
 /**
@@ -272,6 +283,9 @@ class ConversationViewModel(
 ) : BubbleContext {
     /** Notes to me: no presence, receipts, typing or calls (CV:154-156). */
     val isNotes: Boolean = backend.isNotesChat(peer)
+
+    /** The audio-file player behind the now-playing bar (docs/file-sharing.md §11.6). */
+    val audioFiles: AudioFilePlaybackCoordinator? get() = backend.audioFiles
 
     /** Wired by the screen once the composer exists. */
     var compose: ConversationCompose = ConversationCompose.None

@@ -22,6 +22,7 @@ import de.corespace.shroud.core.media.video.VideoSendPlan
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.net.wire.MessageReplyReference
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
 import de.corespace.shroud.core.voice.VoiceFormat
 import de.corespace.shroud.core.voice.VoiceRecorder
 import kotlinx.coroutines.CoroutineScope
@@ -115,8 +116,14 @@ internal interface ComposeServices {
     suspend fun finishRecording(): VoiceRecorder.Recording?
     fun cancelRecording()
 
-    /** Playback and recording cannot share the route (`ConversationView.swift:1419-1420`). */
+    /**
+     * Playback and recording cannot share the route (`ConversationView.swift:1419-1420`); leaving the
+     * chat or locking stops it too. Voice notes and audio files (docs/file-sharing.md §11.5).
+     */
     fun stopPlayback()
+
+    /** The audio-file player (docs/file-sharing.md §11.5); null where there is none (tests). */
+    val audioFiles: AudioFilePlaybackCoordinator? get() = null
 
     // ---- Transcription (W3-TRANSCRIPTION) ----
 
@@ -238,7 +245,12 @@ internal class ContainerComposeServices(private val container: AppContainer) : C
     override suspend fun startRecording(): Boolean = recorder.start()
     override suspend fun finishRecording(): VoiceRecorder.Recording? = recorder.finish()
     override fun cancelRecording() = recorder.cancel()
-    override fun stopPlayback() = container.voice.playback.stop()
+    override fun stopPlayback() {
+        container.voice.playback.stop()
+        container.voice.audioFiles.stop()
+    }
+
+    override val audioFiles: AudioFilePlaybackCoordinator get() = container.voice.audioFiles
 
     override fun prepareTranscriptionModel() {
         // Low priority, detached from the chat: the download keeps going while they speak (CV:1427-1430).

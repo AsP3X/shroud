@@ -5,6 +5,7 @@ import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.OpenAs
 import de.corespace.shroud.core.crypto.PeerLocks
+import de.corespace.shroud.core.media.files.AudioTags
 import de.corespace.shroud.core.media.files.FileNames
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
@@ -287,6 +288,10 @@ class MessageDecoder(
                 replyTo = payload.re,
                 fileName = FileNames.clean(payload.n.orEmpty()),
                 pageCount = payload.pg,
+                // An audio file's length and tags (§11.2), the tags cleaned again here.
+                durationMs = payload.d?.takeIf { it >= 1 },
+                audioTitle = AudioTags.clean(payload.ti),
+                audioArtist = AudioTags.clean(payload.ar),
             )
         }
         if (payload != null && payload.isLink) {
@@ -374,6 +379,8 @@ class MessageDecoder(
             linkPreview: LinkPreview? = null,
             fileName: String? = null,
             pageCount: Int? = null,
+            audioTitle: String? = null,
+            audioArtist: String? = null,
         ) = ChatMessage(
             id = dto.id,
             peerUserId = peer,
@@ -399,6 +406,8 @@ class MessageDecoder(
             linkPreview = linkPreview,
             fileName = fileName,
             pageCount = pageCount,
+            audioTitle = audioTitle,
+            audioArtist = audioArtist,
         )
     }
 

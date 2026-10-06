@@ -30,6 +30,12 @@ export type MediaPayload = {
    * it: an integer ≥ 1. Absent on other types and on payloads from before §10.
    */
   pg?: number | null;
+  /**
+   * Title and artist tags of an audio file sent as a file (docs/file-sharing.md §11.2), cleaned
+   * by the sender; receivers clean them again. Its `d` is the duration in ms, its `th` the cover.
+   */
+  ti?: string | null;
+  ar?: string | null;
 };
 
 /** `pg` as sealed, or null when it is missing or not a page count. */
@@ -58,6 +64,8 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
       lp: (parsed as { lp?: unknown }).lp as Record<string, unknown> | undefined ?? null,
       n: typeof parsed.n === "string" ? parsed.n : null,
       pg: pageCountOf((parsed as { pg?: unknown }).pg),
+      ti: typeof parsed.ti === "string" ? parsed.ti : null,
+      ar: typeof parsed.ar === "string" ? parsed.ar : null,
     };
   } catch {
     return null;

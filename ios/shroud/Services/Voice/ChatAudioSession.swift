@@ -19,6 +19,8 @@ actor ChatAudioSession {
 
         static let moviePlayback = Config(category: .playback, mode: .moviePlayback, options: [])
         static let spokenPlayback = Config(category: .playback, mode: .spokenAudio, options: [])
+        /// Shared audio files: songs as well as podcasts, so the default mode.
+        static let musicPlayback = Config(category: .playback, mode: .default, options: [])
         static let mixedPlayback = Config(category: .playback, mode: .default, options: [.mixWithOthers])
         static let voiceRecord = Config(category: .playAndRecord, mode: .default, options: [.defaultToSpeaker])
         static let voiceCall = Config(

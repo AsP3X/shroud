@@ -26,6 +26,8 @@ struct ConversationView: View {
     @State private var toast: Toast?
     /// Height of the composer bar (plus the Notes toolbar), so toasts land above it.
     @State private var composerBarHeight: CGFloat = 0
+    /// Height of the header bar, so the now-playing bar lands 8 under it.
+    @State private var topBarHeight: CGFloat = 0
     /// Notes only: the header menu's "Delete All Notes" confirmation.
     @State private var showNotesDeleteConfirm = false
     /// A reaction on its way from the bar or a double tap to its chip (`ReactionFlight`).
@@ -224,6 +226,7 @@ struct ConversationView: View {
     var body: some View {
         chatSurfaceWithFiles
             .overlay(alignment: .bottomTrailing) { jumpToLatestLayer }
+            .overlay(alignment: .top) { nowPlayingLayer }
             .overlay {
                 if let focusedMenu {
                     messageMenuOverlay(session: focusedMenu)
@@ -359,6 +362,8 @@ struct ConversationView: View {
             // bubble the edge effect has only half faded.
             .glassTopBar(scrim: Theme.backgroundChat) {
                 topChrome
+                    // The now-playing bar sits under this (outside the bar's inset).
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topBarHeight = $0 }
             }
             .glassBottomBar {
                 VStack(spacing: 8) {
@@ -424,6 +429,10 @@ struct ConversationView: View {
             }
             .onAppear {
                 messaging.setActivePeer(peerUserID)
+                // A file that ends hands over to the next audio file below it in this chat.
+                AudioFilePlayer.shared.onFinished = { [messaging, peerUserID] finished in
+                    Self.playNextAudio(after: finished, peerUserID: peerUserID, messaging: messaging)
+                }
                 // Opening a chat should always start at the newest message (Telegram/Signal/WhatsApp).
                 if !didOpen { pinToBottomToken &+= 1 }
             }
@@ -435,6 +444,9 @@ struct ConversationView: View {
                 if profileDestination == nil { linkComposer.reset() }
                 voiceRecorder.cancel()
                 VoicePlaybackCoordinator.shared.stop()
+                // A shared audio file stops with the conversation (file-sharing §11.5).
+                AudioFilePlayer.shared.stop()
+                AudioFilePlayer.shared.onFinished = nil
                 menuAnimationTask?.cancel()
                 if !isNotes {
                     messaging.setTyping(peerUserID: peerUserID, isTyping: false)
@@ -447,6 +459,7 @@ struct ConversationView: View {
             .onReceive(NotificationCenter.default.publisher(for: .shroudCallMediaStarting)) { _ in
                 if voiceRecorder.isRecording { cancelRecording() }
                 VoicePlaybackCoordinator.shared.stop()
+                AudioFilePlayer.shared.stop()
             }
             .onChange(of: voiceRecorder.isRecording) { _, recording in
                 if !isNotes {
@@ -694,6 +707,18 @@ struct ConversationView: View {
         .padding(.bottom, composerBarHeight + 8)
         // Rides up and down with the reply and link strips.
         .animation(Motion.respecting(reduceMotion, Motion.snappy), value: composerBarHeight)
+    }
+
+    /// The now-playing bar (§11.6), 8 under the header while the active audio file of this chat
+    /// is scrolled away. Not over a full-screen layer or the message menu.
+    private var nowPlayingLayer: some View {
+        NowPlayingLayer(
+            peerUserID: peerUserID,
+            isAllowed: !coversComposer && focusedMenu == nil,
+            onShowBubble: { jumpToQuoted($0) }
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, topBarHeight + 8)
     }
 
     private struct ProfileDestination: Identifiable, Hashable {
@@ -1491,6 +1516,7 @@ struct ConversationView: View {
     private func startRecording() async -> Bool {
         // Playback and recording cannot share the route; a note that is playing must yield.
         VoicePlaybackCoordinator.shared.stop()
+        AudioFilePlayer.shared.stop()
         do {
             try await voiceRecorder.start()
             Haptics.impact(.medium)
@@ -1721,7 +1747,11 @@ struct ConversationView: View {
                 time: messaging.clockTimeLabel(for: message.createdAt),
                 transfer: key.transfer,
                 onTap: {
-                    fileAction(.open, for: message)
+                    if message.isAudioFile {
+                        audioTap(message)
+                    } else {
+                        fileAction(.open, for: message)
+                    }
                 },
                 onCancelDownload: {
                     cancelDownload(message)
@@ -2603,10 +2633,23 @@ struct ConversationView: View {
         }
         guard !picked.isEmpty else { return }
 
+        // An audio file's tags, duration and cover, read now so the composer shows them (§11.3);
+        // each read gives up after 2 s.
+        let audioTags = await withTaskGroup(of: (UUID, AudioFileMetadata?).self) { group in
+            for file in picked where file.type.category == .audio {
+                group.addTask { (file.id, await AudioFileMetadata.read(url: file.url)) }
+            }
+            var tags: [UUID: AudioFileMetadata] = [:]
+            for await (id, metadata) in group {
+                if let metadata { tags[id] = metadata }
+            }
+            return tags
+        }
+
         var photos: [PickedPhoto] = []
         var videos: [PickedVideo] = []
         var files: [PickedFile] = []
-        for file in picked {
+        for var file in picked {
             switch file.type.category {
             case .image:
                 // Read and decoded off the main actor, as the library path does.
@@ -2630,6 +2673,10 @@ struct ConversationView: View {
                 } else {
                     files.append(file)
                 }
+            case .audio:
+                // Never transcoded and never the photo/video compose: the file composer (§11.1).
+                file.audio = audioTags[file.id]
+                files.append(file)
             default:
                 files.append(file)
             }
@@ -2721,7 +2768,109 @@ struct ConversationView: View {
             retryFile(live)
             return
         }
+        if live.isAudioFile {
+            audioTap(live)
+            return
+        }
         fileAction(.open, for: live)
+    }
+
+    // MARK: - Audio files (docs/file-sharing.md §11)
+
+    /// A tap on an audio bubble (§11.4): stop a transfer, retry a failed send, download and
+    /// then play, or play / pause. One the player can't open does what a file tap does.
+    private func audioTap(_ message: MessagingController.ChatMessage) {
+        // Backstop for the release of a hold that opened the message menu.
+        guard !isShowingMessageMenu else { return }
+        let live = liveMessage(message)
+        guard !live.deleted, live.fileType != nil else { return }
+        let player = AudioFilePlayer.shared
+        if let transfer = messaging.mediaTransfers[live.id] {
+            if !transfer.isUpload { cancelDownload(live) }
+            return
+        }
+        if live.isMine, live.receipt == .failed {
+            retryFile(live)
+            return
+        }
+        if player.isUnplayable(live.id) {
+            fileAction(.open, for: live)
+            return
+        }
+        if player.isActive(live.id) {
+            player.toggle()
+            return
+        }
+        guard live.needsMediaDownload else {
+            startAudio(live)
+            return
+        }
+        // Plays once it is here — unless something else started playing meanwhile, or the
+        // reader left the chat.
+        let startsBefore = player.startCount
+        let voiceBefore = VoicePlaybackCoordinator.shared.isPlaying ? VoicePlaybackCoordinator.shared.activeID : nil
+        Task {
+            guard await downloadFile(live) else { return }
+            guard messaging.activePeerID == peerUserID, player.startCount == startsBefore else { return }
+            let voice = VoicePlaybackCoordinator.shared
+            if voice.isPlaying, voice.activeID != voiceBefore { return }
+            startAudio(liveMessage(live))
+        }
+    }
+
+    /// Checks the stored file once (§11.5) and plays it; a failure says why.
+    private func startAudio(_ message: MessagingController.ChatMessage) {
+        Task {
+            switch await messaging.audioSource(for: message) {
+            case let .success(source):
+                // The reader left while the file was checked.
+                guard messaging.activePeerID == peerUserID else { return }
+                switch await AudioFilePlayer.shared.play(source) {
+                case .started, .superseded, .unplayable:
+                    // Unplayable: the bubble turns into the plain file bubble with its note.
+                    break
+                case .failed:
+                    toast = .failure("Could not play that file.")
+                    Haptics.notification(.error)
+                }
+            case .failure(.unsupported):
+                return
+            case .failure(.notDownloaded):
+                toast = .failure("Could not download that file.")
+                Haptics.notification(.error)
+            case let .failure(.contentMismatch(type)):
+                toast = .failure(SharedFile.contentMismatch(type), duration: .seconds(4))
+                Haptics.notification(.error)
+            case .failure(.damaged), .failure(.unreadable):
+                toast = .failure("Could not open that file.")
+                Haptics.notification(.error)
+            }
+        }
+    }
+
+    /// The end of a file plays the next audio file below it (either sender) when it is on this
+    /// device and playable; otherwise playback stops (§11.5).
+    private static func playNextAudio(
+        after finished: AudioFilePlayer.Track,
+        peerUserID: UUID,
+        messaging: MessagingController
+    ) {
+        let player = AudioFilePlayer.shared
+        guard finished.peerUserID == peerUserID, messaging.activePeerID == peerUserID,
+              let thread = messaging.threads[peerUserID],
+              let index = thread.firstIndex(where: { $0.id == finished.messageID }),
+              let next = thread[(index + 1)...].first(where: { $0.isAudioFile && !$0.deleted }),
+              next.fileStored, !player.isUnplayable(next.id),
+              !(next.isMine && next.receipt == .failed)
+        else { return }
+        let startsBefore = player.startCount
+        Task {
+            guard case let .success(source) = await messaging.audioSource(for: next),
+                  messaging.activePeerID == peerUserID,
+                  player.startCount == startsBefore
+            else { return }
+            _ = await player.play(source)
+        }
     }
 
     /// Share is offered for a file Shroud can open and that is, or can get, on this device.
@@ -2927,6 +3076,25 @@ private struct JumpToLatestLayer: View {
             count: state.unseenCount(in: messages),
             action: action
         )
+    }
+}
+
+/// Reads `AudioFilePlayer`, so that only the bar redraws as the playhead moves.
+private struct NowPlayingLayer: View {
+    let peerUserID: UUID
+    /// False while something else owns the screen.
+    let isAllowed: Bool
+    let onShowBubble: (UUID) -> Void
+
+    @State private var player = AudioFilePlayer.shared
+
+    private var isVisible: Bool {
+        guard isAllowed, let track = player.track, track.peerUserID == peerUserID else { return false }
+        return !player.visibleBubbleIDs.contains(track.messageID)
+    }
+
+    var body: some View {
+        NowPlayingBar(isVisible: isVisible, player: player, onShowBubble: onShowBubble)
     }
 }
 

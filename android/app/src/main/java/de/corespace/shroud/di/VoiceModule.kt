@@ -6,11 +6,15 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
+import de.corespace.shroud.core.lifecycle.AppPhase
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.voice.AacM4aWriter
 import de.corespace.shroud.core.voice.AndroidFocusPort
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
+import de.corespace.shroud.core.voice.AudioFileQueue
 import de.corespace.shroud.core.voice.AudioFocusCoordinator
 import de.corespace.shroud.core.voice.AudioRecordPcmSource
+import de.corespace.shroud.core.voice.ExoAudioFilePlayer
 import de.corespace.shroud.core.voice.ExoVoicePlayer
 import de.corespace.shroud.core.voice.PcmSource
 import de.corespace.shroud.core.voice.VoiceCaptureFactory
@@ -28,7 +32,8 @@ import java.util.UUID
 /**
  * Voice messages (00-plan §1.7.9, C24; media-voice-links §8). Owner: W2-VOICE. Builds the process's
  * one [VoiceRecorder] (one microphone), one [VoicePlaybackCoordinator] (one note at a time, iOS
- * `VoicePlaybackCoordinator.shared`) and the [AudioFocusCoordinator] both route through. Pure helpers
+ * `VoicePlaybackCoordinator.shared`), one [AudioFilePlaybackCoordinator] (audio files, docs/file-sharing.md
+ * §11.5; one sound at a time with the notes) and the [AudioFocusCoordinator] they route through. Pure helpers
  * (`VoiceWaveform`, `VoiceTimeFormat`, `VoiceLevel`, `AudioPcmDecoder`) are objects in `core/voice`.
  *
  * Wiring the integration package does (W2-INT; this module cannot reach packages of the same wave):
@@ -66,12 +71,34 @@ class VoiceModule(container: AppContainer) : AppModule(container) {
             container.appScope.launch {
                 recorder.state.map { it.recording }.distinctUntilChanged().collect { recording ->
                     if (recording && playbackLazy.isInitialized()) playback.stop()
+                    if (recording && audioFilesLazy.isInitialized()) audioFiles.stop()
                 }
             }
         }
     }
 
-    private val playbackLazy = lazy { VoicePlaybackCoordinator(ExoVoicePlayer(app), container.appScope) }
+    private val playbackLazy: Lazy<VoicePlaybackCoordinator> = lazy {
+        VoicePlaybackCoordinator(
+            ExoVoicePlayer(app),
+            container.appScope,
+            // One sound at a time (docs/file-sharing.md §11.5): a voice note stops an audio file.
+            onStarting = { if (audioFilesLazy.isInitialized()) audioFiles.stopForOtherSound() },
+        )
+    }
+
+    private val audioFilesLazy: Lazy<AudioFilePlaybackCoordinator> = lazy {
+        AudioFilePlaybackCoordinator(
+            player = ExoAudioFilePlayer(app) { id -> container.media.dataSourceFactory(id) },
+            scope = container.appScope,
+            nextAfter = { id -> AudioFileQueue.nextAfter(container.messaging.controller.threads.value, id) },
+            onStarting = { if (playbackLazy.isInitialized()) playback.stop() },
+        ).also { files ->
+            // iOS and Android pause when the app leaves the foreground (§11.5).
+            container.appScope.launch {
+                container.appPhase.phase.collect { if (it == AppPhase.Background) files.pauseForBackground() }
+            }
+        }
+    }
 
     /**
      * The microphone: AAC-LC 44.1 kHz mono `.m4a` takes in `cacheDir/shroud-voice-*.m4a`
@@ -83,6 +110,12 @@ class VoiceModule(container: AppContainer) : AppModule(container) {
     val playback: VoicePlaybackCoordinator by playbackLazy
 
     /**
+     * The app-wide audio-file player (docs/file-sharing.md §11.5): songs and recordings sent as files,
+     * played from the sealed cache; one sound at a time with [playback].
+     */
+    val audioFiles: AudioFilePlaybackCoordinator by audioFilesLazy
+
+    /**
      * For `MessagingController.registerArtifactSink` (W2-INT): purges stop the purged note and drop its
      * played mark, a re-key moves them to the server id, a lock stops playback and throws a take away
      * (`RootView` lock tears the thread down, `ConversationView.swift:363-379`). Builds nothing that was
@@ -91,14 +124,17 @@ class VoiceModule(container: AppContainer) : AppModule(container) {
     val artifactSink: MessageArtifactSinks = object : MessageArtifactSinks {
         override fun onPurged(messageIds: Collection<UUID>) {
             if (playbackLazy.isInitialized()) playback.artifactSink.onPurged(messageIds)
+            if (audioFilesLazy.isInitialized()) audioFiles.artifactSink.onPurged(messageIds)
         }
 
         override fun onSensitiveMemoryLocked() {
             haltForWipe()
+            if (audioFilesLazy.isInitialized()) audioFiles.artifactSink.onSensitiveMemoryLocked()
         }
 
         override fun onMessageRekeyed(from: UUID, to: UUID) {
             if (playbackLazy.isInitialized()) playback.artifactSink.onMessageRekeyed(from, to)
+            if (audioFilesLazy.isInitialized()) audioFiles.artifactSink.onMessageRekeyed(from, to)
         }
     }
 
@@ -111,6 +147,7 @@ class VoiceModule(container: AppContainer) : AppModule(container) {
     fun haltForWipe() {
         if (recorderLazy.isInitialized()) recorder.cancel()
         if (playbackLazy.isInitialized()) playback.stop()
+        if (audioFilesLazy.isInitialized()) audioFiles.stop()
     }
 
     /** iOS `.shroudCallMediaStarting` (`ConversationView.swift:380-383`, `CallController.swift:1948`). */

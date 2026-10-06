@@ -13,8 +13,11 @@
 
 import { linkPreviewWire, parseLinkPreview, type LinkPreview } from "./links";
 
-/** `file` quotes carry the file name as `x` (docs/file-sharing.md §1). */
-export type ReplyKind = "text" | "image" | "video" | "voice" | "file";
+/**
+ * `file` quotes carry the file name as `x`, `audio` quotes (an audio file) its display title
+ * (docs/file-sharing.md §1, §11.2).
+ */
+export type ReplyKind = "text" | "image" | "video" | "voice" | "file" | "audio";
 
 export type ReplyRef = {
   /** Server id of the quoted message (lowercased). */
@@ -29,7 +32,7 @@ export type ReplyRef = {
 /** One line is all the header draws; the envelope is sealed twice, so trim early. */
 export const MAX_REPLY_SNIPPET = 120;
 
-const KINDS: ReplyKind[] = ["text", "image", "video", "voice", "file"];
+const KINDS: ReplyKind[] = ["text", "image", "video", "voice", "file", "audio"];
 
 /** Collapses whitespace and cuts at a character boundary, marking the cut with "…". */
 export function clampSnippet(raw: string): string {
@@ -146,6 +149,8 @@ export function replyKindLabel(kind: ReplyKind): string {
       return "Voice message";
     case "file":
       return "File";
+    case "audio":
+      return "Audio";
     default:
       return "Message";
   }

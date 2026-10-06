@@ -18,6 +18,8 @@ import de.corespace.shroud.core.media.PlainSource
 import de.corespace.shroud.core.media.UploadedBlob
 import de.corespace.shroud.core.media.VideoPipeline
 import de.corespace.shroud.core.media.edit.MediaEdits
+import de.corespace.shroud.core.media.files.AudioCover
+import de.corespace.shroud.core.media.files.AudioFileMetadata
 import de.corespace.shroud.core.media.files.FileCategory
 import de.corespace.shroud.core.media.files.FileCopy
 import de.corespace.shroud.core.media.files.FileLimits
@@ -230,6 +232,12 @@ class SendDependencies(
     val videoTooLarge: (Throwable) -> Boolean = { false },
     /** A PDF's `th` and `pg` (docs/file-sharing.md §10.1; `media.pdf`); never throws, null when there is none. */
     val pdfPreview: suspend (PdfPreviewSource) -> PdfEnvelopePreview? = { null },
+    /**
+     * An audio file's duration, tags and cover read from the sealed copy of a queued or failed send
+     * whose bubble no longer holds them (docs/file-sharing.md §11.2; `media.sealedAudioMetadata`);
+     * null when there are none. A fresh pick brings its own ([PickedFile.audio]).
+     */
+    val audioMetadata: suspend (UUID) -> AudioFileMetadata? = { null },
 ) {
     /**
      * Seals [plaintext] for [apiPeer] (`MessageCrypto.seal`, MC:4834-4841): v3 when a session exists
@@ -1189,6 +1197,8 @@ class SendPipeline(
         val optimisticId = UUID.randomUUID()
         val generation = state.lockGeneration
         val knownSize = file.sizeBytes.takeIf { it > 0 }
+        // An audio file's length, tags and cover, read at pick time (§11.2).
+        val audio = file.audio?.takeIf { type.category == FileCategory.Audio }
         state.edit(storePeer) { list ->
             list + ChatMessage(
                 id = optimisticId,
@@ -1203,7 +1213,7 @@ class SendPipeline(
                 fileName = name,
                 pendingSync = true,
                 replyTo = replyTo,
-            )
+            ).withAudio(audio)
         }
         beginTransfer(optimisticId, MediaTransfer.Phase.Preparing, knownSize)
         // A PDF's `th` and `pg` are made beside the copy, from the picked descriptor (§10.1).
@@ -1231,7 +1241,7 @@ class SendPipeline(
         val pdf = pdfJob?.await()
         if (state.lockGeneration != generation) return null
         state.update(optimisticId) { it.withPdfPreview(pdf).copy(hasFullMedia = true, mediaByteCount = size) }
-        val info = FileInfo(name, type, size, pdf)
+        val info = FileInfo(name, type, size, pdf, audio)
 
         if (notes) {
             sendNotesFile(optimisticId, storePeer, trimmedCaption, info, replyTo, generation)
@@ -1343,16 +1353,18 @@ class SendPipeline(
 
         val trimmedCaption = WireText.trimWhitespacesAndNewlines(caption)
         val peerPublic = deps.peerIdentities().publicKeyForSending(apiPeer)
+        val cover = file.audio?.cover
         val sealed = sealMediaPayload(
             kind = MediaMessagePayload.KIND_FILE,
             // The canonical type of the extension, never the provider's (docs/file-sharing.md §1).
             mime = file.type.mime,
-            width = file.pdf?.width ?: 0,
-            height = file.pdf?.height ?: 0,
+            width = file.pdf?.width ?: cover?.width ?: 0,
+            height = file.pdf?.height ?: cover?.height ?: 0,
             key = blob.keyBase64,
             caption = trimmedCaption.ifEmpty { null },
-            durationMs = null,
-            previewJpeg = file.pdf?.jpeg,
+            // An audio file's `d`, `ti`, `ar` and cover `th` (§11.2).
+            durationMs = file.audio?.durationMs,
+            previewJpeg = file.pdf?.jpeg ?: cover?.jpeg,
             byteCount = file.sizeBytes,
             apiPeer = apiPeer,
             me = signed.me,
@@ -1361,6 +1373,8 @@ class SendPipeline(
             fileName = file.name,
             pageCount = file.pdf?.pageCount,
             sizeIsPreview = true,
+            audioTitle = file.audio?.title,
+            audioArtist = file.audio?.artist,
         )
         val dto = deps.api.sendMessage(
             signed.token,
@@ -1384,7 +1398,7 @@ class SendPipeline(
             fileName = file.name,
             sendError = null,
             replyTo = replyTo,
-        ).withPdfPreview(file.pdf)
+        ).withPdfPreview(file.pdf).withAudio(file.audio)
         if (state.lockGeneration == generation) {
             if (rekey) reKey(storePeer, optimisticId, sent, appendIfMissing = false)
             state.persistSnapshot()
@@ -1439,8 +1453,17 @@ class SendPipeline(
         }
     }
 
-    /** [pdf]: a PDF's `th` and `pg`, when it could be made (docs/file-sharing.md §10.1). */
-    private class FileInfo(val name: String, val type: FileType, val sizeBytes: Long, val pdf: PdfEnvelopePreview? = null)
+    /**
+     * [pdf]: a PDF's `th` and `pg`, when it could be made (docs/file-sharing.md §10.1); [audio]: an
+     * audio file's duration, tags and cover (§11.2), when they could be read.
+     */
+    private class FileInfo(
+        val name: String,
+        val type: FileType,
+        val sizeBytes: Long,
+        val pdf: PdfEnvelopePreview? = null,
+        val audio: AudioFileMetadata? = null,
+    )
 
     /**
      * A queued or failed file rebuilt from its bubble and the cache; null when it cannot go out. A
@@ -1462,7 +1485,53 @@ class SendPipeline(
             }
         }
         if (pdf != null) state.update(message.id) { it.withPdfPreview(pdf) }
-        return FileInfo(name, type, size, pdf)
+        val audio = if (type.category == FileCategory.Audio) audioFromBubble(message) else null
+        if (audio != null) state.update(message.id) { it.withAudio(audio) }
+        return FileInfo(name, type, size, pdf, audio)
+    }
+
+    /**
+     * An audio file's §11.2 parts as its bubble holds them; a bubble that lost its cover (the app
+     * restarted: rows keep no pictures) reads the sealed copy again, the bubble's tags winning.
+     */
+    private suspend fun audioFromBubble(message: ChatMessage): AudioFileMetadata? {
+        val kept = message.previewJpeg?.let { jpeg ->
+            val width = message.imageWidth ?: 0
+            val height = message.imageHeight ?: 0
+            if (width > 0 && height > 0) AudioCover(jpeg.toByteArray(), width, height) else null
+        }
+        val read = if (kept == null) {
+            try {
+                deps.audioMetadata(message.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        val metadata = AudioFileMetadata(
+            durationMs = message.durationMs?.takeIf { it >= 1 } ?: read?.durationMs,
+            title = message.audioTitle ?: read?.title,
+            artist = message.audioArtist ?: read?.artist,
+            cover = kept ?: read?.cover,
+        )
+        return metadata.takeUnless { it.isEmpty }
+    }
+
+    /** The bubble with [audio]'s duration, tags and cover (its pixel size); unchanged without them. */
+    private fun ChatMessage.withAudio(audio: AudioFileMetadata?): ChatMessage {
+        if (audio == null) return this
+        val cover = audio.cover
+        return copy(
+            durationMs = audio.durationMs ?: durationMs,
+            audioTitle = audio.title ?: audioTitle,
+            audioArtist = audio.artist ?: audioArtist,
+            previewJpeg = cover?.let { Bytes.of(it.jpeg) } ?: previewJpeg,
+            imageWidth = if (cover != null) cover.width else imageWidth,
+            imageHeight = if (cover != null) cover.height else imageHeight,
+        )
     }
 
     private suspend fun pdfPreviewOrNull(source: PdfPreviewSource): PdfEnvelopePreview? = try {
@@ -2025,6 +2094,8 @@ class SendPipeline(
         fileName: String? = null,
         pageCount: Int? = null,
         sizeIsPreview: Boolean = false,
+        audioTitle: String? = null,
+        audioArtist: String? = null,
     ): SealedPayload {
         val safePreview = previewJpeg?.takeIf { it.size <= MediaCrypto.MAX_ENVELOPE_PREVIEW_BYTES }
         // A file's `w`/`h` are its `th`'s pixel size, so they leave with it (docs/file-sharing.md §1).
@@ -2042,6 +2113,8 @@ class SendPipeline(
             lp = linkPreview,
             n = fileName,
             pg = pageCount?.takeIf { it >= 1 },
+            ti = audioTitle,
+            ar = audioArtist,
         ).encoded()
 
         var includePreview = safePreview != null

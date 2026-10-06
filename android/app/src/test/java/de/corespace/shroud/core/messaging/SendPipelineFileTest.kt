@@ -1,6 +1,8 @@
 package de.corespace.shroud.core.messaging
 
 import de.corespace.shroud.core.media.PlainSource
+import de.corespace.shroud.core.media.files.AudioCover
+import de.corespace.shroud.core.media.files.AudioFileMetadata
 import de.corespace.shroud.core.media.files.FileTypes
 import de.corespace.shroud.core.media.files.PickedFile
 import de.corespace.shroud.core.media.pdf.PdfEnvelopePreview
@@ -228,5 +230,75 @@ class SendPipelineFileTest {
         assertEquals(ReceiptStatus.Sent, note.receipt)
         assertEquals("todo.txt", note.fileName)
         assertTrue(w.state.transfers.transfers.value.isEmpty())
+    }
+
+    // ---- Audio files (docs/file-sharing.md §11.2) ----
+
+    private val cover = ByteArray(3_000) { 9 }
+    private val tags = AudioFileMetadata(durationMs = 243_400, title = "Midnight City", artist = "M83", cover = AudioCover(cover, 160, 160))
+
+    @Test
+    fun anAudioFileCarriesItsLengthTagsAndCover() = runTest(main.dispatcher) {
+        val w = world()
+        assertNull(w.pipeline().sendFile(picked("track01.mp3").withAudio(tags), w.peer, "", null))
+        val payload = MediaMessagePayload.parse(w.openAsPeer(w.server.lastRequest()))!!
+        assertEquals(MediaMessagePayload.KIND_FILE, payload.t)
+        assertEquals("audio/mpeg", payload.mime)
+        assertEquals(243_400, payload.d)
+        assertEquals("Midnight City", payload.ti)
+        assertEquals("M83", payload.ar)
+        assertArrayEquals(cover, payload.previewJpeg)
+        assertEquals(160, payload.w)
+        assertEquals(160, payload.h)
+        assertNull(payload.pg)
+        val sent = w.state.messages(w.peer)!!.single()
+        assertEquals(243_400, sent.durationMs)
+        assertEquals("Midnight City", sent.audioTitle)
+        assertEquals("M83", sent.audioArtist)
+        assertArrayEquals(cover, sent.previewJpeg!!.toByteArray())
+        val quote = sent.replyReference!!
+        assertEquals(MessageReplyReference.Kind.Audio, quote.kind)
+        assertEquals("Midnight City \u2013 M83", quote.snippet)
+        assertTrue("a fresh pick brings its own tags", w.audioMetadataReads.isEmpty())
+    }
+
+    @Test
+    fun anAudioFileWithoutTagsGoesWithoutThem() = runTest(main.dispatcher) {
+        val w = world()
+        w.pipeline().sendFile(picked("memo.wav"), w.peer, "", null)
+        val payload = MediaMessagePayload.parse(w.openAsPeer(w.server.lastRequest()))!!
+        assertNull(payload.d)
+        assertNull(payload.ti)
+        assertNull(payload.ar)
+        assertNull(payload.th)
+        assertEquals(0, payload.w)
+        // Tags on a pick of another type are ignored.
+        w.pipeline().sendFile(picked("notes.txt", "hi".toByteArray()).withAudio(tags), w.peer, "", null)
+        val text = MediaMessagePayload.parse(w.openAsPeer(w.server.lastRequest()))!!
+        assertNull(text.ti)
+        assertNull(text.d)
+    }
+
+    @Test
+    fun aRetriedAudioFileKeepsItsTagsAndReadsALostCoverFromTheSealedCopy() = runTest(main.dispatcher) {
+        val w = world()
+        val pipeline = w.pipeline()
+        w.transfers.failUploads = 1
+        pipeline.sendFile(picked("track01.mp3").withAudio(tags), w.peer, "", null)
+        val failed = w.state.messages(w.peer)!!.single()
+        assertEquals(ReceiptStatus.Failed, failed.receipt)
+        // A restart keeps the row's tags and length but no picture.
+        w.state.update(failed.id) { it.copy(previewJpeg = null, imageWidth = null, imageHeight = null) }
+        val reread = ByteArray(2_000) { 4 }
+        w.audioMetadata = { AudioFileMetadata(durationMs = 1, title = "Other", artist = null, cover = AudioCover(reread, 128, 128)) }
+
+        assertNull(pipeline.retryFailedFile(failed.id, w.peer))
+        assertEquals(listOf(failed.id), w.audioMetadataReads)
+        val payload = MediaMessagePayload.parse(w.openAsPeer(w.server.lastRequest()))!!
+        assertEquals("the bubble's tags win", "Midnight City", payload.ti)
+        assertEquals("M83", payload.ar)
+        assertEquals(243_400, payload.d)
+        assertArrayEquals(reread, payload.previewJpeg)
+        assertEquals(128, payload.w)
     }
 }

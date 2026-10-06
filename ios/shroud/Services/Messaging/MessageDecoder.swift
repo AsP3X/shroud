@@ -342,11 +342,15 @@ enum MessageDecoder {
                 imageHeight: payload.h > 0 ? payload.h : nil,
                 previewData: payload.previewJPEG,
                 mediaByteCount: payload.s,
+                voiceDurationMs: payload.audioDurationMs,
                 replyTo: payload.re,
                 fileName: SharedFile.cleanName(payload.n ?? ""),
                 // Whether the blob is here, never its bytes: a file is opened on demand only.
                 fileStored: local.hasFileBlob(dto.id),
-                filePageCount: payload.pg
+                filePageCount: payload.pg,
+                // Tags are cleaned again here, like the name (§11.2).
+                fileTitle: AudioFileText.cleanTag(payload.ti),
+                fileArtist: AudioFileText.cleanTag(payload.ar)
             )
         }
 

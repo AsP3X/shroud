@@ -75,10 +75,12 @@ enum ChatListFormatting {
 }
 
 extension MessagingController.ChatMessage {
-    /// Chat list and notification line for a file: the caption, else the file name.
+    /// Chat list and notification line for a file: the caption, else the file name — an audio
+    /// file's display title behind a note, `🎵 Midnight City – M83` (`docs/file-sharing.md` §7).
     var filePreviewText: String {
         let caption = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !caption.isEmpty { return caption }
+        if isAudioFile { return AudioFileText.previewLine(displayTitle: audioDisplayTitle) }
         return fileName ?? "File"
     }
 }

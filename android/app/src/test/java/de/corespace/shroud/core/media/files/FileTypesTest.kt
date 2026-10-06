@@ -33,6 +33,8 @@ class FileTypesTest {
             "heic" to "image/heic", "heif" to "image/heif", "avif" to "image/avif", "tif" to "image/tiff", "tiff" to "image/tiff",
             "bmp" to "image/bmp", "mp4" to "video/mp4", "m4v" to "video/x-m4v", "mov" to "video/quicktime", "webm" to "video/webm",
             "mkv" to "video/x-matroska", "avi" to "video/x-msvideo", "3gp" to "video/3gpp",
+            "mp3" to "audio/mpeg", "m4a" to "audio/mp4", "aac" to "audio/aac", "wav" to "audio/wav", "flac" to "audio/flac",
+            "ogg" to "audio/ogg", "opus" to "audio/ogg", "aif" to "audio/aiff", "aiff" to "audio/aiff",
             "apk" to "application/vnd.android.package-archive",
         )
         assertEquals(expected, FileTypes.all.associate { it.extension to it.mime })

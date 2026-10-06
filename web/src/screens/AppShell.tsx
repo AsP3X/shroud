@@ -75,6 +75,7 @@ import {
   shareTranscript,
   type ChatMessage,
   type HistoryCursor,
+  type AudioSendFields,
   type PdfSendPreview,
   type SealedFile,
 } from "../messaging";
@@ -153,6 +154,8 @@ type FileSend = {
   sealed: SealedFile | null;
   /** A PDF's `th` and `pg` (docs/file-sharing.md §10.1), read once and reused by every retry. */
   pdf: Promise<PdfSendPreview | null> | null;
+  /** An audio file's `d`, `ti`, `ar` and cover (docs/file-sharing.md §11.2), read once. */
+  audio: Promise<AudioSendFields | null> | null;
 };
 
 /** Rounds a reaction save may lose to our other device writing first before its set stands. */
@@ -2253,6 +2256,7 @@ export function AppShell({ session }: { session: Session }) {
           replyTo: optimistic.replyTo ?? null,
           sealed: null,
           pdf: null,
+          audio: null,
         },
         optimistic,
       };
@@ -2296,6 +2300,31 @@ export function AppShell({ session }: { session: Session }) {
         );
       });
     }
+    // An audio file's tags, length and cover: the composer started reading them; this reuses that.
+    if (fileTypeOf(job.name)?.category === "audio" && !job.audio) {
+      job.audio = import("../media/audioSendPreview")
+        .then((m) => m.audioSendInfo(job.file))
+        .catch(() => null);
+      void job.audio.then((audio) => {
+        if (!audio || !alive.current) return;
+        const thumbnail = audio.thumb ? bytesToB64(audio.thumb) : null;
+        setThread((prev) =>
+          prev.map((m) =>
+            m.id === localId
+              ? {
+                  ...m,
+                  audioTitle: audio.title,
+                  audioArtist: audio.artist,
+                  audioDurationMs: audio.durationMs,
+                  thumbnail: thumbnail ?? m.thumbnail,
+                  imageWidth: thumbnail ? audio.width : m.imageWidth,
+                  imageHeight: thumbnail ? audio.height : m.imageHeight,
+                }
+              : m,
+          ),
+        );
+      });
+    }
     try {
       setTransfer(localId, { direction: "up", phase: "preparing", loaded: 0, total: job.file.size });
       job.sealed ??= await sealForUpload(job.file, (loaded, total) =>
@@ -2311,6 +2340,7 @@ export function AppShell({ session }: { session: Session }) {
         size: job.file.size,
         caption: job.caption,
         pdf: job.pdf,
+        audio: job.audio,
         replyTo: job.replyTo,
         clientMessageId: job.clientId,
         onProgress: (loaded, total) => setTransfer(localId, { direction: "up", phase: "transferring", loaded, total }),

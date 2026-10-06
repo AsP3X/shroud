@@ -219,6 +219,9 @@ internal class FakeComposeServices(override val sendScope: CoroutineScope) : Com
         playbackStops++
     }
 
+    /** The audio-file player the composer drives (docs/file-sharing.md §11.5); none unless a test sets one. */
+    override var audioFiles: de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator? = null
+
     // ---- Transcription ----
     var modelPrepares = 0
     var modelInstalled = false

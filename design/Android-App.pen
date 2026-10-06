@@ -170553,6 +170553,4567 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "YBs9q",
+      "x": 4841,
+      "y": 593,
+      "name": "Audio Bubble / In",
+      "context": "AudioFileBubble.kt (file-sharing.md §11, t:\"file\" with an audio extension): the FileBubble shell (width min(300, row budget), r17.5 / tail 5, padding 10/12/10/4) with a 44 dp round cover instead of the tile: accent in, white 22 % out; th fills it under black 35 %. Glyphs white: ArrowDownBold 18 (not here), TransferRing + StopFill 14 (moving), PlayFill / PauseFill 18 (on device), ArrowClockwiseBold 18 (failed). Title Inter 15 Medium one line (tag title, else the name with middle ellipsis); detail Inter 13 tabular: '{artist} · {m:ss}', no tags '{m:ss} · {size} · {EXT}', not here adds the size, moving '{done} of {total}', active '{elapsed} / {duration}'. Scrubber only on the active file: 3 dp track, accent / white played, 25 % / 30 % rest, 10 dp thumb, drag seeks (ExoPlayer over SealedMediaDataSource). Failed: as FileBubble (outline, error, Retry).",
+      "reusable": true,
+      "width": 300,
+      "fill": "$bubble-in",
+      "cornerRadius": [
+        17.5,
+        17.5,
+        17.5,
+        5
+      ],
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#00000014",
+        "offset": {
+          "x": 0,
+          "y": 1
+        },
+        "blur": 3
+      },
+      "layout": "vertical",
+      "gap": 4,
+      "padding": [
+        10,
+        12,
+        5,
+        10
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "wABD4",
+          "name": "Audio Row",
+          "width": "fill_container",
+          "gap": 10,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "j1klch",
+              "name": "Cover",
+              "clip": true,
+              "width": 44,
+              "height": 44,
+              "fill": "$accent",
+              "cornerRadius": 22,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "H7vzY",
+                  "name": "Scrim",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#00000000",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "aKvdM",
+                      "name": "Glyph",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "play-fill",
+                      "library": "phosphor",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tChtF",
+              "name": "Info",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "VkM3Y",
+                  "name": "Title",
+                  "fill": "$text-primary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Midnight City",
+                  "lineHeight": 1.2,
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "text",
+                  "id": "mGxEG",
+                  "name": "Detail",
+                  "fill": "$text-secondary",
+                  "content": "M83 · 4:03",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "mMrTs",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Scrubber",
+                  "enabled": false,
+                  "width": "fill_container(0)",
+                  "height": 14,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1.5,
+                      "id": "sEV7r",
+                      "name": "Played",
+                      "fill": "$accent",
+                      "width": 70,
+                      "height": 3
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "evGb9",
+                      "name": "Knob",
+                      "fill": "$accent",
+                      "width": 10,
+                      "height": 10
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1.5,
+                      "id": "V2GTlB",
+                      "name": "Remaining",
+                      "fill": "#8E8EA04D",
+                      "width": "fill_container",
+                      "height": 3
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "DPvsa",
+          "x": 0,
+          "y": 0,
+          "name": "Caption",
+          "enabled": false,
+          "fill": "$text-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container(0)",
+          "content": "Caption",
+          "lineHeight": 1.25,
+          "fontFamily": "$font",
+          "fontSize": 16,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "oVv5R",
+          "name": "Footer",
+          "width": "fill_container",
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "xl2SX",
+              "name": "Meta",
+              "gap": 3,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "A6RSAO",
+                  "name": "Time",
+                  "fill": "$text-secondary",
+                  "content": "12:04",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "WxN8k",
+      "x": 5191,
+      "y": 593,
+      "name": "Audio Bubble / Out",
+      "context": "AudioFileBubble.kt (file-sharing.md §11, t:\"file\" with an audio extension): the FileBubble shell (width min(300, row budget), r17.5 / tail 5, padding 10/12/10/4) with a 44 dp round cover instead of the tile: accent in, white 22 % out; th fills it under black 35 %. Glyphs white: ArrowDownBold 18 (not here), TransferRing + StopFill 14 (moving), PlayFill / PauseFill 18 (on device), ArrowClockwiseBold 18 (failed). Title Inter 15 Medium one line (tag title, else the name with middle ellipsis); detail Inter 13 tabular: '{artist} · {m:ss}', no tags '{m:ss} · {size} · {EXT}', not here adds the size, moving '{done} of {total}', active '{elapsed} / {duration}'. Scrubber only on the active file: 3 dp track, accent / white played, 25 % / 30 % rest, 10 dp thumb, drag seeks (ExoPlayer over SealedMediaDataSource). Failed: as FileBubble (outline, error, Retry).",
+      "reusable": true,
+      "width": 300,
+      "fill": "$bubble-out",
+      "cornerRadius": [
+        17.5,
+        17.5,
+        5,
+        17.5
+      ],
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#00000014",
+        "offset": {
+          "x": 0,
+          "y": 1
+        },
+        "blur": 3
+      },
+      "layout": "vertical",
+      "gap": 4,
+      "padding": [
+        10,
+        12,
+        5,
+        10
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "rzBsa",
+          "name": "Audio Row",
+          "width": "fill_container",
+          "gap": 10,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "g8hczE",
+              "name": "Cover",
+              "clip": true,
+              "width": 44,
+              "height": 44,
+              "fill": "#FFFFFF38",
+              "cornerRadius": 22,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "wqgPl",
+                  "name": "Scrim",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "#00000000",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "wWfzS",
+                      "name": "Glyph",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "play-fill",
+                      "library": "phosphor",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "RTCe9",
+              "name": "Info",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "nd56U",
+                  "name": "Title",
+                  "fill": "#FFFFFF",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Midnight City",
+                  "lineHeight": 1.2,
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "text",
+                  "id": "X6bXE",
+                  "name": "Detail",
+                  "fill": "#FFFFFFA6",
+                  "content": "M83 · 4:03",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "Tih7k",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Scrubber",
+                  "enabled": false,
+                  "width": "fill_container(0)",
+                  "height": 14,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1.5,
+                      "id": "yZ0dF",
+                      "name": "Played",
+                      "fill": "#FFFFFF",
+                      "width": 70,
+                      "height": 3
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "b8gkRN",
+                      "name": "Knob",
+                      "fill": "#FFFFFF",
+                      "width": 10,
+                      "height": 10
+                    },
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1.5,
+                      "id": "Y0b2O",
+                      "name": "Remaining",
+                      "fill": "#FFFFFF4D",
+                      "width": "fill_container",
+                      "height": 3
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "WO6ef",
+          "x": 0,
+          "y": 0,
+          "name": "Caption",
+          "enabled": false,
+          "fill": "#FFFFFF",
+          "textGrowth": "fixed-width",
+          "width": "fill_container(0)",
+          "content": "Caption",
+          "lineHeight": 1.25,
+          "fontFamily": "$font",
+          "fontSize": 16,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "n2KUL",
+          "name": "Footer",
+          "width": "fill_container",
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "e8hUj",
+              "name": "Meta",
+              "gap": 3,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "Q6es5",
+                  "name": "Time",
+                  "fill": "#FFFFFFA6",
+                  "content": "12:04",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "icon",
+                  "id": "LlyPJ",
+                  "name": "Read",
+                  "width": 14,
+                  "height": 10,
+                  "icon": "check-check",
+                  "library": "lucide",
+                  "fill": "#FFFFFFF2"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "seG5q",
+      "x": 100,
+      "y": 26140,
+      "name": "Section · Conversation · Audio Files",
+      "layout": "vertical",
+      "gap": 6,
+      "children": [
+        {
+          "type": "text",
+          "id": "x6qM7",
+          "name": "Section Title",
+          "fill": "$text-primary",
+          "content": "Conversation · Audio Files",
+          "fontFamily": "$font",
+          "fontSize": 44,
+          "fontWeight": "700"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "qsgYt",
+      "x": 100,
+      "y": 26250,
+      "name": "Conversation — Audio Files",
+      "context": "Audio files in the thread (file-sharing.md §11). From the top: a song from them, not downloaded (cover under the scrim); a podcast downloading; your song playing (pause, elapsed / duration, scrubber, caption); your recording uploading; a file without tags on this phone. Only one audio plays at a time, voice notes included (VoicePlaybackCoordinator and the audio file player share one audio focus).",
+      "clip": true,
+      "width": 412,
+      "height": 915,
+      "fill": "$bg-chat",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "OQfpG",
+          "name": "Messages",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "padding": [
+            0,
+            16,
+            8,
+            16
+          ],
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "IFW4i",
+              "name": "Date Chip Wrap",
+              "width": "fill_container",
+              "padding": [
+                0,
+                0,
+                6,
+                0
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "MYkmm",
+                  "name": "Date Chip",
+                  "fill": "#0B0B120F",
+                  "cornerRadius": 12,
+                  "padding": [
+                    4,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "eAYwn",
+                      "name": "Date",
+                      "opacity": 0.6,
+                      "fill": "$text-primary",
+                      "content": "Today",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "EwkB1",
+              "name": "Audio Row In",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "id": "x1ILf",
+                  "type": "ref",
+                  "ref": "YBs9q",
+                  "name": "Song · Not downloaded",
+                  "descendants": {
+                    "j1klch": {
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 135,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#FF7A59",
+                            "position": 0
+                          },
+                          {
+                            "color": "#B83280",
+                            "position": 0.55
+                          },
+                          {
+                            "color": "#3B2A8F",
+                            "position": 1
+                          }
+                        ]
+                      }
+                    },
+                    "H7vzY": {
+                      "fill": "#00000059"
+                    },
+                    "aKvdM": {
+                      "icon": "arrow-down-bold"
+                    },
+                    "VkM3Y": {
+                      "content": "Midnight City"
+                    },
+                    "mGxEG": {
+                      "content": "M83 · 4:03 · 8.4 MB"
+                    },
+                    "A6RSAO": {
+                      "content": "18:02"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ZNdyj",
+              "name": "Audio Row In",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "id": "RCfjo",
+                  "type": "ref",
+                  "ref": "YBs9q",
+                  "name": "Podcast · Downloading",
+                  "descendants": {
+                    "H7vzY": {
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Ss8Fu",
+                          "name": "Progress Ring",
+                          "width": 30,
+                          "height": 30,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "Yg8jI",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Track",
+                              "innerRadius": 0.83,
+                              "fill": "#FFFFFF4D",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "RfPVL",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Progress",
+                              "innerRadius": 0.83,
+                              "startAngle": 90,
+                              "sweepAngle": -120,
+                              "fill": "#FFFFFF",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "PbuLn",
+                              "x": 9.5,
+                              "y": 9.5,
+                              "name": "Stop",
+                              "fill": "#FFFFFF",
+                              "width": 11,
+                              "height": 11
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "VkM3Y": {
+                      "content": "Privacy Hour · Ep. 42"
+                    },
+                    "mGxEG": {
+                      "content": "3.1 MB of 48.2 MB"
+                    },
+                    "A6RSAO": {
+                      "content": "18:05"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "TF3f7",
+              "name": "Audio Row Out",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "alignItems": "end",
+              "children": [
+                {
+                  "id": "sj9Cr",
+                  "type": "ref",
+                  "ref": "WxN8k",
+                  "name": "Song · Playing",
+                  "descendants": {
+                    "g8hczE": {
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 200,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#2EC4B6",
+                            "position": 0
+                          },
+                          {
+                            "color": "#1B4965",
+                            "position": 1
+                          }
+                        ]
+                      }
+                    },
+                    "wqgPl": {
+                      "fill": "#00000059"
+                    },
+                    "wWfzS": {
+                      "icon": "pause-fill"
+                    },
+                    "nd56U": {
+                      "content": "Holocene"
+                    },
+                    "X6bXE": {
+                      "content": "1:12 / 5:36"
+                    },
+                    "Tih7k": {
+                      "enabled": true
+                    },
+                    "yZ0dF": {
+                      "width": 52
+                    },
+                    "WO6ef": {
+                      "enabled": true,
+                      "content": "For the drive on Saturday"
+                    },
+                    "Q6es5": {
+                      "content": "18:09"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gT8QW",
+              "name": "Audio Row Out",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "alignItems": "end",
+              "children": [
+                {
+                  "id": "Ul9Wo",
+                  "type": "ref",
+                  "ref": "WxN8k",
+                  "name": "Recording · Uploading",
+                  "descendants": {
+                    "wqgPl": {
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "EKbdF",
+                          "name": "Progress Ring",
+                          "width": 30,
+                          "height": 30,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ylQus",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Track",
+                              "innerRadius": 0.83,
+                              "fill": "#FFFFFF4D",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "eAm9i",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Progress",
+                              "innerRadius": 0.83,
+                              "startAngle": 90,
+                              "sweepAngle": -120,
+                              "fill": "#FFFFFF",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "wmY4Q",
+                              "x": 9.5,
+                              "y": 9.5,
+                              "name": "Stop",
+                              "fill": "#FFFFFF",
+                              "width": 11,
+                              "height": 11
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "nd56U": {
+                      "content": "Demo v3 (final mix).wav"
+                    },
+                    "X6bXE": {
+                      "content": "9.8 MB of 24.6 MB"
+                    },
+                    "Q6es5": {
+                      "content": "18:11"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "vr2tL",
+              "name": "Audio Row In",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "id": "uE8O1",
+                  "type": "ref",
+                  "ref": "YBs9q",
+                  "name": "No tags · On device",
+                  "descendants": {
+                    "VkM3Y": {
+                      "content": "Interview raw take.flac"
+                    },
+                    "mGxEG": {
+                      "content": "12:47 · 86.1 MB · FLAC"
+                    },
+                    "A6RSAO": {
+                      "content": "18:14"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pgoSa",
+          "name": "Composer",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Yb72Y",
+              "name": "Composer Row",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                4,
+                12,
+                8,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "EwMAH",
+                  "name": "Attach",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "YjfyU",
+                      "name": "Attach Glyph",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z9M4lV",
+                  "name": "Field",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "MazFi",
+                      "name": "Placeholder",
+                      "fill": "$text-secondary",
+                      "content": "Message",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "kSwSp",
+                      "name": "Sticker",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "smile",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "B7bHPQ",
+                  "name": "Mic",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "u56SPJ",
+                      "name": "Mic Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "mic",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "diHpc",
+              "name": "Gesture Nav",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                4,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "g72cW",
+                  "name": "Gesture Handle",
+                  "fill": "$text-primary",
+                  "width": 108,
+                  "height": 4
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "R5TxW",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "context": "Header backdrop (ChatHeaderBackdrop): over the thread, a blur of it (20 dp, API 31+) and bg-chat at 80% through the status bar and bar row, smoothstep to clear over 28 dp below it; API 30 draws bg-chat at 94% with no blur. Faded in only while the thread has content under the bar.",
+          "width": 412,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#F5F4FACC",
+                "position": 0
+              },
+              {
+                "color": "#F5F4FACC",
+                "position": 0.7879
+              },
+              {
+                "color": "#F5F4FAC3",
+                "position": 0.8144
+              },
+              {
+                "color": "#F5F4FAAC",
+                "position": 0.8409
+              },
+              {
+                "color": "#F5F4FA8B",
+                "position": 0.8674
+              },
+              {
+                "color": "#F5F4FA66",
+                "position": 0.8939
+              },
+              {
+                "color": "#F5F4FA41",
+                "position": 0.9205
+              },
+              {
+                "color": "#F5F4FA20",
+                "position": 0.947
+              },
+              {
+                "color": "#F5F4FA09",
+                "position": 0.9735
+              },
+              {
+                "color": "#F5F4FA00",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "c6Ve6y",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Backdrop Blur",
+              "width": 412,
+              "height": 104,
+              "effect": {
+                "type": "background_blur",
+                "radius": 20
+              }
+            },
+            {
+              "type": "frame",
+              "id": "aiBia",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 104,
+              "name": "Backdrop Blur Tail 1",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 14
+              }
+            },
+            {
+              "type": "frame",
+              "id": "mCQGM",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 111,
+              "name": "Backdrop Blur Tail 2",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 9
+              }
+            },
+            {
+              "type": "frame",
+              "id": "Jun3P",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 118,
+              "name": "Backdrop Blur Tail 3",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 5
+              }
+            },
+            {
+              "type": "frame",
+              "id": "elo9s",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 125,
+              "name": "Backdrop Blur Tail 4",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 2
+              }
+            },
+            {
+              "id": "G4ZK3",
+              "type": "ref",
+              "ref": "ohoDT",
+              "name": "Status Bar"
+            },
+            {
+              "type": "frame",
+              "id": "CnlAH",
+              "name": "Chat Nav",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                2,
+                16,
+                6,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Thvlj",
+                  "name": "Back",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Cc1NE",
+                      "name": "Back Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lQe6S",
+                  "name": "Contact",
+                  "width": "fill_container",
+                  "height": 44,
+                  "gap": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "MZBpU",
+                      "type": "ref",
+                      "ref": "gTywD",
+                      "name": "Nav Avatar",
+                      "width": 40,
+                      "height": 40,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#C77CFF",
+                            "position": 0
+                          },
+                          {
+                            "color": "#9B4AE6",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "descendants": {
+                        "ugwnH": {
+                          "content": "AM",
+                          "fontSize": 15
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "dEw7y",
+                      "name": "Nav Info",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ARaPf",
+                          "name": "Chat Name",
+                          "fill": "$text-primary",
+                          "content": "Arlene McCoy",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "KgkZn",
+                          "name": "Presence",
+                          "fill": "$text-secondary",
+                          "content": "last seen 6:41",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "wIzfx",
+                  "name": "Call Group",
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Q0iFyV",
+                      "name": "Video",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "D0CN1I",
+                          "name": "Video Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "video",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "a5HVZ",
+                      "name": "Call",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "c38yL",
+                          "name": "Call Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "phone",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "wmAR2",
+              "name": "Scrim Tail",
+              "width": "fill_container",
+              "height": 28
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "qpAUb",
+      "x": 1040,
+      "y": 26250,
+      "name": "Conversation — Audio Can't Play, Not Sent",
+      "context": "Audio edge cases (file-sharing.md §11). A file ExoPlayer has no extractor or decoder for (AIFF here) keeps the plain FileBubble with MusicNotesFill and 'Can't play on this phone' (secondary, InfoFill); a tap opens the message menu (Save to Downloads, Share, Open in Another App). A file that fails the content check (first bytes not audio) shows no player. Your audio that didn't go out: retry glyph on the cover, 'Not sent', danger outline, the error and Retry under it.",
+      "clip": true,
+      "width": 412,
+      "height": 915,
+      "fill": "$bg-chat",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "j70mj",
+          "name": "Messages",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "padding": [
+            0,
+            16,
+            8,
+            16
+          ],
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "urJFD",
+              "name": "Date Chip Wrap",
+              "width": "fill_container",
+              "padding": [
+                0,
+                0,
+                6,
+                0
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "UAoFJ",
+                  "name": "Date Chip",
+                  "fill": "#0B0B120F",
+                  "cornerRadius": 12,
+                  "padding": [
+                    4,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "K7fNJ2",
+                      "name": "Date",
+                      "opacity": 0.6,
+                      "fill": "$text-primary",
+                      "content": "Today",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "CeBWk",
+              "name": "File Row In",
+              "width": "fill_container",
+              "children": [
+                {
+                  "id": "VfS47",
+                  "type": "ref",
+                  "ref": "jt6Zv",
+                  "name": "AIFF · Can't play here",
+                  "width": 300,
+                  "descendants": {
+                    "vXdss": {
+                      "fill": "$accent"
+                    },
+                    "XdF14": {
+                      "icon": "music-notes-fill",
+                      "fill": "#FFFFFF",
+                      "width": 20,
+                      "height": 20
+                    },
+                    "B5CGs": {
+                      "content": "studio-take.aiff"
+                    },
+                    "Av4j0": {
+                      "content": "31.4 MB · AIFF"
+                    },
+                    "wRTpG": {
+                      "enabled": true
+                    },
+                    "YNMoR": {
+                      "icon": "info-fill",
+                      "fill": "$text-secondary"
+                    },
+                    "bYmyr": {
+                      "content": "Can't play on this phone",
+                      "fill": "$text-secondary"
+                    },
+                    "kE8fD": {
+                      "content": "09:12"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "L5SgL",
+              "name": "File Row Out",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "justifyContent": "end",
+              "alignItems": "end",
+              "children": [
+                {
+                  "id": "IeHeK",
+                  "type": "ref",
+                  "ref": "WxN8k",
+                  "name": "Audio · Not sent",
+                  "stroke": "#FF3B30B3",
+                  "strokeWidth": 1.5,
+                  "descendants": {
+                    "wWfzS": {
+                      "icon": "arrow-clockwise-bold"
+                    },
+                    "nd56U": {
+                      "content": "Demo v3 (final mix).wav"
+                    },
+                    "X6bXE": {
+                      "content": "Not sent"
+                    },
+                    "Q6es5": {
+                      "content": "09:20"
+                    },
+                    "LlyPJ": {
+                      "icon": "warning-circle-fill",
+                      "fill": "#FFFFFFF2",
+                      "library": "phosphor",
+                      "width": 12,
+                      "height": 12
+                    }
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "LrsGN",
+                  "name": "Send Error",
+                  "fill": "$danger",
+                  "content": "Waiting for connection…",
+                  "fontFamily": "$font",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "GBh2S",
+                  "name": "Retry",
+                  "gap": 4,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Fobar",
+                      "name": "Retry Glyph",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-clockwise-bold",
+                      "library": "phosphor",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "text",
+                      "id": "kWH4i",
+                      "name": "Retry Label",
+                      "fill": "$accent",
+                      "content": "Retry",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "XDmRX",
+          "name": "Composer",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "TUjhT",
+              "name": "Composer Row",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                4,
+                12,
+                8,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "vjLlO",
+                  "name": "Attach",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "tJjXT",
+                      "name": "Attach Glyph",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ojgy0",
+                  "name": "Field",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "z1HHNh",
+                      "name": "Placeholder",
+                      "fill": "$text-secondary",
+                      "content": "Message",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "OotSB",
+                      "name": "Sticker",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "smile",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DZ1DV",
+                  "name": "Mic",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "wlF9q",
+                      "name": "Mic Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "mic",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FL2Gf",
+              "name": "Gesture Nav",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                4,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "rvJpN",
+                  "name": "Gesture Handle",
+                  "fill": "$text-primary",
+                  "width": 108,
+                  "height": 4
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "MSI9s",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "context": "Header backdrop (ChatHeaderBackdrop): over the thread, a blur of it (20 dp, API 31+) and bg-chat at 80% through the status bar and bar row, smoothstep to clear over 28 dp below it; API 30 draws bg-chat at 94% with no blur. Faded in only while the thread has content under the bar.",
+          "width": 412,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#F5F4FACC",
+                "position": 0
+              },
+              {
+                "color": "#F5F4FACC",
+                "position": 0.7879
+              },
+              {
+                "color": "#F5F4FAC3",
+                "position": 0.8144
+              },
+              {
+                "color": "#F5F4FAAC",
+                "position": 0.8409
+              },
+              {
+                "color": "#F5F4FA8B",
+                "position": 0.8674
+              },
+              {
+                "color": "#F5F4FA66",
+                "position": 0.8939
+              },
+              {
+                "color": "#F5F4FA41",
+                "position": 0.9205
+              },
+              {
+                "color": "#F5F4FA20",
+                "position": 0.947
+              },
+              {
+                "color": "#F5F4FA09",
+                "position": 0.9735
+              },
+              {
+                "color": "#F5F4FA00",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "PGGyr",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Backdrop Blur",
+              "width": 412,
+              "height": 104,
+              "effect": {
+                "type": "background_blur",
+                "radius": 20
+              }
+            },
+            {
+              "type": "frame",
+              "id": "x51oa",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 104,
+              "name": "Backdrop Blur Tail 1",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 14
+              }
+            },
+            {
+              "type": "frame",
+              "id": "wtzEj",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 111,
+              "name": "Backdrop Blur Tail 2",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 9
+              }
+            },
+            {
+              "type": "frame",
+              "id": "WfHFS",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 118,
+              "name": "Backdrop Blur Tail 3",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 5
+              }
+            },
+            {
+              "type": "frame",
+              "id": "MCMIz",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 125,
+              "name": "Backdrop Blur Tail 4",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 2
+              }
+            },
+            {
+              "id": "tw9nr",
+              "type": "ref",
+              "ref": "ohoDT",
+              "name": "Status Bar"
+            },
+            {
+              "type": "frame",
+              "id": "HufKy",
+              "name": "Chat Nav",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                2,
+                16,
+                6,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "AnqGP",
+                  "name": "Back",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "KIX3g",
+                      "name": "Back Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "C0IRa",
+                  "name": "Contact",
+                  "width": "fill_container",
+                  "height": 44,
+                  "gap": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "gqoBR",
+                      "type": "ref",
+                      "ref": "gTywD",
+                      "name": "Nav Avatar",
+                      "width": 40,
+                      "height": 40,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#C77CFF",
+                            "position": 0
+                          },
+                          {
+                            "color": "#9B4AE6",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "descendants": {
+                        "ugwnH": {
+                          "content": "AM",
+                          "fontSize": 15
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "jMw55",
+                      "name": "Nav Info",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "VkuHb",
+                          "name": "Chat Name",
+                          "fill": "$text-primary",
+                          "content": "Arlene McCoy",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ggcrX",
+                          "name": "Presence",
+                          "fill": "$text-secondary",
+                          "content": "last seen 6:41",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pygqQ",
+                  "name": "Call Group",
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pJrRw",
+                      "name": "Video",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "LTGwa",
+                          "name": "Video Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "video",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "BlvoW",
+                      "name": "Call",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "e6fZ6v",
+                          "name": "Call Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "phone",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "l1JNX",
+              "name": "Scrim Tail",
+              "width": "fill_container",
+              "height": 28
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "ClVEK",
+      "x": 570,
+      "y": 26250,
+      "name": "Conversation — Audio Compose",
+      "context": "File composer sheet with audio files (file-sharing.md §7, §11). Audio rows: the cover (or the accent circle with MusicNotesFill) as a 44 dp circle; the tag title, else the file name; detail '{artist} · {m:ss} · {size} · {EXT}', without tags '{m:ss} · {size} · {EXT}'. Tags, cover and duration come from MediaMetadataRetriever on the picked URI within 2 s.",
+      "clip": true,
+      "width": 412,
+      "height": 915,
+      "fill": "$bg-chat",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "rKC7N",
+          "name": "Messages",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 3,
+          "padding": [
+            12,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "H6K0VE",
+              "name": "Date Chip Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "u9hij3",
+                  "name": "Date Chip",
+                  "fill": "#0B0B120D",
+                  "cornerRadius": 12,
+                  "padding": [
+                    4,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "kcsSk",
+                      "name": "Date",
+                      "opacity": 0.6,
+                      "fill": "$text-primary",
+                      "content": "Today",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "F2dxP6",
+                  "name": "E2E Notice",
+                  "fill": "$accent-soft",
+                  "cornerRadius": 14,
+                  "gap": 6,
+                  "padding": [
+                    6,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "au3Ss",
+                      "name": "Lock",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "lock",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    },
+                    {
+                      "type": "text",
+                      "id": "N3ldy",
+                      "name": "E2E Text",
+                      "fill": "$accent",
+                      "content": "Messages and calls are end-to-end encrypted",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "i2Gg7",
+              "name": "Msg Row",
+              "width": "fill_container",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Cuxxi",
+                  "name": "Bubble In",
+                  "fill": "$bubble-in",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "gap": 7,
+                  "padding": [
+                    6,
+                    9,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "w6Cib",
+                      "name": "Msg",
+                      "fill": "$text-primary",
+                      "content": "Hey! Are we still on for tomorrow?",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "q0LIO",
+                      "name": "Meta",
+                      "gap": 3,
+                      "justifyContent": "end",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zGZgT",
+                          "name": "Time",
+                          "fill": "$text-secondary",
+                          "content": "11:02",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Z4vXZ",
+              "name": "Msg Row",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Tz7D5",
+                  "name": "Bubble Out",
+                  "fill": "$accent",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "gap": 7,
+                  "padding": [
+                    6,
+                    9,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "A1ICk",
+                      "name": "Msg",
+                      "fill": "#FFFFFF",
+                      "content": "Yes! 10am at the trailhead",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "kP1gY",
+                      "name": "Meta",
+                      "gap": 3,
+                      "justifyContent": "end",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zQIah",
+                          "name": "Time",
+                          "fill": "#FFFFFFA6",
+                          "content": "11:05",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "qz005",
+                          "name": "Read",
+                          "width": 14,
+                          "height": 10,
+                          "icon": "check-check",
+                          "library": "lucide",
+                          "fill": "#FFFFFFF2"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ERivV",
+              "name": "Msg Row",
+              "width": "fill_container",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "IERZE",
+                  "name": "Bubble In",
+                  "fill": "$bubble-in",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "gap": 7,
+                  "padding": [
+                    6,
+                    9,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "P8YvXU",
+                      "name": "Msg",
+                      "fill": "$text-primary",
+                      "content": "Perfect. Should I bring anything?",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "uGmoR",
+                      "name": "Meta",
+                      "gap": 3,
+                      "justifyContent": "end",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "PeDiJ",
+                          "name": "Time",
+                          "fill": "$text-secondary",
+                          "content": "11:06",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LmRvz",
+              "name": "Msg Row",
+              "width": "fill_container",
+              "justifyContent": "end",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pMfYy",
+                  "name": "Bubble Out",
+                  "fill": "$accent",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    5,
+                    17.5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "layout": "vertical",
+                  "gap": 4,
+                  "padding": [
+                    7,
+                    11,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ERXIH",
+                      "name": "Msg",
+                      "fill": "#FFFFFF",
+                      "textGrowth": "fixed-width",
+                      "width": 240,
+                      "content": "Just water and good shoes. I will pack snacks for both of us",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "BXWkT",
+                      "name": "Meta",
+                      "gap": 3,
+                      "justifyContent": "end",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "n36Jfm",
+                          "name": "Time",
+                          "fill": "#FFFFFFA6",
+                          "content": "11:08",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mvg9T",
+                          "name": "Read",
+                          "width": 14,
+                          "height": 10,
+                          "icon": "check-check",
+                          "library": "lucide",
+                          "fill": "#FFFFFFA6"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "zBiLA",
+              "name": "Msg Row",
+              "width": "fill_container",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "soUAI",
+                  "name": "Bubble In",
+                  "fill": "$bubble-in",
+                  "cornerRadius": [
+                    17.5,
+                    17.5,
+                    17.5,
+                    5
+                  ],
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0B0B120F",
+                    "offset": {
+                      "x": 0,
+                      "y": 1
+                    },
+                    "blur": 2
+                  },
+                  "gap": 7,
+                  "padding": [
+                    6,
+                    9,
+                    6,
+                    11
+                  ],
+                  "alignItems": "end",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Gdt0J",
+                      "name": "Msg",
+                      "fill": "$text-primary",
+                      "content": "Sounds good, see you tomorrow!",
+                      "lineHeight": 1.25,
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "jcnnm",
+                      "name": "Meta",
+                      "gap": 3,
+                      "justifyContent": "end",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "qnjOj",
+                          "name": "Time",
+                          "fill": "$text-secondary",
+                          "content": "12:10",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ZmeYK",
+          "name": "Composer",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "l2pkAj",
+              "name": "Composer Row",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                4,
+                12,
+                8,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tDYEK",
+                  "name": "Attach",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "kELSM",
+                      "name": "Attach Glyph",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "oYYrB",
+                  "name": "Field",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hc1Zt",
+                      "name": "Placeholder",
+                      "fill": "$text-secondary",
+                      "content": "Message",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "SB8vN",
+                      "name": "Sticker",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "smile",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "nLaPc",
+                  "name": "Mic",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "tkuen",
+                      "name": "Mic Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "mic",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Z3gYx",
+              "name": "Gesture Nav",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                4,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "NnBRa",
+                  "name": "Gesture Handle",
+                  "fill": "$text-primary",
+                  "width": 108,
+                  "height": 4
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "MgTjJ",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "context": "Header backdrop (ChatHeaderBackdrop): over the thread, a blur of it (20 dp, API 31+) and bg-chat at 80% through the status bar and bar row, smoothstep to clear over 28 dp below it; API 30 draws bg-chat at 94% with no blur. Faded in only while the thread has content under the bar.",
+          "width": 412,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#F5F4FACC",
+                "position": 0
+              },
+              {
+                "color": "#F5F4FACC",
+                "position": 0.7879
+              },
+              {
+                "color": "#F5F4FAC3",
+                "position": 0.8144
+              },
+              {
+                "color": "#F5F4FAAC",
+                "position": 0.8409
+              },
+              {
+                "color": "#F5F4FA8B",
+                "position": 0.8674
+              },
+              {
+                "color": "#F5F4FA66",
+                "position": 0.8939
+              },
+              {
+                "color": "#F5F4FA41",
+                "position": 0.9205
+              },
+              {
+                "color": "#F5F4FA20",
+                "position": 0.947
+              },
+              {
+                "color": "#F5F4FA09",
+                "position": 0.9735
+              },
+              {
+                "color": "#F5F4FA00",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "oQ7Mq",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Backdrop Blur",
+              "width": 412,
+              "height": 104,
+              "effect": {
+                "type": "background_blur",
+                "radius": 20
+              }
+            },
+            {
+              "type": "frame",
+              "id": "jah0I",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 104,
+              "name": "Backdrop Blur Tail 1",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 14
+              }
+            },
+            {
+              "type": "frame",
+              "id": "LSOMx",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 111,
+              "name": "Backdrop Blur Tail 2",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 9
+              }
+            },
+            {
+              "type": "frame",
+              "id": "o6FC8",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 118,
+              "name": "Backdrop Blur Tail 3",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 5
+              }
+            },
+            {
+              "type": "frame",
+              "id": "c2Ejg4",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 125,
+              "name": "Backdrop Blur Tail 4",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 2
+              }
+            },
+            {
+              "id": "qxmPF",
+              "type": "ref",
+              "ref": "ohoDT",
+              "name": "Status Bar"
+            },
+            {
+              "type": "frame",
+              "id": "Z5LNo",
+              "name": "Chat Nav",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                2,
+                16,
+                6,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "d3sKv",
+                  "name": "Back",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "AINGW",
+                      "name": "Back Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Mr45U",
+                  "name": "Contact",
+                  "width": "fill_container",
+                  "height": 44,
+                  "gap": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "h9yUg4",
+                      "type": "ref",
+                      "ref": "gTywD",
+                      "name": "Nav Avatar",
+                      "width": 40,
+                      "height": 40,
+                      "descendants": {
+                        "ugwnH": {
+                          "content": "JC",
+                          "fontSize": 15
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "joL2w",
+                      "name": "Nav Info",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "u2V07i",
+                          "name": "Chat Name",
+                          "fill": "$text-primary",
+                          "content": "Jane Cooper",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dxcg6",
+                          "name": "Status Row",
+                          "gap": 4,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "wa6TP",
+                              "name": "Online Dot",
+                              "fill": "$online",
+                              "width": 7,
+                              "height": 7
+                            },
+                            {
+                              "type": "text",
+                              "id": "jIKD0",
+                              "name": "Presence",
+                              "fill": "$accent",
+                              "content": "online",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "J4x7eS",
+                  "name": "Call Group",
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "DmU9J",
+                      "name": "Video",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "JY2bH",
+                          "name": "Video Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "video",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "UJolB",
+                      "name": "Call",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "q2PBEl",
+                          "name": "Call Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "phone",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "FDkaC",
+              "name": "Scrim Tail",
+              "width": "fill_container",
+              "height": 28
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "cE3RW",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Scrim",
+          "fill": "$media-sheet-scrim",
+          "width": 412,
+          "height": 915
+        },
+        {
+          "type": "frame",
+          "id": "WdpHH",
+          "layoutPosition": "absolute",
+          "x": 8,
+          "y": 518.5,
+          "name": "File Compose Sheet",
+          "context": "FileComposeSheet.kt: ShroudSheet Inset (r38, 8 dp margins, bg-grouped, grabber, gap 14). Title Inter 17 SemiBold centred. Rows card $bg r16; rows padding 12/8, 10 vertical; tile 44 r12 accent + category glyph 22; Remove = 28 dp textSecondary 15 % circle with XBold 12, 44 dp target; separators 0.5 dp inset 66. Note 13 textSecondary centred. Caption: $bg capsule r22 min 44, Inter 16. Send: PrimaryButton (54 dp accent capsule), no arrow.",
+          "width": 396,
+          "fill": "$bg-grouped",
+          "cornerRadius": 38,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#0B0B1229",
+            "offset": {
+              "x": 0,
+              "y": -4
+            },
+            "blur": 30
+          },
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            8,
+            16,
+            24,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "i2BOz",
+              "name": "Grabber Wrap",
+              "width": "fill_container",
+              "layout": "vertical",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2.5,
+                  "id": "GyKMs",
+                  "name": "Grabber",
+                  "fill": "$chevron",
+                  "width": 36,
+                  "height": 5
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "bo5fy",
+              "name": "Title",
+              "fill": "$text-primary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Send 2 Files",
+              "textAlign": "center",
+              "fontFamily": "$font",
+              "fontSize": 17,
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "khSvx",
+              "name": "File List",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 16,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "fNZ48",
+                  "name": "File Row",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "padding": [
+                    10,
+                    8,
+                    10,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "uNET8",
+                      "name": "Tile",
+                      "clip": true,
+                      "width": 44,
+                      "height": 44,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 135,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#FF7A59",
+                            "position": 0
+                          },
+                          {
+                            "color": "#B83280",
+                            "position": 0.55
+                          },
+                          {
+                            "color": "#3B2A8F",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "cornerRadius": 22,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "yjkLk",
+                          "x": 11,
+                          "y": 11,
+                          "name": "Tile Glyph",
+                          "enabled": false,
+                          "width": 22,
+                          "height": 22,
+                          "icon": "file-pdf-fill",
+                          "library": "phosphor",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "i7ejN",
+                      "name": "Info",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ATKEq",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Midnight City",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "qrBkN",
+                          "name": "Detail",
+                          "fill": "$text-secondary",
+                          "content": "M83 · 4:03 · 8.4 MB · MP3",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "izcyO",
+                      "name": "Remove",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "hjGM3",
+                          "name": "Remove Circle",
+                          "width": 28,
+                          "height": 28,
+                          "fill": "#8E8E9326",
+                          "cornerRadius": 14,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "C3TvF1",
+                              "name": "Remove Glyph",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x-bold",
+                              "library": "phosphor",
+                              "fill": "$text-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "k2ijBw",
+                  "name": "Divider Wrap",
+                  "width": "fill_container",
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    66
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "VLiUc",
+                      "name": "Divider",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 0.5
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "dnA9C",
+                  "name": "File Row",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "padding": [
+                    10,
+                    8,
+                    10,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "h9dNq",
+                      "name": "Tile",
+                      "clip": true,
+                      "width": 44,
+                      "height": 44,
+                      "fill": "$accent",
+                      "cornerRadius": 22,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "vysGQ",
+                          "name": "Tile Glyph",
+                          "width": 22,
+                          "height": 22,
+                          "icon": "music-notes-fill",
+                          "library": "phosphor",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "iOw6D",
+                      "name": "Info",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "g2kvn4",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Interview raw take.flac",
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "text",
+                          "id": "h2alY2",
+                          "name": "Detail",
+                          "fill": "$text-secondary",
+                          "content": "12:47 · 86.1 MB · FLAC",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "btwZs",
+                          "x": 0,
+                          "y": 38,
+                          "name": "Warning",
+                          "enabled": false,
+                          "gap": 4,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "F7JHO",
+                              "name": "Warning Glyph",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "warning-fill",
+                              "library": "phosphor",
+                              "fill": "$warning-icon"
+                            },
+                            {
+                              "type": "text",
+                              "id": "d5sZrW",
+                              "name": "Warning Text",
+                              "fill": "$warning-text",
+                              "content": "May contain macros",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "NNtJi",
+                      "name": "Remove",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "i8MJ1",
+                          "name": "Remove Circle",
+                          "width": 28,
+                          "height": 28,
+                          "fill": "#8E8E9326",
+                          "cornerRadius": 14,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "xhiFt",
+                              "name": "Remove Glyph",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x-bold",
+                              "library": "phosphor",
+                              "fill": "$text-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "LLQ1M",
+              "name": "Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Files are sent as they are, without compression, and keep their metadata.",
+              "lineHeight": 1.3,
+              "textAlign": "center",
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "q3sNaK",
+              "name": "Caption Field",
+              "width": "fill_container",
+              "height": 44,
+              "fill": "$bg",
+              "cornerRadius": 22,
+              "padding": [
+                0,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "EqyBe",
+                  "name": "Placeholder",
+                  "fill": "$text-secondary",
+                  "content": "Add a caption…",
+                  "fontFamily": "$font",
+                  "fontSize": 16,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Afs7B",
+              "name": "Send",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "$accent",
+              "cornerRadius": 27,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "JD6EU",
+                  "name": "Send Label",
+                  "fill": "#FFFFFF",
+                  "content": "Send",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "kj1kL",
+      "x": 1510,
+      "y": 26250,
+      "name": "Conversation — Audio Now Playing",
+      "context": "v1.1: the now-playing bar under the app bar while an audio file plays or is paused and its bubble is out of view: a 52 dp card (bubble-in fill, r16, elevation 2) with play/pause, title + '{artist} · {elapsed} / {duration}', the speed chip for files of 10 min and more, close. A 2 dp accent progress line on its bottom edge. Tap on the text scrolls to the bubble. Background playback runs in a MediaSessionService with its media notification; what that notification shows (title or a generic 'Shroud – Audio') is an open decision.",
+      "clip": true,
+      "width": 412,
+      "height": 915,
+      "fill": "$bg-chat",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "xOjSm",
+          "name": "Messages",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 6,
+          "padding": [
+            0,
+            16,
+            8,
+            16
+          ],
+          "justifyContent": "end",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ekhno",
+              "name": "Date Chip Wrap",
+              "width": "fill_container",
+              "padding": [
+                0,
+                0,
+                6,
+                0
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "z27xwh",
+                  "name": "Date Chip",
+                  "fill": "#0B0B120F",
+                  "cornerRadius": 12,
+                  "padding": [
+                    4,
+                    10
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "F9Osi",
+                      "name": "Date",
+                      "opacity": 0.6,
+                      "fill": "$text-primary",
+                      "content": "Today",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ZP6oS",
+              "name": "Audio Row In",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "id": "OTaav",
+                  "type": "ref",
+                  "ref": "YBs9q",
+                  "name": "Song · Not downloaded",
+                  "descendants": {
+                    "j1klch": {
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 135,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#FF7A59",
+                            "position": 0
+                          },
+                          {
+                            "color": "#B83280",
+                            "position": 0.55
+                          },
+                          {
+                            "color": "#3B2A8F",
+                            "position": 1
+                          }
+                        ]
+                      }
+                    },
+                    "H7vzY": {
+                      "fill": "#00000059"
+                    },
+                    "aKvdM": {
+                      "icon": "arrow-down-bold"
+                    },
+                    "VkM3Y": {
+                      "content": "Midnight City"
+                    },
+                    "mGxEG": {
+                      "content": "M83 · 4:03 · 8.4 MB"
+                    },
+                    "A6RSAO": {
+                      "content": "18:02"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NbbZy",
+              "name": "Audio Row In",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "id": "rATyK",
+                  "type": "ref",
+                  "ref": "YBs9q",
+                  "name": "Podcast · Downloading",
+                  "descendants": {
+                    "H7vzY": {
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "zqFCA",
+                          "name": "Progress Ring",
+                          "width": 30,
+                          "height": 30,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "IksqY",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Track",
+                              "innerRadius": 0.83,
+                              "fill": "#FFFFFF4D",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "M1WT8V",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Progress",
+                              "innerRadius": 0.83,
+                              "startAngle": 90,
+                              "sweepAngle": -120,
+                              "fill": "#FFFFFF",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "vIGxP",
+                              "x": 9.5,
+                              "y": 9.5,
+                              "name": "Stop",
+                              "fill": "#FFFFFF",
+                              "width": 11,
+                              "height": 11
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "VkM3Y": {
+                      "content": "Privacy Hour · Ep. 42"
+                    },
+                    "mGxEG": {
+                      "content": "3.1 MB of 48.2 MB"
+                    },
+                    "A6RSAO": {
+                      "content": "18:05"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "R0B8OE",
+              "name": "Audio Row Out",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "alignItems": "end",
+              "children": [
+                {
+                  "id": "u8Guc",
+                  "type": "ref",
+                  "ref": "WxN8k",
+                  "name": "Recording · Uploading",
+                  "descendants": {
+                    "wqgPl": {
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "WMKBu",
+                          "name": "Progress Ring",
+                          "width": 30,
+                          "height": 30,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "oyXxG",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Track",
+                              "innerRadius": 0.83,
+                              "fill": "#FFFFFF4D",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "quQHv",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Progress",
+                              "innerRadius": 0.83,
+                              "startAngle": 90,
+                              "sweepAngle": -120,
+                              "fill": "#FFFFFF",
+                              "width": 30,
+                              "height": 30
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "s7K4r",
+                              "x": 9.5,
+                              "y": 9.5,
+                              "name": "Stop",
+                              "fill": "#FFFFFF",
+                              "width": 11,
+                              "height": 11
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "nd56U": {
+                      "content": "Demo v3 (final mix).wav"
+                    },
+                    "X6bXE": {
+                      "content": "9.8 MB of 24.6 MB"
+                    },
+                    "Q6es5": {
+                      "content": "18:11"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "nJ1x2",
+              "name": "Audio Row In",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "id": "WYEPT",
+                  "type": "ref",
+                  "ref": "YBs9q",
+                  "name": "No tags · On device",
+                  "descendants": {
+                    "VkM3Y": {
+                      "content": "Interview raw take.flac"
+                    },
+                    "mGxEG": {
+                      "content": "12:47 · 86.1 MB · FLAC"
+                    },
+                    "A6RSAO": {
+                      "content": "18:14"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "b1sU7l",
+          "name": "Composer",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "C7MW2",
+              "name": "Composer Row",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                4,
+                12,
+                8,
+                12
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "oM1T5",
+                  "name": "Attach",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "NbiZO",
+                      "name": "Attach Glyph",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "RoEWI",
+                  "name": "Field",
+                  "width": "fill_container",
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "HB2Mg",
+                      "name": "Placeholder",
+                      "fill": "$text-secondary",
+                      "content": "Message",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "pIPtu",
+                      "name": "Sticker",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "smile",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Z7zN3",
+                  "name": "Mic",
+                  "width": 40,
+                  "height": 40,
+                  "fill": "$glass",
+                  "cornerRadius": 20,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "a0jCz",
+                      "name": "Mic Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "mic",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "a3V5H2",
+              "name": "Gesture Nav",
+              "width": "fill_container",
+              "layout": "vertical",
+              "padding": [
+                4,
+                0,
+                8,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "eU4TC",
+                  "name": "Gesture Handle",
+                  "fill": "$text-primary",
+                  "width": 108,
+                  "height": 4
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "eoPbZ",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "Top Chrome",
+          "context": "Header backdrop (ChatHeaderBackdrop): over the thread, a blur of it (20 dp, API 31+) and bg-chat at 80% through the status bar and bar row, smoothstep to clear over 28 dp below it; API 30 draws bg-chat at 94% with no blur. Faded in only while the thread has content under the bar.",
+          "width": 412,
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 180,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#F5F4FACC",
+                "position": 0
+              },
+              {
+                "color": "#F5F4FACC",
+                "position": 0.7879
+              },
+              {
+                "color": "#F5F4FAC3",
+                "position": 0.8144
+              },
+              {
+                "color": "#F5F4FAAC",
+                "position": 0.8409
+              },
+              {
+                "color": "#F5F4FA8B",
+                "position": 0.8674
+              },
+              {
+                "color": "#F5F4FA66",
+                "position": 0.8939
+              },
+              {
+                "color": "#F5F4FA41",
+                "position": 0.9205
+              },
+              {
+                "color": "#F5F4FA20",
+                "position": 0.947
+              },
+              {
+                "color": "#F5F4FA09",
+                "position": 0.9735
+              },
+              {
+                "color": "#F5F4FA00",
+                "position": 1
+              }
+            ]
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "n7yICi",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 0,
+              "name": "Backdrop Blur",
+              "width": 412,
+              "height": 104,
+              "effect": {
+                "type": "background_blur",
+                "radius": 20
+              }
+            },
+            {
+              "type": "frame",
+              "id": "YJ1Zc",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 104,
+              "name": "Backdrop Blur Tail 1",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 14
+              }
+            },
+            {
+              "type": "frame",
+              "id": "qQQc6",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 111,
+              "name": "Backdrop Blur Tail 2",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 9
+              }
+            },
+            {
+              "type": "frame",
+              "id": "RZsKl",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 118,
+              "name": "Backdrop Blur Tail 3",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 5
+              }
+            },
+            {
+              "type": "frame",
+              "id": "MqUTE",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 125,
+              "name": "Backdrop Blur Tail 4",
+              "width": 412,
+              "height": 7,
+              "effect": {
+                "type": "background_blur",
+                "radius": 2
+              }
+            },
+            {
+              "id": "qeSvh",
+              "type": "ref",
+              "ref": "ohoDT",
+              "name": "Status Bar"
+            },
+            {
+              "type": "frame",
+              "id": "eOllD",
+              "name": "Chat Nav",
+              "width": "fill_container",
+              "gap": 8,
+              "padding": [
+                2,
+                16,
+                6,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tABXp",
+                  "name": "Back",
+                  "width": 44,
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "uVJxd",
+                      "name": "Back Glyph",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "chevron-left",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "uSAOi",
+                  "name": "Contact",
+                  "width": "fill_container",
+                  "height": 44,
+                  "gap": 10,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "pl7nr",
+                      "type": "ref",
+                      "ref": "gTywD",
+                      "name": "Nav Avatar",
+                      "width": 40,
+                      "height": 40,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#C77CFF",
+                            "position": 0
+                          },
+                          {
+                            "color": "#9B4AE6",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "descendants": {
+                        "ugwnH": {
+                          "content": "AM",
+                          "fontSize": 15
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Y4wkp",
+                      "name": "Nav Info",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "gMtGz",
+                          "name": "Chat Name",
+                          "fill": "$text-primary",
+                          "content": "Arlene McCoy",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "YLZZ0",
+                          "name": "Presence",
+                          "fill": "$text-secondary",
+                          "content": "last seen 6:41",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "NZO3G",
+                  "name": "Call Group",
+                  "height": 44,
+                  "fill": "$glass",
+                  "cornerRadius": 22,
+                  "stroke": "$glass-bar-stroke",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 18
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#0B0B1214",
+                      "offset": {
+                        "x": 0,
+                        "y": 4
+                      },
+                      "blur": 12
+                    }
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "LGteQ",
+                      "name": "Video",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "dKCLX",
+                          "name": "Video Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "video",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JUdDZ",
+                      "name": "Call",
+                      "width": 44,
+                      "height": 44,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Heihx",
+                          "name": "Call Glyph",
+                          "width": 20,
+                          "height": 20,
+                          "icon": "phone",
+                          "library": "lucide",
+                          "fill": "$accent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "RFI4i",
+              "name": "Scrim Tail",
+              "width": "fill_container",
+              "height": 28
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "eOvkx",
+          "layoutPosition": "absolute",
+          "x": 16,
+          "y": 124,
+          "name": "Now Playing Bar",
+          "clip": true,
+          "width": 380,
+          "height": 52,
+          "fill": "$bubble-in",
+          "cornerRadius": 16,
+          "effect": {
+            "type": "shadow",
+            "shadowType": "outer",
+            "color": "#00000024",
+            "offset": {
+              "x": 0,
+              "y": 2
+            },
+            "blur": 6
+          },
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "iLWyf",
+              "name": "Row",
+              "width": "fill_container",
+              "height": 50,
+              "gap": 10,
+              "padding": [
+                0,
+                4,
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Xfy25",
+                  "name": "Play Pause",
+                  "width": 34,
+                  "height": 34,
+                  "fill": "$accent",
+                  "cornerRadius": 17,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "TF1ez",
+                      "name": "Glyph",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "pause-fill",
+                      "library": "phosphor",
+                      "fill": "#FFFFFF"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "S7uQu",
+                  "name": "Info",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "RxJmR",
+                      "name": "Title",
+                      "fill": "$text-primary",
+                      "content": "Holocene",
+                      "fontFamily": "$font",
+                      "fontSize": 14,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "o0BLAE",
+                      "name": "Detail",
+                      "fill": "$text-secondary",
+                      "content": "Bon Iver · 1:12 / 5:36",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pyCBZ",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Speed",
+                  "enabled": false,
+                  "height": 24,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 12,
+                  "padding": [
+                    0,
+                    8
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ohU1U",
+                      "name": "Speed Label",
+                      "fill": "$accent",
+                      "content": "1×",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "700"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "qsUVY",
+                  "name": "Close",
+                  "width": 40,
+                  "height": 40,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "OOxnz",
+                      "name": "Close Glyph",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "x-bold",
+                      "library": "phosphor",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "IgUpi",
+              "name": "Progress Track",
+              "width": "fill_container",
+              "height": 2,
+              "fill": "#8E8EA033",
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "tFC9T",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Progress",
+                  "fill": "$accent",
+                  "width": 82,
+                  "height": 2
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "themes": {

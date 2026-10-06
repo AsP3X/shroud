@@ -4,6 +4,7 @@ import { closeNotifications, notificationPermission, showPageNotification } from
 import type { RealtimeEvent } from "../realtime";
 import { holdAutoLock } from "../session";
 import { stopVoice } from "../voice/playback";
+import { stopAudioFile } from "../voice/audioFilePlayback";
 import { interruptVoiceRecord } from "../voice/recorder";
 import { safetyNumber } from "../crypto/safetyNumber";
 import {
@@ -190,6 +191,8 @@ const env: CallEnv = {
   holdAutoLock,
   interruptVoice: () => {
     stopVoice();
+    // A call stops an audio file too (docs/file-sharing.md §11.5).
+    stopAudioFile();
     interruptVoiceRecord();
   },
   notifyRing,

@@ -20,6 +20,8 @@ import de.corespace.shroud.core.net.wire.LinkPreview
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.core.transcription.TranscriptionInstallState
 import de.corespace.shroud.core.transcription.VoiceTranscription
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
+import de.corespace.shroud.core.voice.AudioFilePlayer
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.core.voice.VoicePlayer
 import de.corespace.shroud.ui.components.ComposeHarness
@@ -246,6 +248,8 @@ internal class RenderBubbleServices(override val context: Context, scope: Corout
     override suspend fun videoPoster(messageId: UUID): ByteArray? = null
     override suspend fun mediaDurationMs(messageId: UUID): Int? = null
     override val playback = VoicePlaybackCoordinator(ReadyVoicePlayer(), scope)
+    val audioPlayer = ReadyAudioFilePlayer()
+    override val audioFiles = AudioFilePlaybackCoordinator(audioPlayer, scope)
     override val transcription: VoiceTranscription = RenderTranscription(install)
     override fun transcriptionHints(peerName: String): List<String> = listOf(peerName)
     override fun shareTranscript(transcript: String, voiceMessageId: UUID, peer: UUID) = Unit
@@ -268,6 +272,27 @@ internal class ReadyVoicePlayer(private val durationMs: Long = 18_000, override 
     override fun setSpeed(rate: Float) = Unit
     override val isAdvancing: Boolean = false
     override fun stop() = Unit
+}
+
+/** A player whose files are 4:03 long and 1:05 in, ready as soon as they load. */
+internal class ReadyAudioFilePlayer(private val durationMs: Long = 243_400, override var positionMs: Long = 65_000) : AudioFilePlayer {
+    override var listener: AudioFilePlayer.Listener? = null
+    val loads = ArrayList<UUID>()
+    val seeks = ArrayList<Long>()
+    override fun load(messageId: UUID) {
+        loads += messageId
+        listener?.onReady(durationMs)
+    }
+    override fun play() = Unit
+    override fun pause() = Unit
+    override fun seekTo(positionMs: Long) {
+        seeks += positionMs
+        this.positionMs = positionMs
+    }
+    override fun setSpeed(rate: Float) = Unit
+    override val isAdvancing: Boolean = false
+    override fun stop() = Unit
+    fun failUnsupported() = listener?.onError(unsupported = true)
 }
 
 /** A transcriber whose model download the test drives through [install]. */

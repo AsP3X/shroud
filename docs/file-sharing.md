@@ -1,7 +1,7 @@
 # File sharing
 
-Sending documents, PDFs, text, Office files, image and video files in their original form, and
-APKs, on iOS, iPadOS, the web and Android. Every client implements this page exactly: the wire
+Sending documents, PDFs, text, Office files, audio, image and video files in their original form,
+and APKs, on iOS, iPadOS, the web and Android. Every client implements this page exactly: the wire
 shapes, the type table, the name rules and the copy are shared, and the vectors in §9 pin them.
 
 The server needs nothing new. A file is a `content_type = media` message whose blob is opaque, and
@@ -21,9 +21,11 @@ A `MediaMessagePayload` / `MediaPayload` (see [architecture.md](./architecture.m
 | `k` | Base64 AES-256 key of the SHRF1 blob (§3). |
 | `s` | Plaintext size in bytes. Required; receivers check it against the blob. |
 | `c` | Optional caption. |
-| `th` | Optional ≤ 6 KB JPEG preview (images, videos and PDFs, when the sender can make one cheaply; every client shows one). A PDF's `th` is the **top of its first page** in a 2:1 frame (§10.1); every client sends one for PDFs. |
+| `th` | Optional ≤ 6 KB JPEG preview (images, videos and PDFs, when the sender can make one cheaply; every client shows one). A PDF's `th` is the **top of its first page** in a 2:1 frame (§10.1); every client sends one for PDFs. An audio file's `th` is its **cover art**, square (§11.2). |
 | `w`, `h` | Pixel size of `th`, or `0`. |
 | `pg` | Optional page count of a PDF (integer ≥ 1), when the sender could read it. Absent on other types and on payloads from before §10. |
+| `d` | Optional duration of an audio file in milliseconds (integer ≥ 1), when the sender could read it (§11.2). |
+| `ti`, `ar` | Optional title and artist of an audio file from its tags, cleaned by §11.2 on both ends. |
 | `re` | The quoted message, as for every media kind. |
 
 A payload with `t: "file"` is a file whatever its `mime` says: every reader checks `t == "file"`
@@ -34,7 +36,8 @@ photo placeholder with the caption, an `image/*` file as a photo, a `video/*` fi
 of them can open the SHRF1 blob, so the update prompt (`GET /client-version`) is the way out.
 
 **Reply quotes** use `k: "file"` with `x` = the file name. Old builds read an unknown `k` as text and
-show `x`, which is the right fallback. The quote label is **File**.
+show `x`, which is the right fallback. The quote label is **File**. Audio files quote as `k: "audio"`
+with `x` = the display title of §11.2, labelled **Audio**.
 
 ## 2. Limits
 
@@ -91,6 +94,7 @@ refuse it, receivers show the bubble with **Unsupported file** and offer no down
 | PowerPoint | `ppt` application/vnd.ms-powerpoint · `pps` application/vnd.ms-powerpoint · `pot` application/vnd.ms-powerpoint · `pptm` application/vnd.ms-powerpoint.presentation.macroEnabled.12 · `ppsm` application/vnd.ms-powerpoint.slideshow.macroEnabled.12 · `potm` application/vnd.ms-powerpoint.template.macroEnabled.12 | macros |
 | Image | `jpg` `jpeg` image/jpeg · `png` image/png · `gif` image/gif · `webp` image/webp · `heic` image/heic · `heif` image/heif · `avif` image/avif · `tif` `tiff` image/tiff · `bmp` image/bmp | — |
 | Video | `mp4` video/mp4 · `m4v` video/x-m4v · `mov` video/quicktime · `webm` video/webm · `mkv` video/x-matroska · `avi` video/x-msvideo · `3gp` video/3gpp | — |
+| Audio | `mp3` audio/mpeg · `m4a` audio/mp4 · `aac` audio/aac · `wav` audio/wav · `flac` audio/flac · `ogg` audio/ogg · `opus` audio/ogg · `aif` `aiff` audio/aiff | — |
 | App | `apk` application/vnd.android.package-archive | app |
 
 - The legacy binary Office formats (`doc`, `xls`, `ppt` and their templates) carry the macro warning
@@ -118,6 +122,13 @@ possible (they keep the warning of §6).
 | `doc dot xls xlt ppt pps pot` | starts with `D0 CF 11 E0 A1 B1 1A E1` (OLE) |
 | `rtf` | starts with `{\rtf` |
 | `txt csv` | no `00` byte in the first 8 KiB |
+| `mp3` | starts with `ID3`, or `FF` then a byte with its top three bits set (`b1 & E0 == E0`, MPEG frame sync) |
+| `aac` | starts with `ID3`, or `FF` then `b1 & F6 == F0` (ADTS) |
+| `m4a` | `ftyp` at offset 4 |
+| `wav` | `RIFF` at 0 and `WAVE` at 8 |
+| `flac` | starts with `fLaC` or `ID3` |
+| `ogg opus` | starts with `OggS` |
+| `aif aiff` | `FORM` at 0 and `AIFF` or `AIFC` at 8 |
 | images, videos | none (the platform decoders reject what they can't read) |
 
 ## 5. File names
@@ -240,7 +251,8 @@ browser blocks the new tab, **The browser blocked the new tab — click the file
 
 ### Elsewhere
 
-- Chat list and notification preview: the caption, else the file name.
+- Chat list and notification preview: the caption, else the file name (audio: **🎵 {display title}**,
+  §11.2).
 - Delete dialog: **This file** on the web, **Delete this file?** on iOS; Android's sheet names no subject.
 - Copy (where offered) copies the caption.
 
@@ -284,6 +296,9 @@ SHRF1 with `k = 00 01 … 1f`, `noncePrefix = a0 a1 a2 a3 a4 a5 a6`:
 | `i % 251` × 200000 | 200080 B, SHA-256 `b59a0b0206599c2fb139a31cc5a82d0feb6e8e6a715f5e4dbc03081275f924a5` |
 
 Names: the `== names ==` block of the script's output (input → cleaned), all 20 rows.
+
+Audio (§11): the `== audio tags ==` (tag text → cleaned, `null` = absent), `== audio titles ==`,
+`== audio durations ==` and `== audio sniff ==` blocks, every row.
 
 ## 10. PDFs: preview card and viewer
 
@@ -461,3 +476,140 @@ CMaps and WebAssembly from Shroud's own origin (the CSP allows nothing else).
 **Accessibility.** Controls are labelled as above. iOS: PDFKit exposes the text to VoiceOver.
 Android and the web: each page is one element, `Page {n} of {count}`; on the web the text layer
 is readable.
+
+## 11. Audio files
+
+Songs, podcasts and recordings sent as files play in the chat: a round play button with the cover
+art, the title and artist, and a scrubber, as WhatsApp and Telegram show music. They stay
+`t: "file"` messages — SHRF1 blob, 2 GB limit, storage, delete, save and share all as §1–§8 — so a
+build without this section shows **Unsupported file** instead of a broken voice bubble (an unknown
+`t` with an `audio/` MIME would read as a voice note). Voice notes are unchanged.
+
+Designs: the **Conversation · Audio Files** sections of `design/iOS-App.pen`, `iPad-App.pen`,
+`webclient.pen` and `Android-App.pen` (components *Audio Bubble / In · Out*, *AudioBubbleIn · Out*,
+*NowPlayingBar*).
+
+### 11.1 Scope
+
+- The types are the **Audio** row of §4; the sender reads the extension as for every file.
+- Audio picks are never transcoded and never go to the photo/video compose: they go to the file
+  composer with the other files. Like every file they keep their metadata (the composer says so).
+- There are no lock-screen, media-notification or Media Session controls yet, and iOS and Android
+  pause when the app leaves the foreground (§11.5).
+
+### 11.2 Payload
+
+On top of §1, the sender adds what it could read **within 2 s** (else it sends the file without):
+
+- `d`: the duration in ms, rounded, ≥ 1.
+- `ti`, `ar`: the title and artist tags, cleaned as below; absent when empty.
+- `th`, `w`, `h`: the embedded cover art, centre-cropped to a square, scaled to 160 px, JPEG.
+  Shrink by 0.8 and lower the quality until it fits 6 KB; give up below 64 px (no `th`).
+
+Where the sender reads them: iOS `AVURLAsset` (`load(.duration)`, common metadata
+`.commonIdentifierTitle` / `.commonIdentifierArtist` / `.commonIdentifierArtwork`); Android
+`MediaMetadataRetriever` on the picked URI (`METADATA_KEY_DURATION`, `_TITLE`, `_ARTIST`,
+`embeddedPicture`); the web reads the duration from an `<audio preload="metadata">` on the
+`File`'s object URL and the tags with its own parser over `Blob.slice` ranges, never the whole file:
+ID3v2.2–2.4 (`TT2`/`TIT2`, `TP1`/`TPE1`, `PIC`/`APIC`), MP4 `moov/udta/meta/ilst`
+(`©nam`, `©ART`, `covr`) found by walking box headers, and FLAC `VORBIS_COMMENT` (`TITLE`,
+`ARTIST`) and `PICTURE` blocks.
+
+**Tag text** (`ti`, `ar`) is cleaned on the sender before sealing and again on the receiver:
+NFC; drop the §5 step-3 code points; turn each run of §5 step-5 spaces into one U+0020 (none at the
+start); cut to 200 code points; trim trailing spaces; empty → absent.
+
+**Display title**: `{ti} – {ar}` (U+2013 with spaces) when both are present, else `ti`, else the
+cleaned file name. It is what the reply quote's `x`, the chat list and the notification use.
+
+**Durations** show as `m:ss`, from one hour `h:mm:ss`: a total (`d`) rounds to whole seconds, an
+elapsed time floors.
+
+### 11.3 Composer
+
+The §7 file composer lists an audio file as a row with a **44 round cover** (`th`, else the accent
+circle with a music-notes glyph), the title (`ti`, else the name, middle-truncated) and
+`{ar} · {duration} · {size} · {EXT}`, leaving out what is missing. Nothing else changes: the title
+(**Send File** / **Send {n} Files**), the note, the caption, the 10-file limit, the refusals.
+
+### 11.4 The audio bubble
+
+```
+┌────────────────────────────────────────┐
+│ ╭──────╮  Midnight City                │   title 15 medium, one line
+│ │  ▶   │  M83 · 4:03                   │   detail 13, tabular digits, as the §7 meta line
+│ ╰──────╯  ━━━━━━━━●──────────────      │   scrubber: only on the active file
+│ caption, when there is one             │
+│                               18:09 ✓✓ │
+└────────────────────────────────────────┘
+```
+
+The §7 file bubble's shell (width, corners, padding, caption, footer, failed look) with a **44 round
+cover** in place of the tile:
+
+- Fill: accent on incoming bubbles, white at 22 % on outgoing ones. With `th`, the cover fills it
+  (aspect fill) under a 35 % black scrim.
+- Glyph (white, 18): **not on this device** → download arrow; **transferring** either way →
+  progress ring with a stop glyph; **on this device** → play, or pause while it plays; **failed
+  send** → retry arrow.
+- Title: `ti`, else the file name (middle-truncated, §5).
+- Detail line, by state:
+  - transferring: `{done} of {total}`;
+  - failed send: **Not sent**;
+  - the **active** file (playing, or paused part-way): `{elapsed} / {duration}`;
+  - otherwise with `ar`: `{ar} · {duration}`, plus ` · {size}` while not on this device;
+  - otherwise: `{duration} · {size} · {EXT}`.
+  A missing duration drops its part.
+- The detail line takes the §7 meta line's colours (secondary; on outgoing bubbles white 65 % on
+  iOS and Android, white 78 % on the web).
+- Scrubber, only on the active file: a 3 pt track (accent / white played; the rest accent 25 % on
+  iOS, `#8E8EA0` at 30 % on Android and the web, white 30 % on outgoing bubbles) with a 10 pt
+  thumb. Dragging or tapping it seeks; the web uses a range input (←/→ seek 5 s).
+- Tap on the bubble (not on the scrubber): not on this device → download, then play when it
+  finishes, unless something else started playing meanwhile or the chat closed; transferring → stop
+  the transfer where the platform can (the web can't stop an upload, so an uploading bubble takes
+  no tap, as its file bubble); on this device → play / pause.
+- Accessibility label: `Audio, {title}, {artist}, {duration}` without the missing parts; the
+  play/pause action is the bubble's default action.
+- The message menu is the §7 file menu (Share, Save to Downloads, Download …).
+
+**Can't play here.** Whether a file plays is decided by the platform player, not by this page. A file
+it can't open (Ogg Vorbis on iOS, AIFF where ExoPlayer has no extractor, a codec the browser
+lacks — on the web known from `canPlayType` before a download) is drawn as the plain §7 file bubble
+with a music-notes glyph, `{size} · {EXT}` and the line **Can't play on this iPhone** / **Can't play
+on this iPad** / **Can't play on this phone** / **Can't play in this browser** (secondary colour,
+info glyph) in place of a warning. Its tap does what a §7 file tap does. A file that fails §4's
+content check shows that toast and is never handed to the player.
+
+### 11.5 Playback
+
+- **One sound at a time.** Starting an audio file stops a playing voice note and the other way
+  round; a call stops both.
+- **Plaintext.** iOS plays the `.shrf` blob of §8 through `AVPlayer` with an
+  `AVAssetResourceLoaderDelegate` that decrypts the SHRF1 segments the player asks for; before the
+  first play in a session the whole blob is checked once (every tag, the last flag, the length) and
+  the result is kept in memory per message, so §3's rule holds. Android plays the SHRM1 cache
+  through `SealedMediaDataSource` into ExoPlayer. The web opens the file as for §7 (a verified,
+  decrypted `Blob`), plays it from an object URL and revokes it when another file starts, the chat
+  closes or the chats lock. No platform writes decrypted audio to disk.
+- **The end of a file** rewinds it and plays the next audio file below it in the chat (either
+  sender) if it is on this device and playable; otherwise playback stops.
+- **Stops** when the conversation closes, the chats lock, the message is deleted, or a call starts.
+  iOS and Android also **pause** when the app leaves the foreground and on an audio interruption;
+  the web keeps playing in a hidden tab until the chats lock.
+- **Speed**: 1× → 1.5× → 2×, from the now-playing bar's chip, shown only for files of 10 minutes or
+  more; it holds for the session.
+
+### 11.6 Now-playing bar
+
+While an audio file is active (playing or paused part-way) and its bubble is not on screen, the
+conversation shows a bar under its header:
+
+| | iPhone / iPad | Android | Web |
+| --- | --- | --- | --- |
+| Shape | Liquid Glass capsule, 48 tall, 16 from the sides, 8 under the chat bar | card, 52 dp, radius 16, bubble-in fill, elevation 2, 16 from the sides | 44 px strip across the thread, under its head, elevated background |
+| Content | play/pause (32 accent circle), title 14 medium over `{ar} · {elapsed} / {duration}` 12 secondary, speed chip, close ✕ | same | play/pause (28), title 14/500 then the artist 13 secondary on one line, `{elapsed} / {duration}` 12, speed chip, close ✕ |
+
+A 2 pt accent progress line runs along its bottom edge. A tap on the text scrolls to the bubble;
+close stops playback. Voice notes don't get the bar. Labels: **Play**, **Pause**, **Playback speed**
+(value `1×`, `1.5×`, `2×`), **Stop**.

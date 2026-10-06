@@ -422,4 +422,24 @@ class MessageDecoderTest {
         assertTrue(own.isMine)
         assertEquals(bobId, own.peerUserId)
     }
+
+    @Test
+    fun anAudioFileKeepsItsLengthAndTagsCleanedAgain() = runTest { // docs/file-sharing.md §11.2
+        val payload = MediaMessagePayload(
+            t = "file", mime = "audio/mpeg", w = 160, h = 160, k = "a2V5", th = "qqo=", d = 243_400, s = 9_700_000,
+            n = "track01.mp3", ti = "Midnight\u202E  City", ar = "\u200BM83",
+        )
+        val dto = Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(payload), mediaObjectId = UUID.randomUUID())
+        val message = decoder().decode(dto, context())
+        assertEquals(ChatMessageKind.File, message.kind)
+        assertEquals(243_400, message.durationMs)
+        assertEquals("Midnight City", message.audioTitle)
+        assertEquals("M83", message.audioArtist)
+        assertTrue(message.previewJpeg != null)
+        assertEquals(160, message.imageWidth)
+        val zero = decoder().decode(Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(payload.copy(d = 0, ti = " ", ar = null))), context())
+        assertNull(zero.durationMs)
+        assertNull(zero.audioTitle)
+        assertNull(zero.audioArtist)
+    }
 }

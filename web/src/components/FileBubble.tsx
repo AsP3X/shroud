@@ -8,6 +8,8 @@ import {
   FileText,
   FileType,
   FileVideoCamera,
+  Info,
+  Music,
   Presentation,
   RotateCw,
   Smartphone,
@@ -16,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatBytes } from "../format";
+import { CANT_PLAY_HERE } from "../audioFiles";
 import {
   fileAccessibilityLabel,
   fileMetaLine,
@@ -43,6 +46,7 @@ const CATEGORY_ICONS: Record<FileCategory, LucideIcon> = {
   powerpoint: Presentation,
   image: FileImage,
   video: FileVideoCamera,
+  audio: Music,
   app: Smartphone,
 };
 
@@ -105,6 +109,7 @@ export function FileBubble({
   onOpen,
   onCancelDownload,
   onRetry,
+  cantPlay = false,
 }: {
   message: ChatMessage;
   className: string;
@@ -118,6 +123,11 @@ export function FileBubble({
   onCancelDownload: (id: string) => void;
   /** Sends a failed file again; absent where there is nothing to resend. */
   onRetry?: (message: ChatMessage) => void;
+  /**
+   * An audio file this browser can't play (docs/file-sharing.md §11.4): drawn as a plain file with
+   * the music glyph and **Can't play in this browser** in place of a warning.
+   */
+  cantPlay?: boolean;
 }) {
   const transfer = useTransfer(message.id);
   const onDevice = useFileOnDevice(message.id);
@@ -197,12 +207,17 @@ export function FileBubble({
             <TriangleAlert size={12} aria-hidden="true" />
             {warningLine(type.warning)}
           </span>
+        ) : cantPlay ? (
+          <span className="file-warning file-cant-play">
+            <Info size={12} aria-hidden="true" />
+            {CANT_PLAY_HERE}
+          </span>
         ) : null}
       </span>
     </>
   );
 
-  const label = fileAccessibilityLabel(name, size, pages);
+  const label = `${fileAccessibilityLabel(name, size, pages)}${cantPlay ? `, ${CANT_PLAY_HERE.toLowerCase()}` : ""}`;
   const tap = () => {
     if (notSent) onRetry?.(message);
     else if (downloading) onCancelDownload(message.id);

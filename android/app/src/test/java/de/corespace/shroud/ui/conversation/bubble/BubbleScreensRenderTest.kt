@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -22,6 +23,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.dp
 import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
 import de.corespace.shroud.core.model.ChatPeerActivity
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.ReceiptStatus
@@ -556,6 +558,64 @@ class BubbleScreensRenderTest {
                 bubble(row(file("Old.doc", mine = true, minute = 7, receipt = ReceiptStatus.Failed, sendError = "Waiting for connection…"))),
                 bubble(row(file("script.sh", mine = false, minute = 8, full = false))),
                 bubble(row(file("photo.HEIC", mine = true, minute = 9).copy(reactions = listOf(reaction(PEER, "❤️", seq = 1))))),
+            )
+        }
+    }
+
+    // ---- 12 audio files (docs/file-sharing.md §11.4, §11.6) ----
+
+    @Test
+    fun audioFiles() {
+        val cover = landscape(160, 160, quality = 70, warm = true)
+        fun song(mine: Boolean, minute: Int, full: Boolean = true, caption: String = "", name: String = "Midnight City.mp3", title: String? = "Midnight City", artist: String? = "M83", art: Boolean = true, receipt: ReceiptStatus? = null, sendError: String? = null) =
+            message(
+                caption,
+                mine = mine,
+                time = at(18, minute),
+                kind = ChatMessageKind.File,
+                mediaObjectId = UUID.randomUUID(),
+                hasFullMedia = full,
+                mediaByteCount = 9_700_000,
+                durationMs = 243_400,
+                previewJpeg = if (art) cover else null,
+                imageWidth = if (art) 160 else null,
+                imageHeight = if (art) 160 else null,
+                receipt = receipt ?: if (mine) ReceiptStatus.Read else ReceiptStatus.Sent,
+                sendError = sendError,
+            ).copy(fileName = name, audioTitle = title, audioArtist = artist)
+        val notHere = song(mine = false, minute = 1, full = false)
+        val downloading = song(mine = false, minute = 2, full = false, art = false, title = "Holocene", artist = "Bon Iver")
+        val active = song(mine = false, minute = 3)
+        val mine = song(mine = true, minute = 4, caption = "for the drive", title = null, artist = null, name = "Demo v3 (final mix).wav", art = false)
+        val failed = song(mine = true, minute = 5, receipt = ReceiptStatus.Failed, sendError = "Waiting for connection…")
+        val unplayable = song(mine = false, minute = 6, name = "Interview raw take.aiff", title = null, artist = null, art = false)
+        val longPlayer = AudioFilePlaybackCoordinator(ReadyAudioFilePlayer(durationMs = 45 * 60_000L, positionMs = 754_000), scope)
+        val podcast = song(mine = false, minute = 7, title = "Episode 112: Keys", artist = "The Crypto Hour").copy(durationMs = 45 * 60_000)
+        both("12-audio-files", setup = { sheet ->
+            val files = sheet.services.audioFiles
+            files.play(unplayable.id)
+            sheet.services.audioPlayer.failUnsupported()
+            files.play(active.id)
+            files.pause()
+            if (longPlayer.state.value.activeId == null) {
+                longPlayer.play(podcast.id)
+                longPlayer.cycleRate()
+                longPlayer.pause()
+            }
+        }) {
+            listOf(
+                bubble(row(notHere)),
+                bubble(row(downloading, transfer = MediaTransfer(MediaTransfer.Phase.Transferring, isUpload = false, fraction = 0.4, totalBytes = 9_700_000))),
+                bubble(row(active)),
+                bubble(row(mine)),
+                bubble(row(failed)),
+                bubble(row(unplayable)),
+                { _ ->
+                    val state = longPlayer.state.collectAsState()
+                    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        de.corespace.shroud.ui.conversation.NowPlayingBar(podcast, state, longPlayer, onJump = {})
+                    }
+                },
             )
         }
     }

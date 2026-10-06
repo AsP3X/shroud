@@ -112,7 +112,8 @@ final class ChatVideoPlayer {
     }
 
     /// Waits until `AVPlayerItem` has a timebase so periodic observers can attach.
-    private static func waitUntilReady(_ item: AVPlayerItem) async -> Bool {
+    /// Also `AudioFilePlayer`'s wait: false when the item failed or never got ready.
+    static func waitUntilReady(_ item: AVPlayerItem) async -> Bool {
         if item.status == .readyToPlay { return true }
         if item.status == .failed { return false }
         return await withCheckedContinuation { continuation in

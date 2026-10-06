@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 /// `scripts/gen_file_vectors.mjs`; change web/ and android/ together.
 nonisolated enum SharedFile {
     enum Category: String, Sendable, CaseIterable {
-        case text, pdf, word, excel, powerPoint, image, video, app
+        case text, pdf, word, excel, powerPoint, image, video, audio, app
     }
 
     /// The two cautions of §6, shown on the bubble and asked before a received file is opened.
@@ -117,6 +117,15 @@ nonisolated enum SharedFile {
         ("mkv", "video/x-matroska", .video, nil),
         ("avi", "video/x-msvideo", .video, nil),
         ("3gp", "video/3gpp", .video, nil),
+        ("mp3", "audio/mpeg", .audio, nil),
+        ("m4a", "audio/mp4", .audio, nil),
+        ("aac", "audio/aac", .audio, nil),
+        ("wav", "audio/wav", .audio, nil),
+        ("flac", "audio/flac", .audio, nil),
+        ("ogg", "audio/ogg", .audio, nil),
+        ("opus", "audio/ogg", .audio, nil),
+        ("aif", "audio/aiff", .audio, nil),
+        ("aiff", "audio/aiff", .audio, nil),
         ("apk", "application/vnd.android.package-archive", .app, .app),
     ]
 
@@ -158,10 +167,11 @@ nonisolated enum SharedFile {
     ]
     private static let oleTypes: Set<String> = ["doc", "dot", "xls", "xlt", "ppt", "pps", "pot"]
 
-    /// Whether the file's first bytes fit its extension; checked before any viewer gets it.
-    /// Images and videos are left to the platform decoders.
+    /// Whether the file's first bytes fit its extension; checked before any viewer or the audio
+    /// player gets it. Images and videos are left to the platform decoders.
     static func contentMatches(_ type: FileType, header: Data) -> Bool {
         let bytes = [UInt8](header.prefix(contentCheckBytes))
+        if type.category == .audio { return audioContentMatches(ext: type.ext, bytes: bytes) }
         switch type.ext {
         case "pdf":
             let window = bytes.prefix(1024)
@@ -183,9 +193,30 @@ nonisolated enum SharedFile {
         }
     }
 
+    /// §4's audio rows: an ID3 tag or a frame sync for MP3/AAC, the container's magic for the rest.
+    private static func audioContentMatches(ext: String, bytes: [UInt8]) -> Bool {
+        func ascii(_ at: Int, _ text: String) -> Bool {
+            let magic = Array(text.utf8)
+            guard bytes.count >= at + magic.count else { return false }
+            return Array(bytes[at ..< at + magic.count]) == magic
+        }
+        let id3 = ascii(0, "ID3")
+        switch ext {
+        case "mp3": return id3 || (bytes.count >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0)
+        case "aac": return id3 || (bytes.count >= 2 && bytes[0] == 0xFF && bytes[1] & 0xF6 == 0xF0)
+        case "m4a": return ascii(4, "ftyp")
+        case "wav": return ascii(0, "RIFF") && ascii(8, "WAVE")
+        case "flac": return id3 || ascii(0, "fLaC")
+        case "ogg", "opus": return ascii(0, "OggS")
+        case "aif", "aiff": return ascii(0, "FORM") && (ascii(8, "AIFF") || ascii(8, "AIFC"))
+        default: return false
+        }
+    }
+
     // MARK: - Names (§5)
 
-    private static let removed: Set<UInt32> = {
+    /// §5 step 3: code points dropped from names (and from audio tags, §11.2).
+    static let removed: Set<UInt32> = {
         var set = Set<UInt32>()
         let ranges: [ClosedRange<UInt32>] = [
             0x00 ... 0x08, 0x0E ... 0x1F, 0x7F ... 0x9F, 0xAD ... 0xAD, 0x061C ... 0x061C,
@@ -196,7 +227,8 @@ nonisolated enum SharedFile {
         return set
     }()
 
-    private static let spaces: Set<UInt32> = {
+    /// §5 step 5: spaces whose runs become one U+0020 (in names and audio tags).
+    static let spaces: Set<UInt32> = {
         var set = Set<UInt32>([0x20, 0xA0, 0x1680, 0x202F, 0x205F, 0x3000])
         set.formUnion(0x09 ... 0x0D)
         set.formUnion(0x2000 ... 0x200A)

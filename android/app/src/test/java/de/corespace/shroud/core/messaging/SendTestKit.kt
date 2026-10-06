@@ -747,6 +747,8 @@ class SendWorld(
     /** A PDF's `th` and `pg` (docs/file-sharing.md §10.1); the sources asked, in order. */
     var pdfPreview: (PdfPreviewSource) -> de.corespace.shroud.core.media.pdf.PdfEnvelopePreview? = { null }
     val pdfPreviewSources = ArrayList<PdfPreviewSource>()
+    var audioMetadata: (UUID) -> de.corespace.shroud.core.media.files.AudioFileMetadata? = { null }
+    val audioMetadataReads = ArrayList<UUID>()
     val crypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
     val peerCrypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
 
@@ -771,6 +773,10 @@ class SendWorld(
         pdfPreview = { source ->
             pdfPreviewSources += source
             pdfPreview(source)
+        },
+        audioMetadata = { id ->
+            audioMetadataReads += id
+            audioMetadata(id)
         },
     )
 

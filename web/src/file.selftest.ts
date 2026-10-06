@@ -222,7 +222,7 @@ check(sanitizeFileName("a/b\\c.pdf") === "c.pdf", "both separators");
 
 /* ---------------------------------------------------------------------------------- type table */
 
-check(FILE_EXTENSIONS.length === 45, `45 extensions, got ${FILE_EXTENSIONS.length}`);
+check(FILE_EXTENSIONS.length === 54, `54 extensions, got ${FILE_EXTENSIONS.length}`);
 const MACROS = ["doc", "dot", "docm", "dotm", "xls", "xlt", "xlsm", "xltm", "xlsb", "ppt", "pps", "pot", "pptm", "ppsm", "potm"];
 for (const ext of FILE_EXTENSIONS) {
   const type = fileTypeOf(`x.${ext}`)!;
@@ -237,6 +237,17 @@ check(fileTypeOf("Budget 2026.XLSX")?.mime === "application/vnd.openxmlformats-o
 check(fileTypeOf("Photo.JPEG")?.mime === "image/jpeg" && fileTypeOf("a.jpg")?.mime === "image/jpeg", "jpg/jpeg");
 check(fileTypeOf("clip.mov")?.mime === "video/quicktime" && fileTypeOf("a.3gp")?.mime === "video/3gpp", "videos");
 check(fileTypeOf("app.apk")?.mime === "application/vnd.android.package-archive", "apk");
+{
+  const AUDIO: [string, string][] = [
+    ["mp3", "audio/mpeg"], ["m4a", "audio/mp4"], ["aac", "audio/aac"], ["wav", "audio/wav"], ["flac", "audio/flac"],
+    ["ogg", "audio/ogg"], ["opus", "audio/ogg"], ["aif", "audio/aiff"], ["aiff", "audio/aiff"],
+  ];
+  for (const [ext, mime] of AUDIO) {
+    const type = fileTypeOf(`Song.${ext.toUpperCase()}`);
+    check(type?.category === "audio" && type.mime === mime && type.warning === null, `audio row .${ext}`);
+    check(openModeOf(type!) === "download", `.${ext} that can't play downloads like a file`);
+  }
+}
 check(fileTypeOf("old.doc")?.mime === "application/msword" && fileTypeOf("old.dot")?.mime === "application/msword", "doc");
 for (const name of ["a.svg", "a.html", "a.htm", "a.exe", "a.zip", "a.js", "archive.tar.gz", "noext", "pdf", "a.xml", "a.json"]) {
   check(fileTypeOf(name) === null, `${name} is unsupported`);
@@ -400,6 +411,163 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   const pdfMsg = messageFromMediaPayload(base, { ...payload, n: "r.pdf", pg: 7 }, null);
   check(pdfMsg.pageCount === 7 && tombstone(pdfMsg).pageCount === null, "pg reaches the message, tombstone drops it");
   check(messageFromMediaPayload(base, payload, null).pageCount === null, "no pg, no page count");
+}
+
+/* ------------------------------------------------------------------------- audio (§11, §9) */
+
+{
+  const {
+    audioAccessibilityLabel,
+    audioComposerLine,
+    audioDetailLine,
+    audioDisplayTitle,
+    audioDurationOf,
+    cleanTagText,
+    formatAudioElapsed,
+    formatAudioTotal,
+    playableMimeOf,
+  } = await import("./audioFiles");
+
+  // `== audio tags ==`, every row (tag text → cleaned, null = absent).
+  const TAGS: [string, string | null][] = [
+    ["Midnight City", "Midnight City"],
+    ["  Holocene  ", "Holocene"],
+    ["Bon  Iver", "Bon Iver"],
+    ["line\nbreak\ttab", "line break tab"],
+    ["rtl‮override", "rtloverride"],
+    ["zero​width﻿", "zerowidth"],
+    ["Beyoncé", "Beyoncé"],
+    ["   ", null],
+    ["", null],
+    ["\u0000\u0007", null],
+    ["T".repeat(199) + " x", "T".repeat(199)],
+    ["y".repeat(250), "y".repeat(200)],
+    ["🎵 emoji title", "🎵 emoji title"],
+  ];
+  check(TAGS.length === 13, "all 13 audio tag rows");
+  for (const [raw, cleaned] of TAGS) {
+    const got = cleanTagText(raw);
+    check(got === cleaned, `tag ${JSON.stringify(raw)} -> ${JSON.stringify(got)}, want ${JSON.stringify(cleaned)}`);
+    if (got) check(cleanTagText(got) === got, `cleaning ${JSON.stringify(got)} again changes nothing`);
+  }
+  check(cleanTagText(null) === null && cleanTagText(undefined) === null, "absent stays absent");
+  check([...cleanTagText("🎵".repeat(300))!].length === 200, "the tag cap counts code points");
+
+  // `== audio titles ==`, every row.
+  const TITLES: [string | null, string | null, string, string][] = [
+    ["Midnight City", "M83", "track01.mp3", "Midnight City – M83"],
+    ["Midnight City", null, "track01.mp3", "Midnight City"],
+    [null, "M83", "track01.mp3", "track01.mp3"],
+    ["  ", "  ", "Interview raw take.flac", "Interview raw take.flac"],
+    [null, null, "../x/Demo v3 (final mix).wav", "Demo v3 (final mix).wav"],
+  ];
+  for (const [ti, ar, name, want] of TITLES) {
+    const got = audioDisplayTitle(ti, ar, name);
+    check(got === want, `title ${JSON.stringify([ti, ar, name])} -> ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+  }
+
+  // `== audio durations ==`, every row: totals round, elapsed times floor.
+  const DURATIONS: [number, string, string][] = [
+    [0, "0:00", "0:00"],
+    [499, "0:00", "0:00"],
+    [500, "0:01", "0:00"],
+    [999, "0:01", "0:00"],
+    [59499, "0:59", "0:59"],
+    [59500, "1:00", "0:59"],
+    [243400, "4:03", "4:03"],
+    [3599499, "59:59", "59:59"],
+    [3599500, "1:00:00", "59:59"],
+    [3600000, "1:00:00", "1:00:00"],
+    [45296000, "12:34:56", "12:34:56"],
+  ];
+  for (const [ms, total, elapsed] of DURATIONS) {
+    check(formatAudioTotal(ms) === total, `total ${ms} ms -> ${formatAudioTotal(ms)}, want ${total}`);
+    check(formatAudioElapsed(ms) === elapsed, `elapsed ${ms} ms -> ${formatAudioElapsed(ms)}, want ${elapsed}`);
+  }
+
+  // `== audio sniff ==`, every row, through the §4 content check.
+  const SNIFF: [string, string, boolean][] = [
+    ["mp3", "494433040000", true], ["mp3", "fffb9064", true], ["mp3", "fff15080", true], ["mp3", "00000020", false],
+    ["aac", "fff15080", true], ["aac", "fff95080", true], ["aac", "fffb9064", false], ["aac", "494433", true],
+    ["m4a", "0000002066747970", true], ["m4a", "0000002066726565", false],
+    ["wav", "52494646244200005741564566", true], ["wav", "524946462442000041564920", false],
+    ["flac", "664c614300000022", true], ["flac", "4944330300", true], ["flac", "4f676753", false],
+    ["ogg", "4f67675300020000", true], ["opus", "4f67675300020000", true], ["ogg", "664c6143", false],
+    ["aiff", "464f524d0000a0c641494646", true], ["aif", "464f524d0000a0c641494643", true], ["aiff", "464f524d0000a0c64d415220", false],
+    ["mp3", "", false],
+  ];
+  check(SNIFF.length === 22, "all 22 audio sniff rows");
+  const hex = (h: string) => Uint8Array.from(h.match(/../g) ?? [], (b) => parseInt(b, 16));
+  for (const [ext, bytes, want] of SNIFF) {
+    check(contentMatches(ext, hex(bytes)) === want, `sniff ${ext} ${bytes || "(empty)"} -> ${!want}, want ${want}`);
+  }
+
+  // The detail line (§11.4) and the composer line (§11.3).
+  const MB = 2.4 * 1024 * 1024;
+  const detail = (extra: Partial<Parameters<typeof audioDetailLine>[0]>) =>
+    audioDetailLine({ name: "Midnight City.mp3", artist: "M83", durationMs: 243400, size: MB, onDevice: false, ...extra });
+  check(detail({}) === "M83 · 4:03 · 2.4 MB", "with an artist, not on this device: the size too");
+  check(detail({ onDevice: true }) === "M83 · 4:03", "with an artist, on this device");
+  check(detail({ artist: null }) === "4:03 · 2.4 MB · MP3", "without an artist");
+  check(detail({ artist: null, durationMs: null }) === "2.4 MB · MP3", "no duration drops its part");
+  check(detail({ durationMs: null, onDevice: true }) === "M83", "artist only");
+  check(detail({ elapsedMs: 61999, onDevice: true }) === "1:01 / 4:03", "the active file: elapsed / duration");
+  check(detail({ elapsedMs: 0, onDevice: true, durationMs: null }) === "0:00", "active without a duration");
+  check(detail({ artist: "  " }) === "4:03 · 2.4 MB · MP3", "a blank artist is no artist");
+  check(audioComposerLine("a.flac", "M83", 243400, MB) === "M83 · 4:03 · 2.4 MB · FLAC", "composer line");
+  check(audioComposerLine("a.flac", null, null, MB) === "2.4 MB · FLAC", "composer line, nothing read");
+  check(audioAccessibilityLabel("Midnight City", "M83", 243400) === "Audio, Midnight City, M83, 4:03", "a11y label");
+  check(audioAccessibilityLabel("song.mp3", null, null) === "Audio, song.mp3", "a11y label, nothing read");
+  check(audioDurationOf(243400.4) === 243400 && audioDurationOf(0) === null && audioDurationOf(-5) === null, "d");
+  check(audioDurationOf("4000") === null && audioDurationOf(Number.NaN) === null && audioDurationOf(0.6) === 1, "odd d");
+  check(playableMimeOf("a.opus") === 'audio/ogg; codecs="opus"' && playableMimeOf("a.m4a") === "audio/mp4", "canPlayType asks");
+  check(playableMimeOf("a.pdf") === null, "only audio files play");
+
+  // Payload: `d`, `ti`, `ar` round trip, and are cleaned again on this side.
+  const wire = JSON.stringify({
+    t: "file", n: "Midnight City.mp3", mime: "audio/mpeg", k: "a2V5", s: 9, w: 160, h: 160, th: "AAAA",
+    d: 243400, ti: "Midnight‮  City ", ar: "M83",
+  });
+  const parsed = parseMediaPayload(wire)!;
+  check(isFilePayload(parsed) && !isVoicePayload(parsed), "an audio file is a file, never a voice note");
+  check(parsed.ti === "Midnight‮  City " && parsed.ar === "M83" && parsed.d === 243400, "ti, ar and d parse");
+  const plain = parseMediaPayload(JSON.stringify({ t: "file", n: "a.mp3", mime: "audio/mpeg", k: "a2V5", s: 1, w: 0, h: 0, ti: 5 }));
+  check(plain?.ti === null && plain.ar === null, "non-string tags are dropped");
+  const { messageFromMediaPayload, previewCopy, replyRefFor } = await import("./messaging");
+  const base = {
+    id: "21111111-2222-3333-4444-555555555555",
+    senderUserId: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    createdAt: "2026-10-06T10:00:00Z",
+    isMine: false,
+    deleted: false,
+    failed: false,
+  };
+  const song = messageFromMediaPayload(base, parsed, "77777777-2222-3333-4444-555555555555");
+  check(song.kind === "file" && song.mime === "audio/mpeg", "decoded as a file");
+  check(song.audioTitle === "Midnight City" && song.audioArtist === "M83" && song.audioDurationMs === 243400, "tags cleaned again");
+  check(song.thumbnail === "AAAA", "the cover is th");
+  check(previewCopy(song) === "🎵 Midnight City – M83", "chat list: 🎵 display title");
+  check(previewCopy({ ...song, caption: "listen" }) === "listen", "a caption wins");
+  check(previewCopy({ ...song, audioTitle: null }) === "🎵 Midnight City.mp3", "no title: the name");
+  const quote = replyRefFor(song)!;
+  check(quote.kind === "audio" && quote.snippet === "Midnight City – M83", "an audio file quotes as audio, by its display title");
+  check(replyRefWire(quote).k === "audio" && replyKindLabel("audio") === "Audio", "quote label Audio");
+  check(parseReplyRef({ id: "A", u: "B", k: "audio", x: "Song – Artist" })?.kind === "audio", "k=audio parses");
+  // Tags on anything but an audio file mean nothing.
+  const pdf = messageFromMediaPayload(base, { ...parsed, n: "r.pdf" }, null);
+  check(pdf.audioTitle === null && pdf.audioDurationMs === null && replyRefFor(pdf)!.kind === "file", "no tags on a PDF");
+}
+
+/* ---------------------------------------------------------------- the audio player's views */
+
+{
+  const { audioFileView, markUnplayable, rekeyAudioFile } = await import("./voice/audioFilePlayback");
+  const idle = audioFileView("A-1");
+  check(!idle.loaded && !idle.active && !idle.unplayable && audioFileView("a-1") === idle, "an idle view is shared");
+  markUnplayable("pending:X");
+  check(audioFileView("pending:x").unplayable, "unplayable, by any case of its id");
+  rekeyAudioFile("pending:X", "B-2");
+  check(audioFileView("b-2").unplayable && !audioFileView("pending:x").unplayable, "unplayable follows a re-key");
 }
 
 console.log("file selftest ok");

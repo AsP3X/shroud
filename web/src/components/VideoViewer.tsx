@@ -9,6 +9,7 @@ import { clockLabel } from "../media/videoPlan";
 import { thumbnailUrl } from "./ImageBubble";
 import { ProgressRing } from "./ProgressRing";
 import { stopVoice } from "../voice/playback";
+import { pauseAudioFile } from "../voice/audioFilePlayback";
 import { RollingText } from "./RollingText";
 
 const SWIPE_CLOSE = 110;
@@ -51,6 +52,7 @@ export function VideoViewer({
 
   useEffect(() => {
     stopVoice();
+    pauseAudioFile();
     const previous = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
     const overflow = document.body.style.overflow;

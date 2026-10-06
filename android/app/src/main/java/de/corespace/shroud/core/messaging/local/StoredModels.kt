@@ -2,6 +2,7 @@
 
 package de.corespace.shroud.core.messaging.local
 
+import de.corespace.shroud.core.media.files.AudioTags
 import de.corespace.shroud.core.messaging.CachedConversation
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
@@ -132,6 +133,12 @@ data class StoredMessage(
     val fileSize: Long? = null,
     /** A PDF file's page count (docs/file-sharing.md §10), for the same reason; absent when unknown. */
     val filePages: Int? = null,
+    /**
+     * An audio file's cleaned title and artist tags (docs/file-sharing.md §11.2), for the same
+     * reason; its duration rides in [voiceDurationMs]. Absent for every other kind and when unknown.
+     */
+    val fileTitle: String? = null,
+    val fileArtist: String? = null,
 ) {
     override fun toString(): String = "StoredMessage(id=$id, kind=$kind, deleted=$deleted, receipt=$receipt)"
 
@@ -177,6 +184,8 @@ data class StoredMessage(
             mediaByteCount = if (kind == ChatMessageKind.File) fileSize else null,
             fileName = if (kind == ChatMessageKind.File) fileName else null,
             pageCount = if (kind == ChatMessageKind.File) filePages?.takeIf { it >= 1 } else null,
+            audioTitle = if (kind == ChatMessageKind.File) AudioTags.clean(fileTitle) else null,
+            audioArtist = if (kind == ChatMessageKind.File) AudioTags.clean(fileArtist) else null,
         )
     }
 
@@ -212,6 +221,8 @@ data class StoredMessage(
             fileName = if (message.kind == ChatMessageKind.File) message.fileName else null,
             fileSize = if (message.kind == ChatMessageKind.File) message.mediaByteCount else null,
             filePages = if (message.kind == ChatMessageKind.File) message.pageCount else null,
+            fileTitle = if (message.kind == ChatMessageKind.File) message.audioTitle else null,
+            fileArtist = if (message.kind == ChatMessageKind.File) message.audioArtist else null,
         )
 
         /** A stored waveform outside 0…255 (iOS would refuse the row) is dropped, the message kept. */

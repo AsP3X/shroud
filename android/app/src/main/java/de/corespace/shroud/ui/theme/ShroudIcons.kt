@@ -1136,6 +1136,12 @@ object ShroudIcons {
         "M210.3,56.34l-80-24A8,8,0,0,0,120,40V148.26A48,48,0,1,0,136,184V98.75l69.7,20.91A8,8,0,0,0,216,112V64A8,8,0,0,0,210.3,56.34Z")
     }
 
+    /** Phosphor `music-notes-fill`. */
+    val MusicNotesFill: ImageVector by lazy {
+        icon("MusicNotesFill", 256f, false,
+        "M212.92,17.71a7.89,7.89,0,0,0-6.86-1.46l-128,32A8,8,0,0,0,72,56V166.1A36,36,0,1,0,88,196V102.25l112-28V134.1A36,36,0,1,0,216,164V24A8,8,0,0,0,212.92,17.71Z")
+    }
+
     /** Phosphor `palette-fill`. */
     val PaletteFill: ImageVector by lazy {
         icon("PaletteFill", 256f, false,

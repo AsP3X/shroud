@@ -8,8 +8,8 @@ import Testing
 struct SharedFileTypeTests {
     @Test
     func theTableHasEveryExtensionOfTheSpec() {
-        #expect(SharedFile.supportedExtensions.count == 45)
-        #expect(Set(SharedFile.supportedExtensions).count == 45)
+        #expect(SharedFile.supportedExtensions.count == 54)
+        #expect(Set(SharedFile.supportedExtensions).count == 54)
     }
 
     @Test(arguments: [

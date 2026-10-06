@@ -7,6 +7,7 @@ import {
   type PointerEvent,
 } from "react";
 import { stopVoice } from "../voice/playback";
+import { pauseAudioFile } from "../voice/audioFilePlayback";
 import { prepareTranscription } from "../voice/transcriber";
 import {
   VOICE_LOCK_PX,
@@ -182,6 +183,7 @@ export function useVoiceRecording({
     setBud(budOnMic());
     setPhase("arming");
     stopVoice();
+    pauseAudioFile();
     // While the press still counts as a user gesture.
     prepareTranscription();
     let started: boolean;

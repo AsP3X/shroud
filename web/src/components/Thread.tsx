@@ -44,6 +44,18 @@ import {
   type FileWarning,
 } from "../files";
 import { isUnsent, type ChatMessage } from "../messaging";
+import { isAudioFileName } from "../audioFiles";
+import {
+  browserCanPlay,
+  getAudioFileState,
+  playAudioFile,
+  playWhenLoaded,
+  setAudioQueue,
+  stopAudioFile,
+  stopWaiting,
+  toggleAudioFile,
+  waitToPlay,
+} from "../voice/audioFilePlayback";
 import { rowBubble } from "../rowBubble";
 import { ReactionPicker, ReactionStrip } from "./Reactions";
 
@@ -77,7 +89,9 @@ import {
   type OpenedFile,
 } from "../media/fileTransfer";
 import { Avatar } from "./Avatar";
+import { AudioOrFileBubble } from "./AudioFileBubble";
 import { FileBubble } from "./FileBubble";
+import { NowPlayingBar } from "./NowPlayingBar";
 import { FileWarningDialog } from "./FileWarningDialog";
 import { Highlight } from "./Highlight";
 import { ImageBubble } from "./ImageBubble";
@@ -188,6 +202,7 @@ function MessageRow({
   onOpenPhoto,
   onOpenVideo,
   onOpenFile,
+  onPlayAudio,
   onRetryFile,
   onLoadImage,
   onLoadVideo,
@@ -220,6 +235,8 @@ function MessageRow({
   onOpenPhoto: (message: ChatMessage) => void;
   onOpenVideo: (message: ChatMessage) => void;
   onOpenFile: (message: ChatMessage) => void;
+  /** An audio file's play / pause (downloads first when needed, docs/file-sharing.md §11.4). */
+  onPlayAudio: (message: ChatMessage) => void;
   onRetryFile?: (message: ChatMessage) => void;
   onLoadImage: (message: ChatMessage) => Promise<LoadedImage | null>;
   onLoadVideo: (message: ChatMessage) => Promise<LoadedVideo | null>;
@@ -320,6 +337,21 @@ function MessageRow({
         onCancelDownload={cancelVideoDownload}
         quote={quote}
         footer={strip()}
+      />
+    );
+  } else if (file && isAudioFileName(message.fileName)) {
+    bubble = (
+      <AudioOrFileBubble
+        className={bubbleClass}
+        message={message}
+        query={query}
+        quote={quote}
+        meta={reacted ? null : meta}
+        footer={strip(meta)}
+        onOpen={onOpenFile}
+        onPlay={onPlayAudio}
+        onCancelDownload={cancelFileDownload}
+        onRetry={onRetryFile}
       />
     );
   } else if (file) {
@@ -1344,6 +1376,70 @@ export function Thread({
     });
   }
 
+  /* ------------------------------------------------- audio files (docs/file-sharing.md §11) */
+
+  /**
+   * An audio bubble's click: play or pause the file in the player; else play it from memory, or
+   * download it and play it when it lands — unless something else started meanwhile or the chat
+   * closed. A file that fails §4's check says so and never reaches the player.
+   */
+  function playAudio(message: ChatMessage) {
+    const type = fileTypeOf(message.fileName ?? "");
+    if (!type || message.deleted) return;
+    if (toggleAudioFile(message.id)) return;
+    const ready = peekOpenedFile(message.id);
+    if (ready) {
+      if (ready.matches) playAudioFile(message.id, ready.blob);
+      else showNotice(contentMismatchText(type.ext), 3600);
+      return;
+    }
+    const ticket = waitToPlay(message.id);
+    onLoadFile(message).then(
+      (file) => {
+        if (!file.matches) {
+          stopWaiting(message.id);
+          showNotice(contentMismatchText(type.ext), 3600);
+          return;
+        }
+        playWhenLoaded(message.id, ticket, file.blob);
+      },
+      (err) => {
+        stopWaiting(message.id);
+        fileFailed(err);
+      },
+    );
+  }
+
+  /* Read by the player when a file ends: the messages as they are then, not as they were. */
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const loadFileRef = useRef(onLoadFile);
+  loadFileRef.current = onLoadFile;
+
+  /* The end of a file plays the next audio file below it, when its bytes are already in memory
+     (this tab sent it, or it is the file last opened) and it passes §4's check; nothing is
+     downloaded unasked (docs/file-sharing.md §11.5). Leaving the chat stops playback. */
+  useEffect(() => {
+    setAudioQueue(async (afterId) => {
+      const list = messagesRef.current;
+      const at = list.findIndex((m) => m.id.toLowerCase() === afterId);
+      if (at < 0) return null;
+      const next = list.slice(at + 1).find((m) => m.kind === "file" && !m.deleted && isAudioFileName(m.fileName));
+      if (!next || !fileOnDevice(next.id) || !browserCanPlay(next.fileName ?? "")) return null;
+      if (getAudioFileState().unplayable.has(next.id.toLowerCase())) return null;
+      try {
+        const file = await loadFileRef.current(next);
+        return file.matches ? { id: next.id, blob: file.blob } : null;
+      } catch {
+        return null;
+      }
+    });
+    return () => {
+      setAudioQueue(null);
+      stopAudioFile();
+    };
+  }, []);
+
   /* Escape drops the reply, the way it closes search — but search, an open message menu or the
      delete dialog each take that Escape first. */
   const escapeTaken =
@@ -1475,6 +1571,14 @@ export function Thread({
         </div>
       ) : null}
 
+      {/* Over the top of the list, under the head (and the search field while it is open). */}
+      <NowPlayingBar
+        messages={messages}
+        scroller={scroller}
+        renderKey={`${renderStart}:${rows.length}:${query}`}
+        onShow={jumpTo}
+      />
+
       <div className="messages" ref={scroller} onScroll={onScroll}>
         <div className="messages-inner">
           {loading && messages.length === 0 ? (
@@ -1531,6 +1635,7 @@ export function Thread({
                     onOpenPhoto={(opened) => setViewing(opened.id)}
                     onOpenVideo={(opened) => setWatching(opened.id)}
                     onOpenFile={openFile}
+                    onPlayAudio={playAudio}
                     onRetryFile={onRetryFile}
                     onLoadImage={onLoadImage}
                     onLoadVideo={onLoadVideo}

@@ -38,8 +38,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import de.corespace.shroud.core.media.files.AudioFileCopy
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.model.audioDisplayTitle
+import de.corespace.shroud.core.model.isAudioFile
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.ui.components.ShroudIcon
 import de.corespace.shroud.ui.conversation.DecodedImageCache
@@ -132,7 +135,11 @@ data class ReplyQuoteContent(
                     )
                 }
                 // A file is quoted by its name (docs/file-sharing.md §1); the label "File" stands in without one.
-                ChatMessageKind.File -> {
+                // An audio file by its display title (§11.2), labelled "Audio" without one.
+                ChatMessageKind.File -> if (original.isAudioFile) {
+                    val title = original.audioDisplayTitle.trim()
+                    ReplyQuoteContent(author, title.ifEmpty { AudioFileCopy.AUDIO }, isStandIn = title.isEmpty(), thumbnail = null, symbol = ShroudIcons.MusicNotesFill)
+                } else {
                     val name = original.fileName.orEmpty()
                     ReplyQuoteContent(author, name.ifEmpty { "File" }, isStandIn = name.isEmpty(), thumbnail = null, symbol = ShroudIcons.FileFill)
                 }
@@ -152,6 +159,7 @@ data class ReplyQuoteContent(
             MessageReplyReference.Kind.Video -> ShroudIcons.Video
             MessageReplyReference.Kind.Voice -> ShroudIcons.Waveform
             MessageReplyReference.Kind.File -> ShroudIcons.FileFill
+            MessageReplyReference.Kind.Audio -> ShroudIcons.MusicNotesFill
         }
     }
 }

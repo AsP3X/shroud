@@ -194,6 +194,8 @@ internal fun ConversationContent(
         ) {
             ThreadList(vm, scroll, padding, Modifier.fillMaxSize().glassBackdropSource())
             EdgeFades(list, { headerHeight }, { composerHeight })
+            // An audio file playing while its bubble is off screen (docs/file-sharing.md §11.6).
+            NowPlayingBarHost(vm, list, top = { headerHeight }, modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth())
             HeaderHost(
                 vm = vm,
                 onBack = onBack,

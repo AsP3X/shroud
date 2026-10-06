@@ -1,4 +1,5 @@
-import { File as FileIcon, ImageIcon, Mic, Video } from "lucide-react";
+import { File as FileIcon, ImageIcon, Mic, Music, Video } from "lucide-react";
+import { audioDisplayTitle, isAudioFileName } from "../audioFiles";
 import type { ChatMessage } from "../messaging";
 import { peekImage } from "../media/images";
 import { replyKindLabel, type ReplyRef } from "../reply";
@@ -11,7 +12,7 @@ export type QuotePreview = {
   /** True when `text` is a stand-in ("Photo", "Message deleted") rather than typed words. */
   isStandIn: boolean;
   thumbnail: string | null;
-  icon: "photo" | "video" | "voice" | "file" | null;
+  icon: "photo" | "video" | "voice" | "file" | "audio" | null;
 };
 
 /**
@@ -39,7 +40,10 @@ export function resolveQuote(
           ? null
           : reference.kind === "image"
             ? "photo"
-            : reference.kind === "video" || reference.kind === "voice" || reference.kind === "file"
+            : reference.kind === "video" ||
+                reference.kind === "voice" ||
+                reference.kind === "file" ||
+                reference.kind === "audio"
               ? reference.kind
               : null,
     };
@@ -75,6 +79,16 @@ export function quoteOf(message: ChatMessage, peerName: string): QuotePreview {
       // Telegram quotes a voice note by name, not by its transcript.
       return { author, text: "Voice message", isStandIn: true, thumbnail: null, icon: "voice" };
     case "file":
+      // An audio file by its display title, with its cover (docs/file-sharing.md §11.2).
+      if (message.fileName && isAudioFileName(message.fileName)) {
+        return {
+          author,
+          text: audioDisplayTitle(message.audioTitle, message.audioArtist, message.fileName),
+          isStandIn: false,
+          thumbnail: thumbnailUrl(message),
+          icon: "audio",
+        };
+      }
       // Quoted by its name (docs/file-sharing.md §1), whatever the caption says.
       return {
         author,
@@ -109,7 +123,16 @@ export function ReplyQuote({
   variant?: "bubble" | "bar";
   onClick?: () => void;
 }) {
-  const Icon = quote.icon === "photo" ? ImageIcon : quote.icon === "video" ? Video : quote.icon === "file" ? FileIcon : Mic;
+  const Icon =
+    quote.icon === "photo"
+      ? ImageIcon
+      : quote.icon === "video"
+        ? Video
+        : quote.icon === "file"
+          ? FileIcon
+          : quote.icon === "audio"
+            ? Music
+            : Mic;
   const body = (
     <>
       {quote.thumbnail ? (

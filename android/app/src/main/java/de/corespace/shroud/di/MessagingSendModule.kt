@@ -106,6 +106,7 @@ class MessagingSendModule(container: AppContainer) : AppModule(container) {
                 is PdfPreviewSource.Cached -> container.media.pdf.envelopePreview(source.messageId)
             }
         },
+        audioMetadata = { messageId -> container.media.sealedAudioMetadata(messageId) },
     )
 }
 

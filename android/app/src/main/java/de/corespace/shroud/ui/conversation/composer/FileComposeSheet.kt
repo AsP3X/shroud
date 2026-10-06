@@ -32,6 +32,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import de.corespace.shroud.core.media.ByteCountLabel
+import de.corespace.shroud.core.media.files.AudioFileCopy
+import de.corespace.shroud.core.media.files.FileCategory
 import de.corespace.shroud.core.media.files.FileCopy
 import de.corespace.shroud.core.media.files.FileWarning
 import de.corespace.shroud.core.media.files.PickedFile
@@ -44,6 +46,8 @@ import de.corespace.shroud.ui.components.ShroudSheet
 import de.corespace.shroud.ui.components.ShroudText
 import de.corespace.shroud.ui.components.ShroudTextField
 import de.corespace.shroud.ui.components.pressable
+import de.corespace.shroud.ui.conversation.bubble.AudioCoverDisc
+import de.corespace.shroud.ui.conversation.bubble.BubbleImages
 import de.corespace.shroud.ui.conversation.bubble.FileGlyphs
 import de.corespace.shroud.ui.conversation.bubble.FileWarningLine
 import de.corespace.shroud.ui.theme.ShroudIcons
@@ -53,7 +57,7 @@ import de.corespace.shroud.ui.theme.inter
 /**
  * The file composer (docs/file-sharing.md §7): an inset sheet titled "Send File" / "Send {n} Files"
  * listing the staged files — tile, name (one line, truncated in the middle), `{size} · {TYPE}`, the
- * warning line, a Remove button — then "Files are sent as they are, without compression, and keep
+ * warning line, a Remove button; an audio file with its cover, title and artist (§11.3) — then "Files are sent as they are, without compression, and keep
  * their metadata.", the caption field ("Add a caption…") and Send.
  *
  * Human: the sheet rises with the picked files; removing the last one closes it; Send closes it and
@@ -121,24 +125,43 @@ internal fun FileComposeSheet(
     }
 }
 
-/** One staged file: tile, name, `{size} · {TYPE}`, warning, Remove. */
+/**
+ * One staged file: tile, name, `{size} · {TYPE}`, warning, Remove. An audio file (docs/file-sharing.md
+ * §11.3) gets a 44 round cover (`th`, else the accent circle with music notes), its title tag (else
+ * the name) and `{ar} · {duration} · {size} · {EXT}`, leaving out what is missing.
+ */
 @Composable
 private fun FileComposeRow(file: PickedFile, onRemove: () -> Unit) {
     val colors = ShroudTheme.colors
-    val meta = file.sizeBytes.takeIf { it > 0 }?.let { FileCopy.meta(ByteCountLabel.format(it), file.type.label) } ?: file.type.label
+    val isAudio = file.type.category == FileCategory.Audio
+    val audio = file.audio.takeIf { isAudio }
+    val size = file.sizeBytes.takeIf { it > 0 }?.let(ByteCountLabel::format)
+    val meta = if (isAudio) {
+        AudioFileCopy.composerMeta(audio?.artist, audio?.durationMs?.toLong(), size, file.type.label)
+    } else {
+        size?.let { FileCopy.meta(it, file.type.label) } ?: file.type.label
+    }
+    val title = audio?.title ?: file.name
+    val cover = remember(audio?.cover) { audio?.cover?.jpeg?.let(BubbleImages::decodeSmall) }
     Row(
         Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(colors.accent),
-            contentAlignment = Alignment.Center,
-        ) {
-            ShroudIcon(FileGlyphs.category(file.type.category), Color.White, size = 22.dp)
+        if (isAudio) {
+            AudioCoverDisc(fill = colors.accent, cover = cover) {
+                ShroudIcon(ShroudIcons.MusicNotesFill, Color.White, size = 20.dp)
+            }
+        } else {
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(colors.accent),
+                contentAlignment = Alignment.Center,
+            ) {
+                ShroudIcon(FileGlyphs.category(file.type.category), Color.White, size = 22.dp)
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            ShroudText(file.name, inter(15f, FontWeight.Medium), colors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+            ShroudText(title, inter(15f, FontWeight.Medium), colors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
             ShroudText(meta, inter(13f, tabularDigits = true), colors.textSecondary, maxLines = 1)
             file.type.warning?.let { FileWarningLine(it, onAccent = false) }
         }

@@ -262,4 +262,37 @@ class StoredModelsTest {
 
     /** Swift `UUID().uuidString`: upper case. */
     private fun uuidString(): String = UUID.randomUUID().toString().uppercase()
+
+    @Test
+    fun anAudioFileRowKeepsItsTitleArtistAndDuration() { // docs/file-sharing.md §11.2
+        val id = UUID.randomUUID()
+        val message = ChatMessage(
+            id = id,
+            peerUserId = UUID.randomUUID(),
+            senderUserId = UUID.randomUUID(),
+            text = "",
+            createdAt = Instant.parse("2026-10-06T10:00:00Z"),
+            isMine = true,
+            receipt = ReceiptStatus.Failed,
+            kind = ChatMessageKind.File,
+            mediaByteCount = 9_700_000,
+            fileName = "track01.mp3",
+            durationMs = 243_400,
+            audioTitle = "Midnight City",
+            audioArtist = "M83",
+            pendingSync = true,
+        )
+        val row = StoredMessage.from(message)
+        assertEquals("Midnight City", row.fileTitle)
+        assertEquals("M83", row.fileArtist)
+        val data = LocalStoreJson.encodeToString(StoredMessage.serializer(), row)
+        val restored = LocalStoreJson.decodeFromString(StoredMessage.serializer(), data).toChatMessage { it == id }
+        assertEquals(message.copy(hasFullMedia = true), restored)
+        // Other kinds never write the tag keys, and a row from before audio files reads without them.
+        val text = StoredMessage.from(message.copy(kind = ChatMessageKind.Text))
+        assertNull(text.fileTitle)
+        assertNull(text.fileArtist)
+        val old = LocalStoreJson.decodeFromString(StoredMessage.serializer(), data.replace("\"fileTitle\"", "\"x1\"").replace("\"fileArtist\"", "\"x2\""))
+        assertNull(old.toChatMessage { false }.audioTitle)
+    }
 }

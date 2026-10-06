@@ -4,6 +4,7 @@ import de.corespace.shroud.core.crypto.Entropy
 import de.corespace.shroud.core.crypto.SystemEntropy
 import de.corespace.shroud.core.keys.SealedLocalState
 import de.corespace.shroud.core.media.LocalMediaStore
+import de.corespace.shroud.core.media.files.AudioTags
 import de.corespace.shroud.core.messaging.HydratedMessages
 import de.corespace.shroud.core.messaging.MessagingSnapshot
 import de.corespace.shroud.core.messaging.MessagingStore
@@ -472,6 +473,12 @@ class MessagingLocalRepository(
         if (result.previewJpeg == null) payload.previewJpeg?.let { result = result.copy(previewJpeg = Bytes.adopt(it)) }
         if (result.mediaByteCount == null && payload.s != null) result = result.copy(mediaByteCount = payload.s)
         if (result.kind == ChatMessageKind.File && result.pageCount == null && payload.pg != null) result = result.copy(pageCount = payload.pg)
+        // An audio file's length and tags (docs/file-sharing.md §11.2) for rows written before they were kept.
+        if (result.kind == ChatMessageKind.File) {
+            if (result.durationMs == null) payload.d?.takeIf { it >= 1 }?.let { result = result.copy(durationMs = it) }
+            if (result.audioTitle == null) AudioTags.clean(payload.ti)?.let { result = result.copy(audioTitle = it) }
+            if (result.audioArtist == null) AudioTags.clean(payload.ar)?.let { result = result.copy(audioArtist = it) }
+        }
         if (result.kind == ChatMessageKind.Video && result.posterJpeg == null && result.previewJpeg != null) {
             result = result.copy(posterJpeg = result.previewJpeg)
         }

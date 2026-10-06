@@ -90,6 +90,7 @@ final class DeviceWipeController {
         messaging?.haltForDeviceWipe()
         calls?.clearLocalState()
         VoicePlaybackCoordinator.shared.stop()
+        AudioFilePlayer.shared.reset()
         withAnimation(Motion.standard) { phase = .running }
         Task { await run() }
     }
@@ -123,6 +124,7 @@ final class DeviceWipeController {
         messaging?.haltForDeviceWipe()
         calls?.clearLocalState()
         VoicePlaybackCoordinator.shared.stop()
+        AudioFilePlayer.shared.reset()
         inventory = wipe.inventory()
         wipe.markPending()
         for step in Step.allCases {

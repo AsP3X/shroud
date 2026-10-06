@@ -21,6 +21,7 @@ import de.corespace.shroud.core.messaging.ChatListFormatting
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.Haptic
+import de.corespace.shroud.core.model.isAudioFile
 import de.corespace.shroud.core.model.presentedKind
 import de.corespace.shroud.ui.conversation.BubbleContext
 import de.corespace.shroud.ui.conversation.MessageRowModel
@@ -135,7 +136,8 @@ private fun BubbleBody(row: MessageRowModel, context: BubbleContext, services: B
             BubbleKind.Video -> VideoMessageBubble(parts, context, services, modifier)
             BubbleKind.Voice -> VoiceMessageBubble(parts, context, services, modifier)
             BubbleKind.Todo -> TodoMessageBubble(parts, context, modifier)
-            BubbleKind.File -> FileMessageBubble(parts, context, modifier)
+            // An audio file plays in the chat (docs/file-sharing.md §11.4).
+            BubbleKind.File -> if (message.isAudioFile) AudioFileMessageBubble(parts, context, services, modifier) else FileMessageBubble(parts, context, modifier)
         }
     }
 }

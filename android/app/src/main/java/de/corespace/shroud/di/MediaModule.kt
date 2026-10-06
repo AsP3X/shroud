@@ -18,6 +18,9 @@ import de.corespace.shroud.core.media.capture.CameraXSession
 import de.corespace.shroud.core.media.capture.ShroudCameraCapture
 import de.corespace.shroud.core.media.library.MediaStorePhotoLibrary
 import de.corespace.shroud.core.media.library.PhotoLibrary
+import de.corespace.shroud.core.media.files.AudioFileMetadata
+import de.corespace.shroud.core.media.files.AudioMetadataReader
+import de.corespace.shroud.core.media.files.AudioMetadataSource
 import de.corespace.shroud.core.media.files.FileIntake
 import de.corespace.shroud.core.media.pdf.PdfFiles
 import de.corespace.shroud.core.media.share.FileSharing
@@ -95,8 +98,23 @@ class MediaModule(container: AppContainer) : AppModule(container) {
      */
     val pdf: PdfFiles by lazy { PdfFiles(container.appContext) { id -> localMedia.openReader(id) } }
 
-    /** What the file picker handed back, named, sized and checked (docs/file-sharing.md §2, §4, §5). */
-    val fileIntake: FileIntake by lazy { FileIntake(container.appContext.contentResolver) }
+    /**
+     * What the file picker handed back, named, sized and checked (docs/file-sharing.md §2, §4, §5);
+     * audio files with their duration, tags and cover (§11.2).
+     */
+    val fileIntake: FileIntake by lazy {
+        FileIntake(container.appContext.contentResolver) { uri -> audioMetadata.read(AudioMetadataSource.Picked(uri)) }
+    }
+
+    /**
+     * An audio file's duration, tags and cover for its payload (docs/file-sharing.md §11.2): from the
+     * picked document, or from the sealed copy of a queued or failed send.
+     */
+    val audioMetadata: AudioMetadataReader by lazy { AudioMetadataReader(container.appContext) }
+
+    /** [audioMetadata] of [messageId]'s sealed copy; null when it is not here or nothing could be read. */
+    suspend fun sealedAudioMetadata(messageId: UUID): AudioFileMetadata? =
+        audioMetadata.read(AudioMetadataSource.Sealed { metadataSource(messageId) })
 
     /** [sharing] when something already built it. A lock or a wipe must not construct it just to revoke. */
     val sharingIfBuilt: MediaSharing? get() = if (sharingLazy.isInitialized()) sharing else null

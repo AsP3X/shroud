@@ -9,7 +9,8 @@ import Observation
 /// single 30 Hz progress timer for the whole thread, and lets playback survive a bubble being
 /// scrolled out of view and recycled.
 /// Agent: OWNS AVAudioPlayer + AVAudioSession(.playback). READS decrypted audio bytes handed in by
-/// the bubble; never fetches or decrypts anything itself. `playedIDs` is in-memory only.
+/// the bubble; never fetches or decrypts anything itself. `playedIDs` is in-memory only. Playing a
+/// note stops `AudioFilePlayer` (shared audio files), which stops this one in turn.
 @Observable
 @MainActor
 final class VoicePlaybackCoordinator {
@@ -80,6 +81,8 @@ final class VoicePlaybackCoordinator {
     func resume() async {
         sessionGeneration += 1
         let generation = sessionGeneration
+        // One sound at a time: a voice note silences a shared audio file (file-sharing §11.5).
+        AudioFilePlayer.shared.stop()
         try? await ChatAudioSession.shared.activate(.spokenPlayback)
         guard generation == sessionGeneration, let player else { return }
         player.enableRate = true
@@ -135,6 +138,7 @@ final class VoicePlaybackCoordinator {
         let generation = sessionGeneration
         stopTicker()
         player?.stop()
+        if autoplay { AudioFilePlayer.shared.stop() }
 
         try? await ChatAudioSession.shared.activate(.spokenPlayback)
         guard generation == sessionGeneration else { return }

@@ -62,6 +62,8 @@ object ThreadMessageMerge {
                 linkPreview = prior.linkPreview ?: decoded.linkPreview,
                 fileName = prior.fileName ?: decoded.fileName,
                 pageCount = prior.pageCount ?: decoded.pageCount,
+                audioTitle = prior.audioTitle ?: decoded.audioTitle,
+                audioArtist = prior.audioArtist ?: decoded.audioArtist,
             )
         }
 
@@ -78,6 +80,8 @@ object ThreadMessageMerge {
             replyTo = decoded.replyTo ?: prior.replyTo,
             fileName = decoded.fileName ?: prior.fileName,
             pageCount = decoded.pageCount ?: prior.pageCount,
+            audioTitle = decoded.audioTitle ?: prior.audioTitle,
+            audioArtist = decoded.audioArtist ?: prior.audioArtist,
         )
         // Same for a link preview: a cache written before previews existed has none (`:74-75`).
         if (merged.linkPreview == null && merged.kind == ChatMessageKind.Text) merged = merged.copy(linkPreview = prior.linkPreview)
@@ -96,6 +100,10 @@ object ThreadMessageMerge {
             (prior.hasFullMedia || prior.mediaObjectId != null)
         ) {
             merged = merged.copy(kind = ChatMessageKind.File, text = prior.text, hasFullMedia = merged.hasFullMedia || prior.hasFullMedia)
+        }
+        // An audio file's length (§11.2) from a cache written before the decode carried it.
+        if (merged.kind == ChatMessageKind.File && merged.durationMs == null && prior.kind == ChatMessageKind.File) {
+            merged = merged.copy(durationMs = prior.durationMs)
         }
         if (!priorFailed && decodedFailed) {
             // `:82-86` (a deleted prior lands here).

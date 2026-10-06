@@ -1,3 +1,5 @@
+import { claimSound, registerSound } from "./soundFocus";
+
 const RATES = [1, 1.5, 2] as const;
 
 export type VoicePlaybackState = {
@@ -116,6 +118,7 @@ function start(id: string, data: Uint8Array, mime: string, fraction: number, aut
       emit();
       return;
     }
+    claimSound("voice");
     void el
       .play()
       .then(() => {
@@ -163,6 +166,7 @@ export function toggleVoice(id: string, data: Uint8Array, mime: string): void {
       emit();
     } else {
       audio.playbackRate = snapshot.rate;
+      claimSound("voice");
       void audio.play().then(() => {
         snapshot = { ...snapshot, playing: true };
         startTick();
@@ -233,6 +237,10 @@ export function measureVoiceDuration(data: Uint8Array, mime: string): Promise<nu
     probe.src = url;
   });
 }
+
+registerSound("voice", () => {
+  if (snapshot.activeId) stopVoice();
+});
 
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {

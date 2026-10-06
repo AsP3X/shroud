@@ -58,6 +58,8 @@ class VoicePlaybackCoordinator(
     private val tickMs: Long = TICK_MS,
     /** Monotonic clock for the position estimate; tests drive it by hand. */
     private val nanoTime: () -> Long = System::nanoTime,
+    /** Runs before a note starts or resumes playing: an audio file stops (docs/file-sharing.md §11.5, one sound at a time). */
+    private val onStarting: () -> Unit = {},
 ) {
     private val mutableState = MutableStateFlow(VoicePlaybackState())
     val state: StateFlow<VoicePlaybackState> = mutableState.asStateFlow()
@@ -150,6 +152,7 @@ class VoicePlaybackCoordinator(
     /** Resumes the active note at the sticky rate (`:80-90`). */
     fun resume() {
         if (mutableState.value.activeId == null) return
+        onStarting()
         wantsPlay = true
         update { it.copy(isPlaying = true) }
         if (!ready) return
@@ -236,6 +239,7 @@ class VoicePlaybackCoordinator(
     // ---- Internals (`:131-197`) ----
 
     private fun start(id: UUID, data: ByteArray, fraction: Double, autoplay: Boolean) {
+        if (autoplay) onStarting()
         generation++
         loadedGeneration = generation
         ready = false

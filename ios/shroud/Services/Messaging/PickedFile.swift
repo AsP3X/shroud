@@ -16,6 +16,9 @@ nonisolated struct PickedFile: Identifiable, Equatable, Sendable {
     let name: String
     let byteCount: Int64
     let type: SharedFile.FileType
+    /// An audio file's tags, duration and cover, read when it was picked (§11.2); nil for other
+    /// types and when nothing could be read within 2 s.
+    var audio: AudioFileMetadata? = nil
 
     /// Why a pick can't be sent; `message` is the toast.
     enum Refusal: Error, Equatable {
@@ -90,7 +93,7 @@ nonisolated struct PickedFile: Identifiable, Equatable, Sendable {
 /// page in the bubble's 2:1 card, with the page count (`PDFPagePreview`). Anything that can't
 /// be done quickly is sent without a preview.
 nonisolated enum FilePreview {
-    struct Thumbnail: Sendable {
+    struct Thumbnail: Equatable, Sendable {
         let jpeg: Data
         /// Pixel size of what `jpeg` shows (`w` / `h` in the payload).
         let width: Int

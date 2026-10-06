@@ -290,4 +290,28 @@ class MediaMessagePayloadTest {
         assertNull(photo.n)
         assertFalse(String(MediaMessagePayload(t = "image", mime = "image/jpeg", w = 1, h = 1, k = "a2V5").encoded()).contains("\"n\""))
     }
+
+    @Test
+    fun anAudioFileCarriesItsDurationTitleArtistAndCoverAndRoundTrips() { // docs/file-sharing.md §1, §11.2
+        val payload = MediaMessagePayload(
+            t = MediaMessagePayload.KIND_FILE, mime = "audio/mpeg", w = 160, h = 160, k = "a2V5", d = 243_400, th = "AAAA", s = 9_700_000,
+            n = "track01.mp3", ti = "Midnight City", ar = "M83",
+        )
+        val json = Json.parseToJsonElement(payload.encoded().decodeToString()).jsonObject
+        assertEquals("243400", json["d"].toString())
+        assertEquals("\"Midnight City\"", json["ti"].toString())
+        assertEquals("\"M83\"", json["ar"].toString())
+        assertEquals(payload, MediaMessagePayload.parse(payload.encoded()))
+        assertTrue(payload.isFile)
+        assertFalse("an audio file is never a voice note", payload.isVoice)
+        assertFalse("never prints the tags", payload.toString().contains("Midnight") || payload.toString().contains("M83"))
+        // Without tags the keys are left out; blank ones read as absent.
+        val bare = payload.copy(ti = null, ar = null, d = null)
+        val bareJson = Json.parseToJsonElement(bare.encoded().decodeToString()).jsonObject
+        assertFalse(bareJson.containsKey("ti") || bareJson.containsKey("ar") || bareJson.containsKey("d"))
+        val blank = parse("""{"t":"file","n":"a.mp3","k":"a2V5","s":1,"ti":"  ","ar":null,"d":"1500"}""")!!
+        assertNull(blank.ti)
+        assertNull(blank.ar)
+        assertEquals(1500, blank.d)
+    }
 }

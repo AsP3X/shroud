@@ -12,6 +12,7 @@ import de.corespace.shroud.core.media.pdf.PdfCardRender
 import de.corespace.shroud.core.messaging.MessageArtifactSinks
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.transcription.VoiceTranscription
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
 import de.corespace.shroud.core.voice.VoicePlaybackCoordinator
 import de.corespace.shroud.ui.LocalAppContainer
 import de.corespace.shroud.ui.components.Toast
@@ -64,6 +65,12 @@ interface BubbleServices {
 
     /** The app-wide voice player (one note at a time, survives scrolling). */
     val playback: VoicePlaybackCoordinator
+
+    /**
+     * The app-wide audio-file player (docs/file-sharing.md §11.5): the audio bubble's state and
+     * scrubber. Null where there is none (tests, previews): the bubble then shows its idle state.
+     */
+    val audioFiles: AudioFilePlaybackCoordinator? get() = null
 
     /** On-device transcription (unavailable until W3-TRANSCRIPTION). */
     val transcription: VoiceTranscription
@@ -160,6 +167,7 @@ private class ContainerBubbleServices(private val container: AppContainer) : Bub
     override suspend fun mediaDurationMs(messageId: UUID): Int? = container.video.pipeline.durationMs(messageId)
 
     override val playback: VoicePlaybackCoordinator get() = container.voice.playback
+    override val audioFiles: AudioFilePlaybackCoordinator get() = container.voice.audioFiles
     override val transcription: VoiceTranscription get() = container.transcription.voice
 
     override fun transcriptionHints(peerName: String): List<String> =

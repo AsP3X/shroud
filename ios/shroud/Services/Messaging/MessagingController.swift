@@ -255,6 +255,11 @@ final class MessagingController {
         var fileStored: Bool
         /// A PDF's page count from its payload (`pg`), when the sender sent one.
         var filePageCount: Int?
+        /// An audio file's title and artist tags (`ti`, `ar`), cleaned on this device
+        /// (`AudioFileText.cleanTag`). Its duration is `voiceDurationMs` (`d`), its cover
+        /// `previewData` (`th`).
+        var fileTitle: String?
+        var fileArtist: String?
 
         init(
             id: UUID,
@@ -286,7 +291,9 @@ final class MessagingController {
             reactions: [MessageReaction] = [],
             fileName: String? = nil,
             fileStored: Bool = false,
-            filePageCount: Int? = nil
+            filePageCount: Int? = nil,
+            fileTitle: String? = nil,
+            fileArtist: String? = nil
         ) {
             self.id = id
             self.peerUserID = peerUserID
@@ -318,6 +325,8 @@ final class MessagingController {
             self.fileName = fileName
             self.fileStored = fileStored
             self.filePageCount = filePageCount
+            self.fileTitle = fileTitle
+            self.fileArtist = fileArtist
         }
 
         /// A text message whose link preview carries a large image (Telegram's big layout).
@@ -351,6 +360,17 @@ final class MessagingController {
             return SharedFile.type(forName: fileName)
         }
 
+        /// A shared audio file (`docs/file-sharing.md` §11): it plays in the chat.
+        var isAudioFile: Bool {
+            fileType?.category == .audio
+        }
+
+        /// What an audio file is called in the bubble's quote, the chat list and notifications:
+        /// `{title} – {artist}`, else the title, else the file name (§11.2).
+        var audioDisplayTitle: String {
+            AudioFileText.displayTitle(title: fileTitle, artist: fileArtist, fileName: fileName ?? "")
+        }
+
         /// Poster/preview JPEG for the bubble (full image, payload thumb, or video poster).
         var displayPreviewData: Data? {
             if kind == .image, let imageData { return imageData }
@@ -376,7 +396,8 @@ final class MessagingController {
             case .image: .image
             case .video: .video
             case .voice: .voice
-            case .file: .file
+            // An audio file quotes as audio (§1), labelled "Audio" by builds that know it.
+            case .file: isAudioFile ? .audio : .file
             case .text, .todo: .text
             }
             // Media bubbles keep a stand-in label in `text` ("Photo", "Video", "Voice message");
@@ -386,7 +407,7 @@ final class MessagingController {
             case .video: (text == "Video" || text == "Media") ? "" : text
             case .voice: ""
             // A file is quoted by its name (old builds show `x` as text, the right fallback).
-            case .file: fileName ?? ""
+            case .file: isAudioFile ? audioDisplayTitle : (fileName ?? "")
             case .text, .todo: text
             }
             return MessageReplyReference(
@@ -581,6 +602,7 @@ final class MessagingController {
     /// Wipes in-memory lists and on-device message caches (plaintext, media, ratchets, peer keys).
     /// Called on sign-out so a restart never resurfaces another account’s data.
     func clearLocalData() {
+        AudioFilePlayer.shared.reset()
         FileViewerPresenter.shared.dismissAll()
         PDFCardPreviewStore.shared.removeAll()
         PDFViewerSession.forgetAll()
@@ -703,6 +725,8 @@ final class MessagingController {
         PDFViewerSession.forgetAll()
         // An open file must not stay up over the lock screen; its plaintext goes with it.
         FileViewerPresenter.shared.dismissAll()
+        // Nor may a shared audio file play on: it stops, and is checked again after the unlock.
+        AudioFilePlayer.shared.lock()
     }
 
     /// Reacts to path changes (wired from RootView / scene phase optional).
@@ -1587,7 +1611,9 @@ final class MessagingController {
                 linkPreview: message.linkPreview,
                 fileName: message.fileName,
                 fileStored: message.fileStored,
-                filePageCount: message.filePageCount
+                filePageCount: message.filePageCount,
+                fileTitle: message.fileTitle,
+                fileArtist: message.fileArtist
             )
         }
         return copy
@@ -1989,6 +2015,8 @@ final class MessagingController {
         for id in messageIDs {
             // A voice note that was playing has no player left once its bubble is a tombstone.
             VoicePlaybackCoordinator.shared.stopIfActive(id)
+            // Nor a shared audio file, whose blob goes now.
+            AudioFilePlayer.shared.forget([id])
             // Nor does an open file: its preview or share sheet closes with it.
             FileViewerPresenter.shared.dismiss(messageID: id)
             mediaHydrateTasks[id]?.cancel()
@@ -4133,10 +4161,14 @@ final class MessagingController {
                 deleted: false,
                 receipt: .sending,
                 kind: .file,
+                previewData: file.audio?.cover?.jpeg,
                 mediaByteCount: Int(clamping: file.byteCount),
+                voiceDurationMs: file.audio?.durationMs,
                 pendingSync: true,
                 replyTo: replyTo,
-                fileName: file.name
+                fileName: file.name,
+                fileTitle: file.audio?.title,
+                fileArtist: file.audio?.artist
             )
         )
         threads[peerUserID] = list
@@ -4155,6 +4187,8 @@ final class MessagingController {
                 // The payload promises `s`; a file that changed while it was read can't keep it.
                 guard sealedBytes == file.byteCount else { throw FileBlob.BlobError.unreadable }
                 try store.adopt(staging, as: optimisticID)
+                // An audio file's cover was read with its tags when it was picked (§11.2).
+                if file.type.category == .audio { return file.audio?.cover }
                 return await FilePreview.thumbnail(for: file)
             }.value
             // Sealed: the plaintext copy has done its job.
@@ -4174,12 +4208,14 @@ final class MessagingController {
             h: preview?.height ?? 0,
             k: key.withUnsafeBytes { Data($0) }.base64EncodedString(),
             c: trimmedCaption.isEmpty ? nil : trimmedCaption,
-            d: nil,
+            d: file.audio?.durationMs,
             th: preview?.jpeg.base64EncodedString(),
             s: Int(clamping: file.byteCount),
             re: replyTo,
             n: file.name,
-            pg: preview?.pageCount
+            pg: preview?.pageCount,
+            ti: file.audio?.title,
+            ar: file.audio?.artist
         )
         // Held under the bubble's id until the server keys it: the key, caption and quote a
         // retry or the outbox seal again.
@@ -4237,10 +4273,13 @@ final class MessagingController {
                             imageHeight: sent.imageHeight,
                             previewData: sent.previewData,
                             mediaByteCount: sent.mediaByteCount,
+                            voiceDurationMs: sent.voiceDurationMs,
                             replyTo: sent.replyTo,
                             fileName: sent.fileName,
                             fileStored: sent.fileStored,
-                            filePageCount: sent.filePageCount
+                            filePageCount: sent.filePageCount,
+                            fileTitle: sent.fileTitle,
+                            fileArtist: sent.fileArtist
                         )
                         notesThread.append(note)
                         notesThread.sort { $0.createdAt < $1.createdAt }
@@ -4416,11 +4455,14 @@ final class MessagingController {
             imageHeight: payload.h > 0 ? payload.h : nil,
             previewData: usedPreview,
             mediaByteCount: size,
+            voiceDurationMs: payload.audioDurationMs,
             sendError: nil,
             replyTo: payload.re,
             fileName: SharedFile.cleanName(payload.n ?? ""),
             fileStored: local.hasFileBlob(dto.id),
-            filePageCount: payload.pg
+            filePageCount: payload.pg,
+            fileTitle: AudioFileText.cleanTag(payload.ti),
+            fileArtist: AudioFileText.cleanTag(payload.ar)
         )
         if var thread = threads[peerUserID],
            let idx = thread.firstIndex(where: { $0.id == optimisticID })
@@ -4568,6 +4610,82 @@ final class MessagingController {
             }
         }
         return result
+    }
+
+    /// Why a stored audio file can't be handed to the player.
+    enum AudioPrepareFailure: Error, Equatable {
+        case notDownloaded
+        case unsupported
+        /// The first bytes don't fit the extension (§4): the player never gets it.
+        case contentMismatch(SharedFile.FileType)
+        /// The blob failed a check; it is dropped, so the next tap downloads it again.
+        case damaged
+        case unreadable
+    }
+
+    /// The player's `Source` for a stored audio file (`docs/file-sharing.md` §11.5).
+    ///
+    /// Human: The first play of a message in a session checks the whole blob first — every
+    /// tag, the last flag, the length — and its first bytes against the extension, so the
+    /// player only ever streams a blob that is known whole. The bubble's ring spins meanwhile.
+    /// Later plays skip the check (`AudioFilePlayer.isVerified`).
+    /// Agent: Never decrypts to disk; the check reads the blob once off the main actor.
+    func audioSource(for message: ChatMessage) async -> Result<AudioFilePlayer.Source, AudioPrepareFailure> {
+        guard message.kind == .file, !message.deleted, message.isAudioFile,
+              let type = message.fileType, let name = message.fileName
+        else { return .failure(.unsupported) }
+        guard local.hasFileBlob(message.id) else { return .failure(.notDownloaded) }
+
+        var payloadData = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID)
+        if payloadData.flatMap(MediaMessagePayload.parse)?.isFile != true,
+           let token = sessionController?.bearerToken,
+           let material = cryptoController?.material
+        {
+            payloadData = try? await mediaPayloadData(for: message, token: token, material: material)
+        }
+        guard let payloadData,
+              let payload = MediaMessagePayload.parse(payloadData), payload.isFile,
+              let keyData = Data(base64Encoded: payload.k), keyData.count == 32,
+              let size = payload.s, size > 0
+        else { return .failure(.unreadable) }
+
+        let key = SymmetricKey(data: keyData)
+        let blob = local.fileStore.url(for: message.id)
+        let player = AudioFilePlayer.shared
+        if !player.isVerified(message.id) {
+            beginTransfer(message.id, isUpload: false, phase: .finishing, totalBytes: size)
+            let checked: Result<Data, Error> = await Task.detached(priority: .userInitiated) {
+                Result {
+                    try FileBlob.verify(at: blob, key: key, plaintextSize: Int64(size), prefixBytes: SharedFile.contentCheckBytes)
+                }
+            }.value
+            endTransfer(message.id)
+            switch checked {
+            case let .success(prefix):
+                guard SharedFile.contentMatches(type, header: prefix) else { return .failure(.contentMismatch(type)) }
+                player.markVerified(message.id)
+            case let .failure(error):
+                guard FileOpenStaging.isDamage(error) else { return .failure(.unreadable) }
+                // As `openFile`: a blob that fails its checks is downloaded again on the next tap.
+                if !message.isMine || message.mediaObjectId != nil {
+                    local.fileStore.remove(messageIDs: [message.id])
+                    player.forget([message.id])
+                    updateMessageFile(messageID: message.id, peerID: message.peerUserID, stored: false)
+                }
+                return .failure(.damaged)
+            }
+        }
+        return .success(AudioFilePlayer.Source(
+            messageID: message.id,
+            peerUserID: message.peerUserID,
+            blob: blob,
+            key: key,
+            plaintextSize: Int64(size),
+            ext: type.ext,
+            title: message.fileTitle ?? name,
+            artist: message.fileArtist,
+            durationMs: message.voiceDurationMs
+        ))
     }
 
     /// Removes an opened file's plaintext once Quick Look, the PDF viewer or the share sheet
@@ -5137,7 +5255,9 @@ final class MessagingController {
                 linkPreview: message.linkPreview,
                 fileName: message.fileName,
                 fileStored: message.fileStored,
-                filePageCount: message.filePageCount
+                filePageCount: message.filePageCount,
+                fileTitle: message.fileTitle,
+                fileArtist: message.fileArtist
             )
         }
         return message

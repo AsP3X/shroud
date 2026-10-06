@@ -33,6 +33,7 @@ import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.core.model.needsMediaDownload
 import de.corespace.shroud.core.model.replyReference
 import de.corespace.shroud.core.net.wire.MessageReplyReference
+import de.corespace.shroud.core.voice.AudioFilePlaybackCoordinator
 import de.corespace.shroud.core.voice.VoiceRecorderException
 import de.corespace.shroud.ui.components.Toast
 import de.corespace.shroud.ui.components.ToastState
@@ -1006,7 +1007,10 @@ class ComposeController internal constructor(
     }
 
     /** A file's download (tap, or before the action it was asked for); stopping it from the ring is no failure. */
-    private fun downloadFile(message: ChatMessage, then: FileAction) {
+    private fun downloadFile(message: ChatMessage, then: FileAction) = downloadFile(message) { live -> performFileAction(live, then) }
+
+    /** A file's download, then [then] with the downloaded bubble; stopping it from the ring is no failure. */
+    private fun downloadFile(message: ChatMessage, then: (ChatMessage) -> Unit) {
         if (!mediaDownloadIds.add(message.id)) return
         services.sendScope.launch {
             try {
@@ -1019,11 +1023,56 @@ class ComposeController internal constructor(
                     return@launch
                 }
                 playHaptic(Haptic.Light)
-                performFileAction(live, then)
+                then(live)
             } finally {
                 mediaDownloadIds.remove(message.id)
                 cancelledDownloadIds.remove(message.id)
             }
+        }
+    }
+
+    /**
+     * A tap on an audio bubble (docs/file-sharing.md §11.4): the active file plays or pauses; one on
+     * this phone starts; one that is not downloads, then plays — unless something else started playing
+     * meanwhile or the chat closed; a download in flight stops. Never on the release of the hold that
+     * opened a menu.
+     */
+    private fun tapAudioFile(message: ChatMessage, audio: AudioFilePlaybackCoordinator) {
+        if (message.deleted || host.isShowingMessageMenu) return
+        val live = services.threads.value[peer]?.firstOrNull { it.id == message.id } ?: message
+        if (audio.isActive(live.id)) {
+            audio.toggle(live.id)
+            return
+        }
+        if (live.id in mediaDownloadIds) {
+            cancelDownload(live)
+            return
+        }
+        if (live.needsMediaDownload) {
+            val starts = audio.playStarts
+            downloadFile(live) { downloaded -> if (audio.playStarts == starts) playAudioFile(downloaded, audio) }
+            return
+        }
+        if (live.hasFullMedia) playAudioFile(live, audio)
+    }
+
+    /** Plays [message] once it passed §4's check in this session; a mismatch says so and never reaches the player. */
+    private fun playAudioFile(message: ChatMessage, audio: AudioFilePlaybackCoordinator) {
+        if (left) return
+        if (audio.isChecked(message.id)) {
+            audio.play(message.id)
+            return
+        }
+        val name = message.fileName ?: return
+        val starts = audio.playStarts
+        services.sendScope.launch {
+            val refusal = services.fileOpenRefusal(message.id, name)
+            if (refusal != null) {
+                fileFailure(refusal)
+                return@launch
+            }
+            audio.markChecked(message.id)
+            if (!left && audio.playStarts == starts) audio.play(message.id)
         }
     }
 
@@ -1049,8 +1098,14 @@ class ComposeController internal constructor(
     fun handleMediaTap(message: ChatMessage) {
         if (message.deleted || message.receipt == ReceiptStatus.Failed) return
         if (message.kind == ChatMessageKind.File) {
-            // Download when needed, then open — an APK only downloads (docs/file-sharing.md §6, §7).
             val type = message.fileType ?: return
+            // An audio file plays in the chat, unless this phone's player can't open it (docs/file-sharing.md §11.4).
+            val audio = services.audioFiles
+            if (type.category == FileCategory.Audio && audio != null && !audio.isUnplayable(message.id)) {
+                tapAudioFile(message, audio)
+                return
+            }
+            // Download when needed, then open — an APK only downloads (docs/file-sharing.md §6, §7).
             requestFileAction(message, if (type.canOpen) FileAction.Open else FileAction.Download)
             return
         }

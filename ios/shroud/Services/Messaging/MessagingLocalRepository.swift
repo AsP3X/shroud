@@ -109,6 +109,14 @@ final class MessagingLocalRepository {
         if message.kind == .file, message.filePageCount == nil {
             message.filePageCount = payload.pg
         }
+        // An audio file's tags and duration (§11.2), for threads saved before they were kept.
+        if message.kind == .file, message.fileTitle == nil, message.fileArtist == nil {
+            message.fileTitle = AudioFileText.cleanTag(payload.ti)
+            message.fileArtist = AudioFileText.cleanTag(payload.ar)
+        }
+        if message.kind == .file, message.voiceDurationMs == nil {
+            message.voiceDurationMs = payload.audioDurationMs
+        }
         // Video: keep a poster even when full file is already cached.
         if message.kind == .video, message.imageData == nil, let preview = message.previewData {
             message.imageData = preview

@@ -20,6 +20,7 @@ import {
 } from "./crypto/mediaPayload";
 import { clampSnippet, parseTextPayload, textWire, type ReplyRef } from "./reply";
 import { fileTypeOf, sanitizeFileName, unsupportedRefusal } from "./files";
+import { audioDisplayTitle, audioDurationOf, cleanTagText, isAudioFileName } from "./audioFiles";
 import { linkPreviewWire, type LinkPreview } from "./links";
 import { envelopeToWireB64, openMessage, sealMessage, wireB64ToEnvelope } from "./crypto/messageCrypto";
 import {
@@ -105,6 +106,13 @@ export type ChatMessage = {
   fileName?: string | null;
   /** A PDF's page count from its payload's `pg` (docs/file-sharing.md §10); null when unknown. */
   pageCount?: number | null;
+  /**
+   * An audio file's tags and length (docs/file-sharing.md §11.2): `ti` and `ar` cleaned again on
+   * this side, `d` in ms. Null on other files and when the sender couldn't read them.
+   */
+  audioTitle?: string | null;
+  audioArtist?: string | null;
+  audioDurationMs?: number | null;
   /** Optimistic bubble shown until the server hands back a real id. */
   pending?: boolean;
   /** Set on `kind === "annotation"`; null when it could not be read. */
@@ -344,10 +352,15 @@ export function messageFromMediaPayload(
   if (isFilePayload(payload)) {
     const caption = payload.c?.trim() || "";
     const fileName = sanitizeFileName(payload.n ?? "");
+    // Tags and a length only mean something on an audio file (§11.2); anywhere else they go.
+    const audio = isAudioFileName(fileName);
+    const audioTitle = audio ? cleanTagText(payload.ti) : null;
+    const audioArtist = audio ? cleanTagText(payload.ar) : null;
     return {
       ...base,
       kind: "file",
-      text: caption || fileName,
+      // What a search matches: the caption, else what the bubble calls the file.
+      text: caption || (audio ? audioDisplayTitle(audioTitle, audioArtist, fileName) : fileName),
       caption: caption || null,
       fileName,
       mediaObjectId: mediaObjectId ?? null,
@@ -358,6 +371,9 @@ export function messageFromMediaPayload(
       thumbnail: payload.th?.trim() || null,
       mediaBytes: payload.s ?? null,
       pageCount: payload.pg ?? null,
+      audioTitle,
+      audioArtist,
+      audioDurationMs: audio ? audioDurationOf(payload.d) : null,
     };
   }
   const linkPreview = payloadLinkPreview(payload);
@@ -425,6 +441,19 @@ export function messageFromMediaPayload(
   };
 }
 
+/** The chat list's and the notification's line for an audio file without a caption (§7). */
+function audioPreview(title: string | null | undefined, artist: string | null | undefined, name: string): string {
+  return `🎵 ${audioDisplayTitle(title, artist, name)}`;
+}
+
+/** A file payload's preview line, straight from the payload (the caption, else its name or 🎵 title). */
+function filePayloadPreview(payload: MediaPayload): string {
+  const caption = payload.c?.trim();
+  if (caption) return caption;
+  const name = sanitizeFileName(payload.n ?? "");
+  return isAudioFileName(name) ? audioPreview(payload.ti, payload.ar, name) : name;
+}
+
 /** What a chat row (and a notification that may show text) says about a message. */
 export function previewCopy(msg: ChatMessage): string {
   if (msg.deleted) return "Message deleted";
@@ -432,8 +461,15 @@ export function previewCopy(msg: ChatMessage): string {
   if (msg.kind === "voice") return msg.transcript?.trim() || VOICE_LABEL;
   if (msg.kind === "video") return msg.text || VIDEO_LABEL;
   if (msg.kind === "image") return msg.text || PHOTO_LABEL;
-  // The caption, else the file name (docs/file-sharing.md §7).
-  if (msg.kind === "file") return msg.caption?.trim() || msg.fileName || msg.text;
+  // The caption, else the file name; an audio file its 🎵 title (docs/file-sharing.md §7, §11.2).
+  if (msg.kind === "file") {
+    const caption = msg.caption?.trim();
+    if (caption) return caption;
+    if (msg.fileName && isAudioFileName(msg.fileName)) {
+      return audioPreview(msg.audioTitle, msg.audioArtist, msg.fileName);
+    }
+    return msg.fileName || msg.text;
+  }
   return msg.text;
 }
 
@@ -686,7 +722,7 @@ export async function hydratePreviews(
           senderUserId: dto.sender_user_id,
           text: payload
             ? isFilePayload(payload)
-              ? payload.c?.trim() || sanitizeFileName(payload.n ?? "")
+              ? filePayloadPreview(payload)
               : payloadLinkPreview(payload)
               ? payload.c?.trim() || ""
               : isVoicePayload(payload)
@@ -1086,6 +1122,19 @@ export async function sendVideo(opts: {
 /** A file already sealed as SHRF1 under its own key: what a retry uploads again, unchanged. */
 export type SealedFile = { blob: Blob; key: Uint8Array };
 
+/**
+ * What an audio file's sender read from it (docs/file-sharing.md §11.2): `d`, `ti`, `ar`, and the
+ * cover as `th` with its edge as `w`/`h`. Matches `AudioSendInfo` (media/audioSendPreview.ts).
+ */
+export type AudioSendFields = {
+  durationMs: number | null;
+  title: string | null;
+  artist: string | null;
+  thumb: Uint8Array | null;
+  width: number;
+  height: number;
+};
+
 /** What a PDF's sender read from it (docs/file-sharing.md §10.1): the `th` JPEG and its size, and `pg`. */
 export type PdfSendPreview = { thumb: Uint8Array | null; width: number; height: number; pages: number };
 
@@ -1110,6 +1159,8 @@ export async function sendFile(opts: {
    * still being read while the file uploads, so it may come as a promise.
    */
   pdf?: PdfSendPreview | Promise<PdfSendPreview | null> | null;
+  /** An audio file's §11.2 fields, read within 2 s of the pick (may still be coming). */
+  audio?: AudioSendFields | Promise<AudioSendFields | null> | null;
   /** Quote sealed with the file (first of a batch only). */
   replyTo?: ReplyRef | null;
   /** Idempotency key: the optimistic bubble's id, so a replayed send can't land twice. */
@@ -1127,21 +1178,29 @@ export async function sendFile(opts: {
   opts.onUploaded?.();
 
   const pdf = type.ext === "pdf" ? await Promise.resolve(opts.pdf ?? null).catch(() => null) : null;
-  const thumb = pdf?.thumb && pdf.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(pdf.thumb) : null;
+  const audio = type.category === "audio" ? await Promise.resolve(opts.audio ?? null).catch(() => null) : null;
+  const picture = pdf ?? audio;
+  const thumb = picture?.thumb && picture.thumb.byteLength <= MAX_THUMB_BYTES ? bytesToB64(picture.thumb) : null;
   const pages = pdf && Number.isInteger(pdf.pages) && pdf.pages >= 1 ? pdf.pages : null;
+  const durationMs = audio ? audioDurationOf(audio.durationMs) : null;
+  const title = audio ? cleanTagText(audio.title) : null;
+  const artist = audio ? cleanTagText(audio.artist) : null;
 
   const payload: MediaPayload = withReply(
     {
       t: "file",
       n: opts.name,
       mime: type.mime,
-      w: thumb ? pdf!.width : 0,
-      h: thumb ? pdf!.height : 0,
+      w: thumb ? picture!.width : 0,
+      h: thumb ? picture!.height : 0,
       k: bytesToB64(opts.sealed.key),
       s: opts.size,
       ...(caption ? { c: caption } : {}),
       ...(thumb ? { th: thumb } : {}),
       ...(pages ? { pg: pages } : {}),
+      ...(durationMs ? { d: durationMs } : {}),
+      ...(title ? { ti: title } : {}),
+      ...(artist ? { ar: artist } : {}),
     },
     opts.replyTo,
   );
@@ -1326,11 +1385,15 @@ export function isUnsent(message: ChatMessage): boolean {
 export function replyRefFor(message: ChatMessage): ReplyRef | null {
   if (message.pending || message.failed || message.deleted) return null;
   if (message.id.startsWith("pending:")) return null;
-  const kind = message.kind === "annotation" ? "text" : message.kind;
+  // An audio file quotes as `audio`, by its display title (docs/file-sharing.md §1, §11.2).
+  const audio = message.kind === "file" && isAudioFileName(message.fileName);
+  const kind = message.kind === "annotation" ? "text" : audio ? "audio" : message.kind;
   // Media bubbles keep a stand-in label in `text`; only a real caption is worth sealing.
   const snippet =
     kind === "voice"
       ? ""
+      : kind === "audio"
+        ? audioDisplayTitle(message.audioTitle, message.audioArtist, message.fileName ?? "")
       : kind === "file"
         ? message.fileName ?? ""
         : kind === "image" || kind === "video"
@@ -1358,6 +1421,9 @@ export function tombstone(message: ChatMessage): ChatMessage {
     thumbnail: null,
     fileName: null,
     pageCount: null,
+    audioTitle: null,
+    audioArtist: null,
+    audioDurationMs: null,
     mediaKey: null,
     mediaObjectId: null,
     replyTo: null,

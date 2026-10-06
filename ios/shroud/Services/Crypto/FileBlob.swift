@@ -167,6 +167,97 @@ nonisolated enum FileBlob {
         return plaintext
     }
 
+    /// Checks the whole blob — the header, the length, every tag and the last flag — without
+    /// writing anything, and RETURNS its first `prefixBytes` of plaintext (for §4's content
+    /// check), handed out only after the last tag checked.
+    ///
+    /// Agent: The audio player's gate (`docs/file-sharing.md` §11.5): it runs once per message
+    /// and session before `SegmentReader` serves ranges of the same blob to AVFoundation.
+    static func verify(at input: URL, key: SymmetricKey, plaintextSize: Int64, prefixBytes: Int) throws -> Data {
+        guard key.bitCount == 256 else { throw BlobError.invalidKey }
+        guard plaintextSize >= 0, fileSize(at: input) == sealedSize(plaintextSize) else { throw BlobError.wrongLength }
+        let reader = try FileHandle(forReadingFrom: input)
+        defer { try? reader.close() }
+        let header = try reader.read(upToCount: headerSize) ?? Data()
+        let noncePrefix = try parseHeader(header)
+        var prefix = Data()
+        try openSegments(
+            reader,
+            header: header,
+            noncePrefix: noncePrefix,
+            key: key,
+            plaintextSize: plaintextSize,
+            onProgress: nil
+        ) { plain in
+            if prefix.count < prefixBytes { prefix.append(plain.prefix(prefixBytes - prefix.count)) }
+        }
+        return prefix
+    }
+
+    /// Random access to a stored blob's plaintext, one checked segment at a time.
+    ///
+    /// Human: The audio player asks for byte ranges of a file that can be 2 GB; this opens just
+    /// the segments a range touches. Every segment is still a whole AES-GCM open with its index
+    /// and last flag in the nonce, so a byte is never handed out unchecked.
+    /// Agent: Not thread-safe — one reader per queue. Keeps the last opened segment, since
+    /// AVFoundation asks for neighbouring small ranges.
+    nonisolated final class SegmentReader {
+        let plaintextSize: Int64
+        private let handle: FileHandle
+        private let key: SymmetricKey
+        private let header: Data
+        private let noncePrefix: Data
+        private var cached: (index: Int64, plain: Data)?
+
+        init(url: URL, key: SymmetricKey, plaintextSize: Int64) throws {
+            guard key.bitCount == 256 else { throw BlobError.invalidKey }
+            guard plaintextSize >= 0, fileSize(at: url) == sealedSize(plaintextSize) else { throw BlobError.wrongLength }
+            let handle = try FileHandle(forReadingFrom: url)
+            do {
+                let header = try handle.read(upToCount: headerSize) ?? Data()
+                self.noncePrefix = try parseHeader(header)
+                self.header = header
+            } catch {
+                try? handle.close()
+                throw error
+            }
+            self.handle = handle
+            self.key = key
+            self.plaintextSize = plaintextSize
+        }
+
+        deinit {
+            try? handle.close()
+        }
+
+        /// The plaintext of segment `index`.
+        func segment(_ index: Int64) throws -> Data {
+            if let cached, cached.index == index { return cached.plain }
+            let count = segmentCount(plaintextSize)
+            guard index >= 0, index < count else { throw BlobError.unreadable }
+            let last = index == count - 1
+            let plainLength = last ? Int(plaintextSize - index * Int64(segmentSize)) : segmentSize
+            try handle.seek(toOffset: UInt64(Int64(headerSize) + index * Int64(segmentSize + tagSize)))
+            guard let chunk = try handle.read(upToCount: plainLength + tagSize), chunk.count == plainLength + tagSize else {
+                throw BlobError.unreadable
+            }
+            let plain = try openSegment(chunk, index: UInt32(index), last: last, key: key, noncePrefix: noncePrefix, header: header)
+            cached = (index, plain)
+            return plain
+        }
+
+        /// Up to `maxLength` plaintext bytes from `offset`, never crossing a segment boundary
+        /// (callers loop). Empty at or past the end.
+        func bytes(at offset: Int64, maxLength: Int) throws -> Data {
+            guard offset >= 0, offset < plaintextSize, maxLength > 0 else { return Data() }
+            let index = offset / Int64(segmentSize)
+            let plain = try segment(index)
+            let start = Int(offset - index * Int64(segmentSize))
+            let end = min(plain.count, start + maxLength)
+            return plain.subdata(in: start ..< end)
+        }
+    }
+
     /// Reads, checks and hands on every segment after the header, then refuses trailing bytes.
     private static func openSegments(
         _ reader: FileHandle,

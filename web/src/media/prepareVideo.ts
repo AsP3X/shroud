@@ -1,5 +1,7 @@
 import type { EncodedParts, VideoReply, VideoRequest } from "./videoWorker";
 import { VideoTooLongError, type VideoProbe, type VideoQuality, type VideoTrim } from "./videoPlan";
+import { isAudioFileName } from "../audioFiles";
+import { sanitizeFileName } from "../files";
 
 /**
  * The main thread's side of the video worker: what the send sheet asks about a
@@ -16,6 +18,9 @@ const TILE_EDGE = 120;
 export const VIDEO_ACCEPT = "video/*,.mov,.mp4,.m4v,.webm,.mkv";
 
 export function isVideoFile(file: File): boolean {
+  // An audio file is never a clip, whatever type the OS gives it (an .ogg as `video/ogg`): it goes
+  // to the file composer as it is (docs/file-sharing.md §11.1).
+  if (isAudioFileName(sanitizeFileName(file.name))) return false;
   return file.type.startsWith("video/") || /\.(mov|mp4|m4v|webm|mkv|3gp)$/i.test(file.name);
 }
 

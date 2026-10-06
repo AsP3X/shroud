@@ -1,6 +1,8 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Send, TriangleAlert, X } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Music, Send, TriangleAlert, X } from "lucide-react";
+import { audioComposerLine } from "../audioFiles";
 import { COMPOSER_NOTE, fileMetaLine, fileTypeOf, sanitizeFileName, warningLine } from "../files";
+import type { AudioSendInfo } from "../media/audioSendPreview";
 import { FileCategoryIcon, FileName } from "./FileBubble";
 import { Modal } from "./Modal";
 
@@ -70,6 +72,9 @@ export function FileComposer({
         {files.map((file, index) => {
           const name = sanitizeFileName(file.name);
           const type = fileTypeOf(name);
+          if (type?.category === "audio") {
+            return <AudioComposeRow key={keyOf(file)} file={file} name={name} onRemove={() => remove(index)} />;
+          }
           return (
             <li key={keyOf(file)} className="file-compose-row">
               <span className="file-tile" aria-hidden="true">
@@ -120,5 +125,64 @@ export function FileComposer({
         </button>
       </form>
     </Modal>
+  );
+}
+
+/**
+ * An audio file in the sheet (docs/file-sharing.md §11.3): a round cover (the file's art, else the
+ * accent circle with a music glyph), the title tag (else the name, cut in the middle) and
+ * `{ar} · {duration} · {size} · {EXT}`. What is read here is what the send seals (§11.2).
+ */
+function AudioComposeRow({ file, name, onRemove }: { file: File; name: string; onRemove: () => void }) {
+  const [info, setInfo] = useState<AudioSendInfo | null>(null);
+  const [cover, setCover] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void import("../media/audioSendPreview")
+      .then((m) => m.audioSendInfo(file))
+      .then((read) => {
+        if (live) setInfo(read);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [file]);
+
+  useEffect(() => {
+    if (!info?.thumb) return;
+    const url = URL.createObjectURL(new Blob([info.thumb.slice()], { type: "image/jpeg" }));
+    setCover(url);
+    return () => {
+      URL.revokeObjectURL(url);
+      setCover(null);
+    };
+  }, [info]);
+
+  return (
+    <li className="file-compose-row">
+      <span className="file-tile audio-cover" aria-hidden="true">
+        {cover ? <img className="file-thumb" src={cover} alt="" draggable={false} /> : null}
+        {cover ? null : (
+          <span className="file-glyph">
+            <Music size={20} aria-hidden="true" />
+          </span>
+        )}
+      </span>
+      <span className="file-text">
+        {info?.title ? (
+          <span className="audio-title" title={info.title}>
+            {info.title}
+          </span>
+        ) : (
+          <FileName name={name} />
+        )}
+        <span className="file-meta">{audioComposerLine(name, info?.artist, info?.durationMs, file.size)}</span>
+      </span>
+      <button className="icon-btn file-compose-remove" type="button" aria-label="Remove" title="Remove" onClick={onRemove}>
+        <X size={16} />
+      </button>
+    </li>
   );
 }

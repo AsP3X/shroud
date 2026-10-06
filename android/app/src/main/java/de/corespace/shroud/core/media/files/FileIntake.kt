@@ -6,6 +6,10 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,7 +21,9 @@ import java.io.InputStream
  * name's extension, its size as the document provider reported it ([UNKNOWN_SIZE] when it did not —
  * the send then counts while it copies), and how to read it. Nothing is copied or persisted at
  * pick time; the send streams [open] into the sealed media cache. [uri] is the picked document, so
- * an image or video can go to the photo/video compose instead. [toString] never prints the name.
+ * an image or video can go to the photo/video compose instead. [audio] is what an audio file's tags
+ * said at pick time (docs/file-sharing.md §11.2), for the composer row and the payload; null when
+ * nothing could be read. [toString] never prints the name.
  */
 class PickedFile(
     val name: String,
@@ -25,8 +31,12 @@ class PickedFile(
     val type: FileType,
     val uri: Uri? = null,
     private val descriptorOpener: (() -> ParcelFileDescriptor?)? = null,
+    val audio: AudioFileMetadata? = null,
     private val opener: () -> InputStream?,
 ) {
+    /** The same pick with [metadata] read from its tags. */
+    fun withAudio(metadata: AudioFileMetadata?): PickedFile = PickedFile(name, sizeBytes, type, uri, descriptorOpener, metadata, opener)
+
     /** A fresh stream over the file's bytes; the caller closes it. */
     fun open(): InputStream = opener() ?: throw FileNotFoundException("picked file is gone")
 
@@ -51,7 +61,12 @@ class PickedFile(
  * checked against the type table (§4) and the limits (§2); the refusals come back as the toasts'
  * sentences, one per pick, in pick order.
  */
-class FileIntake(private val resolver: ContentResolver, private val io: CoroutineDispatcher = Dispatchers.IO) {
+class FileIntake(
+    private val resolver: ContentResolver,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** An audio file's duration, tags and cover (§11.2, within 2 s); null when there are none. */
+    private val audioMetadata: suspend (Uri) -> AudioFileMetadata? = { null },
+) {
     /** The files to stage (at most [FileLimits.MAX_FILES_PER_SEND], in pick order) and what was refused. */
     data class Result(val files: List<PickedFile>, val refusals: List<String>)
 
@@ -64,8 +79,14 @@ class FileIntake(private val resolver: ContentResolver, private val io: Coroutin
         val opener: () -> InputStream?,
     )
 
-    /** Describes and checks [uris] off the main thread. */
-    suspend fun inspect(uris: List<Uri>): Result = withContext(io) { evaluate(uris.map(::describe)) }
+    /**
+     * Describes and checks [uris] off the main thread; the audio files among the accepted ones read
+     * their tags too, side by side, each within its 2 s budget (§11.2).
+     */
+    suspend fun inspect(uris: List<Uri>): Result {
+        val result = withContext(io) { evaluate(uris.map(::describe)) }
+        return withAudioMetadata(result, audioMetadata)
+    }
 
     private fun describe(uri: Uri): Candidate {
         var name: String? = null
@@ -99,6 +120,28 @@ class FileIntake(private val resolver: ContentResolver, private val io: Coroutin
     }
 
     companion object {
+        /** [result] with each accepted audio file's [AudioFileMetadata], read in parallel; the rest as they are. */
+        suspend fun withAudioMetadata(result: Result, read: suspend (Uri) -> AudioFileMetadata?): Result = coroutineScope {
+            val files = result.files.map { file ->
+                val uri = file.uri
+                if (file.type.category != FileCategory.Audio || uri == null) {
+                    CompletableDeferred(file)
+                } else {
+                    async {
+                        val metadata = try {
+                            read(uri)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            null
+                        }
+                        file.withAudio(metadata)
+                    }
+                }
+            }.awaitAll()
+            Result(files, result.refusals)
+        }
+
         /**
          * The rules of §2 and §7 over described picks, in order: an unsupported extension, an empty
          * file and one over 2 GB are each refused with their own sentence; past ten accepted files the
@@ -116,7 +159,7 @@ class FileIntake(private val resolver: ContentResolver, private val io: Coroutin
                     candidate.sizeBytes == 0L -> refusals += FileCopy.empty(name)
                     candidate.sizeBytes > FileLimits.MAX_PLAINTEXT_BYTES -> refusals += FileCopy.tooLarge(name)
                     files.size >= FileLimits.MAX_FILES_PER_SEND -> dropped = true
-                    else -> files += PickedFile(name, candidate.sizeBytes, type, candidate.uri, candidate.descriptorOpener, candidate.opener)
+                    else -> files += PickedFile(name, candidate.sizeBytes, type, candidate.uri, candidate.descriptorOpener, opener = candidate.opener)
                 }
             }
             if (dropped) refusals += FileCopy.TOO_MANY

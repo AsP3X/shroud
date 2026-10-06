@@ -91,9 +91,12 @@ import de.corespace.shroud.ui.theme.inter
  * - A failed send also gets the media footer: the error and Retry below the bubble.
  *
  * TalkBack reads one node: `File, {name}, {size}` with the warning, the state and the time.
+ *
+ * [infoLine] is a line in the secondary colour with an info glyph in place of a warning: an audio
+ * file this phone's player can't open says **Can't play on this phone** (docs/file-sharing.md §11.4).
  */
 @Composable
-internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modifier: Modifier) {
+internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modifier: Modifier, infoLine: String? = null) {
     val message = parts.message
     val colors = ShroudTheme.colors
     val isMine = message.isMine
@@ -141,6 +144,7 @@ internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modif
         time = parts.time,
         receipt = message.receipt,
         pages = pages,
+        note = infoLine,
     )
     val quoteTap = handlers.quoteTap(message)
     val rowActions = LocalMessageRowActions.current
@@ -238,6 +242,7 @@ internal fun FileMessageBubble(parts: BubbleParts, context: BubbleContext, modif
                             overflow = TextOverflow.Ellipsis,
                         )
                         type?.warning?.let { warning -> FileWarningLine(warning, isMine) }
+                        infoLine?.let { line -> FileInfoLine(line, secondary) }
                     }
                 }
                 if (caption != null) {
@@ -332,6 +337,15 @@ internal fun FileWarningLine(warning: FileWarning, onAccent: Boolean) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         ShroudIcon(ShroudIcons.WarningFill, icon, size = 12.dp)
         ShroudText(warning.bubbleLine, inter(12f, FontWeight.Medium), text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** An info glyph and [text] in [color] (12 sp): the "Can't play on this phone" of an audio file (§11.4). */
+@Composable
+internal fun FileInfoLine(text: String, color: Color) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        ShroudIcon(ShroudIcons.InfoFill, color, size = 12.dp)
+        ShroudText(text, inter(12f, FontWeight.Medium), color, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -439,6 +453,7 @@ internal object FileGlyphs {
         FileCategory.PowerPoint -> ShroudIcons.FilePptFill
         FileCategory.Image -> ShroudIcons.FileImageFill
         FileCategory.Video -> ShroudIcons.FileVideoFill
+        FileCategory.Audio -> ShroudIcons.MusicNotesFill
         FileCategory.App -> ShroudIcons.AndroidLogoFill
     }
 
@@ -508,6 +523,7 @@ object FileBubbleMath {
         time: String,
         receipt: ReceiptStatus,
         pages: Int? = null,
+        note: String? = null,
     ): String {
         val parts = mutableListOf(if (isMine) "You" else "Them")
         if (replyAuthor != null && replyText != null) parts += "Reply to $replyAuthor: $replyText"
@@ -518,6 +534,7 @@ object FileBubbleMath {
         } else {
             "File, $name" + (count?.let { ", " + FileCopy.pageCount(it) } ?: "") + (type?.warning?.accessibilitySuffix ?: "")
         }
+        if (note != null) parts += note
         if (caption != null) parts += caption
         when {
             type == null -> parts += FileCopy.UNSUPPORTED

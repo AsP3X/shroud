@@ -9,9 +9,14 @@ import UIKit
 /// name stays on one line, truncated in the middle, so the extension is always visible
 /// (`docs/file-sharing.md` §7). A PDF with a preview gets the card of §10.1 above the row: the
 /// top of its first page, sharp once the file is on this device.
+/// An audio file (§11.4) keeps this shell and swaps the tile row for `AudioFileRow` — a round
+/// cover with play/pause, title, detail line and the active file's scrubber. One AVFoundation
+/// can't play falls back to this plain row with a music glyph and "Can't play on this iPhone".
 /// Agent: Presentation, plus asking `MessagingController` (when it is in the environment) to draw
 /// a stored PDF's card. The host decides what a tap does (`onTap` = download if needed, then
-/// open). Every tap claims `MessageTapClaim`, like the photo bubble.
+/// open — or play/pause for an audio file). Every tap claims `MessageTapClaim`, like the photo
+/// bubble. Audio bubbles in the thread report whether they are on screen to `AudioFilePlayer`,
+/// which the now-playing bar reads.
 struct FileMessageBubble: View {
     let message: MessagingController.ChatMessage
     let time: String
@@ -32,6 +37,8 @@ struct FileMessageBubble: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
     @Environment(MessagingController.self) private var messaging: MessagingController?
+    /// Read only for audio files: whether this one plays here, and whether it is playing.
+    @State private var audioPlayer = AudioFilePlayer.shared
 
     static let tileSide: CGFloat = 44
     static let tileRadius: CGFloat = 12
@@ -50,6 +57,11 @@ struct FileMessageBubble: View {
     private var hasCaption: Bool { !caption.isEmpty }
     private var hasReactions: Bool { !reactions.isEmpty && !message.deleted }
     private var isPDF: Bool { type?.category == .pdf }
+    private var isAudio: Bool { type?.category == .audio }
+    /// An audio file this device's player couldn't open (§11.4 "Can't play here").
+    private var cantPlayHere: Bool { isAudio && audioPlayer.isUnplayable(message.id) }
+    /// The audio row instead of the tile row.
+    private var showsAudioRow: Bool { isAudio && !cantPlayHere }
     /// The sharp card drawn from the file, once it is on this device.
     private var localCard: PDFCardPreviewStore.Card? {
         isPDF ? PDFCardPreviewStore.shared.card(for: message.id) : nil
@@ -161,11 +173,22 @@ struct FileMessageBubble: View {
                         .layoutValue(key: LinkBubbleRole.self, value: .ideal)
                 }
 
-                fileRow
-                    .padding(.leading, 10)
-                    .padding(.trailing, 12)
-                    .padding(.top, showsCard ? 8 : (reply == nil ? 10 : 8))
-                    .layoutValue(key: LinkBubbleRole.self, value: .ideal)
+                Group {
+                    if showsAudioRow {
+                        AudioFileRow(
+                            message: message,
+                            phase: audioPhase,
+                            transfer: transfer,
+                            cover: envelopePreview
+                        )
+                    } else {
+                        fileRow
+                    }
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 12)
+                .padding(.top, showsCard ? 8 : (reply == nil ? 10 : 8))
+                .layoutValue(key: LinkBubbleRole.self, value: .ideal)
 
                 if hasCaption {
                     Text(MessageBubbleMetrics.normalizedForDisplay(caption))
@@ -212,6 +235,16 @@ struct FileMessageBubble: View {
             }
         }
         .animation(Motion.snappy, value: state)
+        .animation(Motion.snappy, value: cantPlayHere)
+        // The now-playing bar shows while the active file's bubble is off screen (§11.6).
+        .onScrollVisibilityChange(threshold: 0.2) { visible in
+            guard isAudio, isRowEmbedded else { return }
+            audioPlayer.setBubbleVisible(message.id, visible)
+        }
+        .onDisappear {
+            guard isAudio, isRowEmbedded else { return }
+            audioPlayer.setBubbleVisible(message.id, false)
+        }
         .task(id: cardRequestKey) {
             guard isPDF, message.fileStored, !message.deleted else { return }
             messaging?.requestPDFCard(for: message, pixelWidth: cardPixelWidth)
@@ -240,7 +273,17 @@ struct FileMessageBubble: View {
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(secondaryText)
                     .lineLimit(1)
-                if let warning = type?.warning {
+                if cantPlayHere {
+                    // In the warning's place, in the secondary colour: a fact, not a caution.
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(Self.cantPlayLine)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(secondaryText)
+                } else if let warning = type?.warning {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 10, weight: .semibold))
@@ -254,6 +297,21 @@ struct FileMessageBubble: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// The audio row's state, from the tile's.
+    private var audioPhase: AudioFileRow.Phase {
+        switch state {
+        case .transferring: .transferring
+        case .failed: .failed
+        case .notOnDevice: .notOnDevice
+        case .onDevice, .unsupported: .onDevice
+        }
+    }
+
+    /// "Can't play on this iPhone" / "… iPad" (§11.4).
+    static var cantPlayLine: String {
+        UIDevice.current.userInterfaceIdiom == .pad ? "Can't play on this iPad" : "Can't play on this iPhone"
     }
 
     private var metaLine: String {
@@ -339,6 +397,7 @@ struct FileMessageBubble: View {
         case .powerPoint: "play.rectangle.on.rectangle.fill"
         case .image: "photo.fill"
         case .video: "video.fill"
+        case .audio: "music.note"
         case .app: "shippingbox.fill"
         case nil: "doc.fill"
         }
@@ -422,8 +481,15 @@ struct FileMessageBubble: View {
         }
     }
 
-    /// `File, {name}, {size}` plus the warning (§7).
+    /// `File, {name}, {size}` plus the warning (§7); `Audio, {title}, {artist}, {duration}` for
+    /// an audio file that plays here (§11.4).
     private var accessibilityLabel: String {
+        if showsAudioRow {
+            var parts = ["Audio", message.fileTitle ?? name]
+            if let artist = message.fileArtist { parts.append(artist) }
+            if let ms = message.voiceDurationMs, ms > 0 { parts.append(AudioFileText.totalLabel(ms: ms)) }
+            return parts.joined(separator: ", ")
+        }
         var parts = ["File", name]
         if let pageCount {
             parts.append(SharedFile.pageCountLabel(pageCount))
@@ -431,7 +497,9 @@ struct FileMessageBubble: View {
         if let bytes = message.mediaByteCount, bytes > 0 {
             parts.append(MediaCrypto.byteCountLabel(bytes))
         }
-        if let warning = type?.warning {
+        if cantPlayHere {
+            parts.append(Self.cantPlayLine)
+        } else if let warning = type?.warning {
             parts.append(warning.spokenSuffix)
         }
         return parts.joined(separator: ", ")
@@ -458,7 +526,9 @@ struct FileMessageBubble: View {
         case .notOnDevice:
             parts.append("Not downloaded")
         case .onDevice:
-            break
+            if showsAudioRow, audioPlayer.isActive(message.id) {
+                parts.append(audioPlayer.isPlaying ? "Playing" : "Paused")
+            }
         }
         if hasReactions, let summary = reactions.spokenSummary { parts.append(summary) }
         parts.append(time)
@@ -509,8 +579,9 @@ private struct PDFPreviewCard: View {
     }
 }
 
-/// The tile's progress ring: fills with the transfer, sweeps while there is no number.
-private struct FileTransferRing: View {
+/// The tile's (and the audio cover's) progress ring: fills with the transfer, sweeps while there
+/// is no number.
+struct FileTransferRing: View {
     let transfer: MessagingController.MediaTransfer
     let reduceMotion: Bool
 

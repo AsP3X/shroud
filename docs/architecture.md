@@ -65,7 +65,7 @@ envelope. What the two clients agree on *inside* that envelope:
 | Text with link preview | `{"t":"text","c":<body>,"lp":{…}}` (plus `re` when it is also a reply) | iOS `MessageTextPayload` (read by `web/src/reply.ts`) |
 | Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (read by `web/src/crypto/mediaPayload.ts`) |
 | Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
-| File | `MediaMessagePayload` with `t:"file"`, the cleaned name `n`, size `s` and the key of an SHRF1 blob; read before any MIME sniffing | [file-sharing.md](./file-sharing.md) |
+| File | `MediaMessagePayload` with `t:"file"`, the cleaned name `n`, size `s` and the key of an SHRF1 blob; read before any MIME sniffing. Audio files add `d`, `ti`, `ar` and cover art (§11) | [file-sharing.md](./file-sharing.md) |
 | Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
 | Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>, …]}` (the person's whole set, oldest first), always a tagged v2 envelope | `MessageReaction.swift` / `web/src/reactions.ts` |
 

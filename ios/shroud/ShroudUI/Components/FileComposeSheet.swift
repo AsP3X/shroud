@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 /// The file composer: what is about to go out, a caption, and Send (`docs/file-sharing.md` §7).
 ///
 /// Human: Files go out exactly as they are, so the sheet says so — no compression, metadata
 /// kept. Each row has the same tile, name and meta line as the bubble it will become, and the
-/// same warning, so an APK or a macro file is flagged before it is sent too.
+/// same warning, so an APK or a macro file is flagged before it is sent too. An audio file shows
+/// its round cover, title and `{artist} · {duration} · {size} · {EXT}` (§11.3).
 /// Agent: Pure presentation over `files`; the host owns the copies in `tmp/` and removes them
 /// (`onRemove`, `onCancel`, the sheet's dismissal).
 struct FileComposeSheet: View {
@@ -54,8 +56,30 @@ struct FileComposeSheet: View {
         .presentationBackground(Theme.background)
     }
 
-    private func row(_ file: PickedFile) -> some View {
-        HStack(spacing: 12) {
+    private func isAudio(_ file: PickedFile) -> Bool {
+        file.type.category == .audio
+    }
+
+    /// The tile, or for an audio file the round cover of §11.3 (its art, else the accent circle
+    /// with a music glyph).
+    @ViewBuilder
+    private func tile(_ file: PickedFile) -> some View {
+        if isAudio(file) {
+            ZStack {
+                Circle().fill(Theme.accent)
+                if let jpeg = file.audio?.cover?.jpeg, let cover = UIImage(data: jpeg) {
+                    Image(uiImage: cover)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: FileMessageBubble.symbol(for: .audio))
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                }
+            }
+            .frame(width: FileMessageBubble.tileSide, height: FileMessageBubble.tileSide)
+            .clipShape(Circle())
+        } else {
             ZStack {
                 RoundedRectangle(cornerRadius: FileMessageBubble.tileRadius, style: .continuous)
                     .fill(Theme.accent)
@@ -64,15 +88,37 @@ struct FileComposeSheet: View {
                     .foregroundStyle(Color.white)
             }
             .frame(width: FileMessageBubble.tileSide, height: FileMessageBubble.tileSide)
-            .accessibilityHidden(true)
+        }
+    }
+
+    /// `ti`, else the name.
+    private func title(_ file: PickedFile) -> String {
+        file.audio?.title ?? file.name
+    }
+
+    /// `{size} · {TYPE}`; an audio file's `{ar} · {duration} · {size} · {EXT}` without the
+    /// missing parts (§11.3).
+    private func meta(_ file: PickedFile) -> String {
+        guard isAudio(file) else { return SharedFile.metaLine(byteCount: file.byteCount, type: file.type) }
+        var parts: [String] = []
+        if let artist = file.audio?.artist { parts.append(artist) }
+        if let ms = file.audio?.durationMs { parts.append(AudioFileText.totalLabel(ms: ms)) }
+        parts.append(SharedFile.metaLine(byteCount: file.byteCount, type: file.type))
+        return parts.joined(separator: " · ")
+    }
+
+    private func row(_ file: PickedFile) -> some View {
+        HStack(spacing: 12) {
+            tile(file)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(file.name)
+                Text(title(file))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(SharedFile.metaLine(byteCount: file.byteCount, type: file.type))
+                Text(meta(file))
                     .font(.system(size: 13).monospacedDigit())
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
