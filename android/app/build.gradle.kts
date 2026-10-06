@@ -1,5 +1,6 @@
 import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.FilterConfiguration
+import com.android.build.api.variant.VariantOutput
 import com.android.build.api.variant.VariantOutputConfiguration
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.result.ResolvedComponentResult
@@ -446,35 +447,42 @@ androidComponents {
                     VariantOutputConfiguration.OutputType.SINGLE -> Unit
                 }
             }
-            "release" -> variant.outputs.forEach { output ->
-                when (output.outputType) {
-                    VariantOutputConfiguration.OutputType.UNIVERSAL -> {
-                        // AGP stamps this output's version into the main manifest, then a
-                        // one-ABI split copies that manifest. The phone offset keeps that
-                        // APK installable. A second ABI differs and is stamped on its own.
-                        val abi = shroudAbis.first()
-                        val offset = abiSplitVersionOffset.getValue(abi)
-                        output.versionCode.set(offset * 1000 + baseVersionCode)
-                        output.enabled.set(false)
-                    }
-                    VariantOutputConfiguration.OutputType.ONE_OF_MANY -> {
-                        val abi = output.filters
-                            .find { it.filterType == FilterConfiguration.FilterType.ABI }
-                            ?.identifier
-                        val offset = abiSplitVersionOffset[abi]
-                            ?: throw GradleException("release split has no ABI version code: $abi")
-                        output.versionCode.set(offset * 1000 + baseVersionCode)
-                    }
-                    VariantOutputConfiguration.OutputType.SINGLE -> {
-                        // One selected CPU can come out as a single APK instead of a split.
-                        if (shroudAbis.size != 1) {
-                            throw GradleException("release produced one APK; ABI splits did not apply")
+            "release" -> {
+                fun splitVersionCode(abi: String?): Int {
+                    val offset = abiSplitVersionOffset[abi]
+                        ?: throw GradleException("release split has no ABI version code: $abi")
+                    return offset * 1000 + baseVersionCode
+                }
+                fun splitAbi(output: VariantOutput): String? = output.filters
+                    .find { it.filterType == FilterConfiguration.FilterType.ABI }
+                    ?.identifier
+                // AGP 9.4 writes the universal output's version into the main manifest. Building the
+                // split manifests, it treats the first enabled split as the main one and hands it that
+                // manifest unchanged; only the other splits get their own version stamped in. So the
+                // universal output carries the first split's version. With arm64's, the x86_64 APK
+                // (first in a two-CPU build) shipped arm64's code.
+                val firstSplitAbi = variant.outputs
+                    .firstOrNull { it.outputType == VariantOutputConfiguration.OutputType.ONE_OF_MANY }
+                    ?.let(::splitAbi)
+                variant.outputs.forEach { output ->
+                    when (output.outputType) {
+                        VariantOutputConfiguration.OutputType.UNIVERSAL -> {
+                            if (firstSplitAbi != null) {
+                                output.versionCode.set(splitVersionCode(firstSplitAbi))
+                            }
+                            output.enabled.set(false)
                         }
-                        val abi = shroudAbis.single()
-                        val offset = abiSplitVersionOffset[abi]
-                            ?: throw GradleException("release split has no ABI version code: $abi")
-                        output.versionCode.set(offset * 1000 + baseVersionCode)
-                        output.outputFileName.set("app-$abi-release.apk")
+                        VariantOutputConfiguration.OutputType.ONE_OF_MANY ->
+                            output.versionCode.set(splitVersionCode(splitAbi(output)))
+                        VariantOutputConfiguration.OutputType.SINGLE -> {
+                            // One selected CPU can come out as a single APK instead of a split.
+                            if (shroudAbis.size != 1) {
+                                throw GradleException("release produced one APK; ABI splits did not apply")
+                            }
+                            val abi = shroudAbis.single()
+                            output.versionCode.set(splitVersionCode(abi))
+                            output.outputFileName.set("app-$abi-release.apk")
+                        }
                     }
                 }
             }
