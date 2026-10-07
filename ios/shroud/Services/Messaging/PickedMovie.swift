@@ -3,12 +3,17 @@ import Foundation
 import UIKit
 import UniformTypeIdentifiers
 
-/// A movie file copied into a temp location from the photo library / Files.
+/// A movie to compose: a copy in a temp location (photo library, camera), or a video picked in
+/// Files, read where it is.
 ///
-/// Human: PhotosPicker hands us a security-scoped source; we copy once so export can run
-/// after the picker dismisses without losing access.
+/// Human: PhotosPicker hands us a file that is gone once its closure returns, so we copy once
+/// so export can run after the picker dismisses. A video picked in Files stays where it is, its
+/// security scope held until `cleanup()`, so a large clip opens without a copy.
+/// Agent: `cleanup()` deletes `url` only when `access` is nil (our copy), never the original.
 struct PickedMovie: Transferable, Sendable {
     let url: URL
+    /// The document picker's scope on an original in Files; nil for a copy of our own.
+    var access: ScopedAccess? = nil
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { movie in
@@ -31,9 +36,20 @@ struct PickedMovie: Transferable, Sendable {
         }
     }
 
-    /// Best-effort cleanup after send (or cancel).
+    /// Makes sure an original from Files is on disk: a file provider may have evicted it since it
+    /// was picked. True for a copy of our own. Blocking: run it off the main actor.
+    nonisolated func ensureOnDisk() -> Bool {
+        guard access != nil else { return true }
+        return (try? PickedFile.coordinatedRead(url) { _ in true }) ?? false
+    }
+
+    /// Best-effort cleanup after send (or cancel): deletes our copy, or lets go of the original.
     func cleanup() {
-        try? FileManager.default.removeItem(at: url)
+        if let access {
+            access.release()
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 

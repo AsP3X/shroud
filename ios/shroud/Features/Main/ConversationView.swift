@@ -66,7 +66,7 @@ struct ConversationView: View {
     @State private var showCamera = false
     /// The document picker behind the attach sheet's File row.
     @State private var showFileImporter = false
-    /// Files copied in from the picker, waiting in the file composer (plaintext in `tmp/`).
+    /// Files from the document picker, read where they are, waiting in the file composer.
     /// The sheet's item: it hands the files to the sheet itself. A separate list read from the
     /// `isPresented` sheet's closure came through empty ("Sending 0 Files"), and Send sent nothing.
     @State private var stagedFiles: StagedFiles?
@@ -312,7 +312,7 @@ struct ConversationView: View {
                     },
                     onCancel: discardStagedFiles,
                     onSend: { caption in
-                        // Handed to the sends: closing the sheet must not delete them.
+                        // Handed to the sends: closing the sheet must not let go of them.
                         let files = staged.files
                         stagedFiles = nil
                         let reference = outgoingReplyReference
@@ -1949,6 +1949,11 @@ struct ConversationView: View {
 
         var firstError: String?
         for (index, plan) in plans.enumerated() {
+            // A clip picked in Files is read where it is; its provider may have evicted it while
+            // it was being composed.
+            if let movie = movies.first(where: { $0.url == plan.sourceURL }) {
+                _ = await Task.detached(priority: .userInitiated) { movie.ensureOnDisk() }.value
+            }
             // The quote goes on the first clip only, as the caption does.
             let error = await messaging.sendVideo(
                 plan,
@@ -2602,20 +2607,22 @@ struct ConversationView: View {
         let warning: SharedFile.Warning
     }
 
-    /// The document picker's picks: checked, copied in, then the photo and video compose for the
-    /// images and videos Shroud can show in the chat, and the file composer for the rest.
+    /// The document picker's picks: checked and kept where they are, then the photo and video
+    /// compose for the images and videos Shroud can show in the chat, and the file composer for
+    /// the rest.
     ///
     /// Human: One toast per pick, for the first file that can't go (or for an eleventh one);
     /// the rest still reach the composer. A photo or video picked as a file goes out like one
     /// from the library (compressed, metadata scrubbed), so it shows in the chat; only one the
-    /// photo or video pipeline can't decode (a TIFF it can't read, an MKV) stays a file.
+    /// photo or video pipeline can't decode (a TIFF it can't read, an MKV) stays a file. Nothing
+    /// is copied, so a large file reaches its composer as quickly as a small one.
     private func loadPickedFiles(_ result: Result<[URL], any Error>) async {
         guard case let .success(urls) = result, !urls.isEmpty else { return }
         var refusal = urls.count > SharedFile.maxFilesPerSend ? SharedFile.tooManyRefusal : nil
         let kept = Array(urls.prefix(SharedFile.maxFilesPerSend))
-        // Copying can mean a provider download; never on the main actor.
+        // Reads only metadata, but a provider may still be slow to answer; never on the main actor.
         let outcomes = await Task.detached(priority: .userInitiated) {
-            kept.map(PickedFile.copyIn)
+            kept.map(PickedFile.open)
         }.value
 
         var picked: [PickedFile] = []
@@ -2635,8 +2642,14 @@ struct ConversationView: View {
 
         // An audio file's tags, duration and cover, read now so the composer shows them (§11.3);
         // each read gives up after 2 s.
+        // A coordinated read first, so a file provider has each song on disk; one after another,
+        // as each one blocks its thread while it waits.
+        let audio = picked.filter { $0.type.category == .audio }
+        let audioOnDisk = await Task.detached(priority: .userInitiated) {
+            audio.filter { file in (try? file.read { _ in true }) ?? false }
+        }.value
         let audioTags = await withTaskGroup(of: (UUID, AudioFileMetadata?).self) { group in
-            for file in picked where file.type.category == .audio {
+            for file in audioOnDisk {
                 group.addTask { (file.id, await AudioFileMetadata.read(url: file.url)) }
             }
             var tags: [UUID: AudioFileMetadata] = [:]
@@ -2654,7 +2667,7 @@ struct ConversationView: View {
             case .image:
                 // Read and decoded off the main actor, as the library path does.
                 let decoded = await Task.detached(priority: .userInitiated) { () -> (Data, UIImage)? in
-                    guard let data = try? Data(contentsOf: file.url),
+                    guard let data = try? file.read({ try Data(contentsOf: $0) }),
                           let preview = MediaCrypto.previewImage(from: data, maxEdge: 2048)
                     else { return nil }
                     return (data, preview)
@@ -2666,10 +2679,15 @@ struct ConversationView: View {
                     files.append(file)
                 }
             case .video:
-                // The clip keeps the copy in `tmp/`; the video compose removes it.
-                if let probe = await VideoMedia.probe(url: file.url) {
+                // A coordinated read first, so a file provider has the clip on disk before
+                // AVFoundation opens it; the clip then keeps the scope until the compose is done.
+                let onDisk = await Task.detached(priority: .userInitiated) {
+                    (try? file.read { _ in true }) ?? false
+                }.value
+                if onDisk, let probe = await VideoMedia.probe(url: file.url) {
                     let poster = await VideoMedia.posterImage(url: file.url)
-                    videos.append(PickedVideo(movie: PickedMovie(url: file.url), probe: probe, poster: poster))
+                    let movie = PickedMovie(url: file.url, access: file.access)
+                    videos.append(PickedVideo(movie: movie, probe: probe, poster: poster))
                 } else {
                     files.append(file)
                 }
@@ -2711,7 +2729,7 @@ struct ConversationView: View {
         )
     }
 
-    /// The composer closed without sending: its copies go.
+    /// The composer closed without sending: it lets go of the picked files.
     private func discardStagedFiles() {
         stagedFiles?.files.forEach { $0.cleanup() }
         stagedFiles = nil

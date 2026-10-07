@@ -178,7 +178,10 @@ offers **Save to Downloads** and **Share**, not **Open**.
 ### Attach
 
 - iOS / iPadOS: the attach sheet's **File** row opens the document picker (`.fileImporter`,
-  multiple, the §4 types as `UTType`s, copied in with security-scoped access).
+  multiple, the §4 types as `UTType`s). Nothing is copied at pick time: the picked files stay where
+  they are, their security scope held until they are sealed (read under `NSFileCoordinator`, so a
+  file provider downloads one then) or the composer drops them, so a 2 GB file opens its composer as
+  fast as a small one.
 - Android: the attach sheet's **File** option opens `ACTION_OPEN_DOCUMENT` with the §4 MIME types,
   multiple.
 - Web: the paperclip button (**Attach a file**) opens a file input whose `accept` lists the §4

@@ -4129,8 +4129,9 @@ final class MessagingController {
     /// SHRF1 one 64 KiB segment at a time, so a 2 GB file never sits in memory. The sealed blob
     /// is kept (`LocalFileStore`) and its payload (key, caption, quote) is cached under the
     /// bubble's id, so a failed or offline send retries with the very same bytes.
-    /// Agent: Deletes `file.url` (the plaintext copy) once it is sealed. RETURNS a user-facing
-    /// error or nil.
+    /// Agent: Reads the user's original in place (`PickedFile.read`) and closes its scope once it
+    /// is sealed; `s` is the size actually sealed, not the one the picker reported. RETURNS a
+    /// user-facing error or nil.
     func sendFile(
         _ file: PickedFile,
         to peerUserID: UUID,
@@ -4178,25 +4179,38 @@ final class MessagingController {
         let store = local.fileStore
         let key = FileBlob.makeKey()
         let onProgress = progressSink(for: optimisticID)
+        let sealedBytes: Int64
         let preview: FilePreview.Thumbnail?
         do {
-            preview = try await Task.detached(priority: .userInitiated) {
+            (sealedBytes, preview) = try await Task.detached(priority: .userInitiated) {
                 let staging = store.makeStagingURL()
                 defer { try? FileManager.default.removeItem(at: staging) }
-                let sealedBytes = try FileBlob.seal(from: file.url, to: staging, key: key, onProgress: onProgress)
-                // The payload promises `s`; a file that changed while it was read can't keep it.
-                guard sealedBytes == file.byteCount else { throw FileBlob.BlobError.unreadable }
+                // The original is read where it is, under a coordinated read: a file provider
+                // downloads it first, so only here is its size known for sure.
+                let sealedBytes = try file.read { readable -> Int64 in
+                    let size = FileBlob.fileSize(at: readable)
+                    let sealedBytes = try FileBlob.seal(from: readable, to: staging, key: key, onProgress: onProgress)
+                    // The payload promises `s`; a file that changed while it was read can't keep it.
+                    guard sealedBytes == size else { throw FileBlob.BlobError.unreadable }
+                    return sealedBytes
+                }
+                guard sealedBytes > 0, sealedBytes <= SharedFile.maxPlaintextBytes else {
+                    throw FileBlob.BlobError.unreadable
+                }
                 try store.adopt(staging, as: optimisticID)
                 // An audio file's cover was read with its tags when it was picked (§11.2).
-                if file.type.category == .audio { return file.audio?.cover }
-                return await FilePreview.thumbnail(for: file)
+                if file.type.category == .audio { return (sealedBytes, file.audio?.cover) }
+                return (sealedBytes, await FilePreview.thumbnail(for: file))
             }.value
-            // Sealed: the plaintext copy has done its job.
+            // Sealed: the picked bytes have done their job.
             file.cleanup()
         } catch {
             file.cleanup()
             store.remove(messageIDs: [optimisticID])
-            let message = "Could not prepare that file."
+            // The provider couldn't hand the file over (an iCloud file while offline, say).
+            let message = (error as? PickedFile.ReadError) == .unavailable
+                ? PickedFile.Refusal.unreadable(file.name).message
+                : "Could not prepare that file."
             markFileFailed(optimisticID: optimisticID, peerUserID: peerUserID, error: message)
             return message
         }
@@ -4210,7 +4224,7 @@ final class MessagingController {
             c: trimmedCaption.isEmpty ? nil : trimmedCaption,
             d: file.audio?.durationMs,
             th: preview?.jpeg.base64EncodedString(),
-            s: Int(clamping: file.byteCount),
+            s: Int(clamping: sealedBytes),
             re: replyTo,
             n: file.name,
             pg: preview?.pageCount,
@@ -4227,6 +4241,7 @@ final class MessagingController {
         local.saveSealedPlaintext(messageID: optimisticID, senderUserID: me, data: payloadData)
         if var thread = threads[peerUserID], let idx = thread.firstIndex(where: { $0.id == optimisticID }) {
             thread[idx].fileStored = true
+            thread[idx].mediaByteCount = Int(clamping: sealedBytes)
             thread[idx].previewData = preview?.jpeg
             thread[idx].imageWidth = preview?.width
             thread[idx].imageHeight = preview?.height
