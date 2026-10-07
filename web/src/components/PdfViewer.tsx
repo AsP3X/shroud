@@ -35,6 +35,7 @@ import {
   pdfPageSubtitle,
 } from "../files";
 import { isOpenableUrl } from "../links";
+import { ChunkLoadError } from "./ChunkBoundary";
 import { loadPdfViewer, openPdfBlob, type PdfLib } from "../media/pdfjs";
 import { lastPdfPage, pdfSidebarChoice, rememberPdfPage, rememberPdfSidebar } from "../media/pdfMemory";
 import { renderPdfCard } from "../media/pdfPreview";
@@ -133,6 +134,8 @@ export function PdfViewer({
 }) {
   const wide = useMediaQuery(WIDE_QUERY);
   const [status, setStatus] = useState<Status>("loading");
+  /** pdf.js didn't download: thrown from render, so the thread's boundary closes the viewer. */
+  const [libFailed, setLibFailed] = useState<ChunkLoadError | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
@@ -258,8 +261,9 @@ export function PdfViewer({
       let parts: Awaited<ReturnType<typeof loadPdfViewer>>;
       try {
         parts = await loadPdfViewer();
-      } catch {
-        if (!cancelled) setStatus("damaged");
+      } catch (error) {
+        // Only the imports can fail here; that isn't the PDF's fault.
+        if (!cancelled) setLibFailed(new ChunkLoadError(error));
         return;
       }
       if (cancelled || !container.current || !viewerEl.current) return;
@@ -782,6 +786,8 @@ export function PdfViewer({
       : searching
         ? ""
         : PDF_NO_RESULTS;
+
+  if (libFailed) throw libFailed;
 
   return createPortal(
     <div className="pdf-viewer-scrim" onMouseDown={() => latest.current.onClose()}>

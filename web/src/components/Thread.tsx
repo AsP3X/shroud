@@ -89,6 +89,7 @@ import {
   type OpenedFile,
 } from "../media/fileTransfer";
 import { Avatar } from "./Avatar";
+import { ChunkBoundary, loadChunk } from "./ChunkBoundary";
 import { AudioOrFileBubble } from "./AudioFileBubble";
 import { FileBubble } from "./FileBubble";
 import { NowPlayingBar } from "./NowPlayingBar";
@@ -120,15 +121,31 @@ import type { PeerActivity } from "../typing";
 import type { VoiceTake } from "../voice/recorder";
 import { clearTranscriptChoice, transcriptTail } from "../voice/transcriptView";
 
-/* Only needed once a photo or video is opened or picked: kept out of the first download. */
-const ImageComposer = lazy(() => import("./ImageComposer").then((m) => ({ default: m.ImageComposer })));
-const ImageViewer = lazy(() => import("./ImageViewer").then((m) => ({ default: m.ImageViewer })));
-const VideoComposer = lazy(() => import("./VideoComposer").then((m) => ({ default: m.VideoComposer })));
-const VideoViewer = lazy(() => import("./VideoViewer").then((m) => ({ default: m.VideoViewer })));
-const FileComposer = lazy(() => import("./FileComposer").then((m) => ({ default: m.FileComposer })));
-const TextFileViewer = lazy(() => import("./TextFileViewer").then((m) => ({ default: m.TextFileViewer })));
+/*
+ * Only needed once a photo or video is opened or picked: kept out of the first download. A chunk
+ * that fails to download (offline, or a deploy replaced it under this tab) closes its view and
+ * shows `VIEW_FAILED` (`LazyView`) instead of taking the app down.
+ */
+const ImageComposer = lazy(loadChunk(() => import("./ImageComposer").then((m) => ({ default: m.ImageComposer }))));
+const ImageViewer = lazy(loadChunk(() => import("./ImageViewer").then((m) => ({ default: m.ImageViewer }))));
+const VideoComposer = lazy(loadChunk(() => import("./VideoComposer").then((m) => ({ default: m.VideoComposer }))));
+const VideoViewer = lazy(loadChunk(() => import("./VideoViewer").then((m) => ({ default: m.VideoViewer }))));
+const FileComposer = lazy(loadChunk(() => import("./FileComposer").then((m) => ({ default: m.FileComposer }))));
+const TextFileViewer = lazy(loadChunk(() => import("./TextFileViewer").then((m) => ({ default: m.TextFileViewer }))));
 /* pdf.js comes with it: never part of the chat's first download. */
-const PdfViewer = lazy(() => import("./PdfViewer").then((m) => ({ default: m.PdfViewer })));
+const PdfViewer = lazy(loadChunk(() => import("./PdfViewer").then((m) => ({ default: m.PdfViewer }))));
+
+/** Shown when a lazy view's chunk didn't download: the browser keeps that failure until a reload. */
+const VIEW_FAILED = "This view couldn’t load. Check your connection, then reload the page.";
+
+/** A lazy view that closes itself (`onFailed`) if its chunk can't be downloaded. */
+function LazyView({ onFailed, children }: { onFailed: () => void; children: ReactNode }) {
+  return (
+    <ChunkBoundary fallback={null} onError={onFailed}>
+      {children}
+    </ChunkBoundary>
+  );
+}
 
 const MEDIA_ACCEPT = `${PHOTO_ACCEPT},${VIDEO_ACCEPT}`;
 /** Shown when the new tab for a photo or video was blocked; the file is in memory by then. */
@@ -761,6 +778,8 @@ export function Thread({
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
   /** Short-lived, neutral status line ("Copied"). */
   const [notice, setNotice] = useState<string | null>(null);
+  /** A photo, video or file view whose chunk didn't download; stays while this chat is open. */
+  const [viewFailed, setViewFailed] = useState(false);
   const flashTimer = useRef(0);
   const noticeTimer = useRef(0);
   const [watching, setWatching] = useState<string | null>(null);
@@ -1185,6 +1204,15 @@ export function Thread({
     showNotice(reactionNotice.text, 2400);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per notice
   }, [reactionNotice?.id]);
+
+  /*
+   * A lazy view's chunk didn't download: close the view the way its own close button would (the
+   * typed text and other queued picks stay) and keep `VIEW_FAILED` up while this chat is open.
+   */
+  const viewDidFail = useCallback((close: () => void) => {
+    setViewFailed(true);
+    close();
+  }, []);
 
   const showNotice = useCallback((text: string, ms = 1800) => {
     setNotice(text);
@@ -1676,6 +1704,15 @@ export function Thread({
           </p>
         ) : null}
 
+        {viewFailed ? (
+          <div className="thread-banner" role="alert">
+            {VIEW_FAILED}
+            <button type="button" className="thread-banner-action" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
+        ) : null}
+
         {notice ? (
           <p className="thread-banner notice" role="status">
             {notice}
@@ -1905,72 +1942,86 @@ export function Thread({
 
       <Suspense fallback={null}>
         {attaching ? (
-          <ImageComposer
-            files={attaching}
-            peerName={peer.username}
-            onFilesChange={setAttaching}
-            onClose={closeAttach}
-            onSend={sendAttached}
-          />
+          <LazyView onFailed={() => viewDidFail(closeAttach)}>
+            <ImageComposer
+              files={attaching}
+              peerName={peer.username}
+              onFilesChange={setAttaching}
+              onClose={closeAttach}
+              onSend={sendAttached}
+            />
+          </LazyView>
         ) : null}
 
         {attachingVideos ? (
-          <VideoComposer
-            files={attachingVideos}
-            peerName={peer.username}
-            onFilesChange={setAttachingVideos}
-            onClose={closeVideoAttach}
-            onSend={sendAttachedVideos}
-          />
+          <LazyView onFailed={() => viewDidFail(closeVideoAttach)}>
+            <VideoComposer
+              files={attachingVideos}
+              peerName={peer.username}
+              onFilesChange={setAttachingVideos}
+              onClose={closeVideoAttach}
+              onSend={sendAttachedVideos}
+            />
+          </LazyView>
         ) : null}
 
         {attachingFiles ? (
-          <FileComposer
-            files={attachingFiles}
-            peerName={peer.username}
-            onFilesChange={setAttachingFiles}
-            onClose={closeFileAttach}
-            onSend={sendAttachedFiles}
-          />
+          <LazyView onFailed={() => viewDidFail(closeFileAttach)}>
+            <FileComposer
+              files={attachingFiles}
+              peerName={peer.username}
+              onFilesChange={setAttachingFiles}
+              onClose={closeFileAttach}
+              onSend={sendAttachedFiles}
+            />
+          </LazyView>
         ) : null}
 
         {textViewing ? (
-          <TextFileViewer
-            name={textViewing.message.fileName || "file"}
-            blob={textViewing.blob}
-            onDownload={() => afterWarning(textViewing.message, () => saveFile(textViewing.message, textViewing.blob))}
-            onClose={() => setTextViewing(null)}
-          />
+          <LazyView onFailed={() => viewDidFail(() => setTextViewing(null))}>
+            <TextFileViewer
+              name={textViewing.message.fileName || "file"}
+              blob={textViewing.blob}
+              onDownload={() => afterWarning(textViewing.message, () => saveFile(textViewing.message, textViewing.blob))}
+              onClose={() => setTextViewing(null)}
+            />
+          </LazyView>
         ) : null}
 
         {pdfViewing ? (
-          <PdfViewer
-            messageId={pdfViewing.message.id}
-            name={pdfViewing.message.fileName || "file"}
-            blob={pdfViewing.blob}
-            onDownload={() => afterWarning(pdfViewing.message, () => saveFile(pdfViewing.message, pdfViewing.blob))}
-            onOpenLink={openLink}
-            onClose={() => setPdfViewing(null)}
-          />
+          <LazyView onFailed={() => viewDidFail(() => setPdfViewing(null))}>
+            <PdfViewer
+              messageId={pdfViewing.message.id}
+              name={pdfViewing.message.fileName || "file"}
+              blob={pdfViewing.blob}
+              onDownload={() => afterWarning(pdfViewing.message, () => saveFile(pdfViewing.message, pdfViewing.blob))}
+              onOpenLink={openLink}
+              onClose={() => setPdfViewing(null)}
+            />
+          </LazyView>
         ) : null}
 
         {viewing && !messages.some((m) => m.id === viewing && m.deleted) ? (
-          <ImageViewer
-            photos={photos}
-            startId={viewing}
-            peerName={peer.username}
-            loadImage={onLoadImage}
-            onClose={() => setViewing(null)}
-          />
+          <LazyView onFailed={() => viewDidFail(() => setViewing(null))}>
+            <ImageViewer
+              photos={photos}
+              startId={viewing}
+              peerName={peer.username}
+              loadImage={onLoadImage}
+              onClose={() => setViewing(null)}
+            />
+          </LazyView>
         ) : null}
 
         {watching && messages.some((m) => m.id === watching && !m.deleted) ? (
-          <VideoViewer
-            message={messages.find((m) => m.id === watching)!}
-            peerName={peer.username}
-            loadVideo={onLoadVideo}
-            onClose={() => setWatching(null)}
-          />
+          <LazyView onFailed={() => viewDidFail(() => setWatching(null))}>
+            <VideoViewer
+              message={messages.find((m) => m.id === watching)!}
+              peerName={peer.username}
+              loadVideo={onLoadVideo}
+              onClose={() => setWatching(null)}
+            />
+          </LazyView>
         ) : null}
       </Suspense>
     </section>

@@ -453,6 +453,9 @@ does nothing. Android follows no links.
 - *Damaged*: **Shroud can't show this PDF.** / **It may be damaged or use features Shroud can't
   display.** with the platform's file action (iOS **Share**, Android **Open in Another App**, web
   **Download**).
+- *Couldn't load* (web): the viewer's code or pdf.js didn't download (offline, or a deploy replaced
+  the files under an open tab). The viewer closes and the thread shows **This view couldn’t load.
+  Check your connection, then reload the page.** with **Reload**; the PDF is not called damaged.
 
 **Keys** (web; iPad with a keyboard where free): Escape closes search, then the pages drawer, then the viewer; Ctrl/⌘ F
 opens search; ← → PageUp PageDown go a page back or on; Home/End go to the first/last page.

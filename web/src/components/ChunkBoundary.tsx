@@ -24,12 +24,23 @@ export function loadChunk<T>(load: () => Promise<T>): () => Promise<T> {
     });
 }
 
+type ChunkBoundaryProps = {
+  fallback: ReactNode;
+  /** Called once the fallback is on screen, e.g. to close the view that needed the chunk. */
+  onError?: (error: ChunkLoadError) => void;
+  children: ReactNode;
+};
+
 /** Shows `fallback` when a lazy child's chunk failed; every other error passes on unchanged. */
-export class ChunkBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { error: unknown }> {
+export class ChunkBoundary extends Component<ChunkBoundaryProps, { error: unknown }> {
   state: { error: unknown } = { error: null };
 
   static getDerivedStateFromError(error: unknown): { error: unknown } {
     return { error };
+  }
+
+  componentDidCatch(error: unknown): void {
+    if (error instanceof ChunkLoadError) this.props.onError?.(error);
   }
 
   render(): ReactNode {
