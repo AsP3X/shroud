@@ -1,9 +1,9 @@
 import { QrCode } from "lucide-react";
 import type { Session } from "../api/client";
+import { displayName } from "../format";
 import { Avatar } from "./Avatar";
 import { CopyButton } from "./CopyButton";
 import { Modal } from "./Modal";
-import { displayName } from "./settings/SettingsHome";
 
 /**
  * Your own profile, opened from the account menu on the rail: who you are to other people and

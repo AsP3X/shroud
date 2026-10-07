@@ -29,6 +29,10 @@ server {
     gzip_vary on;
     gzip_types text/css application/javascript application/json application/wasm image/svg+xml font/woff2;
     gzip_min_length 1024;
+    # The build's copies of assets/ and pdfjs/ (precompress.ts): .br for browsers that accept
+    # Brotli, .gz for the rest, both served as they are. Files without one are gzipped on the fly.
+    brotli_static on;
+    gzip_static on;
 
     location = /api {
         rewrite ^ /api/ last;

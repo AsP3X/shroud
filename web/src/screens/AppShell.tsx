@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, BellOff, Phone, QrCode, Video, X } from "lucide-react";
 import {
@@ -20,6 +20,7 @@ import { BrandMark } from "../components/BrandMark";
 import { CallOverlay } from "../components/CallOverlay";
 import { ChatList, type ListEntry } from "../components/ChatList";
 import { ChatMenu, muteSeconds, type ChatMenuAction } from "../components/ChatMenu";
+import { ChunkBoundary, loadChunk } from "../components/ChunkBoundary";
 import type { MenuAnchor } from "../components/ContextMenu";
 import { TypingLabel } from "../components/Typing";
 import { DeviceWipeDialog, type WipeReason } from "../components/DeviceWipeDialog";
@@ -29,7 +30,6 @@ import { Modal } from "../components/Modal";
 import { ProfileSheet } from "../components/ProfileSheet";
 import { MyQrSheet } from "../components/qr/MyQrSheet";
 import { Rail, TabBar, type Tab } from "../components/Rail";
-import { SettingsPane } from "../components/SettingsPane";
 import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, type Presence } from "../format";
 import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
@@ -139,6 +139,46 @@ import {
 } from "../notifications/push";
 
 type PeerRef = { id: string; username: string };
+
+/*
+ * Settings isn't on the way to the chats: kept out of the first download, then fetched once the
+ * shell is idle (`preloadSettings`), so opening it doesn't wait on the network. A chunk that fails
+ * to download (offline, or a deploy replaced it before this shell started) shows
+ * `SettingsUnavailable` instead of taking the app down.
+ */
+const loadSettingsPane = loadChunk(() => import("../components/SettingsPane"));
+const SettingsPane = lazy(() => loadSettingsPane().then((m) => ({ default: m.SettingsPane })));
+
+/** How long the preload waits for an idle moment before it runs anyway. */
+const PRELOAD_TIMEOUT_MS = 5_000;
+
+/** Fetches the settings chunk in the background; returns a cancel for an unmount before it ran. */
+function preloadSettings(): () => void {
+  // A failure surfaces when Settings opens (ChunkBoundary).
+  const preload = () => void loadSettingsPane().catch(() => {});
+  // Older Safari has no requestIdleCallback.
+  if (typeof requestIdleCallback === "function") {
+    const id = requestIdleCallback(preload, { timeout: PRELOAD_TIMEOUT_MS });
+    return () => cancelIdleCallback(id);
+  }
+  const timer = setTimeout(preload, PRELOAD_TIMEOUT_MS / 2);
+  return () => clearTimeout(timer);
+}
+
+/** Settings' chunk didn't download: the browser keeps that failure until the page reloads. */
+function SettingsUnavailable() {
+  return (
+    <main className="settings" aria-label="Settings">
+      <div className="pane-failed" role="alert">
+        <strong>Settings couldn’t load</strong>
+        <p>Check your connection, then reload the page.</p>
+        <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </div>
+    </main>
+  );
+}
 
 /** One file on its way out: kept whole across a retry, so the same sealed bytes go again. */
 type FileSend = {
@@ -258,6 +298,7 @@ export function AppShell({ session }: { session: Session }) {
   const alive = useRef(true);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  useEffect(() => preloadSettings(), []);
   useEffect(() => {
     return onPeerKeyBlocked((userId) => {
       if (selectedRef.current?.id.toLowerCase() === userId) setThreadError(PEER_KEY_CHANGED);
@@ -2540,19 +2581,24 @@ export function AppShell({ session }: { session: Session }) {
 
       <div className="shell-body">
         {tab === "settings" ? (
-          <SettingsPane
-            session={profile}
-            identity={identity}
-            shareLink={shareLink}
-            onLogout={() => setWipe("logout")}
-            onSessionEnded={endSession}
-            onLockNow={lockNow}
-            onShowQr={() => setShowQr(true)}
-            onCacheCleared={() => setPreviewRev((n) => n + 1)}
-            onShareCodeChanged={setNewShareCode}
-            mutedChats={mutedChats}
-            onUnmute={(peerId) => setChatMute(peerId, "off")}
-          />
+          <ChunkBoundary fallback={<SettingsUnavailable />}>
+            {/* The empty pane holds the layout for the moment the chunk may still be loading. */}
+            <Suspense fallback={<main className="settings" aria-label="Settings" />}>
+              <SettingsPane
+                session={profile}
+                identity={identity}
+                shareLink={shareLink}
+                onLogout={() => setWipe("logout")}
+                onSessionEnded={endSession}
+                onLockNow={lockNow}
+                onShowQr={() => setShowQr(true)}
+                onCacheCleared={() => setPreviewRev((n) => n + 1)}
+                onShareCodeChanged={setNewShareCode}
+                mutedChats={mutedChats}
+                onUnmute={(peerId) => setChatMute(peerId, "off")}
+              />
+            </Suspense>
+          </ChunkBoundary>
         ) : (
           <>
             <ChatList

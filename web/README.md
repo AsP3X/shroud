@@ -17,3 +17,12 @@ Docker image builds it in its first stage, and without it the web client simply 
 for links you send.
 
 Production is the `web` service in Compose (`./deploy.sh`). nginx serves the SPA and reverse-proxies `/api/v1` (including WebSocket) to `api:8080`, so the browser is same-origin.
+
+`npm run build` also writes `.gz` (gzip 9) and `.br` (Brotli 11) copies of the compressible files
+in `dist/assets/` and `dist/pdfjs/` (`precompress.ts`; skipped below 1 KB or when a copy saves
+less than 10%), which nginx serves as they are with `gzip_static` and `brotli_static`. Brotli on
+the two 27 MB ONNX runtime `.wasm` files takes most of the time: they are compressed one at a time
+(about 230 MB of memory each), and the whole build takes about 75 s on an Apple-silicon Mac instead
+of 5 s, longer on a small server. The official nginx image has no Brotli module, so `Dockerfile`
+compiles `ngx_brotli`'s static module (pinned by commit) against the image's own nginx and checks
+it loads with `nginx -t`.

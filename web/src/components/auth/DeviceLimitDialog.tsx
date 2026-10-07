@@ -4,8 +4,8 @@ import { Check } from "lucide-react";
 import { deviceDisplayName, type DeviceLabel } from "../../crypto/deviceName";
 import { DEVICE_LIMIT, type LimitDevice } from "../../deviceLimit";
 import { listTimestamp, longDate } from "../../format";
+import { DeviceTile } from "../DeviceTile";
 import { Modal } from "../Modal";
-import { DeviceTile } from "../settings/DevicesView";
 
 function lastActive(device: LimitDevice): string {
   return device.last_seen_at ? `Last active ${listTimestamp(device.last_seen_at)}` : "Never active";

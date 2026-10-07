@@ -138,7 +138,7 @@ data class SettingsHeroFrame(
 
 /**
  * Who the Settings hero shows (`SettingsView.swift:155-175`; settings-lock §3.3; the web does the
- * same, `SettingsHome.tsx:32-41`). Pure.
+ * same, `format.ts:89-98`). Pure.
  */
 object SettingsIdentity {
     /** Shown when there is no username (`SettingsView.swift:163`). */

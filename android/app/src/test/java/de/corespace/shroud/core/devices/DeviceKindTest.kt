@@ -8,7 +8,7 @@ import org.junit.Test
 
 /**
  * Every row of settings-lock §4.5 (iOS `DeviceKind`, `DevicesView.swift:794-857`; web
- * `deviceKind`, `DevicesView.tsx:44-66`).
+ * `deviceKind`, `DeviceTile.tsx:13-38`).
  */
 class DeviceKindTest {
     private fun kind(name: String, kind: Kind = Kind.Other, custom: Boolean = false) =

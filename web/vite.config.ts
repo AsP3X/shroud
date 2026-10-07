@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { bundleLicenses } from "./bundleLicenses";
 import { pdfjsAssets } from "./pdfjsAssets";
+import { precompress } from "./precompress";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
@@ -26,6 +27,8 @@ export default defineConfig({
     licenses.page,
     // The PDF viewer's CMaps, fonts and decoders, on this origin (src/media/pdfjs.ts).
     pdfjsAssets(root),
+    // .gz and .br copies of assets/ and pdfjs/ for nginx to serve as they are.
+    precompress(),
   ],
   define: {
     "import.meta.env.VITE_WEB_VERSION": JSON.stringify(webVersion),

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link2, ScanLine, Share } from "lucide-react";
 import type { Session } from "../../api/client";
+import { displayName } from "../../format";
 import { normalizeShareCode, shareUrl } from "../../invite";
 import { Avatar } from "../Avatar";
 import { CopyButton } from "../CopyButton";
 import { Modal } from "../Modal";
-import { displayName } from "../settings/SettingsHome";
 import { QrCode } from "./QrCode";
 
 export function MyQrSheet({ session, onClose }: { session: Session; onClose: () => void }) {

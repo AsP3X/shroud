@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts", "bundleLicenses.ts", "pdfjsAssets.ts"]
+  "include": ["vite.config.ts", "bundleLicenses.ts", "pdfjsAssets.ts", "precompress.ts"]
 }

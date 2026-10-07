@@ -21,6 +21,7 @@ import type { Session } from "../../api/client";
 import { webVersion } from "../../appVersion";
 import { bytesToB64 } from "../../crypto/bytes";
 import type { IdentityMaterial } from "../../crypto/identity";
+import { displayName } from "../../format";
 import { useNotificationPrefs } from "../../notifications/prefs";
 import { useThemePref } from "../../theme";
 import { Avatar } from "../Avatar";
@@ -30,17 +31,6 @@ import { notificationsSummary } from "./NotificationsView";
 import { themeLabel } from "./PreferencesViews";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 import type { SettingsRoute } from "./routes";
-
-/** iOS renders `niklas_v` as "Niklas V" in the hero while the handle stays raw. */
-export function displayName(username: string): string {
-  const pretty = username
-    .replace(/_/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
-  return pretty || "Shroud User";
-}
 
 export function SettingsHome({
   session,

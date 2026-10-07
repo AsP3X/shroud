@@ -5,7 +5,7 @@ import de.corespace.shroud.core.crypto.DeviceNameSeal
 /**
  * What a linked device is, for its row in Settings › Devices: the kind sealed with its name, else a
  * guess from the name (iOS `DeviceKind`, `ios/shroud/Features/Main/DevicesView.swift:794-857`; web
- * `deviceKind`, `web/src/components/settings/DevicesView.tsx:44-66`; settings-lock §4.5).
+ * `deviceKind`, `web/src/components/DeviceTile.tsx:13-38`; settings-lock §4.5).
  *
  * The sealed kind byte 4 reads "Android app" (00-plan P4). A name that only *looks* like a phone
  * keeps the guess [Phone] ("Phone"): it may be an Android device renamed by an older client that

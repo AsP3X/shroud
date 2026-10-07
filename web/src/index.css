@@ -977,13 +977,19 @@ a { color: var(--accent-text); text-decoration: none; }
 .thread-note-error { color: var(--danger); }
 /* Holds its height while older pages load, so rows above the reader don't shift twice. */
 .thread-older { flex: none; height: 28px; margin: 0; color: var(--text-secondary); font-size: var(--fs-sm); text-align: center; line-height: 28px; }
-.thread-empty {
+/* .pane-failed: a lazy pane whose chunk didn't download (screens/AppShell.tsx). */
+.thread-empty,
+.pane-failed {
   margin: auto; max-width: 340px;
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   text-align: center;
 }
-.thread-empty strong { font-size: var(--fs-lg); }
-.thread-empty p { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
+.pane-failed { padding: 0 16px; }
+.thread-empty strong,
+.pane-failed strong { font-size: var(--fs-lg); }
+.thread-empty p,
+.pane-failed p { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
+.pane-failed .btn { margin-top: 6px; }
 
 .day-sep { display: flex; justify-content: center; margin: 18px 0 10px; }
 .day-sep span {

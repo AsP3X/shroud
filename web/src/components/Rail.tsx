@@ -1,9 +1,9 @@
 import { useRef, useState } from "react";
 import { LogOut, MessageCircle, Settings, User, Users, type LucideIcon } from "lucide-react";
+import { displayName } from "../format";
 import { Avatar } from "./Avatar";
 import { BrandMark } from "./BrandMark";
 import { ContextMenu, type MenuAnchor, type MenuItem } from "./ContextMenu";
-import { displayName } from "./settings/SettingsHome";
 
 export type Tab = "chats" | "contacts" | "settings";
 

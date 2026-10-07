@@ -85,3 +85,14 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** iOS renders `niklas_v` as "Niklas V" in the hero while the handle stays raw. */
+export function displayName(username: string): string {
+  const pretty = username
+    .replace(/_/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+  return pretty || "Shroud User";
+}
