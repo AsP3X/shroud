@@ -1,0 +1,61 @@
+{
+  "server": {
+    "version": "0.1.0",
+    "started_at": "2026-09-26T10:02:31Z",
+    "checked_at": "2026-10-08T14:03:02Z"
+  },
+  "stats": {
+    "accounts": 1284,
+    "accounts_7d": 12,
+    "accounts_deleted": 9,
+    "devices_active_30d": 2071,
+    "ws_connections": 347,
+    "messages_sent_total": 182406
+  },
+  "ready": {
+    "status": "not_ready",
+    "database": "error",
+    "redis": "ok",
+    "media": "ok"
+  },
+  "configured": {
+    "apns": {
+      "environment": "production",
+      "topic": "de.corespace.shroud"
+    },
+    "web_push": {
+      "subscriptions": 318
+    },
+    "unifiedpush": {
+      "allowed_hosts": [
+        "ntfy.sh",
+        "up.example.org"
+      ],
+      "public_hosts": false
+    },
+    "turn": {
+      "urls": [
+        "turn:turn.example.org:3478"
+      ],
+      "credential_ttl_secs": 43200
+    },
+    "link_relay": {
+      "max_per_account": 6
+    }
+  },
+  "metrics": {
+    "http_requests_total": 4812330,
+    "http_errors_total": 1206,
+    "media_puts_total": 9214,
+    "media_gets_total": 31877,
+    "media_store_errors_total": 0,
+    "media_legacy_reads_total": 3,
+    "media_migrated_total": 0,
+    "calls_created_total": 612
+  },
+  "attention": [
+    {
+      "kind": "not_ready"
+    }
+  ]
+}

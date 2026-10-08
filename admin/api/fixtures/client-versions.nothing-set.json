@@ -1,0 +1,50 @@
+{
+  "server_version": "0.1.0",
+  "ios": {
+    "latest": null,
+    "minimum": null,
+    "update_url": null
+  },
+  "android": {
+    "latest": null,
+    "minimum": null,
+    "update_url": null
+  },
+  "web": {
+    "build_file": "/run/shroud/web-build",
+    "deployed_build": null,
+    "fixed_build": null
+  },
+  "told": {
+    "ios": [
+      {
+        "versions": "any",
+        "status": "current"
+      },
+      {
+        "versions": "unnamed",
+        "status": "current"
+      }
+    ],
+    "android": [
+      {
+        "versions": "any",
+        "status": "current"
+      },
+      {
+        "versions": "unnamed",
+        "status": "current"
+      }
+    ],
+    "web": [
+      {
+        "versions": "any",
+        "status": "current"
+      },
+      {
+        "versions": "unnamed",
+        "status": "current"
+      }
+    ]
+  }
+}

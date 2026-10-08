@@ -1,0 +1,80 @@
+{
+  "automatic": [
+    {
+      "record": "Revoked sessions",
+      "after_secs": 2592000,
+      "every_secs": 3600,
+      "stays": "The sessions of removed devices, so the device learns it was removed"
+    },
+    {
+      "record": "Unlinked media",
+      "after_secs": 3600,
+      "every_secs": 900,
+      "stays": "A blob that couldn't be deleted keeps its row and is retried"
+    },
+    {
+      "record": "Unanswered calls",
+      "after_secs": 60,
+      "every_secs": 10,
+      "stays": "The call row, ended with its reason"
+    },
+    {
+      "record": "Silent call participants",
+      "after_secs": 45,
+      "every_secs": 10,
+      "stays": "The call row, ended with its reason"
+    }
+  ],
+  "kept": [
+    {
+      "record": "Messages",
+      "goes_when": "When the sender unsends it, or with the account"
+    },
+    {
+      "record": "Media",
+      "goes_when": "With its message; the orphan job then removes the blob"
+    },
+    {
+      "record": "Call rows",
+      "goes_when": "With the account of either side"
+    },
+    {
+      "record": "Contact requests",
+      "goes_when": "With the account"
+    },
+    {
+      "record": "Clear and hide markers",
+      "goes_when": "With the account"
+    },
+    {
+      "record": "Devices",
+      "goes_when": "Never · a removed device keeps its row, pending deliveries are dropped"
+    },
+    {
+      "record": "Accounts",
+      "goes_when": "Never · a placeholder keeps \"Deleted account\" in other people's chats"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "Revoked-session purge",
+      "every_secs": 3600,
+      "detail": "Deletes sessions revoked over 30 days ago"
+    },
+    {
+      "name": "Orphan media GC",
+      "every_secs": 900,
+      "detail": "Unlinked media older than 60 minutes"
+    },
+    {
+      "name": "Legacy media migration",
+      "every_secs": null,
+      "detail": "Until the local volume is empty. Moves blobs into Nebular"
+    },
+    {
+      "name": "Call sweep",
+      "every_secs": 10,
+      "detail": "Ends unanswered and silent calls"
+    }
+  ]
+}

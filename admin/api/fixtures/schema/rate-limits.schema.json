@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "what": {
+        "type": "string",
+        "minLength": 1
+      },
+      "counted": {
+        "enum": [
+          "ip",
+          "account",
+          "username",
+          "device"
+        ]
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "window_secs": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "note": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "what",
+      "counted",
+      "limit",
+      "window_secs",
+      "note"
+    ]
+  }
+}

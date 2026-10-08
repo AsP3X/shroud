@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reauth_until": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "reauth_until"
+  ]
+}

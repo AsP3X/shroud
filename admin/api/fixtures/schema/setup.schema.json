@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "operator_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "totp_uri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "qr_svg": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "operator_name",
+    "totp_uri",
+    "qr_svg"
+  ]
+}

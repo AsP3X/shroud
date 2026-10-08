@@ -1,0 +1,4 @@
+{
+  "code": "REAUTH_REQUIRED",
+  "message": "A fresh authenticator code is required."
+}

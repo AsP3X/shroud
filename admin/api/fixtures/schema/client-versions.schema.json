@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "server_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ios": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minimum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "latest",
+        "minimum",
+        "update_url"
+      ]
+    },
+    "android": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minimum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "latest",
+        "minimum",
+        "update_url"
+      ]
+    },
+    "web": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "build_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deployed_build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fixed_build": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "build_file",
+        "deployed_build",
+        "fixed_build"
+      ]
+    },
+    "told": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "versions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "update_required",
+                  "update_available",
+                  "current"
+                ]
+              }
+            },
+            "required": [
+              "versions",
+              "status"
+            ]
+          }
+        },
+        "android": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "versions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "update_required",
+                  "update_available",
+                  "current"
+                ]
+              }
+            },
+            "required": [
+              "versions",
+              "status"
+            ]
+          }
+        },
+        "web": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "versions": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "update_required",
+                  "update_available",
+                  "current"
+                ]
+              }
+            },
+            "required": [
+              "versions",
+              "status"
+            ]
+          }
+        }
+      },
+      "required": [
+        "ios",
+        "android",
+        "web"
+      ]
+    }
+  },
+  "required": [
+    "server_version",
+    "ios",
+    "android",
+    "web",
+    "told"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "code": "UPSTREAM",
+  "message": "The API didn't answer within 10 seconds.",
+  "upstream": "api"
+}

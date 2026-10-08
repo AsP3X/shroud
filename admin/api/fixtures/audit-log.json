@@ -1,0 +1,77 @@
+{
+  "items": [
+    {
+      "at": "2026-10-08T14:02:11Z",
+      "operator": "operator",
+      "action": "session.sign_in",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "ok",
+      "detail": null
+    },
+    {
+      "at": "2026-10-08T14:01:48Z",
+      "operator": "operator",
+      "action": "session.sign_in",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "refused",
+      "detail": "Wrong code"
+    },
+    {
+      "at": "2026-10-08T13:40:02Z",
+      "operator": "operator",
+      "action": "media.orphan_sweep",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "ok",
+      "detail": "41 objects · 212 MB"
+    },
+    {
+      "at": "2026-06-02T09:12:40Z",
+      "operator": "operator",
+      "action": "device.remove",
+      "target_kind": "device",
+      "target_id": "2b7ecc44-7f55-4b66-8c77-3d4e5f6091c0",
+      "outcome": "ok",
+      "detail": null
+    },
+    {
+      "at": "2026-06-02T09:10:05Z",
+      "operator": "operator",
+      "action": "user.sign_out_all",
+      "target_kind": "user",
+      "target_id": "7f3c9a1e-4b02-4d7e-9c55-08a1e6f2b913",
+      "outcome": "ok",
+      "detail": "4 sessions"
+    },
+    {
+      "at": "2026-05-28T17:21:33Z",
+      "operator": "ops2",
+      "action": "user.delete",
+      "target_kind": "user",
+      "target_id": "5e81c3aa-3d22-4e99-b124-5e7a9cadbe23",
+      "outcome": "ok",
+      "detail": null
+    },
+    {
+      "at": "2026-05-28T17:20:58Z",
+      "operator": "ops2",
+      "action": "user.delete",
+      "target_kind": "user",
+      "target_id": "5e81c3aa-3d22-4e99-b124-5e7a9cadbe23",
+      "outcome": "failed",
+      "detail": "Media store timeout"
+    },
+    {
+      "at": "2026-05-21T08:03:12Z",
+      "operator": "ops2",
+      "action": "session.sign_in",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "ok",
+      "detail": null
+    }
+  ],
+  "next_cursor": "2026-05-21T08:03:12Z,8"
+}

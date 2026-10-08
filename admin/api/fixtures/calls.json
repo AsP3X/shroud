@@ -1,0 +1,26 @@
+{
+  "created_total": 612,
+  "ice_servers": [
+    {
+      "urls": "stun:turn.example.org:3478"
+    },
+    {
+      "urls": "turn:turn.example.org:3478?transport=udp"
+    },
+    {
+      "urls": "turn:turn.example.org:3478?transport=tcp"
+    }
+  ],
+  "turn": {
+    "urls": [
+      "turn:turn.example.org:3478?transport=udp",
+      "turn:turn.example.org:3478?transport=tcp"
+    ],
+    "credential_ttl_secs": 43200
+  },
+  "gc": {
+    "ringing_timeout_secs": 60,
+    "participant_timeout_secs": 45,
+    "sweep_secs": 10
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "backend": "nebular",
+  "bucket": "shroud-media",
+  "data_dir": "/data/shroud-media",
+  "objects": 48210,
+  "bytes": 412000000000,
+  "unlinked_objects": 1312,
+  "legacy_reads_total": 3,
+  "migrated_total": 0,
+  "max_object_bytes": 2147483648
+}

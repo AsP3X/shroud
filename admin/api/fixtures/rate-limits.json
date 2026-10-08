@@ -1,0 +1,149 @@
+[
+  {
+    "what": "Register or log in",
+    "counted": "ip",
+    "limit": 10,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Register or log in",
+    "counted": "username",
+    "limit": 5,
+    "window_secs": 60,
+    "note": "Keyed by the username hash"
+  },
+  {
+    "what": "Password change, account delete",
+    "counted": "account",
+    "limit": 5,
+    "window_secs": 3600,
+    "note": null
+  },
+  {
+    "what": "Session status from locked clients",
+    "counted": "ip",
+    "limit": 60,
+    "window_secs": 60,
+    "note": "Each open tab asks about twice a minute"
+  },
+  {
+    "what": "PIN-guard unlock",
+    "counted": "ip",
+    "limit": 20,
+    "window_secs": 60,
+    "note": "The guard's own counter is the real limit"
+  },
+  {
+    "what": "PIN change",
+    "counted": "account",
+    "limit": 10,
+    "window_secs": 3600,
+    "note": null
+  },
+  {
+    "what": "User lookup",
+    "counted": "ip",
+    "limit": 30,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "New share code",
+    "counted": "account",
+    "limit": 10,
+    "window_secs": 3600,
+    "note": "Breaks every QR code and link handed out before"
+  },
+  {
+    "what": "Contact request",
+    "counted": "account",
+    "limit": 10,
+    "window_secs": 3600,
+    "note": null
+  },
+  {
+    "what": "Key bundle or identity fetch",
+    "counted": "account",
+    "limit": 60,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Key bundle or identity fetch",
+    "counted": "ip",
+    "limit": 120,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Device rename",
+    "counted": "account",
+    "limit": 60,
+    "window_secs": 3600,
+    "note": null
+  },
+  {
+    "what": "Message send",
+    "counted": "account",
+    "limit": 120,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Reaction set, replace or remove",
+    "counted": "account",
+    "limit": 120,
+    "window_secs": 60,
+    "note": "Separate from the message budget"
+  },
+  {
+    "what": "Placing a call",
+    "counted": "account",
+    "limit": 30,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Call signals and heartbeats",
+    "counted": "account",
+    "limit": 600,
+    "window_secs": 60,
+    "note": "Offer, answer, ICE and heartbeats"
+  },
+  {
+    "what": "Media upload registration",
+    "counted": "account",
+    "limit": 60,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "WebSocket connect",
+    "counted": "ip",
+    "limit": 30,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Link-preview relay connect",
+    "counted": "ip",
+    "limit": 120,
+    "window_secs": 60,
+    "note": null
+  },
+  {
+    "what": "Link-preview relay connect",
+    "counted": "account",
+    "limit": 60,
+    "window_secs": 60,
+    "note": "At most 6 open pipes per account"
+  },
+  {
+    "what": "Test notification",
+    "counted": "device",
+    "limit": 6,
+    "window_secs": 60,
+    "note": null
+  }
+]

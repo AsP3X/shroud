@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "role": {
+        "enum": [
+          "read",
+          "write"
+        ]
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "last_sign_in_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "date-time"
+      },
+      "totp_enrolled": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "role",
+      "enabled",
+      "last_sign_in_at",
+      "totp_enrolled"
+    ]
+  }
+}

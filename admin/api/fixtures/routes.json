@@ -1,0 +1,203 @@
+{
+  "clock": "2026-10-08T14:02:31Z is Overview checked_at. Frame copy that says Today uses this date.",
+  "bytes": "Storage and media sizes are decimal (412 GB = 412000000000, 1.8 GB = 1800000000).",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/session",
+      "file": "session.json"
+    },
+    {
+      "method": "POST",
+      "path": "/session/reauth",
+      "file": "reauth.json"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/{token}",
+      "file": "setup.json"
+    },
+    {
+      "method": "POST",
+      "path": "/setup/{token}",
+      "file": "setup.enrolled.json"
+    },
+    {
+      "method": "GET",
+      "path": "/overview",
+      "file": "overview.json",
+      "states": {
+        "database-down": "overview.database-down.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/users",
+      "file": "users.json",
+      "states": {
+        "empty": "users.empty.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/users/{id}",
+      "file": "user.json"
+    },
+    {
+      "method": "GET",
+      "path": "/storage",
+      "file": "storage.json",
+      "states": {
+        "new-server": "storage.new-server.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/client-versions",
+      "file": "client-versions.json",
+      "states": {
+        "nothing-set": "client-versions.nothing-set.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/rate-limits",
+      "file": "rate-limits.json"
+    },
+    {
+      "method": "GET",
+      "path": "/retention",
+      "file": "retention.json"
+    },
+    {
+      "method": "GET",
+      "path": "/push",
+      "file": "push.json"
+    },
+    {
+      "method": "GET",
+      "path": "/calls",
+      "file": "calls.json"
+    },
+    {
+      "method": "GET",
+      "path": "/privacy-checks",
+      "file": "privacy-checks.json"
+    },
+    {
+      "method": "GET",
+      "path": "/configuration",
+      "file": "configuration.json"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-log",
+      "file": "audit-log.json",
+      "states": {
+        "empty": "audit-log.empty.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/operators",
+      "file": "operators.json"
+    },
+    {
+      "method": "POST",
+      "path": "/operators",
+      "file": "operators.created.json"
+    },
+    {
+      "method": "POST",
+      "path": "/operators/{id}/reset-totp",
+      "file": "operators.reset-totp.json"
+    }
+  ],
+  "no_body": [
+    "POST /session",
+    "POST /session/recovery",
+    "DELETE /session",
+    "POST /users/{id}/devices/{device_id}/remove",
+    "POST /users/{id}/sign-out-all",
+    "POST /users/{id}/delete",
+    "PATCH /operators/{id}"
+  ],
+  "errors": [
+    {
+      "file": "error.bad-credentials.json",
+      "status": 401
+    },
+    {
+      "file": "error.unauthenticated.json",
+      "status": 401
+    },
+    {
+      "file": "error.reauth-required.json",
+      "status": 403
+    },
+    {
+      "file": "error.forbidden.json",
+      "status": 403
+    },
+    {
+      "file": "error.rate-limited.json",
+      "status": 429
+    },
+    {
+      "file": "error.upstream-postgres.json",
+      "status": 502
+    },
+    {
+      "file": "error.upstream-api.json",
+      "status": 502
+    },
+    {
+      "file": "error.validation.json",
+      "status": 400
+    },
+    {
+      "file": "error.already-done.json",
+      "status": 409
+    },
+    {
+      "file": "error.link-used.json",
+      "status": 410
+    }
+  ],
+  "schemas": {
+    "session.json": "session.schema.json",
+    "reauth.json": "reauth.schema.json",
+    "setup.json": "setup.schema.json",
+    "setup.enrolled.json": "setup-enrolled.schema.json",
+    "overview.json": "overview.schema.json",
+    "overview.database-down.json": "overview.schema.json",
+    "users.json": "users.schema.json",
+    "users.empty.json": "users.schema.json",
+    "user.json": "user.schema.json",
+    "storage.json": "storage.schema.json",
+    "storage.new-server.json": "storage.schema.json",
+    "client-versions.json": "client-versions.schema.json",
+    "client-versions.nothing-set.json": "client-versions.schema.json",
+    "rate-limits.json": "rate-limits.schema.json",
+    "retention.json": "retention.schema.json",
+    "push.json": "push.schema.json",
+    "calls.json": "calls.schema.json",
+    "privacy-checks.json": "privacy-checks.schema.json",
+    "configuration.json": "configuration.schema.json",
+    "audit-log.json": "audit-log.schema.json",
+    "audit-log.empty.json": "audit-log.schema.json",
+    "operators.json": "operators.schema.json",
+    "operators.created.json": "setup-url.schema.json",
+    "operators.reset-totp.json": "setup-url.schema.json",
+    "error.bad-credentials.json": "error.schema.json",
+    "error.unauthenticated.json": "error.schema.json",
+    "error.reauth-required.json": "error.schema.json",
+    "error.forbidden.json": "error.schema.json",
+    "error.rate-limited.json": "error.schema.json",
+    "error.upstream-postgres.json": "error.schema.json",
+    "error.upstream-api.json": "error.schema.json",
+    "error.validation.json": "error.schema.json",
+    "error.already-done.json": "error.schema.json",
+    "error.link-used.json": "error.schema.json"
+  }
+}

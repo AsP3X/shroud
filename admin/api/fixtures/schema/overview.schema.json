@@ -1,0 +1,296 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "version",
+        "started_at",
+        "checked_at"
+      ]
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accounts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accounts_7d": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "accounts_deleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "devices_active_30d": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ws_connections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messages_sent_total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "accounts",
+        "accounts_7d",
+        "accounts_deleted",
+        "devices_active_30d",
+        "ws_connections",
+        "messages_sent_total"
+      ]
+    },
+    "ready": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "not_ready"
+          ]
+        },
+        "database": {
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "redis": {
+          "enum": [
+            "ok",
+            "error",
+            "skipped"
+          ]
+        },
+        "media": {
+          "enum": [
+            "ok",
+            "error"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "database",
+        "redis",
+        "media"
+      ]
+    },
+    "configured": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apns": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "environment",
+            "topic"
+          ],
+          "properties": {
+            "environment": {
+              "enum": [
+                "production",
+                "sandbox"
+              ]
+            },
+            "topic": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "web_push": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "subscriptions"
+          ],
+          "properties": {
+            "subscriptions": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "unifiedpush": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "allowed_hosts",
+            "public_hosts"
+          ],
+          "properties": {
+            "allowed_hosts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "public_hosts": {
+              "type": "boolean"
+            }
+          }
+        },
+        "turn": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "urls",
+            "credential_ttl_secs"
+          ],
+          "properties": {
+            "urls": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "credential_ttl_secs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "link_relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_per_account": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "max_per_account"
+          ]
+        }
+      },
+      "required": [
+        "apns",
+        "web_push",
+        "unifiedpush",
+        "turn",
+        "link_relay"
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http_requests_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "http_errors_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_puts_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_gets_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_store_errors_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_legacy_reads_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_migrated_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "calls_created_total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "http_requests_total",
+        "http_errors_total",
+        "media_puts_total",
+        "media_gets_total",
+        "media_store_errors_total",
+        "media_legacy_reads_total",
+        "media_migrated_total",
+        "calls_created_total"
+      ]
+    },
+    "attention": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "no_min_version",
+              "legacy_media",
+              "not_ready"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      }
+    }
+  },
+  "required": [
+    "server",
+    "stats",
+    "ready",
+    "configured",
+    "metrics",
+    "attention"
+  ]
+}

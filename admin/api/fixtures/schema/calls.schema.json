@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "created_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ice_servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "urls": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "urls"
+        ]
+      }
+    },
+    "turn": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "urls",
+        "credential_ttl_secs"
+      ],
+      "properties": {
+        "urls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "credential_ttl_secs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ringing_timeout_secs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "participant_timeout_secs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sweep_secs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ringing_timeout_secs",
+        "participant_timeout_secs",
+        "sweep_secs"
+      ]
+    }
+  },
+  "required": [
+    "created_total",
+    "ice_servers",
+    "turn",
+    "gc"
+  ]
+}

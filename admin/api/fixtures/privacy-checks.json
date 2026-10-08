@@ -1,0 +1,102 @@
+[
+  {
+    "item": "Usernames are not stored",
+    "state": "hashed",
+    "detail": "Accounts are kept by a hash of the name only."
+  },
+  {
+    "item": "Username hashes are quick to guess",
+    "state": "stored",
+    "detail": "Plain SHA-256. 1,284 accounts still need the slow hash."
+  },
+  {
+    "item": "The API log names who messages whom",
+    "state": "stored",
+    "detail": "RUST_LOG=info records sender, recipient and chat on every message."
+  },
+  {
+    "item": "The web proxy keeps no access log",
+    "state": "not_stored",
+    "detail": "No client addresses or user agents are written."
+  },
+  {
+    "item": "Nginx Proxy Manager access log",
+    "state": "not_stored",
+    "detail": "Can't be checked from here. Turn it off in each proxy host."
+  },
+  {
+    "item": "TURN logins don't name accounts",
+    "state": "not_stored",
+    "detail": "Random logins, and coturn writes no log."
+  },
+  {
+    "item": "Apple sees chat IDs in pushes",
+    "state": "stored",
+    "detail": "Conversation, sender and message IDs are sent in plain text."
+  },
+  {
+    "item": "Redis needs a password, keeps nothing on disk",
+    "state": "not_stored",
+    "detail": "Password set, and nothing is kept on disk."
+  },
+  {
+    "item": "Message sizes aren't padded",
+    "state": "stored",
+    "detail": "A message's size shows roughly how long it is."
+  },
+  {
+    "item": "/metrics is public",
+    "state": "stored",
+    "detail": "Live counters show when people are active."
+  },
+  {
+    "item": "No Google STUN fallback",
+    "state": "not_stored",
+    "detail": "Calls only use servers configured here."
+  },
+  {
+    "item": "Message text",
+    "state": "sealed",
+    "detail": "Never reaches this server."
+  },
+  {
+    "item": "Photos, video, voice",
+    "state": "sealed",
+    "detail": "Never reaches this server."
+  },
+  {
+    "item": "Usernames",
+    "state": "sealed",
+    "detail": "Never reaches this server."
+  },
+  {
+    "item": "Device names",
+    "state": "sealed",
+    "detail": "Never reaches this server."
+  },
+  {
+    "item": "Call audio and video",
+    "state": "sealed",
+    "detail": "Never reaches this server."
+  },
+  {
+    "item": "Who talks to whom",
+    "state": "stored",
+    "detail": "Known to this server."
+  },
+  {
+    "item": "When messages are sent",
+    "state": "stored",
+    "detail": "Known to this server."
+  },
+  {
+    "item": "Addresses while connected",
+    "state": "stored",
+    "detail": "Known to this server."
+  },
+  {
+    "item": "Push tokens (Apple, Google)",
+    "state": "stored",
+    "detail": "Known to this server."
+  }
+]

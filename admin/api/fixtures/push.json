@@ -1,0 +1,33 @@
+{
+  "apns_tokens": 1204,
+  "apns_voip_tokens": 1180,
+  "web_push_subscriptions": 318,
+  "unifiedpush_subscriptions": 212,
+  "notifications_off": 57,
+  "channels": [
+    {
+      "name": "APNs alerts",
+      "registered": 1204,
+      "sent_to": "api.push.apple.com · topic de.corespace.shroud",
+      "dropped_when": "Apple answers BadDeviceToken, Unregistered, DeviceTokenNotForTopic or ExpiredToken"
+    },
+    {
+      "name": "APNs calls (VoIP)",
+      "registered": 1180,
+      "sent_to": "api.push.apple.com · topic de.corespace.shroud.voip · a second token",
+      "dropped_when": "Same answers from Apple"
+    },
+    {
+      "name": "Web Push",
+      "registered": 318,
+      "sent_to": "The subscription's endpoint at the browser's push service",
+      "dropped_when": "The service answers 404 or 410 Gone"
+    },
+    {
+      "name": "UnifiedPush",
+      "registered": 212,
+      "sent_to": "The device's distributor · hosts limited to ntfy.sh, up.example.org",
+      "dropped_when": "The distributor answers 404 or 410 Gone"
+    }
+  ]
+}

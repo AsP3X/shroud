@@ -1,0 +1,85 @@
+{
+  "items": [
+    {
+      "id": "7f3c9a1e-4b02-4d7e-9c55-08a1e6f2b913",
+      "created_on": "2026-03-12",
+      "devices": 3,
+      "last_active_on": "2026-10-08",
+      "push": "mixed",
+      "status": "active"
+    },
+    {
+      "id": "a91b02cd-6e14-4c3a-8b21-7d0e5f1a2b30",
+      "created_on": "2026-03-12",
+      "devices": 2,
+      "last_active_on": "2026-10-08",
+      "push": "apns",
+      "status": "active"
+    },
+    {
+      "id": "0c44e8f2-1a90-4b77-9d02-3c5e7a8b9c01",
+      "created_on": "2026-03-15",
+      "devices": 1,
+      "last_active_on": "2026-10-08",
+      "push": "web",
+      "status": "active"
+    },
+    {
+      "id": "9b2e7714-2c11-4d88-a013-4d6f8b9cad12",
+      "created_on": "2026-04-02",
+      "devices": 4,
+      "last_active_on": "2026-10-08",
+      "push": "mixed",
+      "status": "active"
+    },
+    {
+      "id": "5e81c3aa-3d22-4e99-b124-5e7a9cadbe23",
+      "created_on": "2026-04-04",
+      "devices": 0,
+      "last_active_on": null,
+      "push": "none",
+      "status": "deleted"
+    },
+    {
+      "id": "d2f0b6e9-4e33-4faa-8125-6f8badcecf34",
+      "created_on": "2026-05-19",
+      "devices": 2,
+      "last_active_on": "2026-10-07",
+      "push": "mixed",
+      "status": "active"
+    },
+    {
+      "id": "3a7c50b1-5f44-40bb-9236-709cbedfd045",
+      "created_on": "2026-06-30",
+      "devices": 1,
+      "last_active_on": "2026-08-28",
+      "push": "apns",
+      "status": "active"
+    },
+    {
+      "id": "c8e1a274-6055-41cc-a347-81adcef0e156",
+      "created_on": "2026-08-08",
+      "devices": 2,
+      "last_active_on": "2026-10-08",
+      "push": "mixed",
+      "status": "active"
+    },
+    {
+      "id": "61d93f0c-7166-42dd-b458-92bedf01f267",
+      "created_on": "2026-09-21",
+      "devices": 1,
+      "last_active_on": "2026-10-08",
+      "push": "unifiedpush",
+      "status": "active"
+    },
+    {
+      "id": "b47a2e98-8277-43ee-8569-a3cf01203478",
+      "created_on": "2026-10-02",
+      "devices": 1,
+      "last_active_on": "2026-10-08",
+      "push": "web",
+      "status": "active"
+    }
+  ],
+  "next_cursor": "2026-10-02,b47a2e98-8277-43ee-8569-a3cf01203478"
+}

@@ -1,0 +1,62 @@
+{
+  "server_version": "0.1.0",
+  "ios": {
+    "latest": "1.1",
+    "minimum": "1.1",
+    "update_url": "https://testflight.apple.com/join/example"
+  },
+  "android": {
+    "latest": "0.2.0",
+    "minimum": null,
+    "update_url": "https://chat.example.org/shroud.apk"
+  },
+  "web": {
+    "build_file": "/run/shroud/web-build",
+    "deployed_build": "e3b0c44298fc",
+    "fixed_build": null
+  },
+  "told": {
+    "ios": [
+      {
+        "versions": "<1.1",
+        "status": "update_required"
+      },
+      {
+        "versions": ">=1.1",
+        "status": "current"
+      },
+      {
+        "versions": "unnamed",
+        "status": "update_required"
+      }
+    ],
+    "android": [
+      {
+        "versions": "<0.2.0",
+        "status": "update_available"
+      },
+      {
+        "versions": ">=0.2.0",
+        "status": "current"
+      },
+      {
+        "versions": "unnamed",
+        "status": "update_required"
+      }
+    ],
+    "web": [
+      {
+        "versions": "other",
+        "status": "update_available"
+      },
+      {
+        "versions": "e3b0c44298fc",
+        "status": "current"
+      },
+      {
+        "versions": "unnamed",
+        "status": "update_required"
+      }
+    ]
+  }
+}

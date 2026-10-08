@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "automatic": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "record": {
+            "type": "string",
+            "minLength": 1
+          },
+          "after_secs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "every_secs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stays": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "record",
+          "after_secs",
+          "every_secs",
+          "stays"
+        ]
+      }
+    },
+    "kept": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "record": {
+            "type": "string",
+            "minLength": 1
+          },
+          "goes_when": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "record",
+          "goes_when"
+        ]
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "every_secs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name",
+          "every_secs",
+          "detail"
+        ]
+      }
+    }
+  },
+  "required": [
+    "automatic",
+    "kept",
+    "jobs"
+  ]
+}

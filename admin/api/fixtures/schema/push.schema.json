@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "apns_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "apns_voip_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "web_push_subscriptions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "unifiedpush_subscriptions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "notifications_off": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "registered": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sent_to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dropped_when": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name",
+          "registered",
+          "sent_to",
+          "dropped_when"
+        ]
+      }
+    }
+  },
+  "required": [
+    "apns_tokens",
+    "apns_voip_tokens",
+    "web_push_subscriptions",
+    "unifiedpush_subscriptions",
+    "notifications_off",
+    "channels"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "backend": {
+      "enum": [
+        "nebular",
+        "local"
+      ]
+    },
+    "bucket": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "data_dir": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "objects": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "unlinked_objects": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "legacy_reads_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "migrated_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_object_bytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "backend",
+    "bucket",
+    "data_dir",
+    "objects",
+    "bytes",
+    "unlinked_objects",
+    "legacy_reads_total",
+    "migrated_total",
+    "max_object_bytes"
+  ]
+}

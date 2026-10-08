@@ -1,0 +1,4 @@
+{
+  "code": "VALIDATION_ERROR",
+  "message": "Search must be 4 to 36 hex characters or dashes."
+}

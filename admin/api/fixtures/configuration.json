@@ -1,0 +1,176 @@
+[
+  {
+    "group": "Network",
+    "variables": [
+      {
+        "name": "HOST / PORT",
+        "value": "0.0.0.0:8080",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "WEB_PUBLIC_URL",
+        "value": "https://chat.example.org",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "CORS_ALLOWED_ORIGINS",
+        "value": "https://chat.example.org",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "TRUST_FORWARDED_HEADERS",
+        "value": "true",
+        "secret": false,
+        "set": true
+      }
+    ]
+  },
+  {
+    "group": "Database",
+    "variables": [
+      {
+        "name": "DATABASE_URL",
+        "value": "postgres://shroud@db:5432/shroud",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "DATABASE_POOL_MAX",
+        "value": "10",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "RUN_MIGRATIONS",
+        "value": "true",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "REDIS_URL",
+        "value": "redis://redis:6379",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "REDIS_PASSWORD",
+        "value": null,
+        "secret": true,
+        "set": true
+      }
+    ]
+  },
+  {
+    "group": "Media",
+    "variables": [
+      {
+        "name": "NEBULAR_URL",
+        "value": "https://s3.nebular.example",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "NEBULAR_MEDIA_BUCKET",
+        "value": "shroud-media",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "NEBULAR_SECRET_ACCESS_KEY",
+        "value": null,
+        "secret": true,
+        "set": true
+      },
+      {
+        "name": "MEDIA_DATA_DIR",
+        "value": "/data/shroud-media",
+        "secret": false,
+        "set": true
+      }
+    ]
+  },
+  {
+    "group": "Calls",
+    "variables": [
+      {
+        "name": "TURN_URLS",
+        "value": "turn:turn.example.org:3478",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "TURN_SECRET",
+        "value": null,
+        "secret": true,
+        "set": true
+      },
+      {
+        "name": "TURN_CREDENTIAL_TTL_SECS",
+        "value": "43200",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "ICE_SERVERS_JSON",
+        "value": null,
+        "secret": false,
+        "set": false
+      }
+    ]
+  },
+  {
+    "group": "Push",
+    "variables": [
+      {
+        "name": "APNS_TOPIC",
+        "value": "de.corespace.shroud",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "APNS_KEY_PEM",
+        "value": null,
+        "secret": true,
+        "set": true
+      },
+      {
+        "name": "WEB_PUSH_SUBJECT",
+        "value": "mailto:ops@example.org",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "WEB_PUSH_VAPID_PRIVATE_KEY",
+        "value": null,
+        "secret": true,
+        "set": true
+      },
+      {
+        "name": "UNIFIEDPUSH_ALLOWED_HOSTS",
+        "value": "ntfy.sh, up.example.org",
+        "secret": false,
+        "set": true
+      }
+    ]
+  },
+  {
+    "group": "Limits and logging",
+    "variables": [
+      {
+        "name": "REACTIONS_MAX_PER_USER",
+        "value": "5",
+        "secret": false,
+        "set": true
+      },
+      {
+        "name": "RUST_LOG",
+        "value": "info",
+        "secret": false,
+        "set": true
+      }
+    ]
+  }
+]

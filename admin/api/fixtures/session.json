@@ -1,0 +1,9 @@
+{
+  "operator": {
+    "id": "0a11ce00-0000-4000-8000-000000000001",
+    "name": "operator",
+    "role": "write"
+  },
+  "expires_at": "2026-10-08T14:30:31Z",
+  "reauth_until": null
+}

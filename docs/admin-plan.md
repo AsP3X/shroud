@@ -181,7 +181,8 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 
 | # | Date | Change | Asked by |
 | - | ---- | ------ | -------- |
-| — | — | none yet | — |
+| 1 | 2026-10-08 | §3.3 `GET /users/{id}`: `counts.contacts`, `counts.blocks` and `counts.conversations` are `integer \| null`; `null` means the console does not show them. The User detail frame says "Not visible" for these three, and a contact or conversation count is a view of the social graph the console has no reason to hold. The backend sends `null` and never queries them; the UI renders "Not visible". | Grok (G0.3), from the frame |
+| 2 | 2026-10-08 | §3.2 `attention[].count` is optional; `no_min_version` and `not_ready` carry none. | Grok (G0.3) |
 
 ---
 
