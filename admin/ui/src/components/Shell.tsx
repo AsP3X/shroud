@@ -33,7 +33,8 @@ export function Shell() {
         navigate("/sign-in", { replace: true, state: { from: location.pathname } });
         return;
       }
-      throw error;
+      // The page itself reports an unreachable backend; the sidebar just has no operator to show.
+      setSession(null);
     }
   }, [navigate, location.pathname]);
 
