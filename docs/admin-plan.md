@@ -187,6 +187,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 | 4 | 2026-10-08 | §3.4 `GET /audit-log` takes an optional `target=<id>` that returns only entries whose `target_id` is that account or one of its devices (User detail's "Admin actions on this account"). No fixture change: the dev server ignores the parameter and the UI filters the page it gets. | Claude (C1.3) |
 | 6 | 2026-10-08 | Design, for the read-only pages (C1.4): the Storage frames lose the daily chart, the per-account ranking, the last and next cleanup run and "Run now" (the frame "Storage · Run cleanup" goes), keeping the counts the contract has and gaining a legacy-volume card; the Calls frame loses "Test TURN", the call-today, relay-share, relay-count and traffic tiles, the outcomes and the last-test card, keeping the ICE table, the sweep timings and the relay note; Privacy checks loses the task links and the "last change" tile; the Audit log loses the client addresses and "Kept for 365 days". None of these is a contract field or a server record. | Claude (C1.4) |
 | 5 | 2026-10-08 | Design: the Users frames lose "Export CSV" (no route exports anything) and gain a "Mixed" legend key; User detail frames lose "Suspend" (out of scope, §8) and the "Keys and storage" rows the contract has no field for (one-time prekeys, unattached media, calls in 30 days), keeping media stored and adding the PIN-guard row. | Claude (C1.3) |
+| 7 | 2026-10-08 | §3.4 `GET /calls` `created_total` is the process counter `shroud_calls_created_total` (the Calls frame: "Since the last restart · the only call counter"). The `calls` table has no column grant, so this is not a lifetime count. `GET /privacy-checks` "Username hashes are quick to guess" fills the account count from the live `users` table (`Plain SHA-256. {n} accounts still need the slow hash.`); the fixture's 1,284 is the frame's sample. | Grok (G1.4) |
 
 ---
 
@@ -295,7 +296,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     device name, the APNs token, the push endpoint or the object key. Without either URL the test
     returns immediately, so a green run is not this proof. `cargo clippy --all-targets -- -D warnings`
     passed.
-- [ ] **G1.4 Read-only pages (C4).** `storage`, `client-versions`, `rate-limits`, `retention`,
+- [x] **G1.4 Read-only pages (C4).** `storage`, `client-versions`, `rate-limits`, `retention`,
   `push`, `calls`, `privacy-checks`, `configuration`, `audit-log`. Rate limits and retention come
   from the API crate's constants through a tiny `shroud-server` dependency on the `budgets` module
   and the retention constants (`budgets`, `REVOKED_SESSION_RETENTION_DAYS`, `ORPHAN_TTL_MINUTES`,
@@ -303,6 +304,18 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   constants `SESSION_PURGE_INTERVAL_SECS`, `ORPHAN_GC_INTERVAL_SECS` and `CALL_GC_INTERVAL_SECS`
   become `pub` in the same change), so a constant change rebuilds the table.
   - Done when: each response matches a `psql` query or the constant in the source.
+  - Done 2026-10-08: `cargo test --test pages` with `ADMIN_TEST_DATABASE_URL` and
+    `GRANT_TEST_SUPER_URL` against the throwaway `postgres:16` on `127.0.0.1:54341` runs
+    `read_only_pages_match_the_schema` (not a skip). Rate limits and retention equal the fixture
+    files. The numbers are copied into this crate: the brief for this pass forbids a
+    `shroud-server` change, and a path dependency on that crate is the G0.5 option this pass did
+    not take. Storage objects, bytes and unlinked objects match `count(id)` / `sum(size_bytes)` on
+    the granted columns. Push counts match the same way. `GET /audit-log?target=` returns the
+    account row and its device row and leaves out a different account (§3.9 #4). Client-version
+    rows come from calling the stand-in `/client-version`. `created_total` is the process counter
+    (§3.9 #7). Configuration secrets are only a set flag. A sealed device name, an APNs token and
+    the secret values are absent. Without either URL the test returns immediately, so a green run
+    is not this proof. `cargo clippy --all-targets -- -D warnings` passed.
 
 ### Phase G2 — Writes
 - [ ] **G2.1 [api] Operator listener (C7)** in `shroud-server`: config, second router, token check,

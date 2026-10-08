@@ -15,8 +15,10 @@ pub mod db;
 mod error;
 mod limit;
 mod overview;
+mod pages;
 mod password;
 mod probe;
+mod published;
 mod state;
 pub mod totp;
 mod users;
@@ -81,6 +83,7 @@ pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
     let api = auth::routes()
         .merge(overview::routes())
         .merge(users::routes())
+        .merge(pages::routes())
         .fallback(auth::unknown)
         .layer(middleware::from_fn(no_store))
         .with_state(state);

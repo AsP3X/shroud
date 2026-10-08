@@ -25,19 +25,40 @@ struct Target {
 }
 
 pub async fn get(url: &str) -> Result<Fetched, ProbeError> {
+    get_with(url, &[]).await
+}
+
+/// `headers` are extra request lines (`X-Shroud-Client` on a version probe). A name or
+/// value that contains a line break is refused.
+pub async fn get_with(url: &str, headers: &[(&str, &str)]) -> Result<Fetched, ProbeError> {
     let target = parse_http_url(url)?;
-    match tokio::time::timeout(TIMEOUT, fetch(target)).await {
+    let mut extra = String::new();
+    for (name, value) in headers {
+        if name.is_empty()
+            || name
+                .bytes()
+                .any(|byte| byte == b'\r' || byte == b'\n' || byte == b':')
+            || value.bytes().any(|byte| byte == b'\r' || byte == b'\n')
+        {
+            return Err(ProbeError);
+        }
+        extra.push_str(name);
+        extra.push_str(": ");
+        extra.push_str(value);
+        extra.push_str("\r\n");
+    }
+    match tokio::time::timeout(TIMEOUT, fetch(target, extra)).await {
         Ok(result) => result,
         Err(_) => Err(ProbeError),
     }
 }
 
-async fn fetch(target: Target) -> Result<Fetched, ProbeError> {
+async fn fetch(target: Target, extra_headers: String) -> Result<Fetched, ProbeError> {
     let mut stream = TcpStream::connect((target.host.as_str(), target.port))
         .await
         .map_err(|_| ProbeError)?;
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n{extra_headers}Connection: close\r\n\r\n",
         path = target.path,
         host = target.host_header,
     );
