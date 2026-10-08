@@ -324,8 +324,21 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   Document in `docs/server-plan.md`; `.env.example` gets `OPERATOR_PORT`/`OPERATOR_TOKEN`.
   - Done when: public port `404`s `/operator/*`; wrong token `403`; existing server tests pass; a
     removed device's app wipes on its next connection (simulator check).
-- [ ] **G2.2 Console writes (C5).** Re-auth check (`reauth_until`), role check, operator-API
+- [x] **G2.2 Console writes (C5).** Re-auth check (`reauth_until`), role check, operator-API
   client with a 10 s timeout, `409 ALREADY_DONE`, audit rows for ok, refused and failed.
+  - Done 2026-10-08: `cargo test --test writes` with `ADMIN_TEST_DATABASE_URL` and
+    `GRANT_TEST_SUPER_URL` against throwaway `postgres:16` on `127.0.0.1:54342` runs
+    `writes_require_reauth_and_audit_each_attempt` (not a skip). A view-only operator is
+    `403 FORBIDDEN` and an audit row `refused`. A session whose `reauth_until` is null is
+    `403 REAUTH_REQUIRED` with no audit row and no listener call. A revoked device is
+    `409 ALREADY_DONE` with the fixture message. Success is `204` and an audit row `ok`;
+    sign-out stores the listener's `detail`. A listener that answers anything else, or a
+    closed port, is `502 UPSTREAM` `upstream: api` and an audit row `failed`. The listener
+    is `POST http://{host of API_INTERNAL_URL}:{OPERATOR_PORT}/operator/...` with
+    `Authorization: Bearer OPERATOR_TOKEN`. `204` or `200 {"detail":"..."}` is success;
+    `404` and `409` are already done. G2.1, which would serve that port inside
+    `shroud-server`, is not in this change. Without either URL the test returns immediately,
+    so a green run is not this proof. `cargo clippy --all-targets -- -D warnings` passed.
 - [ ] **G2.3 Operators (C6).** Invite links, role changes, disable ends sessions, TOTP reset.
 
 ### Phase G3 — Hardening and tests

@@ -31,6 +31,20 @@ pub async fn get(url: &str) -> Result<Fetched, ProbeError> {
 /// `headers` are extra request lines (`X-Shroud-Client` on a version probe). A name or
 /// value that contains a line break is refused.
 pub async fn get_with(url: &str, headers: &[(&str, &str)]) -> Result<Fetched, ProbeError> {
+    call("GET", url, headers, b"").await
+}
+
+/// `GET` or `POST` on the internal network. `POST` sends `body` with its content length.
+/// A header name or value that contains a line break is refused.
+pub async fn call(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Result<Fetched, ProbeError> {
+    if method != "GET" && method != "POST" {
+        return Err(ProbeError);
+    }
     let target = parse_http_url(url)?;
     let mut extra = String::new();
     for (name, value) in headers {
@@ -47,18 +61,40 @@ pub async fn get_with(url: &str, headers: &[(&str, &str)]) -> Result<Fetched, Pr
         extra.push_str(value);
         extra.push_str("\r\n");
     }
-    match tokio::time::timeout(TIMEOUT, fetch(target, extra)).await {
+    let payload: &[u8] = if method == "POST" {
+        extra.push_str("Content-Type: application/json\r\n");
+        extra.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        body
+    } else {
+        &[]
+    };
+    match tokio::time::timeout(TIMEOUT, fetch(target, method, extra, payload)).await {
         Ok(result) => result,
         Err(_) => Err(ProbeError),
     }
 }
 
-async fn fetch(target: Target, extra_headers: String) -> Result<Fetched, ProbeError> {
+/// Host from an `http://` URL, bracketed when it is an IPv6 address.
+pub(crate) fn http_host(url: &str) -> Result<String, ProbeError> {
+    let target = parse_http_url(url)?;
+    if target.host.contains(':') {
+        Ok(format!("[{}]", target.host))
+    } else {
+        Ok(target.host)
+    }
+}
+
+async fn fetch(
+    target: Target,
+    method: &str,
+    extra_headers: String,
+    body: &[u8],
+) -> Result<Fetched, ProbeError> {
     let mut stream = TcpStream::connect((target.host.as_str(), target.port))
         .await
         .map_err(|_| ProbeError)?;
     let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n{extra_headers}Connection: close\r\n\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n{extra_headers}Connection: close\r\n\r\n",
         path = target.path,
         host = target.host_header,
     );
@@ -66,6 +102,9 @@ async fn fetch(target: Target, extra_headers: String) -> Result<Fetched, ProbeEr
         .write_all(request.as_bytes())
         .await
         .map_err(|_| ProbeError)?;
+    if !body.is_empty() {
+        stream.write_all(body).await.map_err(|_| ProbeError)?;
+    }
     let mut buf = Vec::new();
     let mut tmp = [0u8; 8192];
     loop {

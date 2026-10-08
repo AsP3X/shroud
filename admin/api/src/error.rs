@@ -90,6 +90,30 @@ impl ApiError {
         )
     }
 
+    pub fn reauth_required() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "REAUTH_REQUIRED",
+            "A fresh authenticator code is required.",
+        )
+    }
+
+    pub fn forbidden() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "This operator can't do that.",
+        )
+    }
+
+    pub fn already_done(message: &'static str) -> Self {
+        Self::new(StatusCode::CONFLICT, "ALREADY_DONE", message)
+    }
+
+    pub fn missing_device() -> Self {
+        Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", "No device has that id.")
+    }
+
     pub fn upstream_postgres() -> Self {
         Self {
             upstream: Some("postgres"),

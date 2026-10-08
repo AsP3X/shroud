@@ -80,6 +80,13 @@ pub(crate) async fn unknown() -> ApiError {
     ApiError::not_found()
 }
 
+/// A signed-in operator. `reauth_until` is absent or past when a write needs a fresh code.
+pub(crate) struct SignedIn {
+    pub operator_id: Uuid,
+    pub role: String,
+    pub reauth_until: Option<DateTime<Utc>>,
+}
+
 /// A signed-in operator, or the 401 response (cookies cleared when the session was dead).
 pub(crate) enum Admission {
     In,
@@ -101,6 +108,41 @@ pub(crate) async fn admit(state: &AppState, headers: &HeaderMap) -> Result<Admis
     }
     touch_session(&pool, &session.id_hash).await?;
     Ok(Admission::In)
+}
+
+/// A session plus the CSRF header and cookie. Writes use this; a GET uses [`admit`].
+pub(crate) async fn admit_mutation(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Result<SignedIn, Response>, ApiError> {
+    let Some(raw) = cookie(headers, SESSION_COOKIE) else {
+        return Ok(Err(ApiError::unauthenticated().into_response()));
+    };
+    let pool = db_pool(state)?;
+    let Some(session) = load_session(&pool, raw).await? else {
+        return Ok(Err(unauthenticated_clear()));
+    };
+    if Utc::now() >= expires_at(session.created_at, session.last_used_at) {
+        delete_session(&pool, &session.id_hash).await?;
+        return Ok(Err(unauthenticated_clear()));
+    }
+    if !csrf_matches(headers, &session.csrf) {
+        return Err(ApiError::csrf());
+    }
+    touch_session(&pool, &session.id_hash).await?;
+    Ok(Ok(signed_in(session)))
+}
+
+pub(crate) fn reauth_current(until: Option<DateTime<Utc>>) -> bool {
+    until.is_some_and(|until| until > Utc::now())
+}
+
+fn signed_in(session: LiveSession) -> SignedIn {
+    SignedIn {
+        operator_id: session.operator_id,
+        role: session.role,
+        reauth_until: session.reauth_until,
+    }
 }
 
 pub async fn bootstrap_cli(args: impl Iterator<Item = String>) -> Result<(), BootstrapError> {
@@ -956,7 +998,7 @@ async fn write_audit(
     outcome: &str,
     detail: Option<&str>,
 ) -> Result<(), ApiError> {
-    write_audit_exec(pool, operator_id, action, outcome, detail).await
+    record_in(pool, operator_id, action, None, None, outcome, detail).await
 }
 
 async fn write_audit_exec<'e, E>(
@@ -969,14 +1011,56 @@ async fn write_audit_exec<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    sqlx::query("INSERT INTO admin.audit_log (operator_id, action, outcome, detail) VALUES ($1, $2, $3, $4)")
-        .bind(operator_id)
-        .bind(action)
-        .bind(outcome)
-        .bind(detail)
-        .execute(executor)
-        .await
-        .map_err(db_err)?;
+    record_in(executor, operator_id, action, None, None, outcome, detail).await
+}
+
+pub(crate) async fn record(
+    pool: &PgPool,
+    operator_id: Uuid,
+    action: &str,
+    target_kind: Option<&str>,
+    target_id: Option<Uuid>,
+    outcome: &str,
+    detail: Option<&str>,
+) -> Result<(), ApiError> {
+    record_in(
+        pool,
+        operator_id,
+        action,
+        target_kind,
+        target_id,
+        outcome,
+        detail,
+    )
+    .await
+}
+
+async fn record_in<'e, E>(
+    executor: E,
+    operator_id: Uuid,
+    action: &str,
+    target_kind: Option<&str>,
+    target_id: Option<Uuid>,
+    outcome: &str,
+    detail: Option<&str>,
+) -> Result<(), ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        "INSERT INTO admin.audit_log
+         (operator_id, action, target_kind, target_id, outcome, detail)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(operator_id)
+    .bind(action)
+    .bind(target_kind)
+    .bind(target_id)
+    .bind(outcome)
+    .bind(detail)
+    .execute(executor)
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 

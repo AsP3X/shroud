@@ -14,6 +14,7 @@ mod crypto;
 pub mod db;
 mod error;
 mod limit;
+mod operator_api;
 mod overview;
 mod pages;
 mod password;
@@ -22,6 +23,7 @@ mod published;
 mod state;
 pub mod totp;
 mod users;
+mod writes;
 
 pub use state::AppState;
 
@@ -84,6 +86,7 @@ pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
         .merge(overview::routes())
         .merge(users::routes())
         .merge(pages::routes())
+        .merge(writes::routes())
         .fallback(auth::unknown)
         .layer(middleware::from_fn(no_store))
         .with_state(state);
