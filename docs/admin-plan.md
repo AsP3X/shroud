@@ -394,6 +394,12 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 ### Phase C3 — Integration and polish
 - [ ] **C3.1** Run against the real backend (`docker compose --profile admin up`), fix every
   difference as a contract bug (§3.9) rather than a UI special case.
+  - Read pages done 2026-10-08 against G1.4 (51022c76) without the compose stack: a throwaway
+    `postgres:16-alpine` container, the API binary on 127.0.0.1:18080 for migrations and probes,
+    `grants.sql` and a seed mirroring `tests/users.rs`, `shroud-admin bootstrap`, enrolment and
+    sign-in through the UI with a real TOTP, then every GET route pulled through a curl session.
+    All 16 live responses validate against the fixture schemas, none carries a seeded secret,
+    and every page renders. No contract bug found. The write routes and Operators wait for G2.
 - [x] **C3.2** Keyboard and screen-reader pass; focus order in dialogs; no colour-only state.
   - Done 2026-10-08 for the C1 pages: skip link, `main` landmark, document title per page,
     card titles as `h2`, labelled search fields and user rows, stat tiles as named groups, the
