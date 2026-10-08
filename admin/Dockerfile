@@ -23,6 +23,7 @@ RUN mkdir -p src \
     && cargo build --release \
     && rm -rf src
 COPY admin/api/src ./src
+COPY admin/api/migrations ./migrations
 RUN touch src/lib.rs src/main.rs \
     && cargo build --release
 

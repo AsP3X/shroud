@@ -10,6 +10,8 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
+pub mod db;
+
 use axum::Router;
 use axum::extract::Request;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -53,6 +55,8 @@ pub enum StartupError {
     },
     #[error("admin console stopped")]
     Serve(#[source] std::io::Error),
+    #[error("database: {0}")]
+    Database(String),
 }
 
 /// Router for `/healthz` and, when `dist/index.html` exists, the built UI.
@@ -77,6 +81,17 @@ pub async fn run() -> Result<(), StartupError> {
     let addr = SocketAddr::from((config.host, config.port));
     let ui = config.dist.join("index.html").is_file();
     tracing::info!(%addr, ui, dist = %config.dist.display(), "admin console listening");
+    if let Ok(url) = std::env::var("ADMIN_DATABASE_URL")
+        && !url.is_empty()
+    {
+        let pool = db::connect(&url)
+            .await
+            .map_err(|err| StartupError::Database(err.to_string()))?;
+        db::migrate(&pool)
+            .await
+            .map_err(|err| StartupError::Database(err.to_string()))?;
+        tracing::info!("admin schema ready");
+    }
     let app = router(Some(&config.dist));
     let listener = tokio::net::TcpListener::bind(addr)
         .await

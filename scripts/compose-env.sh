@@ -564,7 +564,42 @@ shroud_up() {
     shroud_diagnose_up
     return 1
   fi
+  shroud_apply_admin_db
   shroud_publish_web_build
+}
+
+# The init script only runs on an empty data directory. This creates shroud_admin on a volume
+# that already existed, then re-applies the column grants (the API role owns those tables).
+shroud_apply_admin_db() {
+  local user db pass
+  shroud_profile_enabled admin || return 0
+  user="$(shroud_env_value POSTGRES_USER)"
+  db="$(shroud_env_value POSTGRES_DB)"
+  pass="$(shroud_env_value ADMIN_DB_PASSWORD)"
+  user="${user:-shroud}"
+  db="${db:-shroud}"
+  [[ -n "$pass" ]] || {
+    echo "ERROR: the admin profile is on and ADMIN_DB_PASSWORD is empty." >&2
+    return 1
+  }
+  shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+    -v pwd="$pass" -v dbname="$db" <<'SQL'
+SELECT set_config('shroud.admin_password', :'pwd', false);
+DO $body$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shroud_admin') THEN
+    EXECUTE format(
+      'CREATE ROLE shroud_admin LOGIN PASSWORD %L',
+      current_setting('shroud.admin_password')
+    );
+  END IF;
+END
+$body$;
+GRANT CONNECT, CREATE ON DATABASE :"dbname" TO shroud_admin;
+GRANT USAGE ON SCHEMA public TO shroud_admin;
+SQL
+  shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+    -f - < "${SHROUD_REPO_ROOT}/admin/api/grants.sql"
 }
 
 # Empties the three data folders in $1 and makes them again. Their contents belong to uid 70,

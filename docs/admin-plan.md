@@ -237,7 +237,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 - [ ] **G0.3 Fixtures and schemas (C8).** Every file in §3.8, hand-written from the frames'
   numbers, plus JSON Schemas. This unblocks Claude's C1.
   - Done when: `npm run dev:fixtures` in `admin/ui` (Claude's C0.2) serves them unchanged.
-- [ ] **G0.4 Role, schema, grants (R3).** `001_admin.sql`: schema `admin`, tables `operators`
+- [x] **G0.4 Role, schema, grants (R3).** `001_admin.sql`: schema `admin`, tables `operators`
   (`id, name, role, password_hash, totp_secret_enc, enabled, created_at, last_sign_in_at`),
   `operator_sessions` (`id_hash, operator_id, created_at, last_used_at, reauth_until, csrf`),
   `recovery_codes` (`operator_id, code_hash, used_at`), `audit_log`, `setup_links`
@@ -246,6 +246,13 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   advisory lock.
   - Done when: the grant test passes against a throwaway `postgres:16`, including a failing
     `SELECT body FROM messages`.
+  - Done 2026-10-08: `cargo test --test grants` against a throwaway `postgres:16`
+    (`pg-admin-grants` on `127.0.0.1:54341`, removed after the run) returns SQLSTATE 42501 for
+    `SELECT ciphertext FROM messages` and for `username_hash`, `sealed_name`, `object_key`,
+    `bucket`, `apns_token` and `endpoint`. Migration 005 stores the message as `ciphertext`;
+    `SELECT body` is 42703 (the column does not exist), which does not prove the grant. The same
+    test returns immediately when `GRANT_TEST_SUPER_URL` and `GRANT_TEST_ADMIN_URL` are unset, so
+    a green run without them is not this proof. `cargo clippy --all-targets -- -D warnings` passed.
 
 ### Phase G1 — Session and read routes (no API change)
 - [ ] **G1.1 Bootstrap and session (C1).** `shroud-admin bootstrap [--recover]`, setup links,

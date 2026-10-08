@@ -27,8 +27,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-shroud}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shroud}
       POSTGRES_DB: ${POSTGRES_DB:-shroud}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
     volumes:
       - shroud_pg_data:/var/lib/postgresql/data
+      - ./server/docker/init-admin-role.sh:/docker-entrypoint-initdb.d/20-admin-role.sh:ro
     networks:
       - shroud-internal
     healthcheck:
