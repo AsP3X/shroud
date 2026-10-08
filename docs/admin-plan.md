@@ -458,14 +458,24 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     devices and Remove device reached the operator-API client and came back as `502 UPSTREAM`
     with the frames' dialog, since G2.1 is not built, and the audit log shows every attempt with
     its outcome. Only the three API-backed writes remain to be seen succeed, after G2.1.
+  - Done 2026-10-09 against G2.1 (82683d9b): with the API rebuilt and started with
+    `OPERATOR_TOKEN` and `OPERATOR_PORT=18090`, Sign out all devices, Remove device and Delete
+    account each went from the UI through re-authentication to the operator listener and back as
+    success, the devices show Stale then Removed, the account became a placeholder in the Users
+    list, and the audit log holds one `ok` row per action. Phase C3.1 is complete.
+  - Observation, not a bug: after a sign-out the API drops the devices' push registrations, so
+    the console then shows them as "Device" rather than "iOS app" or "Web browser", since the
+    platform comes only from the registration kind (§3.3).
 - [x] **C3.2** Keyboard and screen-reader pass; focus order in dialogs; no colour-only state.
   - Done 2026-10-08 for the C1 pages: skip link, `main` landmark, document title per page,
     card titles as `h2`, labelled search fields and user rows, stat tiles as named groups, the
     phone drawer as a modal dialog (focus moves in, Tab stays inside, Escape closes and returns
     focus), every pill and chip carries text, reduced motion honoured. C2's re-auth and
     confirmation dialogs get the same treatment when they are built.
-- [ ] **C3.3** `design/admin.pen` brought level with anything that had to change (R6), and the
+- [x] **C3.3** `design/admin.pen` brought level with anything that had to change (R6), and the
   owner saves it (Pen edits live only in the running app).
+  - Done as each task landed: every design change is a §3.9 entry (#5, #6, #8) and a commit
+    audited against HEAD (3cb46989, 2b5f0261, 5bd759dc, 5a1006cd). Nothing is pending in Pen.
 
 ## 6. Order and integration points
 
