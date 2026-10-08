@@ -1,0 +1,203 @@
+/* Dialogs (frames "User detail · Confirm it's you", "· Remove device", "· Sign out all devices",
+   "· Delete account") and the toast ("· Device removed"). */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--scrim);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 440px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: 0 24px 60px #0006;
+}
+
+.dialog__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.dialog__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.dialog__icon--accent {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.dialog__icon--warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.dialog__icon--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.dialog__text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialog__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.dialog__body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.button--warn {
+  background: var(--warn);
+  color: #1a1206;
+}
+
+.toasts {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transform: translateX(-50%);
+  width: 460px;
+  max-width: calc(100% - 32px);
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--surface-3);
+  box-shadow: 0 12px 32px #0005;
+}
+
+.toast__icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.toast__icon--ok {
+  color: var(--online);
+}
+
+.toast__icon--danger {
+  color: var(--danger);
+}
+
+.toast__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: 0 12px 32px #0005;
+}
+
+.menu__item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.menu__item:hover,
+.menu__item:focus-visible {
+  background: var(--hover);
+}
+
+.menu__item--danger {
+  color: var(--danger);
+}
+
+.menu-anchor {
+  position: relative;
+}
+
+.setup-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.setup-link code {
+  flex: 1;
+}
+
+.radio-row {
+  display: flex;
+  gap: 8px;
+}
+
+.radio {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  text-align: left;
+}
+
+.radio--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.radio__title {
+  font-weight: 500;
+}

@@ -4,7 +4,9 @@ import { AuditLog } from "./pages/AuditLog";
 import { Calls } from "./pages/Calls";
 import { ClientVersions } from "./pages/ClientVersions";
 import { Configuration } from "./pages/Configuration";
+import { ToastProvider } from "./components/Toast";
 import { Gallery } from "./pages/Gallery";
+import { Operators } from "./pages/Operators";
 import { Overview } from "./pages/Overview";
 import { PrivacyChecks } from "./pages/PrivacyChecks";
 import { Push } from "./pages/Push";
@@ -21,6 +23,7 @@ import { Users } from "./pages/Users";
 export function App() {
   return (
     <BrowserRouter>
+      <ToastProvider>
       <Routes>
         <Route path="/sign-in" element={<SignIn />} />
         <Route path="/setup/:token" element={<Setup />} />
@@ -30,7 +33,7 @@ export function App() {
           <Route path="/users" element={<Users />} />
           <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/sign-ups" element={<Stub title="Sign-ups" task="— not on this server: registration is open by design (docs/admin-plan.md §8)" />} />
-          <Route path="/operators" element={<Stub title="Operators" task="C2.3" />} />
+          <Route path="/operators" element={<Operators />} />
           <Route path="/storage" element={<Storage />} />
           <Route path="/retention" element={<Retention />} />
           <Route path="/push" element={<Push />} />
@@ -43,6 +46,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
+      </ToastProvider>
     </BrowserRouter>
   );
 }
