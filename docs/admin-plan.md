@@ -185,6 +185,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 | 2 | 2026-10-08 | §3.2 `attention[].count` is optional; `no_min_version` and `not_ready` carry none. | Grok (G0.3) |
 | 3 | 2026-10-08 | §3.3 `GET /users` takes an optional `status=active \| deleted` filter (the Users frame's All / Active / Deleted segments, filtered on the server so paging stays right), and its response carries `totals: { accounts, active, deleted }` for the header and the segment labels. `users.json`, `users.empty.json` and `schema/users.schema.json` updated in the same commit. | Claude (C1.3) |
 | 4 | 2026-10-08 | §3.4 `GET /audit-log` takes an optional `target=<id>` that returns only entries whose `target_id` is that account or one of its devices (User detail's "Admin actions on this account"). No fixture change: the dev server ignores the parameter and the UI filters the page it gets. | Claude (C1.3) |
+| 6 | 2026-10-08 | Design, for the read-only pages (C1.4): the Storage frames lose the daily chart, the per-account ranking, the last and next cleanup run and "Run now" (the frame "Storage · Run cleanup" goes), keeping the counts the contract has and gaining a legacy-volume card; the Calls frame loses "Test TURN", the call-today, relay-share, relay-count and traffic tiles, the outcomes and the last-test card, keeping the ICE table, the sweep timings and the relay note; Privacy checks loses the task links and the "last change" tile; the Audit log loses the client addresses and "Kept for 365 days". None of these is a contract field or a server record. | Claude (C1.4) |
 | 5 | 2026-10-08 | Design: the Users frames lose "Export CSV" (no route exports anything) and gain a "Mixed" legend key; User detail frames lose "Suspend" (out of scope, §8) and the "Keys and storage" rows the contract has no field for (one-time prekeys, unattached media, calls in 30 days), keeping media stored and adding the PIN-guard row. | Claude (C1.3) |
 
 ---
@@ -314,10 +315,14 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     Down) and `?state=error:upstream-postgres` (the console's own database unreachable, with
     Try again). Service details use only contract fields: no migration count, pool or open-pipe
     number.
-- [ ] **C1.3 Users** [Users, · Loading, · No results, · Couldn't load] and **User detail**
+- [x] **C1.3 Users** [Users, · Loading, · No results, · Couldn't load] and **User detail**
   [User detail] read-only; actions rendered disabled with the frames' footnote.
-- [ ] **C1.4 Storage, Client versions (both states), Rate limits, Data retention, Push delivery,
+  - Done 2026-10-08 against the fixtures, with contract changes §3.9 #3–#5 (status filter and
+    totals on `/users`, `target` on `/audit-log`, design rows no field backs removed).
+- [x] **C1.4 Storage, Client versions (both states), Rate limits, Data retention, Push delivery,
   Calls, Privacy checks, Configuration, Audit log (both states)**: one route each, data from C4.
+  - Done 2026-10-08 against the fixtures; the design follows through §3.9 #6. Every page shows
+    contract fields only and says what the server does not record.
 - [ ] **C1.5 Phone layout** [Phone · Overview, Phone · Users] at ≤ 600 px.
   - Done when: every frame in `design/admin.pen` has a route that matches it in both themes, and
     `npm run build` passes `tsc` with no `any`.
