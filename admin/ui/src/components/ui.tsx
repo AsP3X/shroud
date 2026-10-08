@@ -46,6 +46,7 @@ export function Chip({
 export function Button({
   variant = "secondary",
   icon: Icon,
+  className,
   children,
   ...rest
 }: {
@@ -54,7 +55,7 @@ export function Button({
   children: ReactNode;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button type="button" className={`button button--${variant}`} {...rest}>
+    <button type="button" {...rest} className={["button", `button--${variant}`, className ?? ""].join(" ").trim()}>
       {Icon ? <Icon aria-hidden="true" /> : null}
       {children}
     </button>

@@ -1,6 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Shell } from "./components/Shell";
 import { Gallery } from "./pages/Gallery";
+import { Setup } from "./pages/Setup";
+import { SignIn } from "./pages/SignIn";
 import { Stub } from "./pages/Stub";
 
 /** One route per frame of design/admin.pen (docs/admin-plan.md §5). Pages fill in through C1 and C2. */
@@ -8,8 +10,8 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/sign-in" element={<Stub title="Sign in" task="C1.1" />} />
-        <Route path="/setup/:token" element={<Stub title="Set up your sign-in" task="C1.1" />} />
+        <Route path="/sign-in" element={<SignIn />} />
+        <Route path="/setup/:token" element={<Setup />} />
         <Route element={<Shell />}>
           <Route index element={<Stub title="Overview" task="C1.2" />} />
           <Route path="/privacy-checks" element={<Stub title="Privacy checks" task="C1.4" />} />
