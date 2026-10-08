@@ -323,7 +323,9 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   Calls, Privacy checks, Configuration, Audit log (both states)**: one route each, data from C4.
   - Done 2026-10-08 against the fixtures; the design follows through §3.9 #6. Every page shows
     contract fields only and says what the server does not record.
-- [ ] **C1.5 Phone layout** [Phone · Overview, Phone · Users] at ≤ 600 px.
+- [x] **C1.5 Phone layout** [Phone · Overview, Phone · Users] at ≤ 600 px.
+  - Done 2026-10-08: the top bar and drawer, two-column stat tiles, the first attention item as
+    the frame's banner, and tables that keep the name and status cells only.
   - Done when: every frame in `design/admin.pen` has a route that matches it in both themes, and
     `npm run build` passes `tsc` with no `any`.
 
