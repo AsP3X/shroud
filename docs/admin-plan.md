@@ -402,8 +402,15 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     way a sign-out deletes them, `GET /users/{id}` still matches `user.schema.json` and that
     device is `platform: "unknown"`, `push: "none"`, not revoked.
     `cargo clippy --all-targets --offline -- -D warnings` passed.
-- [ ] **G3.3** `docs/admin.md` operations note: backup (schema `admin`), lost `ADMIN_SECRET_KEY`
+- [x] **G3.3** `docs/admin.md` operations note: backup (schema `admin`), lost `ADMIN_SECRET_KEY`
   (re-enrol TOTP), `bootstrap --recover`.
+  - Done 2026-10-09: `docs/admin.md` says to back up schema `admin` and to keep `ADMIN_SECRET_KEY`
+    with that backup, because authenticator secrets are AES-256-GCM ciphertext and a lost key
+    cannot be used to read them. Re-enrol is `shroud-admin bootstrap --recover` (with `--name`
+    when more than one operator exists): it clears the password and the authenticator secret,
+    deletes that operator's sessions and recovery codes, retires unused setup links, leaves the
+    audit log, and prints a new one-time setup URL. The commands match `bootstrap` in
+    `admin/api/src/auth.rs`.
 
 ## 5. Claude backlog (frontend: `admin/ui`, `design/admin.pen`)
 
