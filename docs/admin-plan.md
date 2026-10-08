@@ -305,8 +305,12 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `/setup/:token` (password, QR and key, code, recovery codes once; used and invalid links).
     New frames "Set up sign-in", "Save your recovery codes" and "Sign in · Recovery code" in
     `design/admin.pen`.
-- [ ] **C1.2 Overview** [Overview, · Database down, · Light]: all three states from fixtures;
+- [x] **C1.2 Overview** [Overview, · Database down, · Light]: all three states from fixtures;
   the attention items link to their pages.
+  - Done 2026-10-08: `/` renders the fixture, `?state=database-down` (Not ready, PostgreSQL
+    Down) and `?state=error:upstream-postgres` (the console's own database unreachable, with
+    Try again). Service details use only contract fields: no migration count, pool or open-pipe
+    number.
 - [ ] **C1.3 Users** [Users, · Loading, · No results, · Couldn't load] and **User detail**
   [User detail] read-only; actions rendered disabled with the frames' footnote.
 - [ ] **C1.4 Storage, Client versions (both states), Rate limits, Data retention, Push delivery,
