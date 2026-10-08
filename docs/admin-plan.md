@@ -319,11 +319,26 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     is not this proof. `cargo clippy --all-targets -- -D warnings` passed.
 
 ### Phase G2 — Writes
-- [ ] **G2.1 [api] Operator listener (C7)** in `shroud-server`: config, second router, token check,
+- [x] **G2.1 [api] Operator listener (C7)** in `shroud-server`: config, second router, token check,
   three routes reusing the inner functions of device removal, sign-out-all and account deletion.
   Document in `docs/server-plan.md`; `.env.example` gets `OPERATOR_PORT`/`OPERATOR_TOKEN`.
   - Done when: public port `404`s `/operator/*`; wrong token `403`; existing server tests pass; a
     removed device's app wipes on its next connection (simulator check).
+  - Done 2026-10-08: `cargo test --offline -p shroud-server` with `DATABASE_URL` against throwaway
+    `postgres:16` on `127.0.0.1:54343` runs `operator_writes_close_sockets_like_the_user` (not a
+    skip). The public app answers `404` for `/operator/*` even when a minimum client version would
+    otherwise be `426`, and `GET /api/v1/health/live` stays `200`. A wrong, missing or oversized
+    bearer is `403` with an empty body. With the token, `/health`, `/health/live`, `/metrics` and
+    `POST /api/v1/auth/login` are `404` on the operator router. Removing a device is `204`; its
+    socket closes with `DEVICE_REMOVED`, and a reconnect with the old token does too. A second
+    call is `409` and an unknown id is `404`. Signing out is `200` `{"detail":"2 sessions"}`; the
+    socket closes with `UNAUTHORIZED`, the devices stay registered, `session-status` says
+    `removed: false`, and a password login works. A second call is `409`. Deleting an account is
+    `204`, the row is scrubbed the way `DELETE /auth/account` scrubs it, and the socket closes
+    with `DEVICE_REMOVED`. A second call is `409`. The rest of the server tests passed; one ntfy
+    test stayed ignored. `cargo clippy -p shroud-server --all-targets --offline -- -D warnings`
+    passed. The simulator check of a removed device wiping itself is the owner's. Without
+    `DATABASE_URL` the write test returns immediately, so a green run is not this proof.
 - [x] **G2.2 Console writes (C5).** Re-auth check (`reauth_until`), role check, operator-API
   client with a 10 s timeout, `409 ALREADY_DONE`, audit rows for ok, refused and failed.
   - Done 2026-10-08: `cargo test --test writes` with `ADMIN_TEST_DATABASE_URL` and

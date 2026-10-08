@@ -349,25 +349,7 @@ pub async fn logout(
     .await
     .map_err(|err| AppError::Internal(format!("logout failed: {err}")))?;
 
-    // Every way this device was reached by push, and what it asked to be pushed.
-    for table in [
-        "push_tokens",
-        "web_push_subscriptions",
-        "device_notification_settings",
-    ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE device_id = $1"))
-            .bind(auth.device_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| AppError::Internal(format!("logout {table} delete failed: {err}")))?;
-    }
-
-    // The browser that logs out wipes its vault; its PIN must not unlock anything afterwards.
-    sqlx::query(r#"DELETE FROM device_pin_guards WHERE device_id = $1"#)
-        .bind(auth.device_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| AppError::Internal(format!("logout pin guard delete failed: {err}")))?;
+    clear_signed_out_device(&mut tx, auth.device_id).await?;
 
     tx.commit()
         .await
@@ -386,6 +368,109 @@ pub async fn logout(
     );
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Drops how a signed-out device is reached. The device row stays, so the next login can
+/// use it again. Logout does this for one device; signing every device out does it for each.
+async fn clear_signed_out_device(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: Uuid,
+) -> Result<(), AppError> {
+    // Every way this device was reached by push, and what it asked to be pushed.
+    for table in [
+        "push_tokens",
+        "web_push_subscriptions",
+        "device_notification_settings",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE device_id = $1"))
+            .bind(device_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("logout {table} delete failed: {err}")))?;
+    }
+
+    // The browser that logs out wipes its vault; its PIN must not unlock anything afterwards.
+    sqlx::query(r#"DELETE FROM device_pin_guards WHERE device_id = $1"#)
+        .bind(device_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("logout pin guard delete failed: {err}")))?;
+    Ok(())
+}
+
+/// What signing an account out everywhere found.
+pub(crate) enum SignOut {
+    /// No users row.
+    Missing,
+    /// The account is already a placeholder.
+    Deleted,
+    /// No live session. Push registrations of the remaining devices are still cleared.
+    Idle,
+    /// Live sessions that were revoked.
+    SignedOut(usize),
+}
+
+/// Revokes every live session of an account and forgets how its devices are pushed to.
+/// Device rows stay. Sockets close as a sign-out (`UNAUTHORIZED`), not a removal.
+///
+/// The same per-device cleanup as [`logout`]. A concurrent login waits on the user row.
+pub(crate) async fn sign_out_user(state: &AppState, user_id: Uuid) -> Result<SignOut, AppError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    let deleted_at: Option<Option<DateTime<Utc>>> =
+        sqlx::query_scalar(r#"SELECT deleted_at FROM users WHERE id = $1 FOR UPDATE"#)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("lock user for sign-out failed: {err}")))?;
+    let Some(deleted_at) = deleted_at else {
+        return Ok(SignOut::Missing);
+    };
+    if deleted_at.is_some() {
+        return Ok(SignOut::Deleted);
+    }
+
+    let device_ids: Vec<Uuid> = sqlx::query_scalar(
+        r#"SELECT id FROM devices WHERE user_id = $1 AND revoked_at IS NULL ORDER BY id"#,
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("list devices for sign-out failed: {err}")))?;
+
+    let sessions: Vec<Uuid> = if device_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_scalar(
+            r#"
+            UPDATE sessions SET revoked_at = now()
+            WHERE device_id = ANY($1) AND revoked_at IS NULL
+            RETURNING id
+            "#,
+        )
+        .bind(&device_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("revoke sessions failed: {err}")))?
+    };
+    for device_id in &device_ids {
+        clear_signed_out_device(&mut tx, *device_id).await?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit sign-out failed: {err}")))?;
+
+    state.realtime.close_sessions(user_id, &sessions).await;
+    if sessions.is_empty() {
+        Ok(SignOut::Idle)
+    } else {
+        Ok(SignOut::SignedOut(sessions.len()))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -491,7 +576,33 @@ pub async fn delete_account(
         return Err(AppError::invalid_credentials());
     }
 
-    let user_id = auth.user_id;
+    match delete_user_account(&state, auth.user_id, Some(auth.device_id)).await? {
+        AccountDelete::Done => Ok(StatusCode::NO_CONTENT),
+        // Already a placeholder, or the row is gone: this device is removed with it.
+        AccountDelete::Missing | AccountDelete::Deleted => Err(AppError::device_removed()),
+    }
+}
+
+/// What deleting an account found.
+pub(crate) enum AccountDelete {
+    /// Chats, devices and the sign-in are gone. The users row stays as a placeholder.
+    Done,
+    /// No users row.
+    Missing,
+    /// `deleted_at` was already set. Nothing else was changed.
+    Deleted,
+}
+
+/// Deletes an account the way [`delete_account`] does after the password check.
+///
+/// `except_device` is the device that asked. It wipes itself from the response, so it is
+/// not sent the wake push. The operator listener passes `None` and every device is woken.
+/// A missing row, and an account that is already a placeholder, change nothing.
+pub(crate) async fn delete_user_account(
+    state: &AppState,
+    user_id: Uuid,
+    except_device: Option<Uuid>,
+) -> Result<AccountDelete, AppError> {
     let mut tx = state
         .pool
         .begin()
@@ -499,16 +610,18 @@ pub async fn delete_account(
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
     // Human: NO KEY UPDATE, not UPDATE: a send racing this still takes its foreign-key lock
-    // on the row, and a second delete from another device waits here and then finds it gone.
-    let live: Option<Uuid> = sqlx::query_scalar(
-        r#"SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"#,
-    )
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|err| AppError::Internal(format!("lock user for delete failed: {err}")))?;
-    if live.is_none() {
-        return Err(AppError::device_removed());
+    // on the row, and a second delete waits here and then finds it gone.
+    let deleted_at: Option<Option<DateTime<Utc>>> =
+        sqlx::query_scalar(r#"SELECT deleted_at FROM users WHERE id = $1 FOR NO KEY UPDATE"#)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("lock user for delete failed: {err}")))?;
+    let Some(deleted_at) = deleted_at else {
+        return Ok(AccountDelete::Missing);
+    };
+    if deleted_at.is_some() {
+        return Ok(AccountDelete::Deleted);
     }
 
     // Devices first: `send_message` holds its device row while it inserts, so a send racing
@@ -525,8 +638,9 @@ pub async fn delete_account(
     for device_id in &device_ids {
         let revoked = crate::routes::devices::revoke_device(&mut tx, *device_id).await?;
         revoked_sessions.extend(revoked.sessions);
-        // The device that asked wipes itself already.
-        if *device_id != auth.device_id {
+        // The device that asked wipes itself from the response. An operator delete has no
+        // such device, so every one is woken.
+        if Some(*device_id) != except_device {
             wakes.extend(revoked.wake);
         }
     }
@@ -628,7 +742,7 @@ pub async fn delete_account(
 
     // The account is gone either way; blobs a failed purge leaves are unlinked, so the orphan
     // GC takes them.
-    let media_purged = match crate::routes::media::purge_media_ids(&state, &media_ids).await {
+    let media_purged = match crate::routes::media::purge_media_ids(state, &media_ids).await {
         Ok(purged) => purged,
         Err(err) => {
             tracing::warn!(user_id = %user_id, error = %err, "auth.account_delete media purge failed");
@@ -677,7 +791,7 @@ pub async fn delete_account(
         "auth.account_delete ok"
     );
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(AccountDelete::Done)
 }
 
 /// `POST /auth/password` — change password; revoke other sessions and close their sockets.

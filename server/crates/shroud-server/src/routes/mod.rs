@@ -22,6 +22,7 @@ pub mod link_relay;
 pub mod media;
 pub mod messages;
 pub mod notifications;
+pub mod operator;
 pub mod pin_guard;
 pub mod presence;
 pub mod privacy;

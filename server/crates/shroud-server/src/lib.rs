@@ -81,6 +81,7 @@ pub async fn run() -> Result<(), AppError> {
     logging::init_subscriber();
 
     let config = Config::from_env()?;
+    let operator_port = config.operator.as_ref().map(|listener| listener.port);
     tracing::info!(
         host = %config.host,
         port = config.port,
@@ -90,6 +91,8 @@ pub async fn run() -> Result<(), AppError> {
         trust_forwarded_headers = config.trust_forwarded_headers,
         media_store = if config.media.nebular.is_some() { "nebular" } else { "local" },
         media_bucket = %config.media.bucket,
+        operator = config.operator.is_some(),
+        ?operator_port,
         "configuration loaded"
     );
 
@@ -252,23 +255,85 @@ pub async fn run() -> Result<(), AppError> {
     // never leaves anyone busy; both sides hear `call.ended`.
     crate::routes::calls::spawn_call_gc(state.clone());
 
-    let app = app(state, &config.cors_allowed_origins);
+    let public_app = app(state.clone(), &config.cors_allowed_origins);
+    let (shutdown_tx, shutdown_rx) = listen_shutdown();
 
-    let addr: SocketAddr = config.socket_addr()?;
+    let addr = config.socket_addr()?;
     tracing::info!(%addr, "shroud-server listening");
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|err| AppError::Internal(format!("bind failed: {err}")))?;
 
-    // Human: Drain in-flight HTTP after SIGTERM/Ctrl-C so orchestrators can stop cleanly.
-    // Agent: CALLS axum::serve.with_graceful_shutdown; WS clients see close on process exit.
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|err| AppError::Internal(format!("server error: {err}")))?;
+    // Human: Drain in-flight HTTP on the public listener and, when it is on, the operator
+    // listener after SIGTERM/Ctrl-C. Either one exiting stops the other.
+    // Agent: one watch fed by shutdown_signal; both serves use with_graceful_shutdown.
+    if let Some(operator) = config.operator.clone() {
+        let operator_addr = SocketAddr::new(config.host, operator.port);
+        let operator_listener = tokio::net::TcpListener::bind(operator_addr)
+            .await
+            .map_err(|err| AppError::Internal(format!("operator bind failed: {err}")))?;
+        tracing::info!(%operator_addr, "operator listener");
+        let operator_app = routes::operator::router(Arc::from(operator.token())).with_state(state);
+        let public_done = shutdown_tx.clone();
+        let operator_done = shutdown_tx;
+        let public_stop = shutdown_rx.clone();
+        let operator_stop = shutdown_rx;
+        // Whichever listener returns tells the other to drain, then both are awaited.
+        let public_task = tokio::spawn(async move {
+            let result = axum::serve(listener, public_app)
+                .with_graceful_shutdown(until_shutdown(public_stop))
+                .await;
+            let _ = public_done.send(true);
+            result
+        });
+        let operator_task = tokio::spawn(async move {
+            let result = axum::serve(operator_listener, operator_app)
+                .with_graceful_shutdown(until_shutdown(operator_stop))
+                .await;
+            let _ = operator_done.send(true);
+            result
+        });
+        let (public_result, operator_result) = tokio::join!(public_task, operator_task);
+        public_result
+            .map_err(|err| AppError::Internal(format!("server task failed: {err}")))?
+            .map_err(serve_error)?;
+        operator_result
+            .map_err(|err| AppError::Internal(format!("operator task failed: {err}")))?
+            .map_err(serve_error)?;
+    } else {
+        tracing::info!("operator listener off");
+        axum::serve(listener, public_app)
+            .with_graceful_shutdown(until_shutdown(shutdown_rx))
+            .await
+            .map_err(serve_error)?;
+        drop(shutdown_tx);
+    }
 
     tracing::info!("shroud-server shut down");
     Ok(())
+}
+
+fn serve_error(err: std::io::Error) -> AppError {
+    AppError::Internal(format!("server error: {err}"))
+}
+
+/// A flag set on SIGTERM/Ctrl-C. `run` also sets it when either listener returns, so the
+/// other drains.
+fn listen_shutdown() -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::sync::watch::Receiver<bool>,
+) {
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let signal = tx.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = signal.send(true);
+    });
+    (tx, rx)
+}
+
+async fn until_shutdown(mut rx: tokio::sync::watch::Receiver<bool>) {
+    let _ = rx.changed().await;
 }
 
 /// The whole HTTP app: every route behind the middleware stack `run` serves.

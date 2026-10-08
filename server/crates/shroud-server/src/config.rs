@@ -33,6 +33,36 @@ pub struct IceServer {
     pub credential: Option<String>,
 }
 
+/// Default bind for the internal operator listener (`OPERATOR_PORT`).
+const DEFAULT_OPERATOR_PORT: u16 = 8090;
+/// Longer than this is refused: the listener hashes the token on every request.
+const MAX_OPERATOR_TOKEN_LEN: usize = 256;
+
+/// Internal listener the admin console calls.
+///
+/// Absent from [`Config`] when `OPERATOR_TOKEN` is empty: the process does not bind the port.
+#[derive(Clone)]
+pub struct OperatorListener {
+    pub port: u16,
+    token: String,
+}
+
+impl std::fmt::Debug for OperatorListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperatorListener")
+            .field("port", &self.port)
+            .field("token", &"set")
+            .finish()
+    }
+}
+
+impl OperatorListener {
+    /// The bearer token. [`Debug`] prints `set` and never this value.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+}
+
 /// Validated settings required before the server accepts traffic.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -63,6 +93,9 @@ pub struct Config {
     pub unifiedpush: UnifiedPushPolicy,
     /// Released app versions (`IOS_*`, `ANDROID_*`, `WEB_BUILD`).
     pub client_versions: ClientVersions,
+    /// Internal operator listener. `None` when `OPERATOR_TOKEN` is unset or blank:
+    /// the process does not bind `OPERATOR_PORT`.
+    pub operator: Option<OperatorListener>,
 }
 
 /// Where encrypted media blobs live (see [`crate::media_store`]).
@@ -163,6 +196,15 @@ impl Config {
         let client_versions =
             crate::client_version::client_versions(&|name| std::env::var(name).ok())?;
 
+        // Human: Unset token means this process has no operator listener. A set token that
+        // cannot be bound (bad port, or the public PORT) refuses startup instead of serving
+        // the public API without the console's writes.
+        let operator = operator_listener(
+            std::env::var("OPERATOR_TOKEN").ok().as_deref(),
+            std::env::var("OPERATOR_PORT").ok().as_deref(),
+            port,
+        )?;
+
         Ok(Self {
             database_url,
             database_pool_max,
@@ -178,6 +220,7 @@ impl Config {
             reactions_max_per_user,
             unifiedpush,
             client_versions,
+            operator,
         })
     }
 
@@ -185,6 +228,42 @@ impl Config {
     pub fn socket_addr(&self) -> Result<SocketAddr, AppError> {
         Ok(SocketAddr::new(self.host, self.port))
     }
+}
+
+/// The operator listener, or `None` when `token` is unset or only whitespace.
+///
+/// A blank token leaves the listener off and ignores `port`, so a half-filled environment
+/// still boots the public API. A real token is kept exactly as written. It must not contain
+/// a line break or be longer than 256 bytes. The port defaults to 8090 and must not be 0
+/// or the public `PORT`.
+fn operator_listener(
+    token: Option<&str>,
+    port: Option<&str>,
+    public_port: u16,
+) -> Result<Option<OperatorListener>, AppError> {
+    let Some(token) = token.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if token.len() > MAX_OPERATOR_TOKEN_LEN || token.contains('\r') || token.contains('\n') {
+        return Err(AppError::Internal(
+            "OPERATOR_TOKEN must be at most 256 bytes and must not contain a line break".into(),
+        ));
+    }
+    let port = match port.map(str::trim).filter(|value| !value.is_empty()) {
+        None => DEFAULT_OPERATOR_PORT,
+        Some(raw) => raw
+            .parse::<u16>()
+            .map_err(|_| AppError::Internal("OPERATOR_PORT must be a port number".into()))?,
+    };
+    if port == 0 || port == public_port {
+        return Err(AppError::Internal(
+            "OPERATOR_PORT must be a free port and must differ from PORT".into(),
+        ));
+    }
+    Ok(Some(OperatorListener {
+        port,
+        token: token.to_string(),
+    }))
 }
 
 /// Browser origins that may call this API cross-origin.
@@ -557,5 +636,54 @@ mod tests {
             assert!(!is_valid_bucket_name(bad), "{bad}");
         }
         assert!(media_from(&[("NEBULAR_MEDIA_BUCKET", "../etc")]).is_err());
+    }
+
+    #[test]
+    fn operator_listener_stays_off_without_a_token() {
+        assert!(
+            operator_listener(None, Some("nope"), 8080)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            operator_listener(Some("  \n\t"), Some("0"), 8080)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn operator_listener_keeps_the_token_and_rejects_a_bad_port() {
+        let listener = operator_listener(Some(" spaced "), None, 8080)
+            .unwrap()
+            .expect("listener");
+        assert_eq!(listener.port, DEFAULT_OPERATOR_PORT);
+        assert_eq!(listener.token(), " spaced ");
+        let debug = format!("{listener:?}");
+        assert!(debug.contains("set"));
+        assert!(!debug.contains(" spaced "));
+
+        assert_eq!(
+            operator_listener(Some("tok"), Some(""), 8080)
+                .unwrap()
+                .unwrap()
+                .port,
+            DEFAULT_OPERATOR_PORT
+        );
+        assert!(operator_listener(Some("tok"), Some("8080"), 8080).is_err());
+        assert!(operator_listener(Some("tok"), Some("0"), 8080).is_err());
+        assert!(operator_listener(Some("tok"), Some("nope"), 8080).is_err());
+        assert!(operator_listener(Some("tok\n"), None, 8080).is_err());
+        assert!(
+            operator_listener(Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN + 1)), None, 8080).is_err()
+        );
+        assert!(
+            operator_listener(
+                Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN)),
+                Some("8090"),
+                8080
+            )
+            .is_ok()
+        );
     }
 }

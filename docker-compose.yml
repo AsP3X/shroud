@@ -152,6 +152,11 @@ services:
       MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
+      # Operator listener. Same values as the admin service. Not in `ports:`:
+      # only containers on shroud-internal can reach it. Unset token: the API
+      # does not bind the port.
+      OPERATOR_PORT: ${OPERATOR_PORT:-8090}
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:8081}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
       APNS_KEY_PATH: ${APNS_KEY_PATH:-}

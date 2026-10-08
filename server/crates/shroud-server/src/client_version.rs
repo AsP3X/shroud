@@ -257,7 +257,10 @@ pub async fn require_supported_client(
     request: Request,
     next: Next,
 ) -> Response {
-    if OPEN_PATHS.contains(&request.uri().path()) {
+    let path = request.uri().path();
+    // `/operator/*` is not a public route. Let it miss the router and answer 404, including
+    // when a minimum version would otherwise refuse a request that names no app.
+    if OPEN_PATHS.contains(&path) || path == "/operator" || path.starts_with("/operator/") {
         return next.run(request).await;
     }
     let client = request_client(request.headers(), request.uri());

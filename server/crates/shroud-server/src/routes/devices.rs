@@ -170,6 +170,19 @@ pub async fn delete_device(
         return Err(AppError::not_found("Device not found."));
     }
 
+    commit_device_removal(&state, tx, auth.user_id, device_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Commits a revocation the caller has already locked as a live device, then closes its
+/// sockets and sends the wake push. `DELETE /devices/{id}` and the operator listener both
+/// finish here, so a removal has the same effect whoever asked for it.
+pub(crate) async fn commit_device_removal(
+    state: &AppState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    device_id: Uuid,
+) -> Result<(), AppError> {
     let revoked = revoke_device(&mut tx, device_id).await?;
 
     tx.commit()
@@ -181,14 +194,14 @@ pub async fn delete_device(
     // without one is woken by push: either way it wipes the account's data at once.
     state
         .realtime
-        .close_sessions(auth.user_id, &revoked.sessions)
+        .close_sessions(user_id, &revoked.sessions)
         .await;
     state
         .push
         .wake_removed_devices(revoked.wake.into_iter().collect())
         .await;
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
 }
 
 /// What the caller of [`revoke_device`] finishes once its transaction commits.
