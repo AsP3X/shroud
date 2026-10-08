@@ -102,14 +102,19 @@ else
   mode_choice="${mode_choice:-$mode_default}"
 fi
 
+# Whatever .env holds is the default, whichever scheme or host it has. Only a value that is
+# no URL at all falls back to the example (npm) or to localhost on the chosen port (local).
+url_or() {
+  local value="$1" fallback="$2"
+  case "$value" in
+    http://*|https://*) printf '%s' "$value" ;;
+    *) printf '%s' "$fallback" ;;
+  esac
+}
 if [[ "$mode_choice" == "2" ]]; then
   PROXY_MODE="npm"
-  web_default="$(current WEB_PUBLIC_URL)"
-  api_default="$(current API_PUBLIC_URL)"
-  case "$web_default" in https://*) ;; *) web_default="https://web.example.com" ;; esac
-  case "$api_default" in https://*) ;; *) api_default="https://api.example.com" ;; esac
-  WEB_PUBLIC_URL="$(prompt "Public web URL" "$web_default")"
-  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "$api_default")"
+  WEB_PUBLIC_URL="$(prompt "Public web URL" "$(url_or "$(current WEB_PUBLIC_URL)" "https://web.example.com")")"
+  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "$(url_or "$(current API_PUBLIC_URL)" "https://api.example.com")")"
   WEB_PORT="8081"
   API_PORT="8080"
 else
@@ -118,8 +123,11 @@ else
   API_PORT="$(prompt "API host port" "$(current API_PORT)")"
   WEB_PORT="${WEB_PORT:-8081}"
   API_PORT="${API_PORT:-8080}"
-  WEB_PUBLIC_URL="http://localhost:${WEB_PORT}"
-  API_PUBLIC_URL="http://localhost:${API_PORT}"
+  # A reverse proxy outside this compose file, or a LAN address, may front the local ports;
+  # the URL the apps use is asked for, with localhost on the port as the first-run default.
+  echo "  The URLs browsers and the apps use. Keep localhost unless something fronts these ports."
+  WEB_PUBLIC_URL="$(prompt "Public web URL" "$(url_or "$(current WEB_PUBLIC_URL)" "http://localhost:${WEB_PORT}")")"
+  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "$(url_or "$(current API_PUBLIC_URL)" "http://localhost:${API_PORT}")")"
 fi
 
 echo ""
@@ -295,7 +303,12 @@ case "$(printf '%s' "${admin_choice:-$admin_default}" | tr '[:upper:]' '[:lower:
     ;;
 esac
 
-CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL"
+# Extra origins added by hand stay as long as the web URL is still among them.
+CORS_ALLOWED_ORIGINS="$(current CORS_ALLOWED_ORIGINS)"
+case ",${CORS_ALLOWED_ORIGINS}," in
+  *",${WEB_PUBLIC_URL},"*) ;;
+  *) CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL" ;;
+esac
 RUST_LOG="$(current RUST_LOG)"
 RUST_LOG="${RUST_LOG:-info}"
 RUST_LOG_FORMAT="$(current RUST_LOG_FORMAT)"
