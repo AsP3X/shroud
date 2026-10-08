@@ -299,8 +299,12 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     (≤ 600 px) shows the top bar and a drawer with the sidebar.
 
 ### Phase C1 — Sign-in and read-only pages (against fixtures)
-- [ ] **C1.1 Sign in** [Sign in, Sign in · Error], setup/enrolment page with the QR, recovery
+- [x] **C1.1 Sign in** [Sign in, Sign in · Error], setup/enrolment page with the QR, recovery
   codes shown once with a "I saved them" step.
+  - Done 2026-10-08 against the fixtures: `/sign-in` (with a recovery-code switch) and
+    `/setup/:token` (password, QR and key, code, recovery codes once; used and invalid links).
+    New frames "Set up sign-in", "Save your recovery codes" and "Sign in · Recovery code" in
+    `design/admin.pen`.
 - [ ] **C1.2 Overview** [Overview, · Database down, · Light]: all three states from fixtures;
   the attention items link to their pages.
 - [ ] **C1.3 Users** [Users, · Loading, · No results, · Couldn't load] and **User detail**
