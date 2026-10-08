@@ -285,13 +285,18 @@ if [[ "${SHROUD_SETUP_ASSUME_YES:-}" == "1" ]]; then
 else
   read -r admin_choice || true
 fi
-ADMIN_PORT="8082"
-ADMIN_PUBLIC_URL=""
-ADMIN_DB_PASSWORD=""
-ADMIN_DATABASE_URL=""
-ADMIN_SECRET_KEY=""
-OPERATOR_PORT="8090"
-OPERATOR_TOKEN=""
+# Off keeps the console's settings and secrets in .env, so turning it back on later finds the
+# same key: the authenticator secrets in the database are sealed with ADMIN_SECRET_KEY, and a
+# new key would make every operator re-enrol. Only the profile decides whether it runs.
+ADMIN_PORT="$(current ADMIN_PORT)"
+ADMIN_PORT="${ADMIN_PORT:-8082}"
+ADMIN_PUBLIC_URL="$(current ADMIN_PUBLIC_URL)"
+ADMIN_DB_PASSWORD="$(current ADMIN_DB_PASSWORD)"
+ADMIN_DATABASE_URL="$(current ADMIN_DATABASE_URL)"
+ADMIN_SECRET_KEY="$(current ADMIN_SECRET_KEY)"
+OPERATOR_PORT="$(current OPERATOR_PORT)"
+OPERATOR_PORT="${OPERATOR_PORT:-8090}"
+OPERATOR_TOKEN="$(current OPERATOR_TOKEN)"
 case "$(printf '%s' "${admin_choice:-$admin_default}" | tr '[:upper:]' '[:lower:]')" in
   y|yes)
     if [[ -n "$COMPOSE_PROFILES" ]]; then
@@ -317,7 +322,11 @@ case "$(printf '%s' "${admin_choice:-$admin_default}" | tr '[:upper:]' '[:lower:
     echo "  Admin console: ${GREEN}on${NC} at ${ADMIN_PUBLIC_URL}"
     ;;
   *)
-    echo "  Admin console: ${DIM}off${NC}"
+    if [[ -n "$ADMIN_SECRET_KEY" ]]; then
+      echo "  Admin console: ${DIM}off${NC} (its settings and secrets stay in .env for when you turn it back on)"
+    else
+      echo "  Admin console: ${DIM}off${NC}"
+    fi
     ;;
 esac
 

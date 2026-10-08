@@ -2,6 +2,33 @@
 
 The console is the `admin` Compose service (`shroud-admin`). It uses role `shroud_admin` and schema `admin` in the API's Postgres database. `ADMIN_SECRET_KEY` is 64 hex characters. The console will not start while `ADMIN_DATABASE_URL` is set and the key is missing or not that length.
 
+## Turning the console off and on
+
+For a while, without touching `.env`:
+
+```
+docker compose --profile admin stop admin
+docker compose --profile admin start admin
+```
+
+The next `./deploy.sh` starts it again, because the `admin` profile is still on.
+
+Until you want it back, so deploys leave it off:
+
+```
+./deploy.sh --init
+```
+
+Answer `n` at "Enable the admin console?". The wizard drops the `admin` profile and the next
+deploy removes the container, but keeps `ADMIN_SECRET_KEY`, the console's database password
+and the operator token in `.env`. Operators, their authenticators and the audit log stay in
+schema `admin`. To turn it back on, run `./deploy.sh --init` again and answer `y`: the same key
+reads the same secrets, and everyone signs in as before.
+
+While the profile is off, the API still binds its internal operator port, since
+`OPERATOR_TOKEN` is set; nothing publishes that port and nothing calls it. Blank the token in
+`.env` and redeploy if you want the API not to bind it at all.
+
 ## What to back up
 
 Back up schema `admin` with the database. That schema holds:
