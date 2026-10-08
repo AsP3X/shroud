@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { usePageData } from "../api/usePageData";
 import type { Overview as OverviewData } from "../api/types";
 import { LoadError, Loading } from "../components/LoadState";
-import { Button, Card, CardHead, KeyValueRows, PageHeader, StatTile, StatusPill, type Tone } from "../components/ui";
+import { Banner, Button, Card, CardHead, KeyValueRows, PageHeader, StatTile, StatusPill, type Tone } from "../components/ui";
 import { clock, count, duration, percent, uptime } from "../format";
 
 interface ServiceRow {
@@ -111,6 +111,14 @@ export function Overview() {
           Refresh
         </Button>
       </PageHeader>
+
+      {attention[0] ? (
+        <div className="mobile-only">
+          <Link to={ATTENTION[attention[0].kind].to} style={{ display: "block" }}>
+            <Banner title={ATTENTION[attention[0].kind].title(attention[0].count)} body={attention.length > 1 ? `${attention.length} items need attention · see below` : ATTENTION[attention[0].kind].body} />
+          </Link>
+        </div>
+      ) : null}
 
       <div className="stats">
         <StatTile label="Accounts" value={count(stats.accounts)} sub={`+${count(stats.accounts_7d)} in the last 7 days · ${count(stats.accounts_deleted)} deleted`} />

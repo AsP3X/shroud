@@ -69,7 +69,31 @@ button {
   display: none;
 }
 
+.mobile-only,
+.mobile-inline {
+  display: none;
+}
+
 @media (max-width: 600px) {
+  .mobile-only {
+    display: block;
+  }
+  .mobile-inline {
+    display: inline;
+  }
+  .main .stats {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .stat-tile {
+    padding: 14px 16px;
+  }
+  .stat-tile__value {
+    font-size: 24px;
+  }
+  .page-header .button {
+    display: none;
+  }
   .shell {
     grid-template-columns: 1fr;
     grid-template-rows: 56px 1fr;
@@ -426,7 +450,17 @@ h1 {
     flex-direction: column;
   }
   .column {
+    flex: 1 1 auto !important;
     width: 100% !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .card .table__head {
+    display: none;
+  }
+  .card .cell:not(.cell--fill):not(.cell--keep) {
+    display: none;
   }
 }
 

@@ -252,7 +252,13 @@ function UserTableRow({ row, onOpen }: { row: UserRow; onOpen: () => void }) {
           <span className={deleted ? "mono text-secondary" : "mono text-primary"} style={{ fontWeight: 500 }}>
             {row.id.slice(0, 8)}
           </span>
-          <span className="small text-tertiary">{deleted ? "Deleted account" : <span className="mono">{row.id.slice(0, 8)}…</span>}</span>
+          <span className="small text-tertiary">
+            {deleted ? "Deleted account" : <span className="mono">{row.id.slice(0, 8)}…</span>}
+            <span className="mobile-inline">
+              {" · "}
+              {relativeDay(row.last_active_on)} · {row.devices} {row.devices === 1 ? "device" : "devices"}
+            </span>
+          </span>
         </span>
       </Cell>
       <Cell width={130}>{day(row.created_on)}</Cell>
@@ -261,7 +267,9 @@ function UserTableRow({ row, onOpen }: { row: UserRow; onOpen: () => void }) {
       </Cell>
       <Cell width={150}>{relativeDay(row.last_active_on)}</Cell>
       <Cell width={150}>{deleted ? <span className="text-tertiary">—</span> : <PushIcons push={row.push} />}</Cell>
-      <Cell width={120}>{deleted ? <StatusPill tone="neutral">Deleted</StatusPill> : <StatusPill tone="ok">Active</StatusPill>}</Cell>
+      <Cell width={120} className="cell--keep">
+        {deleted ? <StatusPill tone="neutral">Deleted</StatusPill> : <StatusPill tone="ok">Active</StatusPill>}
+      </Cell>
       <Cell width={44} right>
         <ChevronRight size={16} aria-hidden="true" className="text-tertiary" />
       </Cell>
