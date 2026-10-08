@@ -114,6 +114,14 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", "No device has that id.")
     }
 
+    pub fn missing_operator() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "No operator has that id.",
+        )
+    }
+
     pub fn upstream_postgres() -> Self {
         Self {
             upstream: Some("postgres"),

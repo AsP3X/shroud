@@ -1014,17 +1014,20 @@ where
     record_in(executor, operator_id, action, None, None, outcome, detail).await
 }
 
-pub(crate) async fn record(
-    pool: &PgPool,
+pub(crate) async fn record<'e, E>(
+    executor: E,
     operator_id: Uuid,
     action: &str,
     target_kind: Option<&str>,
     target_id: Option<Uuid>,
     outcome: &str,
     detail: Option<&str>,
-) -> Result<(), ApiError> {
+) -> Result<(), ApiError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     record_in(
-        pool,
+        executor,
         operator_id,
         action,
         target_kind,

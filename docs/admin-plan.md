@@ -339,7 +339,22 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `404` and `409` are already done. G2.1, which would serve that port inside
     `shroud-server`, is not in this change. Without either URL the test returns immediately,
     so a green run is not this proof. `cargo clippy --all-targets -- -D warnings` passed.
-- [ ] **G2.3 Operators (C6).** Invite links, role changes, disable ends sessions, TOTP reset.
+- [x] **G2.3 Operators (C6).** Invite links, role changes, disable ends sessions, TOTP reset.
+  - Done 2026-10-08: `cargo test --test operators` with `ADMIN_TEST_DATABASE_URL` against
+    throwaway `postgres:16` on `127.0.0.1:54342` runs `operators_list_invites_and_end_sessions`
+    (not a skip). `GET /operators` is open to either role and matches `operators.schema.json`;
+    `totp_enrolled` means a password is set, and the password hash is not in the JSON. A
+    view-only `POST` is `403 FORBIDDEN` with an audit row `refused`. A session whose
+    `reauth_until` is null is `403 REAUTH_REQUIRED` with no audit row. An invite returns a
+    relative `/setup/{token}` that the setup page accepts and that expires in 15 minutes; a
+    duplicate name is `400`. Changing a role is `204`. Demoting or disabling oneself is
+    `403 FORBIDDEN` and changes nothing. Disabling another operator deletes that operator's
+    sessions. Resetting an authenticator clears the password, ends that operator's sessions,
+    retires the old setup link (`410 LINK_USED`) and returns a new relative link. A missing
+    id is `404`. Those attempts write one audit row each (`operator.create`, `operator.update`,
+    `operator.reset_totp`). Server migrations are not required. Without the URL the test
+    returns immediately, so a green run is not this proof.
+    `cargo clippy --all-targets -- -D warnings` passed. G2.1 is not in this change.
 
 ### Phase G3 — Hardening and tests
 - [ ] **G3.1** CSP `default-src 'self'; img-src 'self' data:` (the enrolment QR is inline SVG),
