@@ -14,7 +14,9 @@ mod crypto;
 pub mod db;
 mod error;
 mod limit;
+mod overview;
 mod password;
+mod probe;
 mod state;
 pub mod totp;
 
@@ -76,6 +78,8 @@ pub fn router(dist: Option<&Path>) -> Router {
 
 pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
     let api = auth::routes()
+        .merge(overview::routes())
+        .fallback(auth::unknown)
         .layer(middleware::from_fn(no_store))
         .with_state(state);
     let mut router = Router::new()

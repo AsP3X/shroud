@@ -74,7 +74,33 @@ pub fn routes() -> Router<AppState> {
         .route("/session/recovery", post(recover_session))
         .route("/session/reauth", post(reauth))
         .route("/setup/{token}", get(setup_get).post(setup_post))
-        .fallback(unknown_route)
+}
+
+pub(crate) async fn unknown() -> ApiError {
+    ApiError::not_found()
+}
+
+/// A signed-in operator, or the 401 response (cookies cleared when the session was dead).
+pub(crate) enum Admission {
+    In,
+    Out(Response),
+}
+
+/// Require a live session. Touches `last_used_at` so paging the console keeps the session.
+pub(crate) async fn admit(state: &AppState, headers: &HeaderMap) -> Result<Admission, ApiError> {
+    let Some(raw) = cookie(headers, SESSION_COOKIE) else {
+        return Ok(Admission::Out(ApiError::unauthenticated().into_response()));
+    };
+    let pool = db_pool(state)?;
+    let Some(session) = load_session(&pool, raw).await? else {
+        return Ok(Admission::Out(unauthenticated_clear()));
+    };
+    if Utc::now() >= expires_at(session.created_at, session.last_used_at) {
+        delete_session(&pool, &session.id_hash).await?;
+        return Ok(Admission::Out(unauthenticated_clear()));
+    }
+    touch_session(&pool, &session.id_hash).await?;
+    Ok(Admission::In)
 }
 
 pub async fn bootstrap_cli(args: impl Iterator<Item = String>) -> Result<(), BootstrapError> {
@@ -321,10 +347,6 @@ struct LiveSession {
     created_at: DateTime<Utc>,
     last_used_at: DateTime<Utc>,
     reauth_until: Option<DateTime<Utc>>,
-}
-
-async fn unknown_route() -> ApiError {
-    ApiError::not_found()
 }
 
 async fn sign_in(

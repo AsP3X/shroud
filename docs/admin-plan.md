@@ -267,10 +267,21 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     the password, authenticator secret, setup token or recovery codes. The same test returns
     immediately when `ADMIN_TEST_DATABASE_URL` is unset, so a green run without it is not this
     proof. `cargo clippy --all-targets -- -D warnings` passed.
-- [ ] **G1.2 Overview (C2).** Postgres counts (R8), `/health/ready`, `/metrics` parsed by name,
+- [x] **G1.2 Overview (C2).** Postgres counts (R8), `/health/ready`, `/metrics` parsed by name,
   `configured` from the console's environment, `attention` rules.
   - Done when: stopping Postgres yields `502 UPSTREAM upstream=postgres`, and
     `/health/ready` not ok yields `ready.status = not_ready`.
+  - Done 2026-10-08: `cargo test --test overview -- --test-threads=1` against the throwaway
+    `postgres:16` on `127.0.0.1:54341`. `overview_without_a_session_is_401_and_a_stopped_database_is_502`
+    matches `error.unauthenticated.json` with no cookie and `error.upstream-postgres.json` for a
+    lazy pool whose server is not listening. `overview_matches_the_schema_and_a_failing_probe_is_not_ready`
+    (needs `ADMIN_TEST_DATABASE_URL` and `GRANT_TEST_SUPER_URL`; without them it returns immediately
+    and a green run is not this proof) validates the body against `schema/overview.schema.json`,
+    matches a `count(id)` of the granted columns, keeps that count for the cached minute after a
+    row is deleted, and sets `ready.status` to `not_ready` when the stand-in `/health/ready`
+    answers 503. A closed `API_INTERNAL_URL` returns `error.upstream-api.json`. The response for
+    the seeded device contains no byte of its sealed name. Each view runs `SELECT 1`; the counts
+    run at most once a minute. `cargo clippy --all-targets -- -D warnings` passed.
 - [ ] **G1.3 Users and user detail (C3).** Cursor pagination on `(created_at, id)`, id-prefix
   search, platform and push from registrations, day-level dates, placeholder detection.
   - Done when: responses validate against the schemas, and a response for a seeded account with a

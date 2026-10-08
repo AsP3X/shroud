@@ -31,4 +31,5 @@ uuid = "1"
 
 [dev-dependencies]
 http-body-util = "0.1"
+jsonschema = "0.30"
 tower = { version = "0.5", features = ["util"] }

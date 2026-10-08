@@ -93,6 +93,17 @@ impl ApiError {
         }
     }
 
+    pub fn upstream_api() -> Self {
+        Self {
+            upstream: Some("api"),
+            ..Self::new(
+                StatusCode::BAD_GATEWAY,
+                "UPSTREAM",
+                "The API didn't answer within 10 seconds.",
+            )
+        }
+    }
+
     pub fn internal() -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
