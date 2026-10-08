@@ -45,10 +45,36 @@ generate_secret() {
   generate_hex 32
 }
 
+# A re-run keeps what .env already has: every prompt defaults to the current value, every
+# secret is reused, and keys the wizard never asks about (APNs, Web Push, client versions,
+# TURN extras) are carried over unchanged. Only a first run generates or asks from scratch.
+current() {
+  shroud_env_value "$1"
+}
+
+reuse_or_generate() {
+  local existing="$1"
+  if [[ -n "$existing" && "$existing" != "GENERATE_ME" ]]; then
+    printf '%s' "$existing"
+  else
+    generate_secret
+  fi
+}
+
+# The keys this wizard writes. Everything else in the old .env is appended again below.
+WIZARD_KEYS=" PROXY_MODE WEB_PUBLIC_URL API_PUBLIC_URL WEB_PORT API_PORT CORS_ALLOWED_ORIGINS POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB NOS_JWT_SECRET NEBULAR_ACCESS_KEY_ID NEBULAR_SECRET_ACCESS_KEY NOS_METRICS_TOKEN REDIS_PASSWORD COMPOSE_PROFILES TURN_URLS TURN_SECRET ADMIN_PORT ADMIN_PUBLIC_URL ADMIN_DB_PASSWORD ADMIN_DATABASE_URL ADMIN_SECRET_KEY OPERATOR_PORT OPERATOR_TOKEN RUST_LOG RUST_LOG_FORMAT SHROUD_DATA_DIR "
+
+OLD_ENV=""
+if [[ -f .env ]]; then
+  OLD_ENV="$(cat .env)"
+fi
+
 if [[ -f .env && "${SHROUD_SETUP_ASSUME_YES:-}" != "1" ]]; then
   echo ""
   echo "${YELLOW}Existing .env detected.${NC}"
-  printf '  Overwrite and reconfigure? %s[y/N]%s: ' "$DIM" "$NC"
+  echo "  Re-running keeps your current values as the defaults (press Enter to keep each one),"
+  echo "  reuses every secret, and carries over settings the wizard doesn't ask about."
+  printf '  Run setup again? %s[y/N]%s: ' "$DIM" "$NC"
   read -r overwrite || true
   case "$(printf '%s' "$overwrite" | tr '[:upper:]' '[:lower:]')" in
     y|yes) ;;
@@ -65,25 +91,33 @@ echo ""
 echo "${BOLD}── How will you reach the stack? ──${NC}"
 echo "  1) Local ports     — web :8081, API :8080 (this machine / iOS Simulator)"
 echo "  2) Nginx Proxy Manager — join proxy-network, you map hostnames in NPM"
-printf '  %s[1]%s: ' "$DIM" "$NC"
+mode_default="1"
+[[ "$(current PROXY_MODE)" == "npm" ]] && mode_default="2"
+printf '  %s[%s]%s: ' "$DIM" "$mode_default" "$NC"
 if [[ "${SHROUD_SETUP_ASSUME_YES:-}" == "1" ]]; then
-  mode_choice="1"
-  echo "1"
+  mode_choice="$mode_default"
+  echo "$mode_default"
 else
   read -r mode_choice || true
-  mode_choice="${mode_choice:-1}"
+  mode_choice="${mode_choice:-$mode_default}"
 fi
 
 if [[ "$mode_choice" == "2" ]]; then
   PROXY_MODE="npm"
-  WEB_PUBLIC_URL="$(prompt "Public web URL" "https://web.example.com")"
-  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "https://api.example.com")"
+  web_default="$(current WEB_PUBLIC_URL)"
+  api_default="$(current API_PUBLIC_URL)"
+  case "$web_default" in https://*) ;; *) web_default="https://web.example.com" ;; esac
+  case "$api_default" in https://*) ;; *) api_default="https://api.example.com" ;; esac
+  WEB_PUBLIC_URL="$(prompt "Public web URL" "$web_default")"
+  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "$api_default")"
   WEB_PORT="8081"
   API_PORT="8080"
 else
   PROXY_MODE="local"
-  WEB_PORT="$(prompt "Web host port" "8081")"
-  API_PORT="$(prompt "API host port" "8080")"
+  WEB_PORT="$(prompt "Web host port" "$(current WEB_PORT)")"
+  API_PORT="$(prompt "API host port" "$(current API_PORT)")"
+  WEB_PORT="${WEB_PORT:-8081}"
+  API_PORT="${API_PORT:-8080}"
   WEB_PUBLIC_URL="http://localhost:${WEB_PORT}"
   API_PUBLIC_URL="http://localhost:${API_PORT}"
 fi
@@ -155,12 +189,19 @@ else
     echo "  Wipe it first: ${BOLD}./deploy.sh --down --volumes${NC}"
   fi
 fi
-NOS_JWT_SECRET="$(generate_secret)"
-NEBULAR_ACCESS_KEY_ID="SHRD$(generate_hex 8 | tr '[:lower:]' '[:upper:]')"
-NEBULAR_SECRET_ACCESS_KEY="$(generate_secret)"
-NOS_METRICS_TOKEN="$(generate_secret)"
-REDIS_PASSWORD="$(generate_secret)"
-echo "  Nebular OS secret and the API's access key: ${GREEN}generated${NC}"
+# The other secrets are reused for the same reason: Nebular remembers the access key it was
+# started with, and a new one would lock the API out of the media it already stored.
+NOS_JWT_SECRET="$(reuse_or_generate "$(current NOS_JWT_SECRET)")"
+NEBULAR_ACCESS_KEY_ID="$(current NEBULAR_ACCESS_KEY_ID)"
+if [[ -z "$NEBULAR_ACCESS_KEY_ID" || "$NEBULAR_ACCESS_KEY_ID" == "GENERATE_ME" ]]; then
+  NEBULAR_ACCESS_KEY_ID="SHRD$(generate_hex 8 | tr '[:lower:]' '[:upper:]')"
+  echo "  Nebular OS secret and the API's access key: ${GREEN}generated${NC}"
+else
+  echo "  Nebular OS secret and the API's access key: ${GREEN}reused from .env${NC}"
+fi
+NEBULAR_SECRET_ACCESS_KEY="$(reuse_or_generate "$(current NEBULAR_SECRET_ACCESS_KEY)")"
+NOS_METRICS_TOKEN="$(reuse_or_generate "$(current NOS_METRICS_TOKEN)")"
+REDIS_PASSWORD="$(reuse_or_generate "$(current REDIS_PASSWORD)")"
 # Reused like the Postgres password: a new one only ends the TURN logins already handed out,
 # but there is no reason to.
 EXISTING_TURN=""
@@ -178,12 +219,20 @@ echo "${BOLD}── Calls ──${NC}"
 echo "  Calls between networks that block direct connections (many mobile carriers) need the"
 echo "  TURN relay (coturn) on this server. It needs UDP/TCP ${BOLD}3478${NC} and UDP ${BOLD}49160-49259${NC} open,"
 echo "  reachable at a public hostname or IP. Leave it blank to go without."
-if [[ "$PROXY_MODE" == "npm" ]]; then
+# The current relay host wins as the default; a first npm setup suggests the API's host.
+EXISTING_TURN_URLS="$(current TURN_URLS)"
+if [[ -n "$EXISTING_TURN_URLS" ]]; then
+  TURN_HOST_DEFAULT="$(printf '%s' "$EXISTING_TURN_URLS" | cut -d, -f1 | sed -E 's#^turns?:##; s#[:?/].*$##')"
+elif [[ "$PROXY_MODE" == "npm" && -z "$OLD_ENV" ]]; then
   TURN_HOST_DEFAULT="$(printf '%s' "$API_PUBLIC_URL" | sed -E 's#^[A-Za-z]+://##; s#[:/].*$##')"
 else
   TURN_HOST_DEFAULT=""
 fi
+if [[ -n "$TURN_HOST_DEFAULT" ]]; then
+  echo "  Enter keeps ${BOLD}${TURN_HOST_DEFAULT}${NC}; type ${BOLD}-${NC} to turn the relay off."
+fi
 TURN_HOST="$(prompt "Relay hostname or IP" "$TURN_HOST_DEFAULT")"
+[[ "$TURN_HOST" == "-" ]] && TURN_HOST=""
 if [[ -n "$TURN_HOST" ]]; then
   TURN_URLS="turn:${TURN_HOST}:3478?transport=udp,turn:${TURN_HOST}:3478?transport=tcp"
   COMPOSE_PROFILES="calls"
@@ -198,22 +247,18 @@ echo ""
 echo "${BOLD}── Admin console ──${NC}"
 echo "  The operator console is its own site, not a page of the web client. Local mode binds it"
 echo "  to 127.0.0.1. Nginx Proxy Manager mode puts it on proxy-network as shroud-admin:8082."
-printf '  Enable the admin console? %s[y/N]%s: ' "$DIM" "$NC"
+case ",$(current COMPOSE_PROFILES)," in
+  *,admin,*) admin_default="y"; admin_hint="[Y/n]" ;;
+  *) admin_default="n"; admin_hint="[y/N]" ;;
+esac
+printf '  Enable the admin console? %s%s%s: ' "$DIM" "$admin_hint" "$NC"
 admin_choice=""
 if [[ "${SHROUD_SETUP_ASSUME_YES:-}" == "1" ]]; then
-  echo "n"
-  admin_choice="n"
+  echo "$admin_default"
+  admin_choice="$admin_default"
 else
   read -r admin_choice || true
 fi
-reuse_or_generate() {
-  local current="$1"
-  if [[ -n "$current" && "$current" != "GENERATE_ME" ]]; then
-    printf '%s' "$current"
-  else
-    generate_secret
-  fi
-}
 ADMIN_PORT="8082"
 ADMIN_PUBLIC_URL=""
 ADMIN_DB_PASSWORD=""
@@ -221,25 +266,28 @@ ADMIN_DATABASE_URL=""
 ADMIN_SECRET_KEY=""
 OPERATOR_PORT="8090"
 OPERATOR_TOKEN=""
-case "$(printf '%s' "${admin_choice:-n}" | tr '[:upper:]' '[:lower:]')" in
+case "$(printf '%s' "${admin_choice:-$admin_default}" | tr '[:upper:]' '[:lower:]')" in
   y|yes)
     if [[ -n "$COMPOSE_PROFILES" ]]; then
       COMPOSE_PROFILES="${COMPOSE_PROFILES},admin"
     else
       COMPOSE_PROFILES="admin"
     fi
-    ADMIN_PORT="$(prompt "Admin host port" "8082")"
+    admin_port_default="$(current ADMIN_PORT)"
+    ADMIN_PORT="$(prompt "Admin host port" "${admin_port_default:-8082}")"
     if [[ "$PROXY_MODE" == "npm" ]]; then
-      ADMIN_PUBLIC_URL="$(prompt "Public admin URL" "https://admin.example.com")"
+      admin_url_default="$(current ADMIN_PUBLIC_URL)"
+      case "$admin_url_default" in https://*) ;; *) admin_url_default="https://admin.example.com" ;; esac
+      ADMIN_PUBLIC_URL="$(prompt "Public admin URL" "$admin_url_default")"
     else
       ADMIN_PUBLIC_URL="http://127.0.0.1:${ADMIN_PORT}"
     fi
-    ADMIN_DB_PASSWORD="$(reuse_or_generate "$(shroud_env_value ADMIN_DB_PASSWORD)")"
+    ADMIN_DB_PASSWORD="$(reuse_or_generate "$(current ADMIN_DB_PASSWORD)")"
     ADMIN_DATABASE_URL="postgres://shroud_admin:${ADMIN_DB_PASSWORD}@postgres:5432/shroud"
-    ADMIN_SECRET_KEY="$(reuse_or_generate "$(shroud_env_value ADMIN_SECRET_KEY)")"
-    OPERATOR_PORT="$(shroud_env_value OPERATOR_PORT)"
+    ADMIN_SECRET_KEY="$(reuse_or_generate "$(current ADMIN_SECRET_KEY)")"
+    OPERATOR_PORT="$(current OPERATOR_PORT)"
     OPERATOR_PORT="${OPERATOR_PORT:-8090}"
-    OPERATOR_TOKEN="$(reuse_or_generate "$(shroud_env_value OPERATOR_TOKEN)")"
+    OPERATOR_TOKEN="$(reuse_or_generate "$(current OPERATOR_TOKEN)")"
     echo "  Admin console: ${GREEN}on${NC} at ${ADMIN_PUBLIC_URL}"
     ;;
   *)
@@ -248,6 +296,30 @@ case "$(printf '%s' "${admin_choice:-n}" | tr '[:upper:]' '[:lower:]')" in
 esac
 
 CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL"
+RUST_LOG="$(current RUST_LOG)"
+RUST_LOG="${RUST_LOG:-info}"
+RUST_LOG_FORMAT="$(current RUST_LOG_FORMAT)"
+RUST_LOG_FORMAT="${RUST_LOG_FORMAT:-text}"
+
+# Lines of the old .env the wizard does not manage: APNs, Web Push, UnifiedPush, client
+# versions, TURN extras, and anything added by hand. Comments and blank lines are kept too,
+# so the file reads as it did.
+CARRIED=""
+carried_count=0
+if [[ -n "$OLD_ENV" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    case "$line" in
+      [A-Z_]*=*)
+        case "$WIZARD_KEYS" in
+          *" ${key} "*) continue ;;
+        esac
+        carried_count=$((carried_count + 1))
+        ;;
+    esac
+    CARRIED="${CARRIED}${line}"$'\n'
+  done <<< "$OLD_ENV"
+fi
 
 umask 077
 cat > .env <<EOF
@@ -275,16 +347,26 @@ ADMIN_DATABASE_URL=${ADMIN_DATABASE_URL}
 ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY}
 OPERATOR_PORT=${OPERATOR_PORT}
 OPERATOR_TOKEN=${OPERATOR_TOKEN}
-RUST_LOG=info
-RUST_LOG_FORMAT=text
+RUST_LOG=${RUST_LOG}
+RUST_LOG_FORMAT=${RUST_LOG_FORMAT}
 EOF
 if [[ -n "$SHROUD_DATA_DIR_VALUE" ]]; then
   printf 'SHROUD_DATA_DIR=%s\n' "$SHROUD_DATA_DIR_VALUE" >>.env
+fi
+if [[ "$carried_count" -gt 0 ]]; then
+  {
+    echo ""
+    echo "# Kept from the previous .env (settings the setup wizard does not ask about)."
+    printf '%s' "$CARRIED"
+  } >>.env
 fi
 chmod 600 .env 2>/dev/null || true
 
 echo ""
 echo "${GREEN}Wrote .env${NC} (mode ${BOLD}${PROXY_MODE}${NC})."
+if [[ "$carried_count" -gt 0 ]]; then
+  echo "  Kept ${carried_count} settings the wizard doesn't ask about (push, client versions, extras)."
+fi
 echo "  Web:  ${WEB_PUBLIC_URL}"
 echo "  API:  ${API_PUBLIC_URL}/api/v1"
 if [[ -n "$ADMIN_PUBLIC_URL" ]]; then
