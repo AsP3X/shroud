@@ -314,8 +314,10 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     Down) and `?state=error:upstream-postgres` (the console's own database unreachable, with
     Try again). Service details use only contract fields: no migration count, pool or open-pipe
     number.
-- [ ] **C1.3 Users** [Users, · Loading, · No results, · Couldn't load] and **User detail**
+- [x] **C1.3 Users** [Users, · Loading, · No results, · Couldn't load] and **User detail**
   [User detail] read-only; actions rendered disabled with the frames' footnote.
+  - Done 2026-10-08 against the fixtures, with contract changes §3.9 #3–#5 (status filter and
+    totals on `/users`, `target` on `/audit-log`, design rows no field backs removed).
 - [ ] **C1.4 Storage, Client versions (both states), Rate limits, Data retention, Push delivery,
   Calls, Privacy checks, Configuration, Audit log (both states)**: one route each, data from C4.
 - [ ] **C1.5 Phone layout** [Phone · Overview, Phone · Users] at ≤ 600 px.
