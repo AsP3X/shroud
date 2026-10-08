@@ -59,10 +59,34 @@
         "string",
         "null"
       ]
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accounts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deleted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "accounts",
+        "active",
+        "deleted"
+      ]
     }
   },
   "required": [
     "items",
-    "next_cursor"
+    "next_cursor",
+    "totals"
   ]
 }

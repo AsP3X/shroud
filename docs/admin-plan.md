@@ -183,6 +183,9 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 | - | ---- | ------ | -------- |
 | 1 | 2026-10-08 | §3.3 `GET /users/{id}`: `counts.contacts`, `counts.blocks` and `counts.conversations` are `integer \| null`; `null` means the console does not show them. The User detail frame says "Not visible" for these three, and a contact or conversation count is a view of the social graph the console has no reason to hold. The backend sends `null` and never queries them; the UI renders "Not visible". | Grok (G0.3), from the frame |
 | 2 | 2026-10-08 | §3.2 `attention[].count` is optional; `no_min_version` and `not_ready` carry none. | Grok (G0.3) |
+| 3 | 2026-10-08 | §3.3 `GET /users` takes an optional `status=active \| deleted` filter (the Users frame's All / Active / Deleted segments, filtered on the server so paging stays right), and its response carries `totals: { accounts, active, deleted }` for the header and the segment labels. `users.json`, `users.empty.json` and `schema/users.schema.json` updated in the same commit. | Claude (C1.3) |
+| 4 | 2026-10-08 | §3.4 `GET /audit-log` takes an optional `target=<id>` that returns only entries whose `target_id` is that account or one of its devices (User detail's "Admin actions on this account"). No fixture change: the dev server ignores the parameter and the UI filters the page it gets. | Claude (C1.3) |
+| 5 | 2026-10-08 | Design: the Users frames lose "Export CSV" (no route exports anything) and gain a "Mixed" legend key; User detail frames lose "Suspend" (out of scope, §8) and the "Keys and storage" rows the contract has no field for (one-time prekeys, unattached media, calls in 30 days), keeping media stored and adding the PIN-guard row. | Claude (C1.3) |
 
 ---
 

@@ -1,4 +1,9 @@
 {
   "items": [],
-  "next_cursor": null
+  "next_cursor": null,
+  "totals": {
+    "accounts": 1284,
+    "active": 1275,
+    "deleted": 9
+  }
 }

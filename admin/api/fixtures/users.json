@@ -81,5 +81,10 @@
       "status": "active"
     }
   ],
-  "next_cursor": "2026-10-02,b47a2e98-8277-43ee-8569-a3cf01203478"
+  "next_cursor": "2026-10-02,b47a2e98-8277-43ee-8569-a3cf01203478",
+  "totals": {
+    "accounts": 1284,
+    "active": 1275,
+    "deleted": 9
+  }
 }
