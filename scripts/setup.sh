@@ -74,6 +74,7 @@ if [[ -f .env && "${SHROUD_SETUP_ASSUME_YES:-}" != "1" ]]; then
   echo "${YELLOW}Existing .env detected.${NC}"
   echo "  Re-running keeps your current values as the defaults (press Enter to keep each one),"
   echo "  reuses every secret, and carries over settings the wizard doesn't ask about."
+  echo "  Found: mode ${BOLD}$(current PROXY_MODE)${NC}, web ${BOLD}$(current WEB_PUBLIC_URL)${NC}, API ${BOLD}$(current API_PUBLIC_URL)${NC}"
   printf '  Run setup again? %s[y/N]%s: ' "$DIM" "$NC"
   read -r overwrite || true
   case "$(printf '%s' "$overwrite" | tr '[:upper:]' '[:lower:]')" in
@@ -102,19 +103,36 @@ else
   mode_choice="${mode_choice:-$mode_default}"
 fi
 
-# Whatever .env holds is the default, whichever scheme or host it has. Only a value that is
-# no URL at all falls back to the example (npm) or to localhost on the chosen port (local).
+# Whatever .env holds is the default, exactly as written. Only an empty value falls back to
+# the example (npm) or to localhost on the chosen port (local).
 url_or() {
   local value="$1" fallback="$2"
-  case "$value" in
-    http://*|https://*) printf '%s' "$value" ;;
-    *) printf '%s' "$fallback" ;;
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$fallback"
+  fi
+}
+# The API uses these values as browser origins, and an origin needs its scheme. A bare host
+# (chat.example.org) gets https:// in proxy mode and http:// on local ports; a trailing slash
+# is dropped. The wizard says so when it changed what was typed or stored.
+with_scheme() {
+  local value="$1" scheme="$2" fixed
+  fixed="${value%/}"
+  case "$fixed" in
+    http://*|https://*) ;;
+    "") ;;
+    *) fixed="${scheme}://${fixed}" ;;
   esac
+  if [[ "$fixed" != "$value" ]]; then
+    echo "  Using ${BOLD}${fixed}${NC} (an origin needs its scheme, and no trailing slash)." >&2
+  fi
+  printf '%s' "$fixed"
 }
 if [[ "$mode_choice" == "2" ]]; then
   PROXY_MODE="npm"
-  WEB_PUBLIC_URL="$(prompt "Public web URL" "$(url_or "$(current WEB_PUBLIC_URL)" "https://web.example.com")")"
-  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "$(url_or "$(current API_PUBLIC_URL)" "https://api.example.com")")"
+  WEB_PUBLIC_URL="$(with_scheme "$(prompt "Public web URL" "$(url_or "$(current WEB_PUBLIC_URL)" "https://web.example.com")")" https)"
+  API_PUBLIC_URL="$(with_scheme "$(prompt "Public API URL (iOS)" "$(url_or "$(current API_PUBLIC_URL)" "https://api.example.com")")" https)"
   WEB_PORT="8081"
   API_PORT="8080"
 else
@@ -126,8 +144,8 @@ else
   # A reverse proxy outside this compose file, or a LAN address, may front the local ports;
   # the URL the apps use is asked for, with localhost on the port as the first-run default.
   echo "  The URLs browsers and the apps use. Keep localhost unless something fronts these ports."
-  WEB_PUBLIC_URL="$(prompt "Public web URL" "$(url_or "$(current WEB_PUBLIC_URL)" "http://localhost:${WEB_PORT}")")"
-  API_PUBLIC_URL="$(prompt "Public API URL (iOS)" "$(url_or "$(current API_PUBLIC_URL)" "http://localhost:${API_PORT}")")"
+  WEB_PUBLIC_URL="$(with_scheme "$(prompt "Public web URL" "$(url_or "$(current WEB_PUBLIC_URL)" "http://localhost:${WEB_PORT}")")" http)"
+  API_PUBLIC_URL="$(with_scheme "$(prompt "Public API URL (iOS)" "$(url_or "$(current API_PUBLIC_URL)" "http://localhost:${API_PORT}")")" http)"
 fi
 
 echo ""

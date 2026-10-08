@@ -31,8 +31,12 @@ shroud_env_value() {
   local key="$1" file="${SHROUD_REPO_ROOT}/.env"
   [[ -f "$file" ]] || return 0
   # A key .env doesn't have is an empty value. Without `|| true`, grep's "no match" fails the
-  # pipeline under deploy.sh's pipefail and aborts the deploy.
-  { grep -E "^${key}=" "$file" 2>/dev/null || true; } | tail -1 | cut -d= -f2- | tr -d '\r' | tr -d '"' | tr -d "'"
+  # pipeline under deploy.sh's pipefail and aborts the deploy. A hand-edited file may indent
+  # the key, prefix it with `export`, or put spaces around `=`; all of those still read.
+  { grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$file" 2>/dev/null || true; } \
+    | tail -1 \
+    | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=[[:space:]]*//; s/[[:space:]]+\$//" \
+    | tr -d '\r' | tr -d '"' | tr -d "'"
 }
 
 # A SHROUD_DATA_DIR value as an absolute path: relative to the repository root (not the caller's
