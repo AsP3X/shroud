@@ -341,7 +341,12 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 ### Phase C3 — Integration and polish
 - [ ] **C3.1** Run against the real backend (`docker compose --profile admin up`), fix every
   difference as a contract bug (§3.9) rather than a UI special case.
-- [ ] **C3.2** Keyboard and screen-reader pass; focus order in dialogs; no colour-only state.
+- [x] **C3.2** Keyboard and screen-reader pass; focus order in dialogs; no colour-only state.
+  - Done 2026-10-08 for the C1 pages: skip link, `main` landmark, document title per page,
+    card titles as `h2`, labelled search fields and user rows, stat tiles as named groups, the
+    phone drawer as a modal dialog (focus moves in, Tab stays inside, Escape closes and returns
+    focus), every pill and chip carries text, reduced motion honoured. C2's re-auth and
+    confirmation dialogs get the same treatment when they are built.
 - [ ] **C3.3** `design/admin.pen` brought level with anything that had to change (R6), and the
   owner saves it (Pen edits live only in the running app).
 
