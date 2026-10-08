@@ -92603,7 +92603,7 @@
                           "fill": "$text-tertiary",
                           "textGrowth": "fixed-width",
                           "width": "fill_container",
-                          "content": "Clearing is safe: history is re-fetched and re-decrypted from the server the next time you open a chat. Chat list previews will look empty until then.",
+                          "content": "Newer messages are fetched and decrypted again the next time you open a chat. Messages from before 23 September 2026 can't be read again after clearing: they were sent in an older format this app no longer trusts. Chat list previews will look empty until then.",
                           "lineHeight": 1.55,
                           "fontFamily": "$font-ui",
                           "fontSize": 12,
