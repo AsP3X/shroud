@@ -221,14 +221,19 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   - Done 2026-10-08: `cargo build` succeeds in `admin/api` and in `server/` separately. `git
     ls-files -s server/crates` has no symlink. The API image builds from `./server` with no admin
     file in its Dockerfile or context, and the admin image builds from the repository root.
-- [ ] **G0.2 Compose, env, deploy.** Service `admin` with `profiles: ["admin"]`; host port in
+- [x] **G0.2 Compose, env, deploy.** Service `admin` with `profiles: ["admin"]`; host port in
   `docker-compose.host-ports.yml`, `proxy-network` in `docker-compose.npm.yml`; `ADMIN_PORT`,
   `ADMIN_PUBLIC_URL`, `ADMIN_DATABASE_URL`, `ADMIN_SECRET_KEY`, `OPERATOR_PORT`, `OPERATOR_TOKEN`
   in `.env.example` (placeholders) and `docker-compose.yml`; the API's non-secret variables passed
   to `admin` too, secrets as `<NAME>_SET: ${NAME:+true}`; `scripts/compose-env.sh` knows the
   `admin` profile like `calls`; `./deploy.sh` asks whether to enable it and prints the URL.
-  - Done when: a fresh `./deploy.sh` with the profile on brings the console up in both proxy
-    modes; with the profile off nothing of it runs; `docker inspect` of `admin` shows no secret.
+  - Done 2026-10-08: `docker compose config` with the local overlay and with the npm overlay
+    includes `admin` only when `COMPOSE_PROFILES` contains `admin`. Local mode publishes
+    `127.0.0.1:8082`; npm mode publishes nothing and joins `proxy-network`. The rendered admin
+    environment has the API's non-secret variables and `<NAME>_SET=true` for its secrets, and
+    none of those secret values. The wizard asks, and with the answer yes it writes the profile
+    and prints the console URL. A full `./deploy.sh` was not run: it would start the shared
+    `shroud-*` stack.
 - [ ] **G0.3 Fixtures and schemas (C8).** Every file in §3.8, hand-written from the frames'
   numbers, plus JSON Schemas. This unblocks Claude's C1.
   - Done when: `npm run dev:fixtures` in `admin/ui` (Claude's C0.2) serves them unchanged.

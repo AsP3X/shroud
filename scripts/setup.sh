@@ -194,6 +194,59 @@ else
   echo "  TURN relay: ${DIM}off${NC}"
 fi
 
+echo ""
+echo "${BOLD}── Admin console ──${NC}"
+echo "  The operator console is its own site, not a page of the web client. Local mode binds it"
+echo "  to 127.0.0.1. Nginx Proxy Manager mode puts it on proxy-network as shroud-admin:8082."
+printf '  Enable the admin console? %s[y/N]%s: ' "$DIM" "$NC"
+admin_choice=""
+if [[ "${SHROUD_SETUP_ASSUME_YES:-}" == "1" ]]; then
+  echo "n"
+  admin_choice="n"
+else
+  read -r admin_choice || true
+fi
+reuse_or_generate() {
+  local current="$1"
+  if [[ -n "$current" && "$current" != "GENERATE_ME" ]]; then
+    printf '%s' "$current"
+  else
+    generate_secret
+  fi
+}
+ADMIN_PORT="8082"
+ADMIN_PUBLIC_URL=""
+ADMIN_DB_PASSWORD=""
+ADMIN_DATABASE_URL=""
+ADMIN_SECRET_KEY=""
+OPERATOR_PORT="8090"
+OPERATOR_TOKEN=""
+case "$(printf '%s' "${admin_choice:-n}" | tr '[:upper:]' '[:lower:]')" in
+  y|yes)
+    if [[ -n "$COMPOSE_PROFILES" ]]; then
+      COMPOSE_PROFILES="${COMPOSE_PROFILES},admin"
+    else
+      COMPOSE_PROFILES="admin"
+    fi
+    ADMIN_PORT="$(prompt "Admin host port" "8082")"
+    if [[ "$PROXY_MODE" == "npm" ]]; then
+      ADMIN_PUBLIC_URL="$(prompt "Public admin URL" "https://admin.example.com")"
+    else
+      ADMIN_PUBLIC_URL="http://127.0.0.1:${ADMIN_PORT}"
+    fi
+    ADMIN_DB_PASSWORD="$(reuse_or_generate "$(shroud_env_value ADMIN_DB_PASSWORD)")"
+    ADMIN_DATABASE_URL="postgres://shroud_admin:${ADMIN_DB_PASSWORD}@postgres:5432/shroud"
+    ADMIN_SECRET_KEY="$(reuse_or_generate "$(shroud_env_value ADMIN_SECRET_KEY)")"
+    OPERATOR_PORT="$(shroud_env_value OPERATOR_PORT)"
+    OPERATOR_PORT="${OPERATOR_PORT:-8090}"
+    OPERATOR_TOKEN="$(reuse_or_generate "$(shroud_env_value OPERATOR_TOKEN)")"
+    echo "  Admin console: ${GREEN}on${NC} at ${ADMIN_PUBLIC_URL}"
+    ;;
+  *)
+    echo "  Admin console: ${DIM}off${NC}"
+    ;;
+esac
+
 CORS_ALLOWED_ORIGINS="$WEB_PUBLIC_URL"
 
 umask 077
@@ -215,6 +268,13 @@ REDIS_PASSWORD=${REDIS_PASSWORD}
 COMPOSE_PROFILES=${COMPOSE_PROFILES}
 TURN_URLS=${TURN_URLS}
 TURN_SECRET=${TURN_SECRET}
+ADMIN_PORT=${ADMIN_PORT}
+ADMIN_PUBLIC_URL=${ADMIN_PUBLIC_URL}
+ADMIN_DB_PASSWORD=${ADMIN_DB_PASSWORD}
+ADMIN_DATABASE_URL=${ADMIN_DATABASE_URL}
+ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY}
+OPERATOR_PORT=${OPERATOR_PORT}
+OPERATOR_TOKEN=${OPERATOR_TOKEN}
 RUST_LOG=info
 RUST_LOG_FORMAT=text
 EOF
@@ -227,4 +287,7 @@ echo ""
 echo "${GREEN}Wrote .env${NC} (mode ${BOLD}${PROXY_MODE}${NC})."
 echo "  Web:  ${WEB_PUBLIC_URL}"
 echo "  API:  ${API_PUBLIC_URL}/api/v1"
+if [[ -n "$ADMIN_PUBLIC_URL" ]]; then
+  echo "  Admin: ${ADMIN_PUBLIC_URL}"
+fi
 echo "  Data: ${STORAGE_LABEL}"

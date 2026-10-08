@@ -154,6 +154,44 @@ shroud_ensure_turn_secret() {
   echo "Added the TURN relay secret to .env: TURN_SECRET"
 }
 
+# True when COMPOSE_PROFILES in .env lists this compose profile.
+shroud_profile_enabled() {
+  [[ ",$(shroud_env_value COMPOSE_PROFILES)," == *",$1,"* ]]
+}
+
+# Secrets the console needs once its profile is on. Generated once, like TURN_SECRET, and
+# left empty while the profile is off so a stock deploy does not invent a console.
+shroud_ensure_admin_secrets() {
+  local file="${SHROUD_REPO_ROOT}/.env" key value port
+  [[ -f "$file" ]] || return 0
+  shroud_profile_enabled admin || return 0
+  for key in ADMIN_DB_PASSWORD ADMIN_SECRET_KEY OPERATOR_TOKEN; do
+    value="$(shroud_env_value "$key")"
+    [[ -n "$value" && "$value" != "GENERATE_ME" ]] && continue
+    shroud_set_env_value "$key" "$(shroud_random_hex 32)"
+    echo "Added the admin console secret to .env: ${key}"
+  done
+  value="$(shroud_env_value ADMIN_DATABASE_URL)"
+  if [[ -z "$value" || "$value" == "GENERATE_ME" ]]; then
+    shroud_set_env_value ADMIN_DATABASE_URL \
+      "postgres://shroud_admin:$(shroud_env_value ADMIN_DB_PASSWORD)@postgres:5432/shroud"
+  fi
+  port="$(shroud_env_value ADMIN_PORT)"
+  [[ -n "$port" ]] || shroud_set_env_value ADMIN_PORT 8082
+  value="$(shroud_env_value OPERATOR_PORT)"
+  [[ -n "$value" ]] || shroud_set_env_value OPERATOR_PORT 8090
+  value="$(shroud_env_value ADMIN_PUBLIC_URL)"
+  if [[ -z "$value" ]]; then
+    shroud_load_proxy_mode
+    port="$(shroud_env_value ADMIN_PORT)"
+    if [[ "$PROXY_MODE" == "npm" ]]; then
+      shroud_set_env_value ADMIN_PUBLIC_URL "https://admin.example.com"
+    else
+      shroud_set_env_value ADMIN_PUBLIC_URL "http://127.0.0.1:${port:-8082}"
+    fi
+  fi
+}
+
 shroud_assert_env() {
   local file="${SHROUD_REPO_ROOT}/.env"
   [[ -f "$file" ]] || return 0
@@ -508,6 +546,7 @@ warn_web_build() {
 shroud_up() {
   shroud_ensure_nebular_secrets
   shroud_ensure_turn_secret
+  shroud_ensure_admin_secrets
   shroud_assert_env
   shroud_ensure_proxy_network
   shroud_export_web_build
@@ -580,11 +619,19 @@ shroud_info() {
   else
     echo "  TURN relay:  off (calls use STUN only; ./deploy.sh --init to turn it on)"
   fi
+  if shroud_profile_enabled admin; then
+    echo "  Admin console: $(shroud_env_value ADMIN_PUBLIC_URL)"
+  else
+    echo "  Admin console: off (./deploy.sh --init to turn it on)"
+  fi
   if [[ "$PROXY_MODE" == "npm" ]]; then
     echo ""
     echo "  Nginx Proxy Manager hosts:"
     echo "    web  →  http://shroud-web:80"
     echo "    api  →  http://shroud-api:8080"
+    if shroud_profile_enabled admin; then
+      echo "    admin →  http://shroud-admin:8082"
+    fi
   fi
   echo ""
   shroud_compose ps

@@ -233,11 +233,10 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Operator console. Off unless the admin profile is selected. G0.1 serves
-  # /healthz and the built UI; it does not connect to Postgres or the API.
-  # The host port is on this service so `docker compose --profile admin up`
-  # binds 127.0.0.1:8082 without an overlay. G0.2 adds env and the npm network
-  # and must not publish this port a second time.
+  # Operator console. Off unless COMPOSE_PROFILES includes admin (the wizard asks).
+  # The host port is only on the local overlay, so npm mode does not publish it;
+  # that overlay reaches the container as shroud-admin:8082. API secrets are not
+  # copied in: a secret the console must know about arrives as <NAME>_SET=true.
   admin:
     profiles: ["admin"]
     build:
@@ -248,9 +247,59 @@ services:
       HOST: 0.0.0.0
       PORT: "8082"
       ADMIN_DIST: /ui/dist
-      RUST_LOG: info
-    ports:
-      - "127.0.0.1:${ADMIN_PORT:-8082}:8082"
+      RUST_LOG: ${RUST_LOG:-info}
+      RUST_LOG_FORMAT: ${RUST_LOG_FORMAT:-text}
+      ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-http://127.0.0.1:8082}
+      ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:-}
+      ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:-}
+      OPERATOR_PORT: ${OPERATOR_PORT:-8090}
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
+      API_INTERNAL_URL: http://api:8080
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:8081}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
+      TRUST_FORWARDED_HEADERS: "true"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}"
+      DATABASE_POOL_MAX: "10"
+      RUN_MIGRATIONS: "true"
+      REDIS_URL: redis://redis:6379
+      NEBULAR_URL: http://nebular:9000
+      NEBULAR_MEDIA_BUCKET: shroud-media
+      NEBULAR_ACCESS_KEY_ID: ${NEBULAR_ACCESS_KEY_ID:-}
+      MEDIA_DATA_DIR: /data/shroud-media
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-sandbox}
+      WEB_PUSH_SUBJECT: ${WEB_PUSH_SUBJECT:-}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:-}
+      WEB_PUSH_ALLOWED_HOSTS: ${WEB_PUSH_ALLOWED_HOSTS:-}
+      UNIFIEDPUSH_ALLOWED_HOSTS: ${UNIFIEDPUSH_ALLOWED_HOSTS:-}
+      UNIFIEDPUSH_PUBLIC_HOSTS: ${UNIFIEDPUSH_PUBLIC_HOSTS:-false}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_CREDENTIAL_TTL_SECS: ${TURN_CREDENTIAL_TTL_SECS:-}
+      TURN_REALM: ${TURN_REALM:-shroud}
+      ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
+      REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
+      IOS_LATEST_VERSION: ${IOS_LATEST_VERSION:-}
+      IOS_MIN_VERSION: ${IOS_MIN_VERSION:-}
+      IOS_UPDATE_URL: ${IOS_UPDATE_URL:-}
+      ANDROID_LATEST_VERSION: ${ANDROID_LATEST_VERSION:-}
+      ANDROID_MIN_VERSION: ${ANDROID_MIN_VERSION:-}
+      ANDROID_UPDATE_URL: ${ANDROID_UPDATE_URL:-}
+      WEB_BUILD_FILE: /run/shroud/web-build
+      POSTGRES_PASSWORD_SET: ${POSTGRES_PASSWORD:+true}
+      REDIS_PASSWORD_SET: ${REDIS_PASSWORD:+true}
+      NOS_JWT_SECRET_SET: ${NOS_JWT_SECRET:+true}
+      NEBULAR_SECRET_ACCESS_KEY_SET: ${NEBULAR_SECRET_ACCESS_KEY:+true}
+      NOS_METRICS_TOKEN_SET: ${NOS_METRICS_TOKEN:+true}
+      APNS_KEY_PATH_SET: ${APNS_KEY_PATH:+true}
+      APNS_KEY_PEM_SET: ${APNS_KEY_PEM:+true}
+      WEB_PUSH_VAPID_PRIVATE_KEY_SET: ${WEB_PUSH_VAPID_PRIVATE_KEY:+true}
+      TURN_SECRET_SET: ${TURN_SECRET:+true}
+      TURN_USERNAME_SET: ${TURN_USERNAME:+true}
+      TURN_CREDENTIAL_SET: ${TURN_CREDENTIAL:+true}
+    volumes:
+      - ./.shroud-run:/run/shroud:ro
     networks:
       - shroud-internal
     read_only: true

@@ -73,11 +73,12 @@ show_help() {
                                    the old volumes or folder stay for you to remove
 
   ${BOLD}Service names${NC} (for --logs / --restart):
-    api  web  postgres  redis  nebular
+    api  web  postgres  redis  nebular  admin
 
   ${BOLD}After deploy:${NC}
     Web:   http://localhost:8081   (PROXY_MODE=local; --status shows the real URL)
     API:   http://localhost:8080/api/v1
+    Admin: off until ./deploy.sh --init enables it (then --status prints its URL)
     iOS:   point the app at the API URL from --status
 
   ${BOLD}Environment:${NC}

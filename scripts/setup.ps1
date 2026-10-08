@@ -145,6 +145,50 @@ if ($TURN_HOST) {
     Write-Host "  TURN relay: off"
 }
 
+Write-Host ""
+Write-Host "── Admin console ──"
+Write-Host "  The operator console is its own site, not a page of the web client. Local mode binds it"
+Write-Host "  to 127.0.0.1. Nginx Proxy Manager mode puts it on proxy-network as shroud-admin:8082."
+$adminChoice = "n"
+if ($env:SHROUD_SETUP_ASSUME_YES -eq "1") {
+    Write-Host "  Enable the admin console? [y/N]: n"
+} else {
+    $adminChoice = Read-Host "  Enable the admin console? [y/N]"
+    if ([string]::IsNullOrWhiteSpace($adminChoice)) { $adminChoice = "n" }
+}
+function Get-ReusedOrNewSecret([string]$Name) {
+    $current = $null
+    if (Test-Path -LiteralPath ".env") {
+        $line = Get-Content -LiteralPath ".env" | Where-Object { $_ -match "^$Name=" } | Select-Object -Last 1
+        if ($line) { $current = $line.Substring("$Name=".Length).Trim() }
+    }
+    if ($current -and $current -ne "GENERATE_ME") { return $current }
+    return New-Secret
+}
+$ADMIN_PORT = "8082"
+$ADMIN_PUBLIC_URL = ""
+$ADMIN_DB_PASSWORD = ""
+$ADMIN_DATABASE_URL = ""
+$ADMIN_SECRET_KEY = ""
+$OPERATOR_PORT = "8090"
+$OPERATOR_TOKEN = ""
+if ($adminChoice -match '^[yY]') {
+    if ($COMPOSE_PROFILES) { $COMPOSE_PROFILES = "$COMPOSE_PROFILES,admin" } else { $COMPOSE_PROFILES = "admin" }
+    $ADMIN_PORT = Read-Prompt "Admin host port" "8082"
+    if ($PROXY_MODE -eq "npm") {
+        $ADMIN_PUBLIC_URL = Read-Prompt "Public admin URL" "https://admin.example.com"
+    } else {
+        $ADMIN_PUBLIC_URL = "http://127.0.0.1:${ADMIN_PORT}"
+    }
+    $ADMIN_DB_PASSWORD = Get-ReusedOrNewSecret "ADMIN_DB_PASSWORD"
+    $ADMIN_DATABASE_URL = "postgres://shroud_admin:${ADMIN_DB_PASSWORD}@postgres:5432/shroud"
+    $ADMIN_SECRET_KEY = Get-ReusedOrNewSecret "ADMIN_SECRET_KEY"
+    $OPERATOR_TOKEN = Get-ReusedOrNewSecret "OPERATOR_TOKEN"
+    Write-Host "  Admin console: on at $ADMIN_PUBLIC_URL" -ForegroundColor Green
+} else {
+    Write-Host "  Admin console: off"
+}
+
 $envLines = @(
     "PROXY_MODE=$PROXY_MODE"
     "WEB_PUBLIC_URL=$WEB_PUBLIC_URL"
@@ -163,6 +207,13 @@ $envLines = @(
     "COMPOSE_PROFILES=$COMPOSE_PROFILES"
     "TURN_URLS=$TURN_URLS"
     "TURN_SECRET=$TURN_SECRET"
+    "ADMIN_PORT=$ADMIN_PORT"
+    "ADMIN_PUBLIC_URL=$ADMIN_PUBLIC_URL"
+    "ADMIN_DB_PASSWORD=$ADMIN_DB_PASSWORD"
+    "ADMIN_DATABASE_URL=$ADMIN_DATABASE_URL"
+    "ADMIN_SECRET_KEY=$ADMIN_SECRET_KEY"
+    "OPERATOR_PORT=$OPERATOR_PORT"
+    "OPERATOR_TOKEN=$OPERATOR_TOKEN"
     "RUST_LOG=info"
     "RUST_LOG_FORMAT=text"
 )
@@ -174,5 +225,6 @@ Write-Host ""
 Write-Host "Wrote .env (mode $PROXY_MODE)." -ForegroundColor Green
 Write-Host "  Web:  $WEB_PUBLIC_URL"
 Write-Host "  API:  $API_PUBLIC_URL/api/v1"
+if ($ADMIN_PUBLIC_URL) { Write-Host "  Admin: $ADMIN_PUBLIC_URL" }
 Write-Host "  Data: $storageLabel"
 Write-Host ""

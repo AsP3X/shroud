@@ -27,3 +27,8 @@ services:
   web:
     ports:
       - "${WEB_PORT:-8081}:80"
+
+  # Only with the admin profile. npm mode does not publish this port.
+  admin:
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-8082}:8082"
