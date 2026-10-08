@@ -11,8 +11,10 @@ import de.corespace.shroud.core.model.MessageReaction
 import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.core.model.ReactionFailure
 import de.corespace.shroud.core.model.ReceiptStatus
+import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ConversationItemDto
 import de.corespace.shroud.core.net.ConversationPeerDto
+import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.ReactionDto
 import de.corespace.shroud.core.net.wire.Icu4jTextUnitsRule
 import de.corespace.shroud.core.net.wire.MessageReactionPayload
@@ -636,6 +638,15 @@ class ReactionEngineTest {
         advanceTimeBy(5_000)
         assertTrue(w.state.persistThreads.isEmpty())
         assertEquals(1, w.server.writes.size)
+    }
+
+    /** A server refusing this build is no "no": a reaction it could not resolve is not recorded as removed. */
+    @Test
+    fun updateRequiredIsTransient() {
+        assertTrue(ReactionEngine.isTransient(ApiError.Server(ErrorCodes.UPDATE_REQUIRED, "Update the app.", 426)))
+        assertTrue(ReactionEngine.isTransient(ApiError.Server(ErrorCodes.INTERNAL_ERROR, "boom", 500)))
+        assertFalse(ReactionEngine.isTransient(ApiError.Server(ErrorCodes.NOT_FOUND, "gone", 404)))
+        assertFalse(ReactionEngine.isTransient(ApiError.Server("OTHER", "m", 426)))
     }
 
     private companion object {

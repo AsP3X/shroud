@@ -15,6 +15,7 @@ import mockwebserver3.MockWebServer
 import mockwebserver3.SocketEffect
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
 import org.junit.After
@@ -46,6 +47,7 @@ class ApiClientTest {
     private lateinit var server: MockWebServer
     private lateinit var client: ApiClient
     private val outcomes = RecordingOutcomes()
+    private val updateRequired = AtomicInteger()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
 
     @Serializable
@@ -57,6 +59,7 @@ class ApiClientTest {
         server.start()
         client = ApiClient(baseUrl = { server.url("/api/v1").toString() }, json = json)
         client.authOutcomes = outcomes
+        client.updateRequired = { updateRequired.incrementAndGet() }
     }
 
     @After
@@ -218,6 +221,67 @@ class ApiClientTest {
         assertTrue(error is ApiError.Transport)
         assertEquals("Can’t reach the server. Check that it is running and the address is right.", error!!.message)
         assertTrue(outcomes.events.toString(), outcomes.events.isEmpty())
+    }
+
+    // ---- Client version (server `client_version.rs`) ----
+
+    private val tooOld = """{"error":{"code":"UPDATE_REQUIRED","message":"This version of Shroud is no longer supported. Update the app to keep using it."}}"""
+
+    @Test
+    fun everyKindOfApiRequestNamesTheApp() = runTest {
+        repeat(3) { server.enqueue(MockResponse(code = 200, body = """{"name":"a"}""")) }
+        repeat(3) { server.enqueue(MockResponse(code = 200, body = "bytes")) }
+        client.get("things", "tok", Thing.serializer())
+        client.get("client-version", null, Thing.serializer())
+        client.raw("PUT", "messages/m/reaction", "tok", jsonBody = """{"a":1}""")
+        client.putBytes("media/m/content", "tok", "x".toByteArray().toRequestBody("application/octet-stream".toMediaType()))
+        client.getBytes("media/m/content", "tok")
+        client.getToFile("media/m/content", "tok", File(temp.root, "f"))
+        repeat(6) { assertEquals(ShroudClientHeader.value, server.takeRequest().headers[ShroudClientHeader.NAME]) }
+        assertTrue(ShroudClientHeader.value, ShroudClientHeader.value.startsWith("android/"))
+    }
+
+    /**
+     * The header is set per API request, not by an interceptor: the shared base client (which the
+     * link-preview fetcher and the Whisper model download build on) sends nothing to other hosts.
+     */
+    @Test
+    fun theSharedHttpClientAloneSendsNoClientHeader() {
+        server.enqueue(MockResponse(code = 200))
+        client.http.newCall(Request.Builder().url(server.url("/elsewhere")).build()).execute().close()
+        assertNull(server.takeRequest().headers[ShroudClientHeader.NAME])
+    }
+
+    @Test
+    fun theHeaderValueIsPlatformSlashVersionName() {
+        assertEquals("android/0.4.2", ShroudClientHeader.forVersion("0.4.2"))
+        // Bytes OkHttp would refuse never make a request fail.
+        assertEquals("android/1.0-beta", ShroudClientHeader.forVersion("1.0 - beta\u00e9\n"))
+    }
+
+    @Test
+    fun updateRequiredIsReportedAndIsNoSessionFailure() = runTest {
+        server.enqueue(MockResponse(code = 426, body = tooOld))
+        server.enqueue(MockResponse(code = 426, body = tooOld))
+        server.enqueue(MockResponse(code = 426, body = tooOld))
+        val withToken = runCatching { client.get("things", "tok", Thing.serializer()) }.exceptionOrNull() as ApiError
+        assertTrue(withToken.isUpdateRequired)
+        assertFalse(withToken.isUnauthorized)
+        assertEquals("This version of Shroud is no longer supported. Update the app to keep using it.", withToken.userMessage)
+        // Signed out (register, log in) and streamed media report it too.
+        runCatching { client.post("auth/login", null, Thing("a"), Thing.serializer(), Thing.serializer()) }
+        runCatching { client.getBytes("media/m/content", "tok") }
+        assertEquals(3, updateRequired.get())
+        assertTrue(outcomes.events.toString(), outcomes.events.isEmpty())
+    }
+
+    @Test
+    fun only426UpdateRequiredReportsAnUpdate() = runTest {
+        server.enqueue(MockResponse(code = 426, body = """{"error":{"code":"SOMETHING_ELSE","message":"m"}}"""))
+        server.enqueue(MockResponse(code = 400, body = """{"error":{"code":"UPDATE_REQUIRED","message":"m"}}"""))
+        server.enqueue(MockResponse(code = 426, body = "Upgrade Required"))
+        repeat(3) { runCatching { client.get("things", "tok", Thing.serializer()) } }
+        assertEquals(0, updateRequired.get())
     }
 
     // ---- Cleartext and URLs ----

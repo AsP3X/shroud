@@ -39,11 +39,15 @@ import kotlin.coroutines.resumeWithException
  *   ([ServerConfiguration.isLocalNetworkHost], the iOS `NSAllowsLocalNetworking`).
  * - **Headers** (`:318-326, 352-363`): `Accept` = JSON, octet-stream, then any type (as iOS);
  *   `Authorization: Bearer <token>` only for a non-empty token; `Content-Type: application/json`
- *   exactly when a JSON body is sent. No `x-request-id`, no cookies, no HTTP cache.
+ *   exactly when a JSON body is sent; [ShroudClientHeader] (`X-Shroud-Client`) on every request.
+ *   No `x-request-id`, no cookies, no HTTP cache.
  * - **Auth outcomes** (`:328-342`): every answer to a request that carried a token reports to
  *   [authOutcomes] before its status is interpreted — 2xx → success, `401 DEVICE_REMOVED` →
  *   removal with that token, other 401 → failure. Token-less calls (register, log in) and transport
  *   errors never report, so a wrong password or being offline never ends a session.
+ * - **Too old** (server `client_version.rs`): any answer `426 UPDATE_REQUIRED`, with or without a
+ *   token, reports to [updateRequired] (the version check asks the server at once and shows the
+ *   blocking update screen). It is an error like any other for the caller: no sign-out, no retry.
  * - **Errors** (`:398-410`): no answer → [ApiError.Transport]; non-2xx → [errorFor] (with
  *   `Retry-After`); a 2xx that does not decode → [ApiError.Decoding]; a `204` or empty body is
  *   success for the `Unit` verbs.
@@ -58,6 +62,7 @@ class ApiClient(
     private val baseUrl: () -> String,
     val json: Json,
     val http: OkHttpClient = defaultHttpClient(),
+    private val clientHeader: String = ShroudClientHeader.value,
 ) {
     /**
      * Where authenticated answers are reported (the iOS `SessionAuthBridge`). Set once by the
@@ -65,6 +70,13 @@ class ApiClient(
      * null reports nothing. Called on IO threads.
      */
     @Volatile var authOutcomes: AuthOutcomeListener? = null
+
+    /**
+     * Called for every `426 UPDATE_REQUIRED` answer: the server no longer serves this build. Set
+     * once by the container (it runs the client-version check); null reports nothing. Called on IO
+     * threads.
+     */
+    @Volatile var updateRequired: (() -> Unit)? = null
 
     /**
      * The client for `PUT/GET media/{id}/content`: a call may take up to an hour (the iOS
@@ -132,7 +144,7 @@ class ApiClient(
         val request = request(verb, path, token, body, query)
         return exchange(http, request) { response ->
             val text = response.body.string()
-            noteAuthOutcome(response.code, text, token)
+            noteOutcome(response.code, text, token)
             RawResponse(response.code, text)
         }
     }
@@ -214,6 +226,7 @@ class ApiClient(
         Request.Builder()
             .url(url(path, query))
             .header("Accept", ACCEPT)
+            .header(ShroudClientHeader.NAME, clientHeader)
             .apply { if (!token.isNullOrEmpty()) header("Authorization", "Bearer $token") }
             .method(method, body)
             .build()
@@ -251,7 +264,7 @@ class ApiClient(
     /** The whole body of a 2xx, after reporting the auth outcome; otherwise the error. */
     private fun successText(response: Response, token: String?): String {
         val text = response.body.string()
-        noteAuthOutcome(response.code, text, token)
+        noteOutcome(response.code, text, token)
         if (!response.isSuccessful) throw errorFor(response.code, text, response.header("Retry-After"))
         return text
     }
@@ -259,11 +272,11 @@ class ApiClient(
     /** For streamed bodies: reports the outcome from the status line and throws on a non-2xx. */
     private fun requireSuccess(response: Response, token: String?) {
         if (response.isSuccessful) {
-            noteAuthOutcome(response.code, "", token)
+            noteOutcome(response.code, "", token)
             return
         }
         val text = response.body.string()
-        noteAuthOutcome(response.code, text, token)
+        noteOutcome(response.code, text, token)
         throw errorFor(response.code, text, response.header("Retry-After"))
     }
 
@@ -281,6 +294,12 @@ class ApiClient(
             if (count == -1L) return total
             total += count
         }
+    }
+
+    /** Reports [status] to the session ([noteAuthOutcome]) and a `426 UPDATE_REQUIRED` to [updateRequired]. */
+    private fun noteOutcome(status: Int, body: String, token: String?) {
+        noteAuthOutcome(status, body, token)
+        if (status == 426 && errorFor(status, body).isUpdateRequired) updateRequired?.invoke()
     }
 
     /**

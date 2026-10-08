@@ -111,6 +111,15 @@ struct ClientVersionTests {
         }
     }
 
+    /// A `426 UPDATE_REQUIRED` asks at once, not after the ten foreground minutes; only a burst
+    /// of refused requests within 30 s of the last refused check is folded into it.
+    @Test func refusedChecksWaitOnlyThirtySeconds() {
+        #expect(ClientVersionPolicy.shouldCheck(.refused, lastCheck: nil, now: start))
+        #expect(!ClientVersionPolicy.shouldCheck(.refused, lastCheck: start, now: start.addingTimeInterval(29)))
+        #expect(ClientVersionPolicy.shouldCheck(.refused, lastCheck: start, now: start.addingTimeInterval(30)))
+        #expect(!ClientVersionPolicy.shouldCheck(.foreground, lastCheck: start, now: start.addingTimeInterval(30)))
+    }
+
     // MARK: - Controller
 
     @Test func controllerThrottlesForegroundButNotManual() async {
@@ -125,6 +134,42 @@ struct ClientVersionTests {
         // Ten minutes from the last check, the manual one.
         #expect(await controller.check(.foreground, configuration: config, now: start.addingTimeInterval(600)) == .skipped)
         #expect(await controller.check(.foreground, configuration: config, now: start.addingTimeInterval(661)) == .answered(.current))
+        #expect(await calls.value == 3)
+    }
+
+    @Test func refusedRequestBringsUpUpdateRequired() async {
+        let results = Script([.success(answer(.current)), .success(answer(.updateRequired))])
+        let calls = Counter()
+        let controller = ClientVersionController(currentVersion: "1.0") { _, _ in
+            await calls.bump()
+            return try await results.next()
+        }
+        await controller.check(.launch, configuration: config, now: start)
+        #expect(controller.prompt == .none)
+        // A second after the launch check said "current", a request is refused: that answer
+        // doesn't throttle it.
+        #expect(await controller.check(.refused, configuration: config, now: start.addingTimeInterval(1)) == .answered(.updateRequired))
+        #expect(controller.isUpdateRequired)
+        // The screen is up: the next refused requests don't ask again.
+        #expect(await controller.check(.refused, configuration: config, now: start.addingTimeInterval(600)) == .skipped)
+        #expect(await calls.value == 2)
+    }
+
+    /// Refused checks are throttled against the last one that started, answered or not, so a
+    /// failing `/client-version` can't be asked once per refused request.
+    @Test func refusedChecksAreThrottledByTheirOwnAttempts() async {
+        let results = Script([.failure, .success(answer(.current)), .success(answer(.updateRequired))])
+        let calls = Counter()
+        let controller = ClientVersionController(currentVersion: "1.0") { _, _ in
+            await calls.bump()
+            return try await results.next()
+        }
+        #expect(await controller.check(.refused, configuration: config, now: start) == .failed)
+        #expect(await controller.check(.refused, configuration: config, now: start.addingTimeInterval(29)) == .skipped)
+        #expect(await controller.check(.refused, configuration: config, now: start.addingTimeInterval(30)) == .answered(.current))
+        #expect(await controller.check(.refused, configuration: config, now: start.addingTimeInterval(45)) == .skipped)
+        // Other triggers don't wait for it.
+        #expect(await controller.check(.manual, configuration: config, now: start.addingTimeInterval(46)) == .answered(.updateRequired))
         #expect(await calls.value == 3)
     }
 

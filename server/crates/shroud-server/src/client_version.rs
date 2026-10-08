@@ -8,16 +8,41 @@
 //! once the new web container is up, into a file the API reads on each question
 //! (`WEB_BUILD_FILE`), so a web-only deploy never restarts the API. A tab whose id differs is
 //! offered a reload. Reloading always fetches the deployed bundle, so the web has no minimum.
+//!
+//! The minimum is also enforced here, not only on the apps' word: every request names its app
+//! in `X-Shroud-Client` (see [`require_supported_client`]). Once a minimum is set, a request from
+//! an older app, or from a build so old that it sends no header, gets `426 UPDATE_REQUIRED`.
 //! Agent: READS IOS_LATEST_VERSION, IOS_MIN_VERSION, IOS_UPDATE_URL, ANDROID_LATEST_VERSION,
 //! ANDROID_MIN_VERSION, ANDROID_UPDATE_URL, WEB_BUILD_FILE (or a fixed WEB_BUILD). Nothing set =
 //! every client is current.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
+use axum::{
+    extract::{Query, Request, State},
+    http::{HeaderMap, HeaderName, Uri},
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 use serde::Serialize;
 
 use crate::error::AppError;
+use crate::state::AppState;
+
+/// Names the app on every request: `ios/1.2.0`, `android/0.3.0`, `web/<build id>`.
+pub static CLIENT_HEADER: HeaderName = HeaderName::from_static("x-shroud-client");
+/// The same value as a query parameter, for WebSocket upgrades: a browser can't add headers there.
+pub const CLIENT_QUERY: &str = "client";
+/// Routes any build may call: health checks, and the version check that tells an app to update.
+const OPEN_PATHS: [&str; 5] = [
+    "/api/v1/health",
+    "/api/v1/health/live",
+    "/api/v1/health/ready",
+    "/api/v1/metrics",
+    "/api/v1/client-version",
+];
 
 /// Release components a version may have (`1`, `1.2`, `1.2.3`, `1.2.3.4`).
 const MAX_VERSION_PARTS: usize = 4;
@@ -198,6 +223,78 @@ impl ClientVersions {
             server_version: SERVER_VERSION,
         }
     }
+
+    /// Whether a request from the app named by `client` (an `X-Shroud-Client` value) is served.
+    ///
+    /// Human: With no minimum set, everything is. Once one is, an app must name itself: every build
+    /// that sends the header is newer than the ones a minimum is there to stop, so a request
+    /// without it (or with one we can't read) is refused. Web tabs pass on any build id, since a
+    /// reload always fetches the deployed bundle; only a tab too old to send the header is stopped.
+    pub fn admits(&self, client: Option<&str>) -> bool {
+        if self.ios.minimum.is_none() && self.android.minimum.is_none() {
+            return true;
+        }
+        let Some((platform, version)) = client.and_then(|raw| raw.trim().split_once('/')) else {
+            return false;
+        };
+        let below_minimum = |release: &AppRelease| {
+            Version::parse_client(version)
+                .is_none_or(|version| release.minimum.as_ref().is_some_and(|min| &version < min))
+        };
+        match platform {
+            "ios" => !below_minimum(&self.ios),
+            "android" => !below_minimum(&self.android),
+            "web" => valid_web_build(version).is_some(),
+            _ => false,
+        }
+    }
+}
+
+/// Refuses requests from apps below the operator's minimum with `426 UPDATE_REQUIRED`
+/// ([`ClientVersions::admits`]); health checks and `GET /client-version` stay open to every build.
+pub async fn require_supported_client(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if OPEN_PATHS.contains(&request.uri().path()) {
+        return next.run(request).await;
+    }
+    let client = request_client(request.headers(), request.uri());
+    if state.client_versions.admits(client.as_deref()) {
+        return next.run(request).await;
+    }
+    // Human: A token that no longer authenticates gets its 401 first, as it would have without
+    // the gate: an old build learns that its device was removed (and wipes itself) or that it was
+    // signed out. Only a session that still works is told to update. The lookup runs on refusals
+    // only; if it fails, the 426 stands.
+    let bearer = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    if let Some(token) = bearer
+        && let Err(rejection) = crate::auth::session::ids_for_token(&state.pool, token).await
+        && rejection.status() == axum::http::StatusCode::UNAUTHORIZED
+    {
+        return rejection.into_response();
+    }
+    AppError::update_required().into_response()
+}
+
+/// The app a request names: `X-Shroud-Client`, else the `client` query parameter.
+pub fn request_client(headers: &HeaderMap, uri: &Uri) -> Option<String> {
+    headers
+        .get(&CLIENT_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| client_from_query(uri))
+}
+
+/// The `client` query parameter, percent-decoded (`web%2Fabc` → `web/abc`).
+fn client_from_query(uri: &Uri) -> Option<String> {
+    let Query(mut params) = Query::<HashMap<String, String>>::try_from_uri(uri).ok()?;
+    params.remove(CLIENT_QUERY)
 }
 
 impl WebBuild {
@@ -501,6 +598,40 @@ mod tests {
         assert!(from(&[("WEB_BUILD", "abc"), ("WEB_BUILD_FILE", "/run/x")]).is_err());
         assert!(from(&[("WEB_BUILD", "a b")]).is_err());
         assert!(from(&[("WEB_BUILD", &"a".repeat(65))]).is_err());
+    }
+
+    #[test]
+    fn requests_pass_freely_until_a_minimum_is_set() {
+        let none = from(&[("IOS_LATEST_VERSION", "1.4")]).unwrap();
+        assert!(none.admits(None));
+        assert!(none.admits(Some("ios/0.1")));
+        assert!(none.admits(Some("garbage")));
+    }
+
+    #[test]
+    fn a_minimum_refuses_older_apps_and_apps_that_dont_say() {
+        let versions = from(&[("IOS_MIN_VERSION", "1.1"), ("ANDROID_MIN_VERSION", "0.2")]).unwrap();
+        assert!(versions.admits(Some("ios/1.1")));
+        assert!(versions.admits(Some("ios/1.2.0 (14)")));
+        assert!(versions.admits(Some(" android/0.2.0 ")));
+        assert!(versions.admits(Some("web/0a1b2c3d4e5f")));
+        assert!(!versions.admits(Some("ios/1.0")));
+        assert!(!versions.admits(Some("android/0.1.9")));
+        assert!(!versions.admits(None));
+        assert!(!versions.admits(Some("")));
+        assert!(!versions.admits(Some("ios")));
+        assert!(!versions.admits(Some("ios/beta")));
+        assert!(!versions.admits(Some("web/")));
+        assert!(!versions.admits(Some("web/a b")));
+        assert!(!versions.admits(Some("windows/9.0")));
+    }
+
+    #[test]
+    fn one_platforms_minimum_leaves_the_other_platform_free_but_named() {
+        let versions = from(&[("IOS_MIN_VERSION", "1.1")]).unwrap();
+        assert!(versions.admits(Some("android/0.0.1")));
+        assert!(!versions.admits(Some("android/unknown")));
+        assert!(!versions.admits(None));
     }
 
     #[test]

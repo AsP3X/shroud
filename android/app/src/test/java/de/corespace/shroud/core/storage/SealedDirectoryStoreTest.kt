@@ -11,7 +11,7 @@ import java.io.File
 
 /**
  * One sealed file per name in a directory — the stand-in for a Keychain service with one item per
- * account (crypto spec §11.3; `keys/ratchets`, `keys/sender-tags`, 00-plan §1.5).
+ * account (crypto spec §11.3; `keys/ratchets`, 00-plan §1.5).
  */
 class SealedDirectoryStoreTest {
     @get:Rule

@@ -9,7 +9,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.Instant
 import java.util.UUID
 
 /**
@@ -19,9 +18,7 @@ import java.util.UUID
  */
 class MessageCryptoTest {
     private val records = InMemoryRatchetSessionRecords()
-    private val tags = InMemorySenderTagWatermarks()
-    private val crypto = MessageCrypto(records, tags)
-    private val now: Instant = Instant.now()
+    private val crypto = MessageCrypto(records)
 
     private fun json(bytes: ByteArray) = CryptoJson.parseToJsonElement(String(bytes, Charsets.UTF_8)) as JsonObject
     private fun json(text: String) = CryptoJson.parseToJsonElement(text) as JsonObject
@@ -34,7 +31,7 @@ class MessageCryptoTest {
         val alice = TestIdentity.random()
         val bob = TestIdentity.random()
         val sealed = crypto.sealV2(utf8("hello shroud"), bob.public, alice.private, alice.public)
-        val opened = crypto.openLegacy(sealed, bob.private, bob.public, alice.public, OpenAs.Recipient, now)
+        val opened = crypto.openLegacy(sealed, bob.private, bob.public, alice.public, OpenAs.Recipient)
         assertEquals("hello shroud", String(opened, Charsets.UTF_8))
     }
 
@@ -44,7 +41,7 @@ class MessageCryptoTest {
         val alice = TestIdentity.random()
         val bob = TestIdentity.random()
         val sealed = crypto.sealV2(utf8("multi-device history"), bob.public, alice.private, alice.public)
-        val opened = crypto.openLegacy(sealed, alice.private, alice.public, alice.public, OpenAs.Sender, now)
+        val opened = crypto.openLegacy(sealed, alice.private, alice.public, alice.public, OpenAs.Sender)
         assertEquals("multi-device history", String(opened, Charsets.UTF_8))
     }
 
@@ -55,12 +52,16 @@ class MessageCryptoTest {
         val bob = TestIdentity.random()
         val eve = TestIdentity.random()
         val sealed = crypto.sealV2(utf8("secret"), bob.public, alice.private, alice.public)
-        assertThrows(Exception::class.java) { crypto.openLegacy(sealed, eve.private, eve.public, alice.public, OpenAs.Recipient, now) }
+        assertThrows(Exception::class.java) { crypto.openLegacy(sealed, eve.private, eve.public, alice.public, OpenAs.Recipient) }
     }
 
-    /** `MessageCryptoTests.swift:86-125`: a hand-built v1 envelope (peer only, untagged). */
+    /**
+     * `MessageCryptoTests.swift:86-125`: a hand-built v1 envelope (peer only, untagged). v1 never
+     * carried a sender tag, so even a genuine one is refused: anyone holding the two public keys
+     * could have built it.
+     */
     @Test
-    fun legacyV1EnvelopeStillOpens() {
+    fun legacyV1EnvelopeIsRefused() {
         val alice = TestIdentity.random()
         val bob = TestIdentity.random()
         val ephemeral = TestIdentity.random()
@@ -72,8 +73,9 @@ class MessageCryptoTest {
         )
         val combined = Primitives.aesGcmSeal(key, SystemEntropy.bytes(12), utf8("legacy"))
         val envelope = utf8(CryptoJson.encodeToString(SealedEnvelope.serializer(), SealedEnvelope(v = 1, ek = B64.encode(ephemeral.public), ct = B64.encode(combined))))
-        val opened = crypto.openLegacy(envelope, bob.private, bob.public, alice.public, OpenAs.Recipient, now)
-        assertEquals("legacy", String(opened, Charsets.UTF_8))
+        assertThrows(CryptoError.UnauthenticatedSender::class.java) {
+            crypto.openLegacy(envelope, bob.private, bob.public, alice.public, OpenAs.Recipient)
+        }
     }
 
     // ---- golden vectors (crypto spec §16.3) ----
@@ -94,7 +96,7 @@ class MessageCryptoTest {
     @Test
     fun deterministicV2EnvelopeMatchesTheVector() {
         val entropy = ScriptedEntropy(bytes(0x77, 32), bytes(0x88, 12), bytes(0x99, 32), bytes(0xaa, 12))
-        val sealed = MessageCrypto(records, tags, entropy).sealV2(utf8("hello shroud"), bob.public, alice.private, alice.public)
+        val sealed = MessageCrypto(records, entropy).sealV2(utf8("hello shroud"), bob.public, alice.private, alice.public)
         assertEquals(0, entropy.remaining)
         val fields = json(sealed)
         assertEquals(setOf("v", "peer", "self"), fields.keys) // nil ek/ct left out
@@ -107,8 +109,8 @@ class MessageCryptoTest {
             json("""{"ek":"uhk4Ns/x9OhmwTlxXTBkCNJqdvdtY4o5r8EAEITSVBE=","ct":"qqqqqqqqqqqqqqqqOBqBgwu8Ps/+0hOzN5McW+rSlWJ3DNPBnjOrbQ==","t":"av2pPfLYZOn2ZE8PvEd5ZBIxA1M2fLW34yXqAnZtepk="}"""),
             fields["self"],
         )
-        assertEquals("hello shroud", String(crypto.openLegacy(sealed, bob.private, bob.public, alice.public, OpenAs.Recipient, now), Charsets.UTF_8))
-        assertEquals("hello shroud", String(crypto.openLegacy(sealed, alice.private, alice.public, alice.public, OpenAs.Sender, now), Charsets.UTF_8))
+        assertEquals("hello shroud", String(crypto.openLegacy(sealed, bob.private, bob.public, alice.public, OpenAs.Recipient), Charsets.UTF_8))
+        assertEquals("hello shroud", String(crypto.openLegacy(sealed, alice.private, alice.public, alice.public, OpenAs.Sender), Charsets.UTF_8))
     }
 
     /**
@@ -120,7 +122,7 @@ class MessageCryptoTest {
         val aliceUser = UUID.fromString("00000000-0000-4000-8000-00000000000a")
         val bobUser = UUID.fromString("00000000-0000-4000-8000-00000000000b")
         val entropy = ScriptedEntropy(bytes(0x33, 32), bytes(0x44, 12), bytes(0x99, 32), bytes(0xaa, 12), bytes(0x77, 32), bytes(0x88, 12))
-        val sealed = MessageCrypto(records, tags, entropy).seal(utf8("hello"), bobUser, bob.public, alice.private, alice.public, aliceUser)
+        val sealed = MessageCrypto(records, entropy).seal(utf8("hello"), bobUser, bob.public, alice.private, alice.public, aliceUser)
         assertEquals(0, entropy.remaining)
         assertEquals(
             json(
@@ -135,9 +137,9 @@ class MessageCryptoTest {
         assertEquals("3e6fed5fdfeb9d7ac6661851b235c9e9f6af85a9fd45e99d408c94cf13ab939e", session.sendChainKey!!.hex())
         assertEquals(1L, session.sendN)
         // Bob reads it by ratchet; Alice reads her own copy from the self box.
-        val opened = MessageCrypto(InMemoryRatchetSessionRecords(), tags).open(sealed, aliceUser, bob.private, bob.public, alice.public, OpenAs.Recipient, now)
+        val opened = MessageCrypto(InMemoryRatchetSessionRecords()).open(sealed, aliceUser, bob.private, bob.public, alice.public, OpenAs.Recipient)
         assertEquals("hello", String(opened, Charsets.UTF_8))
-        assertEquals("hello", String(crypto.open(sealed, bobUser, alice.private, alice.public, alice.public, OpenAs.Sender, now), Charsets.UTF_8))
+        assertEquals("hello", String(crypto.open(sealed, bobUser, alice.private, alice.public, alice.public, OpenAs.Sender), Charsets.UTF_8))
     }
 
     // ---- wire form and malformed input ----
@@ -156,7 +158,7 @@ class MessageCryptoTest {
     @Test
     fun malformedEnvelopesFailClosed() {
         fun open(text: String, role: OpenAs = OpenAs.Recipient) =
-            crypto.open(utf8(text), UUID.randomUUID(), bob.private, bob.public, alice.public, role, now)
+            crypto.open(utf8(text), UUID.randomUUID(), bob.private, bob.public, alice.public, role)
         val v2 = String(crypto.sealV2(utf8("x"), bob.public, alice.private, alice.public), Charsets.UTF_8)
 
         assertThrows(CryptoError.OpenFailed::class.java) { open("not json") }
@@ -164,14 +166,14 @@ class MessageCryptoTest {
         assertThrows(CryptoError.OpenFailed::class.java) { open("""{"v":"two"}""") }
         assertThrows(CryptoError.UnsupportedVersion::class.java) { open("""{"v":9}""") }
         assertThrows(CryptoError.OpenFailed::class.java) { open("""{"v":2}""") }
-        assertThrows(CryptoError.OpenFailed::class.java) { open("""{"v":1}""") }
-        // v1 only ever went peer-ward.
-        assertThrows(CryptoError.OpenFailed::class.java) { open("""{"v":1,"ek":"a","ct":"b"}""", OpenAs.Sender) }
+        // v1 never carried a tag: refused whatever it holds, in either role.
+        assertThrows(CryptoError.UnauthenticatedSender::class.java) { open("""{"v":1}""") }
+        assertThrows(CryptoError.UnauthenticatedSender::class.java) { open("""{"v":1,"ek":"a","ct":"b"}""", OpenAs.Sender) }
         // A v3 counter outside UInt32 does not decode.
         assertThrows(CryptoError.OpenFailed::class.java) { open("""{"v":3,"dh":"a","n":4294967296,"pn":0,"ct":"b"}""") }
         // v3 as recipient needs the ratchet overload.
         assertThrows(CryptoError.UnsupportedVersion::class.java) {
-            crypto.openLegacy(utf8("""{"v":3,"dh":"a","n":0,"pn":0,"ct":"b"}"""), bob.private, bob.public, alice.public, OpenAs.Recipient, now)
+            crypto.openLegacy(utf8("""{"v":3,"dh":"a","n":0,"pn":0,"ct":"b"}"""), bob.private, bob.public, alice.public, OpenAs.Recipient)
         }
         // A v3 envelope for our own devices needs its self box.
         assertThrows(CryptoError.OpenFailed::class.java) { open("""{"v":3,"dh":"a","n":0,"pn":0,"ct":"b"}""", OpenAs.Sender) }

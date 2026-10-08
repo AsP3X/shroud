@@ -22,7 +22,7 @@ sealed class CryptoError(msg: String) : Exception(msg, null, false, false) {
 
     object UnsupportedVersion : CryptoError("unsupported envelope version")
 
-    /** A tag that does not verify, or an untagged box the watermark policy refuses. */
+    /** An identity box (or a v1 envelope) without a sender tag, or with one that does not verify. */
     object UnauthenticatedSender : CryptoError("unauthenticated sender")
 
     /** Android/web only: the history key is not in memory, so ratchet state cannot be read or written. */

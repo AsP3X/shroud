@@ -25,7 +25,6 @@ const contexts = [
   ["PlaintextPayload", "shroud-local-plaintext-v1"],
   ["IdentityKeychain", "shroud-keychain-identity-v1"],
   ["RatchetKeychain", "shroud-keychain-ratchet-v1"],
-  ["SenderTagKeychain", "shroud-keychain-sender-tag-v1"],
   ["LanguageStats", "shroud-local-language-stats-v1"],
   ["RecordNames", "shroud-local-names-v1"],
 ];

@@ -116,7 +116,6 @@ class FakeOpener : EnvelopeOpener {
         ourPublic: ByteArray,
         senderPublic: ByteArray,
         role: OpenAs,
-        sentAt: Instant,
     ): ByteArray {
         calls += Call(peerUserId, senderPublic.copyOf(), role)
         if (String(envelope).startsWith("FAIL")) throw CryptoError.OpenFailed

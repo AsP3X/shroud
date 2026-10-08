@@ -1,9 +1,6 @@
 package de.corespace.shroud.core.crypto
 
 import de.corespace.shroud.core.keys.RatchetSessionRecords
-import de.corespace.shroud.core.keys.SenderTagWatermarks
-import de.corespace.shroud.core.keys.Watermark
-import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -61,38 +58,4 @@ class InMemoryRatchetSessionRecords : RatchetSessionRecords {
     fun put(peerUserId: UUID, session: DoubleRatchet.Session) {
         sessions[peerUserId] = session.encode()
     }
-}
-
-/**
- * Tests: [SenderTagWatermarks] in memory (iOS `SenderTagStore.useInMemoryStorageForTesting()`,
- * `ios/shroud/Services/Crypto/SenderTagStore.swift:31-34`), keyed by the sender's identity key.
- * [isLocked] = true answers [Watermark.Locked] and drops writes, as the sealed store does without the
- * history key.
- */
-class InMemorySenderTagWatermarks : SenderTagWatermarks {
-    private val watermarks = HashMap<String, Instant>()
-
-    @Volatile
-    var isLocked: Boolean = false
-
-    @Synchronized
-    override fun taggedSince(senderIdentityPublic: ByteArray): Watermark {
-        if (isLocked) return Watermark.Locked
-        return watermarks[senderIdentityPublic.hex()]?.let { Watermark.Since(it) } ?: Watermark.Untagged
-    }
-
-    /** The watermark only moves earlier (`SenderTagStore.swift:59-84`). */
-    @Synchronized
-    override fun noteTagged(senderIdentityPublic: ByteArray, sentAt: Instant) {
-        if (isLocked) return
-        val existing = watermarks[senderIdentityPublic.hex()]
-        if (existing != null && !existing.isAfter(sentAt)) return
-        watermarks[senderIdentityPublic.hex()] = sentAt
-    }
-
-    @Synchronized
-    override fun deleteAll() = watermarks.clear()
-
-    @Synchronized
-    fun count(): Int = watermarks.size
 }

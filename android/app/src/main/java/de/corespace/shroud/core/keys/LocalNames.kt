@@ -15,8 +15,8 @@ import kotlin.concurrent.write
  * keyed hash of its id, so the list of files says nothing about who talks to whom (plan §1.5 and
  * C10; web-parity §3.1, adopting the web's `vaultName`, `web/src/crypto/vault.ts:293-301`; crypto
  * spec §6.3, §7.2). iOS names its files and Keychain items by the plain ids
- * (`ios/shroud/Services/Crypto/RatchetSessionStore.swift:22-24`) or a plain SHA-256 of a public
- * key (`SenderTagStore.swift:97-99`); Android's layout is local-only, so this costs no interop.
+ * (`ios/shroud/Services/Crypto/RatchetSessionStore.swift:22-24`); Android's layout is local-only,
+ * so this costs no interop.
  *
  * ```
  * namesKey = LocalHistoryCrypto.subkey(historyKey, RecordNames)   // HKDF info "shroud-local-names-v1"
@@ -67,8 +67,8 @@ class LocalNames(namesKey: ByteArray) {
     fun name(kind: String, id: UUID): String = name(kind, id.toString())
 
     /**
-     * [name] of a byte id — the sender's identity public key for [Kind.SENDER_TAG] — as its
-     * lower-case hex (crypto spec §6.3: keyed by the key, not by a user id).
+     * [name] of a byte id (an identity public key, say) as its lower-case hex (crypto spec §6.3:
+     * keyed by the key, not by a user id).
      */
     fun name(kind: String, id: ByteArray): String = name(kind, id.hex())
 
@@ -88,9 +88,6 @@ class LocalNames(namesKey: ByteArray) {
     object Kind {
         /** `keys/ratchets/<name ratchet:peer>` — Double Ratchet session per peer user id (W1-KEYS). */
         const val RATCHET = "ratchet"
-
-        /** `keys/sender-tags/<name sender-tag:ik>` — watermark per sender identity key, as hex (W1-KEYS). */
-        const val SENDER_TAG = "sender-tag"
 
         /** `shroud/messages/<name user:id>/` — one directory per signed-in account (W2-MSG-STORE). */
         const val USER = "user"

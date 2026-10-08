@@ -38,6 +38,18 @@ nonisolated enum APIError: Error, Equatable, Sendable {
 
     static let deviceRemovedCode = "DEVICE_REMOVED"
 
+    /// The server's minimum version is above this build (`426 UPDATE_REQUIRED`). Not an auth
+    /// failure: `ClientVersionBridge` runs the version check, which blocks the app with
+    /// "Update required".
+    var isUpdateRequired: Bool {
+        if case let .server(code, _, statusCode) = self, statusCode == 426 {
+            return code == Self.updateRequiredCode
+        }
+        return false
+    }
+
+    static let updateRequiredCode = "UPDATE_REQUIRED"
+
     /// Builds an `APIError` from a failed HTTP response body when possible.
     static func from(data: Data, statusCode: Int) -> APIError {
         if let envelope = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {

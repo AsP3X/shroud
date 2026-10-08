@@ -3,9 +3,11 @@ import Foundation
 /// Keeps the server's last word on this build and decides when to ask again.
 ///
 /// Human: Checks at launch, on the way back from the background (at most every ten minutes),
-/// when another server is saved, and from "Check again". A check that fails (offline, an older
-/// server without the route, a bad answer) changes nothing. Dismissing "Update available" lasts
-/// for this process only, per version: a cold launch or a newer release asks again.
+/// when another server is saved, from "Check again", and as soon as the server refuses a
+/// request as too old (`426 UPDATE_REQUIRED`, via `ClientVersionBridge`). A check that fails
+/// (offline, an older server without the route, a bad answer) changes nothing. Dismissing
+/// "Update available" lasts for this process only, per version: a cold launch or a newer
+/// release asks again.
 /// Agent: CALLS `GET /client-version` without a session; READS nothing else. `RootView` presents
 /// `prompt` (alert or `UpdateRequiredView`) and shares the controller through the environment;
 /// About Shroud reads `updateStatus` and `serverVersion` and runs `.manual` checks.
@@ -34,6 +36,9 @@ final class ClientVersionController {
 
     /// When the last answer arrived (its check started). Failed checks don't count.
     private var lastCheckAt: Date?
+    /// When the last `.refused` check started, answered or not: its throttle runs from here, so
+    /// another check's fresh answer never swallows a refusal, and a failing check can't loop.
+    private var lastRefusedAttemptAt: Date?
     /// Bumped on a server change so a check still running against the old server is dropped.
     private var generation = 0
     private let fetch: Fetch
@@ -87,10 +92,15 @@ final class ClientVersionController {
             answer = nil
             lastOutcome = nil
             isChecking = false
+            lastRefusedAttemptAt = nil
         }
+        // The blocking screen is already up: a refused request has nothing new to say.
+        if trigger == .refused, isUpdateRequired { return .skipped }
+        let lastCheck = trigger == .refused ? lastRefusedAttemptAt : lastCheckAt
         guard !isChecking,
-              ClientVersionPolicy.shouldCheck(trigger, lastCheck: lastCheckAt, now: now)
+              ClientVersionPolicy.shouldCheck(trigger, lastCheck: lastCheck, now: now)
         else { return .skipped }
+        if trigger == .refused { lastRefusedAttemptAt = now }
         isChecking = true
         let started = generation
         let result: ClientVersionResponse?
@@ -116,5 +126,27 @@ final class ClientVersionController {
     func dismissAvailable() {
         guard case let .available(latest, _) = prompt else { return }
         dismissed.insert(ClientVersionPolicy.dismissalKey(latest: latest))
+    }
+}
+
+/// Bridges a `426 UPDATE_REQUIRED` seen by the nonisolated `APIClient` or `RealtimeClient` to the
+/// MainActor `ClientVersionController`, the way `SessionAuthBridge` carries 401s.
+///
+/// Human: The refusal only starts a version check; the server's answer brings up "Update
+/// required". It is not an authentication failure: no sign-out, no wipe, and the refused
+/// request is not retried.
+/// Agent: Bound once from `RootView`. Unbound (tests, before launch wiring) it does nothing.
+@MainActor
+enum ClientVersionBridge {
+    static weak var controller: ClientVersionController?
+    /// Where the configured server is read from when the check runs.
+    static weak var serverConfig: ServerConfigurationController?
+
+    /// The server refused a request because this build is below its minimum.
+    nonisolated static func noteUpdateRequired() {
+        Task { @MainActor in
+            guard let controller, let serverConfig else { return }
+            await controller.check(.refused, configuration: serverConfig.configuration)
+        }
     }
 }

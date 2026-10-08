@@ -5,7 +5,6 @@ import de.corespace.shroud.core.contacts.PeerIdentities
 import de.corespace.shroud.core.crypto.B64
 import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.InMemoryRatchetSessionRecords
-import de.corespace.shroud.core.crypto.InMemorySenderTagWatermarks
 import de.corespace.shroud.core.crypto.MediaCrypto
 import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.OpenAs
@@ -749,8 +748,8 @@ class SendWorld(
     val pdfPreviewSources = ArrayList<PdfPreviewSource>()
     var audioMetadata: (UUID) -> de.corespace.shroud.core.media.files.AudioFileMetadata? = { null }
     val audioMetadataReads = ArrayList<UUID>()
-    val crypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
-    val peerCrypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
+    val crypto = MessageCrypto(InMemoryRatchetSessionRecords())
+    val peerCrypto = MessageCrypto(InMemoryRatchetSessionRecords())
 
     val deps = SendDependencies(
         api = server,
@@ -785,12 +784,12 @@ class SendWorld(
     /** The peer opens what we sent them (their own ratchet store). */
     fun openAsPeer(request: SendMessageRequest): ByteArray {
         val dto = server.dtoFor(request)
-        return peerCrypto.open(MessageCrypto.fromWire(request.ciphertext)!!, me, peerKeys.private, peerKeys.public, meKeys.public, OpenAs.Recipient, dto.createdAt)
+        return peerCrypto.open(MessageCrypto.fromWire(request.ciphertext)!!, me, peerKeys.private, peerKeys.public, meKeys.public, OpenAs.Recipient)
     }
 
     /** One of our other devices (or we, later) reads our own message through the self box. */
     fun openAsSender(request: SendMessageRequest): ByteArray =
-        crypto.openLegacy(MessageCrypto.fromWire(request.ciphertext)!!, meKeys.private, meKeys.public, meKeys.public, OpenAs.Sender, Instant.now())
+        crypto.openLegacy(MessageCrypto.fromWire(request.ciphertext)!!, meKeys.private, meKeys.public, meKeys.public, OpenAs.Sender)
 
     /** The peer seals [plaintext] to us and the server stores it. */
     fun peerSends(plaintext: ByteArray, contentType: String = ContentType.TEXT, mediaObjectId: UUID? = null): MessageDto {

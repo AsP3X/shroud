@@ -6,8 +6,8 @@ import java.security.KeyStore
 /**
  * The "Encryption keys" step of the Log Out / removal wipe (crypto spec §14; plan §1.5; iOS
  * `ios/shroud/Services/Auth/DeviceDataWipe.swift:152-158`, "Deleting never asks for Face ID"):
- * deletes everything under `noBackupFilesDir/keys/` (identity, vault record, ratchets, sender tags,
- * peer pins) and every AndroidKeyStore alias starting with `shroud.` (the WhenUnlocked sealer, the
+ * deletes everything under `noBackupFilesDir/keys/` (identity, vault record, ratchets, peer pins,
+ * and the `sender-tags/` watermarks older builds left) and every AndroidKeyStore alias starting with `shroud.` (the WhenUnlocked sealer, the
  * vault wrap keys, the session and other after-first-unlock sealers). `DeviceWipeController`
  * (W2-AUTH-WIPE) calls [wipeAll] after `StorageSeal.seal()` and the session step, and [leftovers]
  * in its verify pass.

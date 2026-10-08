@@ -561,7 +561,6 @@ export async function decodeIncoming(
       ourIdentityPublic: material.agreementPublic,
       senderIdentityPublic: senderPub,
       asSender: isMine,
-      sentAt: Date.parse(dto.created_at),
     });
     const decoded = utf8decode(plain);
     if (isAnnotation) {
@@ -1001,7 +1000,7 @@ export async function sendVoice(opts: {
       dto,
       uploadedMediaObjectId: upload.media_object_id,
       thisAttemptJson: JSON.stringify(payload),
-      openKept: (ciphertext) => openOwnEnvelope(ciphertext, peer, me, opts.material, dto.created_at),
+      openKept: (ciphertext) => openOwnEnvelope(ciphertext, peer, me, opts.material),
     });
     if (kept.payloadJson != null) savePlaintext(dto.id, dto.sender_user_id, kept.payloadJson);
     await saveMediaBlob(dto.id, opts.take.data);
@@ -1244,7 +1243,6 @@ async function openOwnEnvelope(
   peer: string,
   me: string,
   material: IdentityMaterial,
-  createdAt: string,
 ): Promise<string> {
   const plain = await openMessage({
     envelopeData: wireB64ToEnvelope(ciphertext),
@@ -1254,7 +1252,6 @@ async function openOwnEnvelope(
     ourIdentityPublic: material.agreementPublic,
     senderIdentityPublic: material.agreementPublic,
     asSender: true,
-    sentAt: Date.parse(createdAt),
   });
   return utf8decode(plain);
 }
@@ -1307,7 +1304,7 @@ async function sendMediaEnvelope(
       dto,
       uploadedMediaObjectId: mediaObjectId,
       thisAttemptJson: JSON.stringify(payload),
-      openKept: (ciphertext) => openOwnEnvelope(ciphertext, peer, me, opts.material, dto.created_at),
+      openKept: (ciphertext) => openOwnEnvelope(ciphertext, peer, me, opts.material),
     });
     if (kept.payloadJson != null) savePlaintext(dto.id, dto.sender_user_id, kept.payloadJson);
     keep(dto.id);

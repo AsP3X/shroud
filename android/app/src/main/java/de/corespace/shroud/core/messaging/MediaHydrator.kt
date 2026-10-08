@@ -304,7 +304,7 @@ class MediaHydrator(
             val dto = response.messages.firstOrNull { it.id == message.id } ?: return null
             val envelope = dto.ciphertext?.let(MessageCrypto::fromWire) ?: return null
             // Our own message: the self box, no ratchet (MC:4032-4040).
-            val payload = deps.open(envelope, apiPeer, null, OpenAs.Sender, dto.createdAt) ?: return null
+            val payload = deps.open(envelope, apiPeer, null, OpenAs.Sender) ?: return null
             if (MediaMessagePayload.parse(payload) == null) return null
             savePlaintext(message.id, message.senderUserId, payload)
             return payload
@@ -320,7 +320,7 @@ class MediaHydrator(
         return deps.peerLocks.withPeer(dto.senderUserId) {
             // Only when no plaintext at all is cached: a non-payload blob must not burn a second open (MC:4069-4073).
             if (withContext(deps.io) { deps.store().plaintext(message.id, message.senderUserId) } != null) return@withPeer null
-            val payload = deps.open(envelope, dto.senderUserId, senderPublic, OpenAs.Recipient, dto.createdAt) ?: return@withPeer null
+            val payload = deps.open(envelope, dto.senderUserId, senderPublic, OpenAs.Recipient) ?: return@withPeer null
             if (MediaMessagePayload.parse(payload) == null) return@withPeer null
             savePlaintext(message.id, message.senderUserId, payload)
             payload

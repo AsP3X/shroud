@@ -112,11 +112,9 @@ export async function openContactName(
   ourPublic: Uint8Array,
 ): Promise<string | null> {
   const box = parseBox(sealed);
-  if (!box?.t) return null;
+  if (!box) return null;
   try {
-    const opened = await openBox(box, ourPrivate, theirPublic, ourPublic);
-    if (!opened.authenticated) return null;
-    const name = utf8decode(opened.plaintext);
+    const name = utf8decode(await openBox(box, ourPrivate, theirPublic, ourPublic));
     return NAME_RE.test(name) ? name : null;
   } catch {
     return null;

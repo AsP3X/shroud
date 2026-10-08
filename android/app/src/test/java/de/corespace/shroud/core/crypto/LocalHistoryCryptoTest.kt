@@ -69,7 +69,6 @@ class LocalHistoryCryptoTest {
             Context.PlaintextPayload to "f6ff84bee12e2944e80007d3edf8b6b291dbe1e3c8d100359860f123b763b8be",
             Context.IdentityKeychain to "216b4b9b5a89aff4e74200c06ec37ccb6be02296dceef779a2484b35a932bac4",
             Context.RatchetKeychain to "51a7b6121993146d8c17b1ff5e8d622bd334da0a4ec338330bc3586c92adff8e",
-            Context.SenderTagKeychain to "1e874f4a837d7c2527e0481c19a3ce8c62e649b23930e487ed0d898d89cf55ce",
             Context.LanguageStats to "4b0bb41ee29f0db367070ce6c0b927ab0e69501573a22abc575afcde24c2e608",
         )
         for ((context, hex) in expected) {
@@ -96,7 +95,6 @@ class LocalHistoryCryptoTest {
                 "shroud-local-plaintext-v1",
                 "shroud-keychain-identity-v1",
                 "shroud-keychain-ratchet-v1",
-                "shroud-keychain-sender-tag-v1",
                 "shroud-local-language-stats-v1",
                 "shroud-local-names-v1",
             ),

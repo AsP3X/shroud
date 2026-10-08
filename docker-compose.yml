@@ -177,8 +177,10 @@ services:
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
       REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
       # Update prompts (GET /client-version). Below *_LATEST_VERSION an app offers an update the
-      # user may dismiss; below *_MIN_VERSION it blocks until updated. *_UPDATE_URL is where its
-      # Update button leads (TestFlight / App Store, an APK page). Unset = never prompt.
+      # user may dismiss; below *_MIN_VERSION it blocks until updated, and once either minimum is
+      # set the API answers 426 UPDATE_REQUIRED to older apps and to apps that don't name their
+      # version (see .env.example). *_UPDATE_URL is where its Update button leads (TestFlight /
+      # App Store, an APK page). Unset = never prompt.
       IOS_LATEST_VERSION: ${IOS_LATEST_VERSION:-}
       IOS_MIN_VERSION: ${IOS_MIN_VERSION:-}
       IOS_UPDATE_URL: ${IOS_UPDATE_URL:-}

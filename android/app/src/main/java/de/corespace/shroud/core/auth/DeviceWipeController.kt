@@ -210,7 +210,11 @@ class DeviceWipeController(
                 val outcome = endServerSessionOutcome(token)
                 val said = WipeReason.after(reasonState.value, outcome)
                 if (said != reasonState.value) reasonState.value = said
-                if (outcome == ServerSessionOutcome.Offline) "Ended here · server offline" else "Session ended"
+                when (outcome) {
+                    ServerSessionOutcome.Offline -> "Ended here · server offline"
+                    ServerSessionOutcome.UpdateRequired -> "Ended here · app update needed"
+                    ServerSessionOutcome.Ended, ServerSessionOutcome.Removed -> "Session ended"
+                }
             }
             WipeStep.Messages -> {
                 onIo { dataWipe.wipeMessages() }
@@ -410,12 +414,14 @@ class DeviceWipeController(
         const val HOOK_TIMEOUT_MS = 4_000L
 
         /**
-         * 401: already over — `DEVICE_REMOVED` says why. Anything but "could not connect" means the
-         * server heard us (`serverSessionOutcome(of:)`, `:285-291`).
+         * 401: already over — `DEVICE_REMOVED` says why. Anything but "could not connect" or
+         * `426 UPDATE_REQUIRED` (refused before the logout ran) means the server heard us
+         * (`serverSessionOutcome(of:)`, `:285-291`).
          */
         fun serverSessionOutcome(error: ApiError): ServerSessionOutcome = when {
             error.isDeviceRemoved -> ServerSessionOutcome.Removed
             error is ApiError.Transport -> ServerSessionOutcome.Offline
+            error.isUpdateRequired -> ServerSessionOutcome.UpdateRequired
             else -> ServerSessionOutcome.Ended
         }
 

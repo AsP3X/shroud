@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Security
 import UIKit
 
 // Note: local chat history, media, and plaintext caches are AES-256-GCM sealed with
@@ -610,7 +611,20 @@ final class MessagingController {
         clearInMemoryState()
         peerKeys.clear()
         RatchetSessionStore.deleteAll()
-        SenderTagStore.deleteAll()
+        Self.deleteRetiredSenderTagWatermarks()
+    }
+
+    /// Retired store: builds from 2026-09-23 until untagged boxes were refused outright kept a
+    /// per-sender watermark of the first tagged message, one Keychain item per sender under
+    /// `<bundle id>.sender-tags`. Nothing reads them now, but installs that ran those builds
+    /// still have them, so sign-out deletes them with the ratchets. The logout wipe's key step
+    /// deletes every Keychain item as well; this covers `stop(wipeDisk: true)` on its own.
+    private static func deleteRetiredSenderTagWatermarks() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: (Bundle.main.bundleIdentifier ?? "de.corespace.shroud") + ".sender-tags",
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 
     private func clearInMemoryState() {
@@ -4763,8 +4777,7 @@ final class MessagingController {
                 with: material.agreementPrivateKey,
                 ourIdentityPublicKey: material.identityPublicKeyData,
                 senderIdentityPublicKey: material.identityPublicKeyData,
-                as: .sender,
-                sentAt: dto.createdAt
+                as: .sender
             )
         }
         if let kept = decision.payload {
@@ -4802,8 +4815,7 @@ final class MessagingController {
                 with: material.agreementPrivateKey,
                 ourIdentityPublicKey: material.identityPublicKeyData,
                 senderIdentityPublicKey: material.identityPublicKeyData,
-                as: .sender,
-                sentAt: dto.createdAt
+                as: .sender
             )
             if MessageDecoder.isMediaPayloadData(payloadData) {
                 local.saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, data: payloadData)
@@ -4846,8 +4858,7 @@ final class MessagingController {
             with: material.agreementPrivateKey,
             ourIdentityPublicKey: material.identityPublicKeyData,
             senderIdentityPublicKey: senderPub,
-            as: .recipient,
-            sentAt: dto.createdAt
+            as: .recipient
         )
         guard MessageDecoder.isMediaPayloadData(payloadData) else { return nil }
         local.saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, data: payloadData)
@@ -6232,9 +6243,10 @@ extension MessagingController {
     }
 
     /// No answer yet rather than a "no": offline, cancelled, the server struggling or asking
-    /// us to slow down.
+    /// us to slow down, or refusing this build until it is updated (`426 UPDATE_REQUIRED`).
     private static func isTransient(_ error: Error) -> Bool {
         if error is CancellationError || error is URLError { return true }
+        if (error as? APIError)?.isUpdateRequired == true { return true }
         switch error as? APIError {
         case .transport: return true
         case let .server(_, _, statusCode): return statusCode >= 500 || statusCode == 429

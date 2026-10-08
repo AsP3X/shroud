@@ -11,7 +11,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
@@ -28,8 +27,7 @@ import java.util.concurrent.TimeUnit
  */
 class MessageCryptoRatchetTest {
     private val records = InMemoryRatchetSessionRecords()
-    private val tags = InMemorySenderTagWatermarks()
-    private val crypto = MessageCrypto(records, tags)
+    private val crypto = MessageCrypto(records)
     private val aliceUser: UUID
     private val bobUser: UUID
 
@@ -53,7 +51,7 @@ class MessageCryptoRatchetTest {
         storeAsPeer: UUID,
         role: OpenAs = OpenAs.Recipient,
         with: MessageCrypto = crypto,
-    ): String = String(with.open(envelope, storeAsPeer, reader.private, reader.public, sender.public, role, Instant.now()), Charsets.UTF_8)
+    ): String = String(with.open(envelope, storeAsPeer, reader.private, reader.public, sender.public, role), Charsets.UTF_8)
 
     private fun aliceSends(text: String) = seal(text, alice, aliceUser, bob, bobUser)
     private fun bobSends(text: String) = seal(text, bob, bobUser, alice, aliceUser)
@@ -158,7 +156,7 @@ class MessageCryptoRatchetTest {
     @Test
     fun legacyV2StillWorks() {
         val sealed = crypto.sealV2(utf8("classic"), bob.public, alice.private, alice.public)
-        val opened = crypto.openLegacy(sealed, bob.private, bob.public, alice.public, OpenAs.Recipient, Instant.now())
+        val opened = crypto.openLegacy(sealed, bob.private, bob.public, alice.public, OpenAs.Recipient)
         assertEquals("classic", String(opened, Charsets.UTF_8))
     }
 
@@ -179,7 +177,7 @@ class MessageCryptoRatchetTest {
         // MediaMessagePayload(t: image, mime, w: 10, h: 10, k: b64(0x01 × 32)) as the iOS test encodes it.
         val imagePayload = utf8("""{"t":"image","mime":"image/jpeg","w":10,"h":10,"k":"${B64.encode(bytes(0x01, 32))}"}""")
         val imageEnv = crypto.seal(imagePayload, bobUser, bob.public, alice.private, alice.public, aliceUser)
-        assertArrayEquals(imagePayload, crypto.open(imageEnv, aliceUser, bob.private, bob.public, alice.public, OpenAs.Recipient, Instant.now()))
+        assertArrayEquals(imagePayload, crypto.open(imageEnv, aliceUser, bob.private, bob.public, alice.public, OpenAs.Recipient))
     }
 
     // ---- Android: locked ratchets (crypto D5) ----
@@ -210,7 +208,7 @@ class MessageCryptoRatchetTest {
                 return null
             }
         }
-        val crypto = MessageCrypto(locking, tags)
+        val crypto = MessageCrypto(locking)
         assertThrows(CryptoError.Locked::class.java) {
             crypto.seal(utf8("x"), bobUser, bob.public, alice.private, alice.public, aliceUser)
         }
@@ -247,7 +245,7 @@ class MessageCryptoRatchetTest {
         assertEquals(aliceBefore, records.session(bobUser))
         // The chain carries on: no fork, both sides still read through the ratchet.
         val a2 = aliceSends("A2")
-        assertEquals("A2", String(crypto.open(ratchetOnly(a2), aliceUser, bob.private, bob.public, alice.public, sentAt = Instant.now()), Charsets.UTF_8))
+        assertEquals("A2", String(crypto.open(ratchetOnly(a2), aliceUser, bob.private, bob.public, alice.public), Charsets.UTF_8))
     }
 
     /** The same state on the receiving side: the peer box opens it, and no ratchet step is saved. */
@@ -263,7 +261,7 @@ class MessageCryptoRatchetTest {
         assertEquals(saves, records.saveCount)
         records.unreadable = false
         assertEquals(bobBefore, records.session(aliceUser))
-        assertEquals("A2", String(crypto.open(ratchetOnly(a2), aliceUser, bob.private, bob.public, alice.public, sentAt = Instant.now()), Charsets.UTF_8))
+        assertEquals("A2", String(crypto.open(ratchetOnly(a2), aliceUser, bob.private, bob.public, alice.public), Charsets.UTF_8))
     }
 
     // ---- Android: no state change on a failed seal ----
@@ -271,7 +269,7 @@ class MessageCryptoRatchetTest {
     @Test
     fun aSealThatFailsSavesNoRatchetStep() {
         // Entropy for the initiator DH and the ratchet nonce only: sealing the self box then fails.
-        val crypto = MessageCrypto(records, tags, ScriptedEntropy(bytes(0x33, 32), bytes(0x44, 12)))
+        val crypto = MessageCrypto(records, ScriptedEntropy(bytes(0x33, 32), bytes(0x44, 12)))
         assertThrows(IllegalStateException::class.java) {
             crypto.seal(utf8("x"), bobUser, bob.public, alice.private, alice.public, aliceUser)
         }

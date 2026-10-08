@@ -1,13 +1,12 @@
 package de.corespace.shroud.core.keys
 
-import java.time.Instant
 import java.util.UUID
 
 /**
- * Seams between the message crypto (W1-CRYPTO, `MessageCrypto`) and the sealed key-record stores
- * that back it (W1-KEYS, `RatchetSessionStore` and `SenderTagStore`), published by W0-C so both
- * sides build in parallel (plan §1.7.4). W1-CRYPTO tests run against in-memory implementations
- * (`InMemoryRatchetSessionRecords`, `InMemorySenderTagWatermarks` in its test sources).
+ * The seam between the message crypto (W1-CRYPTO, `MessageCrypto`) and the sealed key-record store
+ * that backs it (W1-KEYS, `RatchetSessionStore`), published by W0-C so both sides build in parallel
+ * (plan §1.7.4). W1-CRYPTO tests run against an in-memory implementation
+ * (`InMemoryRatchetSessionRecords` in its test sources).
  */
 
 /**
@@ -59,48 +58,4 @@ interface RatchetSessionRecords {
 
     /** Forgets every session — sign-out (`RatchetSessionStore.swift:51-57`, `MessagingController.swift:556-564`). */
     fun deleteAll()
-}
-
-/**
- * When each sender was first seen tagging their identity boxes, as server time (iOS
- * `SenderTagStore`, `ios/shroud/Services/Crypto/SenderTagStore.swift:5-93`; crypto spec §6).
- * Once a contact's tagged boxes show up, their untagged ones from that time on are refused, so the
- * server cannot slip in a message "from" them.
- *
- * Keyed by the sender's identity **public key** (ours for self boxes), not by user id: a new phrase
- * is a new sender (`SenderTagStore.swift:10-11`). On disk: `keys/sender-tags/<LocalNames.name("sender-tag", key)>`,
- * the watermark sealed with `LocalHistoryCrypto` context `SenderTagKeychain` (plan §1.5).
- */
-interface SenderTagWatermarks {
-    /**
-     * The watermark of [senderIdentityPublic] (`SenderTagStore.swift:36-56`):
-     * [Watermark.Locked] without the history key; [Watermark.Untagged] when there is no record;
-     * `Since(Instant.MIN)` when the record exists but cannot be read, opened or parsed ("a Keychain
-     * error is not 'never tagged'", `:46-47`, `:52-53`); else `Since(stored instant)`.
-     */
-    fun taggedSince(senderIdentityPublic: ByteArray): Watermark
-
-    /**
-     * Records a verified tag seen on a box sent at [sentAt]. The watermark only ever moves
-     * **earlier**: a stored `Since(existing)` with `existing <= sentAt` is kept, so an unreadable
-     * record (`Instant.MIN`) is never overwritten. The read-modify-write is serialised inside the
-     * implementation (`SenderTagStore.swift:26-28`, `:58-84`). Dropped while locked or while
-     * `StorageSeal.isSealed`.
-     */
-    fun noteTagged(senderIdentityPublic: ByteArray, sentAt: Instant)
-
-    /** Forgets every watermark — sign-out, with the ratchets (`SenderTagStore.swift:86-93`). */
-    fun deleteAll()
-}
-
-/** A sender's tag watermark (iOS `SenderTagStore.Watermark`, `ios/shroud/Services/Crypto/SenderTagStore.swift:15-19`). */
-sealed interface Watermark {
-    /** No history key in memory: the policy cannot decide, so the caller fails closed. */
-    data object Locked : Watermark
-
-    /** Never saw a verified tag from this identity key. */
-    data object Untagged : Watermark
-
-    /** First verified tag at [at] (server time); `Instant.MIN` for a record that exists but cannot be read. */
-    data class Since(val at: Instant) : Watermark
 }

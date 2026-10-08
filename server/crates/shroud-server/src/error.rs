@@ -206,6 +206,21 @@ impl AppError {
         }
     }
 
+    /// The app is older than the operator's minimum, or too old to say which version it is.
+    ///
+    /// Human: 426 is HTTP's "upgrade the protocol" status, borrowed for "update the app"; there
+    /// is no protocol to name, so the response carries no `Upgrade` header. Clients key on the
+    /// code, never the status alone.
+    pub fn update_required() -> Self {
+        Self::Api {
+            status: StatusCode::UPGRADE_REQUIRED,
+            code: "UPDATE_REQUIRED",
+            message:
+                "This version of Shroud is no longer supported. Update the app to keep using it."
+                    .into(),
+        }
+    }
+
     pub fn call_busy() -> Self {
         Self::Api {
             status: StatusCode::CONFLICT,
@@ -280,7 +295,7 @@ impl AppError {
         }
     }
 
-    fn status(&self) -> StatusCode {
+    pub(crate) fn status(&self) -> StatusCode {
         match self {
             Self::Api { status, .. } => *status,
             Self::DeviceLimit { .. } => StatusCode::CONFLICT,

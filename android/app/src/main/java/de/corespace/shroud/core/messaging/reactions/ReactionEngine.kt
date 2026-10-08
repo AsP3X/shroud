@@ -812,13 +812,14 @@ class ReactionEngine(
 
         /**
          * No answer yet rather than a "no" (`isTransient`, MC:5430-5437): cancelled, offline, the server
-         * struggling or asking us to slow down — and, on Android, a pin that cannot be read while the
-         * phone is locked (`CryptoError.Locked`, plan §1.7.4 note).
+         * struggling or asking us to slow down, or refusing this build until it is updated
+         * (`426 UPDATE_REQUIRED`) — and, on Android, a pin that cannot be read while the phone is
+         * locked (`CryptoError.Locked`, plan §1.7.4 note).
          */
         internal fun isTransient(error: Throwable): Boolean = when (error) {
             is CancellationException, is IOException, is CryptoError.Locked -> true
             is ApiError.Transport -> true
-            is ApiError.Server -> error.status >= 500 || error.status == 429
+            is ApiError.Server -> error.status >= 500 || error.status == 429 || error.isUpdateRequired
             else -> false
         }
     }

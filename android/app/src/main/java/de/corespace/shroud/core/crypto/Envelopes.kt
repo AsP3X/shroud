@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  *
  * | `v` | contents | written by |
  * | --- | --- | --- |
- * | 1 | `ek`, `ct` at the top level: one untagged box to the peer | nothing any more; still read |
+ * | 1 | `ek`, `ct` at the top level: one untagged box to the peer | nothing any more; refused (no tag) |
  * | 2 | `peer` box + `self` box | the higher user id until a ratchet session exists, `useRatchet = false`, reactions, notes to self |
  * | 3 | ratchet `dh`, `n`, `pn`, `ct` + `peer` + `self` boxes | everything else |
  *
@@ -26,13 +26,14 @@ import kotlinx.serialization.Serializable
  * @property ek the ephemeral X25519 public key (32 bytes).
  * @property ct AES-GCM `nonce (12) ‖ ciphertext ‖ tag (16)`.
  * @property t HMAC-SHA256 over `"shroud-box-tag-v1" ‖ ek ‖ ct` under the sender↔recipient identity
- *   key; null on boxes from builds before the tag (`:29-31`).
+ *   key; null on boxes from builds before the tag (`:29-31`), which no longer open
+ *   (`MessageCrypto.openIdentityBox`).
  */
 @Serializable
 data class SealedBox(val ek: String, val ct: String, val t: String? = null)
 
 /**
- * v1 (`ek`, `ct` at the top level, peer only, never tagged) and v2 (`peer` + `self` boxes)
+ * v1 (`ek`, `ct` at the top level, peer only, never tagged, so refused) and v2 (`peer` + `self` boxes)
  * envelopes (`MessageCrypto.swift:39-51`).
  */
 @Serializable
@@ -79,7 +80,8 @@ internal const val UINT32_MAX = 0xFFFF_FFFFL
  * ```
  *
  * The box key is ECDH(ephemeral, recipient) alone, so anyone holding the two public keys — the
- * server included — can build a box that opens; the tag is what names the sender. The ordered
+ * server included — can build a box that decrypts; the tag is what names the sender, so [open]
+ * reads only boxes whose tag verifies. The ordered
  * public keys in the tag key's info make A→B differ from B→A, so a box cannot be reflected
  * (`:581-582`). Every derived key and shared secret is zeroed after use; nothing is logged.
  */
@@ -139,11 +141,23 @@ internal object IdentityBoxes {
     }
 
     /**
-     * Opens a box with our private key, without looking at its tag (`openBox`,
-     * `MessageCrypto.swift:603-626`). Every failure — fields that are not strict Base64, an `ek`
-     * that is not a valid key, a wrong key or tampered bytes — is [CryptoError.OpenFailed].
+     * Opens a box from [senderPublic] with our private key, the tag first (`openIdentityBox`,
+     * crypto spec §3.5; web `openBox`): a box without a tag, or with one that does not verify, is
+     * [CryptoError.UnauthenticatedSender] before anything is decrypted. An invalid [senderPublic]
+     * → [CryptoError.InvalidPeerKey]; every other failure is [CryptoError.OpenFailed].
      */
     fun open(box: SealedBox, ourPrivate: ByteArray, senderPublic: ByteArray, recipientPublic: ByteArray): ByteArray {
+        if (!verifyTag(box, ourPrivate, senderPublic, recipientPublic)) throw CryptoError.UnauthenticatedSender
+        return decrypt(box, ourPrivate, senderPublic, recipientPublic)
+    }
+
+    /**
+     * Decrypts a box with our private key, without looking at its tag (`openBox`,
+     * `MessageCrypto.swift:603-626`); only [open] calls it, after the tag. Every failure — fields
+     * that are not strict Base64, an `ek` that is not a valid key, a wrong key or tampered bytes —
+     * is [CryptoError.OpenFailed].
+     */
+    private fun decrypt(box: SealedBox, ourPrivate: ByteArray, senderPublic: ByteArray, recipientPublic: ByteArray): ByteArray {
         val ek = B64.decodeStrict(box.ek)
         val ct = B64.decodeStrict(box.ct)
         if (ek == null || ct == null || ek.size != Primitives.X25519_KEY_BYTES) throw CryptoError.OpenFailed

@@ -14,11 +14,10 @@ import {
   checkForUpdate,
   subscribeUpdate,
   updateSnapshot,
-  webBuild,
   webVersion,
   type UpdateStatus,
 } from "../../appVersion";
-import { apiBase } from "../../config";
+import { apiBase, webBuild } from "../../config";
 import { BrandMark } from "../BrandMark";
 import { SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 import type { SettingsRoute } from "./routes";

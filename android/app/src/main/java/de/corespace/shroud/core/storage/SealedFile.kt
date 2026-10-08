@@ -8,8 +8,7 @@ import java.util.concurrent.ThreadLocalRandom
 /**
  * What reading a sealed record found (crypto spec §11.3). The Android counterpart of the Keychain
  * statuses iOS branches on (`errSecSuccess`, `errSecItemNotFound`, `errSecInteractionNotAllowed`,
- * anything else — `ios/shroud/Services/Crypto/IdentityKeyStore.swift:68-89`,
- * `SenderTagStore.swift:101-125`).
+ * anything else — `ios/shroud/Services/Crypto/IdentityKeyStore.swift:68-89`).
  */
 sealed interface RecordRead {
     /** The opened record. The caller owns (and may zero) [bytes]. */

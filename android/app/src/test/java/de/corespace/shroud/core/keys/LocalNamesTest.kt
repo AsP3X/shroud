@@ -30,9 +30,9 @@ class LocalNamesTest {
         val names = LocalNames.derive(SEALED_TEST_KEY)
         assertEquals("5099ebed1c8bf720e879384183c613ef", names.name(LocalNames.Kind.RATCHET, PEER))
         assertEquals("5f13b24cd82a341db0171fce8b306974", names.name(LocalNames.Kind.THREAD, PEER))
-        // Sender tags are keyed by the identity public key as lower-case hex (crypto spec §6.3).
-        assertEquals("bd1b63ed7b582512bf24e91524c6699d", names.name(LocalNames.Kind.SENDER_TAG, ALICE_PUB))
-        assertEquals("bd1b63ed7b582512bf24e91524c6699d", names.name(LocalNames.Kind.SENDER_TAG, hexToBytes(ALICE_PUB)))
+        // Byte ids (an identity public key) are named by their lower-case hex (crypto spec §6.3).
+        assertEquals("bd1b63ed7b582512bf24e91524c6699d", names.name(BYTE_ID_KIND, ALICE_PUB))
+        assertEquals("bd1b63ed7b582512bf24e91524c6699d", names.name(BYTE_ID_KIND, hexToBytes(ALICE_PUB)))
     }
 
     @Test
@@ -51,7 +51,7 @@ class LocalNamesTest {
         // The UUID overload uses the wire form (lower-case), so it names the same file.
         assertEquals(upper, names.name(LocalNames.Kind.THREAD, UUID.fromString(PEER)))
         // Byte ids: upper- and lower-case hex of the same key are one name.
-        assertEquals(names.name(LocalNames.Kind.SENDER_TAG, ALICE_PUB.uppercase()), names.name(LocalNames.Kind.SENDER_TAG, ALICE_PUB))
+        assertEquals(names.name(BYTE_ID_KIND, ALICE_PUB.uppercase()), names.name(BYTE_ID_KIND, ALICE_PUB))
     }
 
     @Test
@@ -121,7 +121,7 @@ class LocalNamesTest {
         val error = assertThrows(CryptoError.Locked::class.java) { names.name(LocalNames.Kind.THREAD, PEER) }
         assertSame(CryptoError.Locked, error)
         assertThrows(CryptoError.Locked::class.java) { names.name(LocalNames.Kind.MEDIA, UUID.fromString(PEER)) }
-        assertThrows(CryptoError.Locked::class.java) { names.name(LocalNames.Kind.SENDER_TAG, hexToBytes(ALICE_PUB)) }
+        assertThrows(CryptoError.Locked::class.java) { names.name(BYTE_ID_KIND, hexToBytes(ALICE_PUB)) }
         names.wipe() // idempotent
         assertTrue(names.isWiped)
     }
@@ -190,7 +190,7 @@ class LocalNamesTest {
 
     @Test
     fun kindWordsAreTheOnesOfPlanSection15() {
-        assertEquals(listOf("ratchet", "sender-tag", "user", "thread", "msg", "media"), KINDS)
+        assertEquals(listOf("ratchet", "user", "thread", "msg", "media"), KINDS)
     }
 
     private companion object {
@@ -202,12 +202,17 @@ class LocalNamesTest {
 
         const val RATCHET_NAME = "5099ebed1c8bf720e879384183c613ef"
 
+        /**
+         * The kind of the byte-id vector: older builds named their sender-tag watermarks so
+         * (`gen_local_history_vectors.mjs`); any stable word works for the byte overload.
+         */
+        const val BYTE_ID_KIND = "sender-tag"
+
         /** crypto spec §16.3: X25519 public of 0x11 × 32. */
         const val ALICE_PUB = "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13"
 
         val KINDS = listOf(
             LocalNames.Kind.RATCHET,
-            LocalNames.Kind.SENDER_TAG,
             LocalNames.Kind.USER,
             LocalNames.Kind.THREAD,
             LocalNames.Kind.MESSAGE,

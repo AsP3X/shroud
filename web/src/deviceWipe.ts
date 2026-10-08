@@ -53,6 +53,8 @@ const MESSAGE_PREFIXES = ["shroud.pt.", "shroud.preview."];
 const KEY_PREFIXES = [
   "shroud.identity.",
   "shroud.ratchet.",
+  // Per-sender untagged-box watermarks, vault-sealed. Nothing writes them since untagged boxes
+  // are refused outright, but a browser that ran an older build keeps them until it logs out.
   "shroud.boxauth.",
   "shroud.vault.",
   "shroud.token.",

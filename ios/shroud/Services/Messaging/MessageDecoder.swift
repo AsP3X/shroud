@@ -206,8 +206,7 @@ enum MessageDecoder {
                     with: context.material.agreementPrivateKey,
                     ourIdentityPublicKey: context.material.identityPublicKeyData,
                     senderIdentityPublicKey: context.material.identityPublicKeyData,
-                    as: .sender,
-                    sentAt: dto.createdAt
+                    as: .sender
                 )
             } else {
                 let senderPub = try await context.resolvePeerIdentityPublicKey(
@@ -220,8 +219,7 @@ enum MessageDecoder {
                     with: context.material.agreementPrivateKey,
                     ourIdentityPublicKey: context.material.identityPublicKeyData,
                     senderIdentityPublicKey: senderPub,
-                    as: .recipient,
-                    sentAt: dto.createdAt
+                    as: .recipient
                 )
             }
 

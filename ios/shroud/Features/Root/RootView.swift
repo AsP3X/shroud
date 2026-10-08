@@ -218,6 +218,9 @@ struct RootView: View {
             // Wire before any network call so 401s during validateSession count toward force-logout.
             SessionAuthBridge.controller = sessionController
             SessionAuthBridge.deviceWipe = deviceWipe
+            // …and a 426 (this build is below the server's minimum) brings up "Update required".
+            ClientVersionBridge.controller = clientVersion
+            ClientVersionBridge.serverConfig = serverConfig
             router.sessionController = sessionController
             router.cryptoController = cryptoController
             router.messagingController = messagingController

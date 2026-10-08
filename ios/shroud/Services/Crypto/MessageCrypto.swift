@@ -15,7 +15,7 @@ import Foundation
 /// Every identity box carries `t`, a sender tag keyed by the static ECDH of the two identity
 /// keys. The box key itself is ECDH(ephemeral, recipient) only, so without the tag anyone
 /// holding both public keys — the server included — could seal a box that opens as the peer.
-/// Untagged boxes (v1, and builds before the tag) are read under the `SenderTagStore` policy.
+/// Untagged boxes (v1, and builds before the tag) are refused: see `openIdentityBox`.
 ///
 /// Human: Plaintext never leaves the device unencrypted; server only sees ciphertext bytes.
 /// Agent: Seal/open; DR sessions in Keychain; self dual-seal on every v3 message.
@@ -27,13 +27,10 @@ enum MessageCrypto {
         /// AES-GCM combined nonce+ciphertext (Base64).
         var ct: String
         /// HMAC-SHA256 over `ek ‖ ct` under the sender↔recipient identity key (Base64).
-        /// Nil on boxes from builds before the tag; those builds ignore it when reading.
+        /// Nil on boxes from builds before the tag; those builds ignore it when reading, and
+        /// this build refuses a box without it.
         var t: String?
     }
-
-    /// Untagged boxes from everyone are refused at or after this server time. Nil until the
-    /// builds that cannot tag are gone; see `docs/architecture.md`.
-    static let legacyBoxCutoff: Date? = nil
 
     /// Wire envelope JSON (stored as server ciphertext Base64 outer layer).
     nonisolated struct SealedEnvelope: Codable, Equatable, Sendable {
@@ -55,7 +52,7 @@ enum MessageCrypto {
         case sealingFailed
         case openFailed
         case unsupportedVersion
-        /// A tag that does not verify, or an untagged box the policy refuses.
+        /// A tag that does not verify, or an identity box without one.
         case unauthenticatedSender
     }
 
@@ -201,16 +198,12 @@ enum MessageCrypto {
     // MARK: - Open
 
     /// Opens v1/v2 (and v3 self-box for sender). Prefer the peerUserID overload for live chats.
-    ///
-    /// - Parameter sentAt: Server time of the message; untagged boxes are judged against the
-    ///   sender's `SenderTagStore` watermark by it.
     static func open(
         envelopeData: Data,
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         ourIdentityPublicKey: Data,
         senderIdentityPublicKey: Data,
-        as role: OpenAs = .recipient,
-        sentAt: Date
+        as role: OpenAs = .recipient
     ) throws -> Data {
         // Our own boxes are sealed from and to our identity, and tagged under it.
         let boxSender = role == .sender ? ourIdentityPublicKey : senderIdentityPublicKey
@@ -219,8 +212,7 @@ enum MessageCrypto {
                 box,
                 with: ourPrivateKey,
                 senderIdentityPublic: boxSender,
-                recipientIdentityPublic: ourIdentityPublicKey,
-                sentAt: sentAt
+                recipientIdentityPublic: ourIdentityPublicKey
             )
         }
 
@@ -237,7 +229,7 @@ enum MessageCrypto {
         let envelope = try JSONDecoder().decode(SealedEnvelope.self, from: envelopeData)
         switch envelope.v {
         case versionV1:
-            // v1 never carried a tag and only ever went peer-ward.
+            // v1 never carried a tag (and only ever went peer-ward), so it is always refused.
             guard role == .recipient, let ek = envelope.ek, let ct = envelope.ct else {
                 throw CryptoError.openFailed
             }
@@ -258,8 +250,7 @@ enum MessageCrypto {
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         ourIdentityPublicKey: Data,
         senderIdentityPublicKey: Data,
-        as role: OpenAs = .recipient,
-        sentAt: Date
+        as role: OpenAs = .recipient
     ) throws -> Data {
         guard let version = peekEnvelopeVersion(envelopeData) else {
             throw CryptoError.openFailed
@@ -271,8 +262,7 @@ enum MessageCrypto {
                 with: ourPrivateKey,
                 ourIdentityPublicKey: ourIdentityPublicKey,
                 senderIdentityPublicKey: senderIdentityPublicKey,
-                as: role,
-                sentAt: sentAt
+                as: role
             )
         }
 
@@ -294,32 +284,18 @@ enum MessageCrypto {
                 box,
                 with: ourPrivateKey,
                 senderIdentityPublic: senderIdentityPublicKey,
-                recipientIdentityPublic: ourIdentityPublicKey,
-                sentAt: sentAt
+                recipientIdentityPublic: ourIdentityPublicKey
             )
         }
-        // The ratchet body is authentic on its own. A tag on its peer box still marks the
-        // sender as tagging, or the device that reads by ratchet would never learn it.
-        // A bad tag next to a good ratchet body proves nothing either way.
-        if let box = v3.peer,
-           (try? verifyBoxTag(
-               box,
-               with: ourPrivateKey,
-               senderIdentityPublic: senderIdentityPublicKey,
-               recipientIdentityPublic: ourIdentityPublicKey
-           )) == true
-        {
-            SenderTagStore.noteTagged(senderIdentityPublic: senderIdentityPublicKey, sentAt: sentAt)
-        }
+        // The ratchet body is authentic on its own; its peer box is not looked at.
         return plain
     }
 
     /// Opens a v2 envelope whose box must carry a sender tag that verifies.
     ///
-    /// Human: For records that never existed untagged — reactions. Accepting an untagged or v1
-    /// box (as history must, for messages from before the tag) would let the server build one
-    /// from public keys alone and date it before the sender's watermark.
-    /// Agent: No ratchet and no `SenderTagStore` (no Keychain write per record).
+    /// Human: For records that are only ever v2 identity boxes — reactions — so any other
+    /// version is refused before a box is looked at.
+    /// Agent: No ratchet.
     static func openTagged(
         envelopeData: Data,
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
@@ -334,15 +310,7 @@ enum MessageCrypto {
         guard let box = role == .recipient ? envelope.peer : envelope.selfBox else {
             throw CryptoError.openFailed
         }
-        guard try verifyBoxTag(
-            box,
-            with: ourPrivateKey,
-            senderIdentityPublic: sender,
-            recipientIdentityPublic: ourIdentityPublicKey
-        ) else {
-            throw CryptoError.unauthenticatedSender
-        }
-        return try openBox(
+        return try openIdentityBox(
             box,
             with: ourPrivateKey,
             senderIdentityPublic: sender,
@@ -440,49 +408,34 @@ enum MessageCrypto {
         return try? JSONDecoder().decode(VersionPeek.self, from: data).v
     }
 
-    // MARK: - Sender tag policy
+    // MARK: - Sender tag
 
-    /// Opens an identity box, then applies the untagged-box policy:
+    /// Opens an identity box only if it carries a sender tag that verifies.
     ///
-    /// - A tag that verifies moves the sender's watermark back to this message's time.
-    /// - An untagged box opens only if the message predates the sender's watermark (history
-    ///   from before they upgraded) and `legacyBoxCutoff`. Fails closed while locked.
+    /// Human: An untagged box — every v1 envelope, and v2/v3 boxes from builds before the tag —
+    /// could have been sealed by anyone holding the two public keys, the server included, so
+    /// it is never read. Builds that cannot tag are kept off the server by its minimum
+    /// version. Messages already opened stay readable from the plaintext cache.
     private static func openIdentityBox(
         _ box: SealedBox,
         with ourPrivateKey: Curve25519.KeyAgreement.PrivateKey,
         senderIdentityPublic: Data,
-        recipientIdentityPublic: Data,
-        sentAt: Date
+        recipientIdentityPublic: Data
     ) throws -> Data {
-        let tagged = try verifyBoxTag(
+        guard try verifyBoxTag(
+            box,
+            with: ourPrivateKey,
+            senderIdentityPublic: senderIdentityPublic,
+            recipientIdentityPublic: recipientIdentityPublic
+        ) else {
+            throw CryptoError.unauthenticatedSender
+        }
+        return try openBox(
             box,
             with: ourPrivateKey,
             senderIdentityPublic: senderIdentityPublic,
             recipientIdentityPublic: recipientIdentityPublic
         )
-        if !tagged {
-            if let legacyBoxCutoff, sentAt >= legacyBoxCutoff {
-                throw CryptoError.unauthenticatedSender
-            }
-            switch SenderTagStore.taggedSince(senderIdentityPublic: senderIdentityPublic) {
-            case .untagged:
-                break
-            case .locked:
-                throw CryptoError.unauthenticatedSender
-            case let .since(watermark):
-                guard sentAt < watermark else { throw CryptoError.unauthenticatedSender }
-            }
-        }
-        let plain = try openBox(
-            box,
-            with: ourPrivateKey,
-            senderIdentityPublic: senderIdentityPublic,
-            recipientIdentityPublic: recipientIdentityPublic
-        )
-        if tagged {
-            SenderTagStore.noteTagged(senderIdentityPublic: senderIdentityPublic, sentAt: sentAt)
-        }
-        return plain
     }
 
     // MARK: - Sealed box primitives (v1/v2/self)

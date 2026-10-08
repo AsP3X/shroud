@@ -2,6 +2,7 @@ package de.corespace.shroud.core.realtime
 
 import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.ServerConfiguration
+import de.corespace.shroud.core.net.ShroudClientHeader
 import de.corespace.shroud.core.realtime.RealtimeClient.ConnectionState
 import de.corespace.shroud.core.realtime.RealtimeClient.Holder
 import kotlinx.coroutines.CoroutineStart
@@ -47,6 +48,9 @@ class RealtimeClientTest {
     private lateinit var http: OkHttpClient
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
     private val outcomes = RecordingOutcomes()
+
+    /** Every `onUpdateRequired` call (a `426 UPDATE_REQUIRED` upgrade refusal). */
+    private val updateRequired = Collections.synchronizedList(ArrayList<Unit>())
 
     /** `AppPhaseMonitor.isStarted` stand-in. */
     @Volatile private var foreground = true
@@ -97,6 +101,7 @@ class RealtimeClientTest {
         scope = backgroundScope,
         authOutcomes = { outcomes },
         isForeground = { foreground },
+        onUpdateRequired = { updateRequired += Unit },
     )
 
     /** The server side of one socket. [lateFrame] is sent after the client's close arrived. */
@@ -808,5 +813,46 @@ class RealtimeClientTest {
         settle()
         assertTrue(client.isConnected)
         assertNull(peer.closeCodes.poll(10, TimeUnit.MILLISECONDS))
+    }
+
+    // ---- Client version (server `client_version.rs`) ----
+
+    private val tooOld = """{"error":{"code":"UPDATE_REQUIRED","message":"This version of Shroud is no longer supported. Update the app to keep using it."}}"""
+
+    @Test
+    fun theUpgradeRequestNamesTheApp() = runTest {
+        val client = newClient()
+        connect(client, Peer())
+        val upgrade = server.takeRequest()
+        assertEquals(ShroudClientHeader.value, upgrade.headers[ShroudClientHeader.NAME])
+        assertTrue(ShroudClientHeader.value.startsWith("android/"))
+    }
+
+    @Test
+    fun anUpgradeRefusedAsTooOldAsksTheVersionCheckAndKeepsTheBackoffWithoutSigningOut() = runTest {
+        val client = newClient()
+        repeat(2) { server.enqueue(MockResponse(code = 426, body = tooOld)) }
+        server.enqueue(MockResponse(code = 500))
+        client.hold(Holder.Messaging, "tok")
+        await("the refusal") { updateRequired.size == 1 }
+        assertFailed(client)
+        // Not a tight loop: the usual 1 s, 2 s … backoff, and every refusal asks again.
+        assertReconnectAfter(client, 1)
+        await("the second refusal") { updateRequired.size == 2 }
+        assertReconnectAfter(client, 2)
+        assertTrue(outcomes.failures.isEmpty())
+        assertTrue(outcomes.removed.isEmpty())
+    }
+
+    @Test
+    fun otherRefusedUpgradesAreNotAnUpdate() = runTest {
+        val client = newClient()
+        server.enqueue(MockResponse(code = 426, body = """{"error":{"code":"SOMETHING_ELSE","message":"m"}}"""))
+        server.enqueue(MockResponse(code = 500))
+        client.hold(Holder.Messaging, "tok")
+        assertReconnectAfter(client, 1)
+        await("the second attempt fails") { server.requestCount == 2 && client.state.value is ConnectionState.Failed }
+        settle()
+        assertTrue(updateRequired.isEmpty())
     }
 }

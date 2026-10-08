@@ -58,7 +58,7 @@ devices) access before it reaches a LAN or emulator-host server.
 | `app/src/main/java/.../core/net` | `ApiClient` (OkHttp + kotlinx.serialization), `ShroudApi`, server settings; UUID-typed DTOs in `dto/`, strict dates and serializers in `wire/` |
 | `app/src/main/java/.../core/realtime` | The one `RealtimeClient` (holders, focus and background frames, backoff), the event parser and the `AppForegroundCoordinator` |
 | `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController`; the v1/v2/v3 envelopes, double ratchet, media crypto, sealed device names, safety numbers; `ByteOps`, `Primitives`, `LocalHistoryCrypto`, `PeerLocks` |
-| `app/src/main/java/.../core/keys` | Sealed key stores (identity, ratchets, sender tags, peer pins), the screen-lock-bound history-key vault, `LocalNames`, key-material wipe |
+| `app/src/main/java/.../core/keys` | Sealed key stores (identity, ratchets, peer pins), the screen-lock-bound history-key vault, `LocalNames`, key-material wipe |
 | `app/src/main/java/.../core/auth` | Session (`SessionController` with the auth listener every authenticated request reports to, Keystore-sealed `SessionStore`), password strength, the `WipeHooks` seam |
 | `app/src/main/java/.../core/{messaging,contacts,media,links,notifications,calls,push,transcription}` | Engines for those packages. `CallController.attach` is not wired; `CallActivity` still closes at once |
 | `app/src/main/java/.../core/storage` | `KeystoreSealer`, sealed files in no-backup storage, `StorageSeal` (blocks writes during a wipe) |

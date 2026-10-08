@@ -1,9 +1,11 @@
 package de.corespace.shroud.core.realtime
 
 import de.corespace.shroud.core.model.Ids
+import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.AuthOutcomeListener
 import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.ServerConfiguration
+import de.corespace.shroud.core.net.ShroudClientHeader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -27,6 +29,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import java.io.IOException
 import java.util.EnumSet
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -84,6 +87,11 @@ import java.util.concurrent.TimeUnit
  * key (`ws.rs` `ClientMessage`). `DEVICE_REMOVED` on such a socket
  * takes the same wipe path — that is how a removal reaches a phone without a push distributor.
  *
+ * **Too old**: the upgrade request carries [ShroudClientHeader]. A server that no longer serves
+ * this build refuses the upgrade with `426 UPDATE_REQUIRED`: [onUpdateRequired] runs (the version
+ * check, which shows the blocking update screen) and the socket retries on the usual backoff, so
+ * an update or a lowered minimum is picked up without a tight loop. No sign-out.
+ *
  * Never logs: tokens, frames and events stay out of every log.
  *
  * @param baseUrl the REST base (`…/api/v1`), read at every open so a server change applies to the
@@ -93,6 +101,9 @@ import java.util.concurrent.TimeUnit
  *   adds the 25 s ping. OkHttp clears the read timeout after the upgrade.
  * @param authOutcomes where `DEVICE_REMOVED` is reported (the session's `SessionAuthBridge`).
  * @param isForeground whether one of our activities is started (`AppPhaseMonitor.isStarted`).
+ * @param onUpdateRequired called on the main thread when the upgrade was refused with
+ *   `426 UPDATE_REQUIRED`.
+ * @param clientHeader the `X-Shroud-Client` value of the upgrade request.
  */
 class RealtimeClient(
     private val baseUrl: () -> String,
@@ -102,6 +113,8 @@ class RealtimeClient(
     private val authOutcomes: () -> AuthOutcomeListener?,
     private val isForeground: () -> Boolean,
     private val timing: RealtimeTiming = RealtimeTiming(),
+    private val onUpdateRequired: () -> Unit = {},
+    private val clientHeader: String = ShroudClientHeader.value,
 ) {
     /** Who needs the socket open (`RealtimeClient.swift:14-18`, plus the background connection). */
     enum class Holder {
@@ -314,7 +327,7 @@ class RealtimeClient(
             is Target.Url -> {
                 dropSocket(CLOSE_GOING_AWAY)
                 mutableState.value = ConnectionState.Connecting
-                val request = Request.Builder().url(target.url).build()
+                val request = Request.Builder().url(target.url).header(ShroudClientHeader.NAME, clientHeader).build()
                 socket = wsHttp.newWebSocket(request, Listener(generation))
             }
         }
@@ -341,7 +354,10 @@ class RealtimeClient(
         when (signal) {
             is Signal.Opened -> sendAuth(signal.webSocket)
             is Signal.Frame -> onFrame(signal.frame)
-            is Signal.Ended -> onEnded(signal.reason)
+            is Signal.Ended -> {
+                if (signal.updateRequired) onUpdateRequired()
+                onEnded(signal.reason)
+            }
         }
     }
 
@@ -476,7 +492,13 @@ class RealtimeClient(
 
         class Frame(override val generation: Long, override val webSocket: WebSocket, val frame: RealtimeFrame) : Signal
 
-        class Ended(override val generation: Long, override val webSocket: WebSocket, val reason: String) : Signal
+        /** [updateRequired]: the upgrade was refused with `426 UPDATE_REQUIRED`. */
+        class Ended(
+            override val generation: Long,
+            override val webSocket: WebSocket,
+            val reason: String,
+            val updateRequired: Boolean = false,
+        ) : Signal
     }
 
     /** Runs on OkHttp's threads: parses, queues, and never reads or writes client state. */
@@ -502,7 +524,22 @@ class RealtimeClient(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            inbound.trySend(Signal.Ended(generation, webSocket, t.message ?: CLOSED_REASON))
+            val updateRequired = response != null && isUpdateRequired(response)
+            inbound.trySend(Signal.Ended(generation, webSocket, t.message ?: CLOSED_REASON, updateRequired))
+        }
+
+        /** A refused upgrade's `426 UPDATE_REQUIRED` envelope; OkHttp closes the response after this callback. */
+        private fun isUpdateRequired(response: Response): Boolean {
+            if (response.code != 426) return false
+            val body = try {
+                response.peekBody(MAX_ERROR_BODY).string()
+            } catch (_: IOException) {
+                return false
+            } catch (_: IllegalStateException) {
+                // The body was already consumed or closed.
+                return false
+            }
+            return ApiError.from(response.code, body).isUpdateRequired
         }
     }
 
@@ -534,6 +571,9 @@ class RealtimeClient(
         private const val CLOSE_GOING_AWAY = 1001
 
         private const val EVENT_BUFFER = 64
+
+        /** Enough for an error envelope; a refused upgrade's body is never longer. */
+        private const val MAX_ERROR_BODY = 4096L
 
         private val SCHEME = Regex("^([A-Za-z][A-Za-z0-9+.-]*):")
 

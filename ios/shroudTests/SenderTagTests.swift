@@ -4,22 +4,20 @@ import Testing
 @testable import shroud
 
 /// Identity boxes carry a sender tag. A box built from the two public keys alone — what the
-/// server can do — must not open as the peer once that peer is known to tag.
+/// server can do — never opens: every untagged box is refused, whoever it claims to be from.
 final class SenderTagTests: Sendable {
     private let aliceUser: UUID
     private let bobUser: UUID
     private let alice = Curve25519.KeyAgreement.PrivateKey()
     private let bob = Curve25519.KeyAgreement.PrivateKey()
     private let mallory = Curve25519.KeyAgreement.PrivateKey()
-    private let t0 = Date(timeIntervalSince1970: 1_788_000_000)
 
     init() {
         let ids = [UUID(), UUID()].sorted { $0.uuidString.lowercased() < $1.uuidString.lowercased() }
         aliceUser = ids[0]
         bobUser = ids[1]
+        // Ratchet sessions are sealed under the history key; without one the store reads nothing.
         SealedTestKey.unlockSealedLocalState()
-        // Watermarks are keyed by identity key, and every case has fresh keys.
-        SenderTagStore.useInMemoryStorageForTesting()
     }
 
     deinit {
@@ -59,7 +57,7 @@ final class SenderTagTests: Sendable {
     }
 
     /// v3 with a ratchet body no session can read, so the peer-box fallback runs.
-    private func junkV3(peer: MessageCrypto.SealedBox) throws -> Data {
+    private func junkV3(peer: MessageCrypto.SealedBox? = nil, selfBox: MessageCrypto.SealedBox? = nil) throws -> Data {
         try JSONEncoder().encode(MessageCrypto.RatchetEnvelope(
             v: 3,
             dh: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation.base64EncodedString(),
@@ -67,7 +65,7 @@ final class SenderTagTests: Sendable {
             pn: 0,
             ct: Data(repeating: 7, count: 40).base64EncodedString(),
             peer: peer,
-            selfBox: nil
+            selfBox: selfBox
         ))
     }
 
@@ -80,28 +78,26 @@ final class SenderTagTests: Sendable {
         )
     }
 
-    private func bobOpens(_ envelope: Data, at sentAt: Date) throws -> String {
+    private func bobOpens(_ envelope: Data) throws -> String {
         let plain = try MessageCrypto.open(
             envelopeData: envelope,
             peerUserID: aliceUser,
             with: bob,
             ourIdentityPublicKey: bPub,
             senderIdentityPublicKey: aPub,
-            as: .recipient,
-            sentAt: sentAt
+            as: .recipient
         )
         return String(decoding: plain, as: UTF8.self)
     }
 
-    private func aliceOpensOwn(_ envelope: Data, at sentAt: Date) throws -> String {
+    private func aliceOpensOwn(_ envelope: Data) throws -> String {
         let plain = try MessageCrypto.open(
             envelopeData: envelope,
             peerUserID: bobUser,
             with: alice,
             ourIdentityPublicKey: aPub,
             senderIdentityPublicKey: aPub,
-            as: .sender,
-            sentAt: sentAt
+            as: .sender
         )
         return String(decoding: plain, as: UTF8.self)
     }
@@ -114,7 +110,7 @@ final class SenderTagTests: Sendable {
         let envelope = try JSONDecoder().decode(MessageCrypto.SealedEnvelope.self, from: sealed)
         #expect(envelope.peer?.t != nil)
         #expect(envelope.selfBox?.t != nil)
-        #expect(try bobOpens(sealed, at: t0) == "hi")
+        #expect(try bobOpens(sealed) == "hi")
     }
 
     @Test
@@ -122,7 +118,7 @@ final class SenderTagTests: Sendable {
         // Mallory seals "from Alice" with her own private key: the static ECDH does not match.
         let forged = try aliceV2("forged", signer: mallory)
         #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(forged, at: self.t0)
+            _ = try self.bobOpens(forged)
         }
     }
 
@@ -133,7 +129,7 @@ final class SenderTagTests: Sendable {
         var moved = try #require(other.peer)
         moved.t = real.peer?.t
         #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(self.v2(peer: moved), at: self.t0)
+            _ = try self.bobOpens(self.v2(peer: moved))
         }
     }
 
@@ -150,7 +146,7 @@ final class SenderTagTests: Sendable {
             try JSONDecoder().decode(MessageCrypto.SealedEnvelope.self, from: bobsOwn).selfBox
         )
         #expect(throws: (any Error).self) {
-            _ = try self.bobOpens(self.v2(peer: selfBox), at: self.t0)
+            _ = try self.bobOpens(self.v2(peer: selfBox))
         }
     }
 
@@ -170,8 +166,7 @@ final class SenderTagTests: Sendable {
                 with: bob,
                 ourIdentityPublicKey: bob.publicKey.rawRepresentation,
                 senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-                as: .recipient,
-                sentAt: t0
+                as: .recipient
             )
         }
         #expect(try open() == Data("from web".utf8))
@@ -179,59 +174,74 @@ final class SenderTagTests: Sendable {
         #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) { _ = try open() }
     }
 
-    // MARK: - Policy
-
-    /// The reported issue: with no tagged message seen yet, a forged v2 still opens. This is
-    /// the transition window for peers on builds that cannot tag.
-    @Test
-    func untaggedBoxOpensBeforeTheSenderIsSeenTagging() throws {
-        let forged = try v2(peer: forgedBox("forged", sender: aPub, recipient: bPub))
-        #expect(try bobOpens(forged, at: t0) == "forged")
-    }
+    // MARK: - Untagged boxes are refused
 
     @Test
-    func untaggedBoxesAfterTheWatermarkAreRefused() throws {
-        #expect(try bobOpens(aliceV2("real"), at: t0) == "real")
-
-        let forgedV2 = try v2(peer: forgedBox("forged", sender: aPub, recipient: bPub))
-        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(forgedV2, at: self.t0.addingTimeInterval(1))
-        }
-        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(forgedV2, at: self.t0)
-        }
-
+    func untaggedV1IsRefused() throws {
         let box = try forgedBox("forged v1", sender: aPub, recipient: bPub)
         let forgedV1 = try JSONEncoder().encode(
             MessageCrypto.SealedEnvelope(v: 1, ek: box.ek, ct: box.ct, peer: nil, selfBox: nil)
         )
         #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(forgedV1, at: self.t0.addingTimeInterval(1))
-        }
-
-        let forgedV3 = try junkV3(peer: forgedBox("forged v3", sender: aPub, recipient: bPub))
-        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(forgedV3, at: self.t0.addingTimeInterval(1))
+            _ = try self.bobOpens(forgedV1)
         }
     }
 
-    /// A fresh device reads the history from before the peer upgraded.
+    /// The reported issue: a forged v2 opened as long as the sender had not been seen tagging.
+    /// Now nothing has to be seen first.
     @Test
-    func untaggedHistoryBeforeTheWatermarkStillOpens() throws {
-        #expect(try bobOpens(aliceV2("real"), at: t0) == "real")
-        let old = try v2(peer: forgedBox("old", sender: aPub, recipient: bPub))
-        #expect(try bobOpens(old, at: t0.addingTimeInterval(-60)) == "old")
-
-        // An older tagged message moves the watermark back past it.
-        #expect(try bobOpens(aliceV2("older"), at: t0.addingTimeInterval(-120)) == "older")
+    func untaggedV2PeerBoxIsRefused() throws {
+        let forged = try v2(peer: forgedBox("forged", sender: aPub, recipient: bPub))
         #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(old, at: self.t0.addingTimeInterval(-60))
+            _ = try self.bobOpens(forged)
         }
     }
 
-    /// The device that reads by ratchet never opens the peer box; its tag still counts.
+    /// A device whose ratchet can't read the body falls back to the peer box: untagged, refused.
     @Test
-    func ratchetReadMarksTheSenderAsTagging() throws {
+    func untaggedV3PeerBoxFallbackIsRefused() throws {
+        let forged = try junkV3(peer: forgedBox("forged v3", sender: aPub, recipient: bPub))
+        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
+            _ = try self.bobOpens(forged)
+        }
+    }
+
+    /// "Sent by me" cannot be forged onto our other devices either, in v2 or v3.
+    @Test
+    func untaggedSelfBoxIsRefused() throws {
+        let forgedV2 = try v2(selfBox: forgedBox("fake own", sender: aPub, recipient: aPub))
+        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
+            _ = try self.aliceOpensOwn(forgedV2)
+        }
+        let forgedV3 = try junkV3(selfBox: forgedBox("fake own v3", sender: aPub, recipient: aPub))
+        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
+            _ = try self.aliceOpensOwn(forgedV3)
+        }
+    }
+
+    /// A tagged message from the same sender first changes nothing for an untagged one.
+    @Test
+    func untaggedBoxStaysRefusedNextToTaggedOnes() throws {
+        #expect(try bobOpens(aliceV2("real")) == "real")
+        let forged = try v2(peer: forgedBox("forged", sender: aPub, recipient: bPub))
+        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
+            _ = try self.bobOpens(forged)
+        }
+    }
+
+    // MARK: - Tagged boxes and ratchet reads open
+
+    @Test
+    func ownTaggedSelfBoxOpens() throws {
+        #expect(try aliceOpensOwn(aliceV2("own")) == "own")
+        let real = try JSONDecoder().decode(MessageCrypto.SealedEnvelope.self, from: aliceV2("own v3"))
+        let selfBox = try #require(real.selfBox)
+        #expect(try aliceOpensOwn(junkV3(selfBox: selfBox)) == "own v3")
+    }
+
+    /// The ratchet body is authentic on its own: it opens whatever its peer box carries.
+    @Test
+    func ratchetReadStillOpens() throws {
         let real = try MessageCrypto.seal(
             plaintext: Data("by ratchet".utf8),
             peerUserID: bobUser,
@@ -240,36 +250,23 @@ final class SenderTagTests: Sendable {
             ourIdentityPublicKey: aPub,
             ourUserID: aliceUser
         )
-        #expect(try JSONDecoder().decode(MessageCrypto.RatchetEnvelope.self, from: real).v == 3)
-        #expect(try bobOpens(real, at: t0) == "by ratchet")
-
-        let forged = try v2(peer: forgedBox("forged", sender: aPub, recipient: bPub))
-        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(forged, at: self.t0.addingTimeInterval(1))
-        }
+        var envelope = try JSONDecoder().decode(MessageCrypto.RatchetEnvelope.self, from: real)
+        #expect(envelope.v == 3)
+        envelope.peer?.t = nil
+        #expect(try bobOpens(JSONEncoder().encode(envelope)) == "by ratchet")
     }
 
     @Test
     func siblingWithoutRatchetStateReadsTheTaggedPeerBox() throws {
         let real = try JSONDecoder().decode(MessageCrypto.SealedEnvelope.self, from: aliceV2("to sibling"))
         let tagged = try #require(real.peer)
-        #expect(try bobOpens(junkV3(peer: tagged), at: t0) == "to sibling")
+        #expect(try bobOpens(junkV3(peer: tagged)) == "to sibling")
 
         let malloryBox = try #require(
             try JSONDecoder().decode(MessageCrypto.SealedEnvelope.self, from: aliceV2("m", signer: mallory)).peer
         )
         #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.bobOpens(self.junkV3(peer: malloryBox), at: self.t0)
-        }
-    }
-
-    /// "Sent by me" cannot be forged onto our other devices either.
-    @Test
-    func forgedSelfBoxAfterOwnTaggedMessageIsRefused() throws {
-        #expect(try aliceOpensOwn(aliceV2("own"), at: t0) == "own")
-        let forged = try v2(selfBox: forgedBox("fake own", sender: aPub, recipient: aPub))
-        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
-            _ = try self.aliceOpensOwn(forged, at: self.t0.addingTimeInterval(1))
+            _ = try self.bobOpens(self.junkV3(peer: malloryBox))
         }
     }
 }

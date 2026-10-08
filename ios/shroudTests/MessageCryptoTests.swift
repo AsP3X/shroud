@@ -4,12 +4,6 @@ import Testing
 @testable import shroud
 
 struct MessageCryptoTests {
-    init() {
-        // The legacy v1 case reads an untagged box; keep the policy off the Keychain, which
-        // simulator test hosts may not be entitled to.
-        SenderTagStore.useInMemoryStorageForTesting()
-    }
-
     @Test
     func sealAndOpenAsRecipient() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
@@ -28,8 +22,7 @@ struct MessageCryptoTests {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(opened == plaintext)
     }
@@ -53,8 +46,7 @@ struct MessageCryptoTests {
             with: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .sender,
-            sentAt: Date()
+            as: .sender
         )
         #expect(opened == plaintext)
     }
@@ -77,14 +69,15 @@ struct MessageCryptoTests {
                 with: eve,
                 ourIdentityPublicKey: eve.publicKey.rawRepresentation,
                 senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-                as: .recipient,
-                sentAt: Date()
+                as: .recipient
             )
         }
     }
 
+    /// v1 never carried a sender tag, so even a genuine one is refused: anyone holding the two
+    /// public keys could have built it.
     @Test
-    func legacyV1EnvelopeStillOpens() throws {
+    func legacyV1EnvelopeIsRefused() throws {
         let alice = Curve25519.KeyAgreement.PrivateKey()
         let bob = Curve25519.KeyAgreement.PrivateKey()
         let plaintext = Data("legacy".utf8)
@@ -113,14 +106,14 @@ struct MessageCryptoTests {
         )
         let data = try JSONEncoder().encode(envelope)
 
-        let opened = try MessageCrypto.open(
-            envelopeData: data,
-            with: bob,
-            ourIdentityPublicKey: bob.publicKey.rawRepresentation,
-            senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
-        )
-        #expect(opened == plaintext)
+        #expect(throws: MessageCrypto.CryptoError.unauthenticatedSender) {
+            _ = try MessageCrypto.open(
+                envelopeData: data,
+                with: bob,
+                ourIdentityPublicKey: bob.publicKey.rawRepresentation,
+                senderIdentityPublicKey: alice.publicKey.rawRepresentation,
+                as: .recipient
+            )
+        }
     }
 }

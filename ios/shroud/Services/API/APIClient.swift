@@ -1,8 +1,10 @@
 import Foundation
 
 /// Minimal HTTP client for the Shroud REST API (`/api/v1`).
-/// Human: Views never call this directly — feature services wrap it.
-/// Agent: HTTP JSON only; never sends key material or message plaintext.
+/// Human: Views never call this directly — feature services wrap it. Every request names the
+/// build (`ClientIdentity`); a `426 UPDATE_REQUIRED` answer starts a version check.
+/// Agent: HTTP JSON only; never sends key material or message plaintext. Talks only to
+/// `baseURL`, the configured server.
 nonisolated final class APIClient: Sendable {
     private let baseURL: URL
     private let session: URLSession
@@ -267,7 +269,7 @@ nonisolated final class APIClient: Sendable {
         bearerToken: String? = nil,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws {
-        var request = rawRequest(path: path, method: "PUT", bearerToken: bearerToken)
+        var request = makeRequest(path: path, method: "PUT", bearerToken: bearerToken)
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
 
         let observer = TransferProgressObserver(direction: .upload, onProgress: onProgress)
@@ -283,7 +285,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
@@ -293,7 +295,7 @@ nonisolated final class APIClient: Sendable {
         bearerToken: String? = nil,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> Data {
-        let request = rawRequest(path: path, method: "GET", bearerToken: bearerToken)
+        let request = makeRequest(path: path, method: "GET", bearerToken: bearerToken)
 
         let observer = TransferProgressObserver(direction: .download, onProgress: onProgress)
         defer { observer.finish() }
@@ -308,7 +310,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return data
     }
@@ -326,7 +328,7 @@ nonisolated final class APIClient: Sendable {
         bearerToken: String? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
-        var request = rawRequest(path: path, method: "PUT", bearerToken: bearerToken)
+        var request = makeRequest(path: path, method: "PUT", bearerToken: bearerToken)
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
 
         let observer = onProgress.map { TransferProgressObserver(direction: .upload, onProgress: $0) }
@@ -343,7 +345,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
@@ -355,7 +357,7 @@ nonisolated final class APIClient: Sendable {
         bearerToken: String? = nil,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        let request = rawRequest(path: path, method: "GET", bearerToken: bearerToken)
+        let request = makeRequest(path: path, method: "GET", bearerToken: bearerToken)
 
         let observer = onProgress.map { TransferProgressObserver(direction: .download, onProgress: $0) }
         defer { observer?.finish() }
@@ -376,30 +378,46 @@ nonisolated final class APIClient: Sendable {
             // An error body is a small JSON document, not the blob.
             let data = (try? Data(contentsOf: location)) ?? Data()
             try? FileManager.default.removeItem(at: location)
-            noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+            noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
             try Self.throwIfNeeded(data: data, status: http.statusCode)
             throw APIError.transport("Unexpected status \(http.statusCode)")
         }
-        noteAuthOutcome(status: http.statusCode, data: Data(), bearerToken: bearerToken)
+        noteOutcome(path: path, status: http.statusCode, data: Data(), bearerToken: bearerToken)
         return location
     }
 
     // MARK: - Internals
 
-    private func rawRequest(path: String, method: String, bearerToken: String?) -> URLRequest {
-        var request = URLRequest(url: resolveURL(path))
+    /// Every request to the server starts here, so each one carries `ClientIdentity`.
+    private func makeRequest(
+        path: String,
+        method: String,
+        bearerToken: String?,
+        query: [String: String]? = nil
+    ) -> URLRequest {
+        var request = URLRequest(url: resolveURL(path, query: query))
         request.httpMethod = method
         request.setValue("application/json, application/octet-stream, */*", forHTTPHeaderField: "Accept")
+        ClientIdentity.apply(to: &request)
         if let bearerToken, !bearerToken.isEmpty {
             request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
         }
         return request
     }
 
+    /// Version policy: `426 UPDATE_REQUIRED` (with or without a Bearer) asks the server about this
+    /// build at once, so "Update required" comes up. It never counts toward the 401 streak.
+    ///
     /// Session policy: only authenticated requests contribute to the 401 streak.
     /// Login/register (no Bearer) must not force-logout an existing local session.
     /// `DEVICE_REMOVED` is final on the first answer: the account removed this iPhone.
-    private func noteAuthOutcome(status: Int, data: Data, bearerToken: String?) {
+    private func noteOutcome(path: String, status: Int, data: Data, bearerToken: String?) {
+        if status == 426 {
+            if Self.startsVersionCheck(path: path, status: status, data: data) {
+                ClientVersionBridge.noteUpdateRequired()
+            }
+            return
+        }
         guard bearerToken.map({ !$0.isEmpty }) == true else { return }
         if (200 ..< 300).contains(status) {
             SessionAuthBridge.noteAuthenticationSuccess()
@@ -412,6 +430,16 @@ nonisolated final class APIClient: Sendable {
         }
     }
 
+    /// A refusal of this build that should ask `/client-version` about it. Not when the refused
+    /// request was that check itself: the server never gates it, and if a proxy did, asking
+    /// again would only be refused again.
+    static func startsVersionCheck(path: String, status: Int, data: Data) -> Bool {
+        guard status == 426,
+              path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) != ClientVersionService.path
+        else { return false }
+        return APIError.from(data: data, statusCode: status).isUpdateRequired
+    }
+
     private func perform(
         _ path: String,
         method: String,
@@ -420,12 +448,7 @@ nonisolated final class APIClient: Sendable {
         query: [String: String]? = nil,
         contentType: String? = "application/json"
     ) async throws -> (Data, HTTPURLResponse) {
-        var request = URLRequest(url: resolveURL(path, query: query))
-        request.httpMethod = method
-        request.setValue("application/json, application/octet-stream, */*", forHTTPHeaderField: "Accept")
-        if let bearerToken, !bearerToken.isEmpty {
-            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-        }
+        var request = makeRequest(path: path, method: method, bearerToken: bearerToken, query: query)
         if let bodyData {
             if let contentType {
                 request.setValue(contentType, forHTTPHeaderField: "Content-Type")
@@ -446,7 +469,7 @@ nonisolated final class APIClient: Sendable {
             throw APIError.transport("Invalid response")
         }
 
-        noteAuthOutcome(status: http.statusCode, data: data, bearerToken: bearerToken)
+        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
 
         return (data, http)
     }

@@ -72,6 +72,12 @@ check(
 check(!isKeyMaterialKey("shroud.session") && !isKeyMaterialKey("shroud.device-anchor"), "not key material");
 // The lock screen's removal check reads it in the clear; the wipe removes it with the keys.
 check(isKeyMaterialKey("shroud.token-hash"), "the token hash goes with the keys");
+// Untagged-box watermarks: no build writes them now, but older builds left them behind.
+check(isKeyMaterialKey("shroud.boxauth.0f1e2d"), "old box-auth watermarks go with the keys");
+check(
+  hasOrphanedAccountData(new FakeStorage({ "shroud.boxauth.0f1e2d": "sealed" })),
+  "an old box-auth watermark without its session is left over from one",
+);
 
 /* --- removal ------------------------------------------------------------- */
 

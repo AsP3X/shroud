@@ -3,7 +3,6 @@ package de.corespace.shroud.core.messaging
 import de.corespace.shroud.core.crypto.B64
 import de.corespace.shroud.core.crypto.CryptoFixtures
 import de.corespace.shroud.core.crypto.InMemoryRatchetSessionRecords
-import de.corespace.shroud.core.crypto.InMemorySenderTagWatermarks
 import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.OpenAs
 import de.corespace.shroud.core.crypto.PeerLocks
@@ -395,8 +394,8 @@ class MessageDecoderTest {
         val (aliceId, bobId) = CryptoFixtures.sortedUserIds()
         val alice = TestIdentity.random()
         val bob = TestIdentity.random()
-        val aliceCrypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
-        val bobCrypto = MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())
+        val aliceCrypto = MessageCrypto(InMemoryRatchetSessionRecords())
+        val bobCrypto = MessageCrypto(InMemoryRatchetSessionRecords())
         // Alice is the initiator: a v3 ratchet envelope.
         val envelope = aliceCrypto.seal("hi bob".toByteArray(), bobId, bob.public, alice.private, alice.public, aliceId)
 
@@ -415,7 +414,7 @@ class MessageDecoderTest {
             override val isUnlocked = true
             override fun <T> withKeys(block: (ByteArray, ByteArray) -> T): T = block(alice.private, alice.public)
         }
-        val aliceDecoder = MessageDecoder(FakeMessagingStore(), aliceKeys, EnvelopeOpener(MessageCrypto(InMemoryRatchetSessionRecords(), InMemorySenderTagWatermarks())::open), PeerLocks(), { false }, dispatcher, dispatcher)
+        val aliceDecoder = MessageDecoder(FakeMessagingStore(), aliceKeys, EnvelopeOpener(MessageCrypto(InMemoryRatchetSessionRecords())::open), PeerLocks(), { false }, dispatcher, dispatcher)
         val aliceContext = MessageDecoder.Context(aliceId, emptyList(), emptyMap()) { alice.public }
         val own = aliceDecoder.decode(dto, aliceContext, forcePeer = bobId)
         assertEquals("hi bob", own.text)

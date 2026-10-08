@@ -1,13 +1,10 @@
 package de.corespace.shroud.core.crypto
 
 import de.corespace.shroud.core.keys.RatchetSessionRecords
-import de.corespace.shroud.core.keys.SenderTagWatermarks
-import de.corespace.shroud.core.keys.Watermark
 import de.corespace.shroud.core.model.Ids
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationStrategy
-import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -24,15 +21,18 @@ enum class OpenAs {
  * Message sealing for 1:1 chats (iOS `ios/shroud/Services/Crypto/MessageCrypto.swift`, web
  * `web/src/crypto/messageCrypto.ts`; crypto spec §3–§4; wire shapes in `Envelopes.kt`):
  *
- * - **v1** one untagged box to the peer (legacy, read only);
+ * - **v1** one untagged box to the peer (legacy; refused, see below);
  * - **v2** a `peer` box and a `self` box, no session state;
  * - **v3** a Double Ratchet body for the peer plus both identity boxes, so the sender's other
  *   devices (self box) and the recipient's other devices (peer box) read without ratchet state.
  *
- * Every box carries a sender tag (`IdentityBoxes`). Untagged boxes — v1, and builds from before the
- * tag — are read under the per-sender watermark policy of [SenderTagWatermarks]
- * (`MessageCrypto.swift:443-486`): once a sender's tagged boxes were seen, their untagged ones from
- * that server time on are refused, so the server cannot slip in a message "from" them.
+ * Every box carries a sender tag (`IdentityBoxes`), and an identity box opens only when its tag
+ * verifies (crypto spec §3.5). An identity box's key needs no sender secret, so anyone holding the
+ * two public identity keys — the server included — can build an untagged one "from" a contact:
+ * v1 envelopes and untagged v2/v3 boxes are refused outright with
+ * [CryptoError.UnauthenticatedSender], whoever sent them and whenever. (Until 2026-10 they were
+ * still read under a per-sender watermark kept for builds from before the tag; every Android
+ * build tags.) Plaintext already opened and cached locally stays readable.
  *
  * Android differences, none visible on the wire:
  * - **Locked ratchets (crypto D5, web parity).** [seal] throws [CryptoError.Locked] while
@@ -58,19 +58,10 @@ enum class OpenAs {
  * key is passed per call and never retained or zeroed; sessions, shared secrets and derived keys are
  * zeroed after use. Never logs keys, ids or plaintext.
  */
-class MessageCrypto internal constructor(
+class MessageCrypto(
     private val ratchets: RatchetSessionRecords,
-    private val senderTags: SenderTagWatermarks,
-    private val entropy: Entropy,
-    /** [LEGACY_BOX_CUTOFF] in production; tests pass their own to exercise the rule. */
-    private val legacyBoxCutoff: Instant?,
+    private val entropy: Entropy = SystemEntropy,
 ) {
-    constructor(
-        ratchets: RatchetSessionRecords,
-        senderTags: SenderTagWatermarks,
-        entropy: Entropy = SystemEntropy,
-    ) : this(ratchets, senderTags, entropy, LEGACY_BOX_CUTOFF)
-
     /** One monitor per peer user id, guarding that peer's ratchet load → mutate → save. */
     private val peerMonitors = ConcurrentHashMap<UUID, Any>()
 
@@ -160,19 +151,17 @@ class MessageCrypto internal constructor(
      * Opens any supported envelope (`open(envelopeData:peerUserID:…)`, `MessageCrypto.swift:254-315`).
      *
      * A v3 envelope opened as [OpenAs.Recipient] is read by the ratchet session of [peerUserId]
-     * first (forward secrecy). If that fails — typically because a sibling device of ours sent and
-     * the peer ratcheted to its DH key — the `peer` box is opened instead, under the untagged-box
-     * policy, and the local session is left as it was. A good ratchet read still marks the sender
-     * as tagging when the peer box's tag verifies (a bad tag next to a good body proves nothing).
-     * Everything else goes to [openLegacy].
+     * first (forward secrecy; the ratchet body authenticates its sender itself). If that fails —
+     * typically because a sibling device of ours sent and the peer ratcheted to its DH key — the
+     * `peer` box is opened instead, only with a tag that verifies, and the local session is left
+     * as it was. Everything else goes to [openLegacy].
      *
      * Callers (messaging, `MessageDecoder.swift:186-213`): a peer's message → `Recipient`,
      * [peerUserId] = the sender, [senderPublic] = their pinned identity key; our own message or a
-     * note to self → `Sender`, [senderPublic] = our public key. [sentAt] is the message's server
-     * `created_at`, the time the watermark policy judges untagged boxes by.
+     * note to self → `Sender`, [senderPublic] = our public key.
      *
-     * @throws CryptoError.UnauthenticatedSender for a tag that does not verify or an untagged box
-     *   the policy refuses — the one error callers tell apart; anything else renders as
+     * @throws CryptoError.UnauthenticatedSender for an identity box without a tag or with one that
+     *   does not verify — the one error callers tell apart; anything else renders as
      *   "[Unable to decrypt]" (`MessageDecoder.swift:283`).
      */
     fun open(
@@ -182,32 +171,27 @@ class MessageCrypto internal constructor(
         ourPublic: ByteArray,
         senderPublic: ByteArray,
         role: OpenAs = OpenAs.Recipient,
-        sentAt: Instant,
     ): ByteArray {
         val version = peekVersion(envelope) ?: throw CryptoError.OpenFailed
         if (version != V3 || role != OpenAs.Recipient) {
-            return openLegacy(envelope, ourPrivate, ourPublic, senderPublic, role, sentAt)
+            return openLegacy(envelope, ourPrivate, ourPublic, senderPublic, role)
         }
 
         val v3 = decode(RatchetEnvelope.serializer(), envelope)
-        val plain = try {
+        return try {
             openRatchetV3Recipient(v3, peerUserId, ourPrivate, senderPublic)
         } catch (e: Exception) {
             val box = v3.peer ?: throw e
-            return openIdentityBox(box, ourPrivate, senderPublic, ourPublic, sentAt)
+            openIdentityBox(box, ourPrivate, senderPublic, ourPublic)
         }
-        val box = v3.peer
-        if (box != null && runCatching { IdentityBoxes.verifyTag(box, ourPrivate, senderPublic, ourPublic) }.getOrDefault(false)) {
-            senderTags.noteTagged(senderPublic, sentAt)
-        }
-        return plain
     }
 
     /**
      * Opens v1 and v2 envelopes, and the self box of a v3 envelope, without ratchet state
      * (`open(envelopeData:with:…)`, `MessageCrypto.swift:203-252`). Our own boxes ([OpenAs.Sender])
      * are sealed from and to our identity. A v3 envelope as [OpenAs.Recipient] needs the ratchet
-     * and therefore [open] → [CryptoError.UnsupportedVersion] here; v1 only ever went peer-ward.
+     * and therefore [open] → [CryptoError.UnsupportedVersion] here; v1 only ever went peer-ward,
+     * and is refused as [CryptoError.UnauthenticatedSender] (it never carried a tag).
      */
     fun openLegacy(
         envelope: ByteArray,
@@ -215,37 +199,29 @@ class MessageCrypto internal constructor(
         ourPublic: ByteArray,
         senderPublic: ByteArray,
         role: OpenAs = OpenAs.Recipient,
-        sentAt: Instant,
     ): ByteArray {
         val boxSender = if (role == OpenAs.Sender) ourPublic else senderPublic
 
         if (peekVersion(envelope) == V3) {
             if (role != OpenAs.Sender) throw CryptoError.UnsupportedVersion
             val box = decode(RatchetEnvelope.serializer(), envelope).selfBox ?: throw CryptoError.OpenFailed
-            return openIdentityBox(box, ourPrivate, boxSender, ourPublic, sentAt)
+            return openIdentityBox(box, ourPrivate, boxSender, ourPublic)
         }
 
         val sealed = decode(SealedEnvelope.serializer(), envelope)
         val box = when (sealed.v) {
-            V1 -> {
-                // v1 never carried a tag (`:239-244`), so the watermark policy decides.
-                val ek = sealed.ek
-                val ct = sealed.ct
-                if (role != OpenAs.Recipient || ek == null || ct == null) throw CryptoError.OpenFailed
-                SealedBox(ek = ek, ct = ct)
-            }
+            // v1 never carried a tag (`:239-244`): nothing proves who sealed it.
+            V1 -> throw CryptoError.UnauthenticatedSender
             V2 -> (if (role == OpenAs.Recipient) sealed.peer else sealed.selfBox) ?: throw CryptoError.OpenFailed
             else -> throw CryptoError.UnsupportedVersion
         }
-        return openIdentityBox(box, ourPrivate, boxSender, ourPublic, sentAt)
+        return openIdentityBox(box, ourPrivate, boxSender, ourPublic)
     }
 
     /**
-     * Opens a v2 envelope whose box must carry a sender tag that verifies — for records that never
-     * existed untagged: reactions (`openTagged`, `MessageCrypto.swift:317-351`; web
-     * `openTaggedEnvelope`, `messageCrypto.ts:236-253`). Accepting an untagged or v1 box, as history
-     * must, would let the server build one from public keys alone. Touches no ratchet and no
-     * watermark (no store write per record).
+     * Opens a v2 envelope whose box must carry a sender tag that verifies — reactions
+     * (`openTagged`, `MessageCrypto.swift:317-351`; web `openTaggedEnvelope`,
+     * `messageCrypto.ts:236-253`). The same tag rule as [open], but v2 only. Touches no ratchet.
      *
      * @throws CryptoError.UnsupportedVersion for anything but v2, [CryptoError.UnauthenticatedSender]
      *   for an untagged box or one whose tag does not verify.
@@ -255,8 +231,7 @@ class MessageCrypto internal constructor(
         if (sealed.v != V2) throw CryptoError.UnsupportedVersion
         val sender = if (role == OpenAs.Sender) ourPublic else senderPublic
         val box = (if (role == OpenAs.Recipient) sealed.peer else sealed.selfBox) ?: throw CryptoError.OpenFailed
-        if (!IdentityBoxes.verifyTag(box, ourPrivate, sender, ourPublic)) throw CryptoError.UnauthenticatedSender
-        return IdentityBoxes.open(box, ourPrivate, sender, ourPublic)
+        return openIdentityBox(box, ourPrivate, sender, ourPublic)
     }
 
     // ---- ratchet ----
@@ -328,30 +303,15 @@ class MessageCrypto internal constructor(
         }
     }
 
-    // ---- sender-tag policy ----
+    // ---- sender tag ----
 
     /**
-     * Opens an identity box, then applies the untagged-box policy (`openIdentityBox`,
-     * `MessageCrypto.swift:445-486`; crypto spec §3.5). Order matters — the tag first:
-     *
-     * - a tag that verifies moves the sender's watermark back to [sentAt] once the box opened;
-     * - an untagged box opens only before [legacyBoxCutoff] and before the sender's watermark
-     *   (history from before they upgraded); a locked watermark store fails closed.
+     * Opens an identity box whose sender tag verifies (`openIdentityBox`, crypto spec §3.5):
+     * [IdentityBoxes.open] checks the tag first, so a box without a tag, or with one that does not
+     * verify, is [CryptoError.UnauthenticatedSender] before anything is decrypted.
      */
-    private fun openIdentityBox(box: SealedBox, ourPrivate: ByteArray, senderPublic: ByteArray, recipientPublic: ByteArray, sentAt: Instant): ByteArray {
-        val tagged = IdentityBoxes.verifyTag(box, ourPrivate, senderPublic, recipientPublic)
-        if (!tagged) {
-            legacyBoxCutoff?.let { if (!sentAt.isBefore(it)) throw CryptoError.UnauthenticatedSender }
-            when (val watermark = senderTags.taggedSince(senderPublic)) {
-                Watermark.Untagged -> Unit // transition: the sender is on a build that cannot tag
-                Watermark.Locked -> throw CryptoError.UnauthenticatedSender
-                is Watermark.Since -> if (!sentAt.isBefore(watermark.at)) throw CryptoError.UnauthenticatedSender
-            }
-        }
-        val plain = IdentityBoxes.open(box, ourPrivate, senderPublic, recipientPublic)
-        if (tagged) senderTags.noteTagged(senderPublic, sentAt)
-        return plain
-    }
+    private fun openIdentityBox(box: SealedBox, ourPrivate: ByteArray, senderPublic: ByteArray, recipientPublic: ByteArray): ByteArray =
+        IdentityBoxes.open(box, ourPrivate, senderPublic, recipientPublic)
 
     // ---- JSON ----
 
@@ -382,13 +342,6 @@ class MessageCrypto internal constructor(
         private const val V1 = 1
         private const val V2 = 2
         private const val V3 = DoubleRatchet.ENVELOPE_VERSION
-
-        /**
-         * Untagged boxes from everyone are refused at or after this server time. Null until the
-         * builds that cannot tag are gone (`MessageCrypto.swift:34-36`, web `LEGACY_BOX_CUTOFF`,
-         * `messageCrypto.ts:90`); set it in all three clients at once (crypto spec §21).
-         */
-        val LEGACY_BOX_CUTOFF: Instant? = null
 
         /** Server limit of a message envelope, decoded (`server/…/routes/messages.rs:28`; crypto spec §4.6). */
         const val MAX_ENVELOPE_BYTES = 64 * 1024

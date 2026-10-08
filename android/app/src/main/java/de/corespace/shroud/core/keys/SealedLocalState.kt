@@ -13,7 +13,7 @@ import kotlin.concurrent.write
 /**
  * The history key for the sealed stores outside `CryptoController` (iOS `SealedLocalState`,
  * `ios/shroud/Services/Crypto/SealedLocalState.swift:4-38`; crypto spec §8): ratchet sessions,
- * sender-tag watermarks, the keyed file names, the voice language statistics and the message
+ * the keyed file names, the voice language statistics and the message
  * stores of later waves. These follow the chat lock exactly: while chats are locked the key is not
  * here, so their records cannot be read, and nothing is written in the clear instead.
  *

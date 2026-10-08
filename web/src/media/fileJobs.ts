@@ -1,3 +1,4 @@
+import { CLIENT_HEADER, clientName } from "../config";
 import { FileBlobError, sealFileBlob, Shrf1Opener } from "../crypto/fileBlob";
 
 /**
@@ -59,7 +60,7 @@ async function download(job: OpenJob, report: (done: number, total: number | nul
   let res: Response;
   try {
     res = await fetch(job.url, {
-      headers: { Accept: "*/*", Authorization: `Bearer ${job.token}` },
+      headers: { Accept: "*/*", Authorization: `Bearer ${job.token}`, [CLIENT_HEADER]: clientName() },
       signal,
     });
   } catch (err) {

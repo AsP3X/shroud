@@ -35,9 +35,6 @@ object LocalHistoryCrypto {
         /** Double Ratchet session (`DoubleRatchet.Session.encode`), one record per peer. */
         RatchetKeychain("shroud-keychain-ratchet-v1"),
 
-        /** Per-sender watermark of the first tagged identity box. */
-        SenderTagKeychain("shroud-keychain-sender-tag-v1"),
-
         /** Per-conversation voice transcription language statistics. */
         LanguageStats("shroud-local-language-stats-v1"),
 

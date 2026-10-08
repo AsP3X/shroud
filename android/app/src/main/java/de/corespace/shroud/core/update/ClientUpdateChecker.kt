@@ -2,6 +2,7 @@ package de.corespace.shroud.core.update
 
 import de.corespace.shroud.core.model.AppClock
 import de.corespace.shroud.core.net.ClientVersionDto
+import de.corespace.shroud.core.net.ShroudClientHeader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -109,6 +110,7 @@ sealed interface UpdateCheckOutcome {
  *   is no burst. [check] and [checkAgain] (the required screen's "Check again", which also gets
  *   the [UpdateCheckOutcome]) ignore that limit.
  *   A server switch ([onServerChanged]) forgets everything and asks the new server at once.
+ *   A request the server refused with `426 UPDATE_REQUIRED` ([onUpdateRequired]) asks at once too.
  * - **Failures** (offline, a non-2xx, a body that does not decode) are ignored: the previous answer
  *   stays. A status this build does not know reads as current.
  * - **Later** ([dismissAvailable], with the offer the dialog showed) silences that one latest
@@ -155,6 +157,17 @@ class ClientUpdateChecker(
     fun onForeground() {
         val last = lastAnswerAt
         if (last != null && clock.elapsedMillis() - last < FOREGROUND_INTERVAL_MS) return
+        check()
+    }
+
+    /**
+     * The server refused a request with `426 UPDATE_REQUIRED` (REST or the socket's upgrade): ask
+     * now, whatever the foreground limit says, so the blocking screen comes up. Nothing while that
+     * screen already shows; a check already running is joined, so a burst of refused requests
+     * asks once. `GET /client-version` itself is never refused, so this cannot feed itself.
+     */
+    fun onUpdateRequired() {
+        if (promptState.value is UpdatePrompt.Required) return
         check()
     }
 
@@ -240,7 +253,7 @@ class ClientUpdateChecker(
 
     companion object {
         /** The `platform` this app sends. */
-        const val PLATFORM = "android"
+        const val PLATFORM = ShroudClientHeader.PLATFORM
 
         /** A foreground check waits this long after the last answer (10 minutes, monotonic). */
         const val FOREGROUND_INTERVAL_MS = 10 * 60 * 1000L

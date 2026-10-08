@@ -5,7 +5,9 @@ import Foundation
 /// server keeps one socket per device (a newer one replaces the older), so the chats and a
 /// call share this one: it stays open while either holds it — a call keeps it after the chats
 /// lock, and a call answered on a locked phone opens it without the chats.
-/// Agent: `hold`/`release` per holder; every listener gets every event; auto-reconnects.
+/// Agent: `hold`/`release` per holder; every listener gets every event; auto-reconnects. The
+/// upgrade names the build (`ClientIdentity`); one refused with 426 starts a version check and
+/// retries on the normal backoff.
 @MainActor
 @Observable
 final class RealtimeClient {
@@ -168,7 +170,7 @@ final class RealtimeClient {
 
         let base = ServerConfigurationStore().load().resolvedBaseURL
             ?? URL(string: "http://127.0.0.1:8080/api/v1")!
-        guard let url = Self.webSocketURL(from: base) else {
+        guard let request = Self.webSocketRequest(from: base) else {
             state = .failed("Invalid WebSocket URL")
             scheduleReconnect()
             return
@@ -176,7 +178,7 @@ final class RealtimeClient {
 
         let session = URLSession(configuration: .default)
         self.session = session
-        let task = session.webSocketTask(with: url)
+        let task = session.webSocketTask(with: request)
         self.task = task
         task.resume()
 
@@ -193,6 +195,7 @@ final class RealtimeClient {
         task.send(.string(authPayload)) { [weak self] error in
             guard let self, let error else { return }
             Task { @MainActor in
+                Self.noteRefusedUpgrade(task)
                 self.state = .failed(error.localizedDescription)
                 self.disconnect(reconnect: true)
                 self.scheduleReconnect()
@@ -202,6 +205,28 @@ final class RealtimeClient {
         receiveLoop = Task { [weak self] in
             await self?.runReceiveLoop()
         }
+    }
+
+    /// The upgrade request for `/api/v1/ws`, naming this build like every API request.
+    nonisolated static func webSocketRequest(from apiBase: URL) -> URLRequest? {
+        guard let url = webSocketURL(from: apiBase) else { return nil }
+        var request = URLRequest(url: url)
+        ClientIdentity.apply(to: &request)
+        return request
+    }
+
+    /// The server refused the upgrade because this build is below its minimum: asks it about
+    /// this build. The reconnect backoff keeps running as for any failed connect (1, 2, 4, 8,
+    /// 16, then every 30 s), so a refused socket never retries in a tight loop.
+    private static func noteRefusedUpgrade(_ task: URLSessionWebSocketTask) {
+        guard isRefusedUpgrade(statusCode: (task.response as? HTTPURLResponse)?.statusCode) else { return }
+        ClientVersionBridge.noteUpdateRequired()
+    }
+
+    /// A failed upgrade's status says this build is too old: HTTP 426. A failed upgrade has no
+    /// body to read the `UPDATE_REQUIRED` code from; no response at all (offline) is not one.
+    nonisolated static func isRefusedUpgrade(statusCode: Int?) -> Bool {
+        statusCode == 426
     }
 
     /// Builds `ws(s)://…/api/v1/ws` from the REST base URL.
@@ -245,6 +270,7 @@ final class RealtimeClient {
                 }
             } catch {
                 if !Task.isCancelled {
+                    Self.noteRefusedUpgrade(task)
                     state = .failed(error.localizedDescription)
                 }
                 break

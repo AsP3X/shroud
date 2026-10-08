@@ -5,8 +5,7 @@ import java.io.File
 /**
  * Named sealed records in one directory — the Android stand-in for one Keychain *service* with
  * one item per account (crypto spec §11.3): ratchet sessions (`<bundle>.dr-sessions`,
- * `ios/shroud/Services/Crypto/RatchetSessionStore.swift:15-17`) and sender-tag watermarks
- * (`<bundle>.sender-tags`, `SenderTagStore.swift:21-23`) under `noBackupFilesDir/keys/…`
+ * `ios/shroud/Services/Crypto/RatchetSessionStore.swift:15-17`) under `noBackupFilesDir/keys/…`
  * (plan §1.5).
  *
  * Names are the keyed `LocalNames` hashes, never ids: [NAME] allows `[a-z0-9._-]{1,64}` (no
@@ -43,7 +42,7 @@ interface RecordStore {
 
 /**
  * [RecordStore] with one [SealedFile] per name in [dir], sealed by [sealer] (the WhenUnlocked
- * `KeystoreSealer` for `keys/ratchets` and `keys/sender-tags`). The directory is created on the
+ * `KeystoreSealer` for `keys/ratchets`). The directory is created on the
  * first write; [deleteAll] removes it with everything in it.
  */
 class SealedDirectoryStore(private val dir: File, private val sealer: Sealer) : RecordStore {

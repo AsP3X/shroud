@@ -49,7 +49,7 @@ data class WipeLocations(
     /** Transcription language statistics (W3-TRANSCRIPTION), named so a narrower sweep cannot miss them (`DeviceDataWipe.swift:166-168`). */
     val voiceDir: File get() = File(shroudDir, "voice")
 
-    /** `noBackupFilesDir/keys/` — identity, vault record, ratchets, sender tags, peer pins (W1-KEYS). */
+    /** `noBackupFilesDir/keys/` — identity, vault record, ratchets, peer pins (W1-KEYS); older builds' `sender-tags/` too. */
     val keysDir: File get() = File(noBackupDir, "keys")
 
     /** `app_*` directories of the data directory (WebView and other platform state written for the app). */

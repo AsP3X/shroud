@@ -21,8 +21,6 @@ final class DoubleRatchetTests: Sendable {
         bobUser = ids[1]
         // Sessions are sealed under the history key; without one the store reads nothing.
         SealedTestKey.unlockSealedLocalState()
-        // Every open notes sender-tag watermarks; keep them out of the simulator Keychain.
-        SenderTagStore.useInMemoryStorageForTesting()
     }
 
     deinit {
@@ -120,8 +118,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(opened == Data("hello".utf8))
     }
@@ -150,8 +147,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             senderIdentityPublicKey: bob.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(opened == Data("bob first".utf8))
     }
@@ -189,8 +185,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(bobOpensAlice == Data("alice first".utf8))
 
@@ -200,8 +195,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             senderIdentityPublicKey: bob.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(aliceOpensBob == Data("bob first".utf8))
 
@@ -222,8 +216,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             senderIdentityPublicKey: bob.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(aliceOpens2 == Data("bob second".utf8))
     }
@@ -264,8 +257,7 @@ final class DoubleRatchetTests: Sendable {
                 with: user,
                 ourIdentityPublicKey: userPub,
                 senderIdentityPublicKey: senderPub,
-                as: .recipient,
-                sentAt: Date()
+                as: .recipient
             )
             return String(data: data, encoding: .utf8) ?? ""
         }
@@ -318,8 +310,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alice.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .sender,
-            sentAt: Date()
+            as: .sender
         )
         #expect(asSender == plain)
     }
@@ -347,8 +338,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bobPub,
             senderIdentityPublicKey: alicePub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("A1".utf8))
 
         let fromBob = try MessageCrypto.seal(
@@ -365,8 +355,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alicePub,
             senderIdentityPublicKey: bobPub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("B1".utf8))
 
         // Alice's other device has the phrase but not this phone's ratchet state.
@@ -377,8 +366,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alicePub,
             senderIdentityPublicKey: bobPub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("B1".utf8))
     }
 
@@ -406,8 +394,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bobPub,
             senderIdentityPublicKey: alicePub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("A1".utf8))
 
         RatchetSessionStore.delete(peerUserID: bobUser)
@@ -435,8 +422,7 @@ final class DoubleRatchetTests: Sendable {
             with: alice,
             ourIdentityPublicKey: alicePub,
             senderIdentityPublicKey: bobPub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("B1".utf8))
         #expect(RatchetSessionStore.load(peerUserID: bobUser) == webAlice)
     }
@@ -464,8 +450,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bobPub,
             senderIdentityPublicKey: alicePub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("A1".utf8))
 
         let phoneAlice = try #require(RatchetSessionStore.load(peerUserID: bobUser))
@@ -485,8 +470,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bobPub,
             senderIdentityPublicKey: alicePub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("A2".utf8))
 
         RatchetSessionStore.save(phoneAlice, peerUserID: bobUser)
@@ -504,8 +488,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bobPub,
             senderIdentityPublicKey: alicePub,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("A3".utf8))
     }
 
@@ -524,8 +507,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(opened == Data("classic".utf8))
     }
@@ -566,8 +548,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("hi".utf8))
 
         // Re-opening the same envelope succeeds via the identity peer-box (sibling
@@ -578,8 +559,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         ) == Data("hi".utf8))
 
         let imagePayload = try JSONEncoder().encode(
@@ -607,8 +587,7 @@ final class DoubleRatchetTests: Sendable {
             with: bob,
             ourIdentityPublicKey: bob.publicKey.rawRepresentation,
             senderIdentityPublicKey: alice.publicKey.rawRepresentation,
-            as: .recipient,
-            sentAt: Date()
+            as: .recipient
         )
         #expect(openedImage == imagePayload)
     }

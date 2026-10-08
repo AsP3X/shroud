@@ -63,6 +63,12 @@ sealed class ApiError(message: String) : Exception(message) {
     val isNotFound: Boolean get() = this is Server && status == 404
 
     /**
+     * `426 UPDATE_REQUIRED`: the server no longer serves this build (server `client_version.rs`,
+     * [ShroudClientHeader]). Not a session failure: nothing signs out over it.
+     */
+    val isUpdateRequired: Boolean get() = this is Server && status == 426 && code == ErrorCodes.UPDATE_REQUIRED
+
+    /**
      * A login's `409 DEVICE_LIMIT` with what it carries ([DeviceLimitDto]): every slot is signed
      * in, and a retry with `replace_device_id` takes the oldest device's place. Null for every other
      * error; its fields are null when the server didn't send them (an older server, or no published
@@ -158,6 +164,9 @@ object ErrorCodes {
     const val CALL_IN_PROGRESS = "CALL_IN_PROGRESS"
     const val REACTION_CHANGED = "REACTION_CHANGED"
     const val MEDIA_UNAVAILABLE = "MEDIA_UNAVAILABLE"
+
+    /** `426`: this build is below the operator's minimum, or sent no `X-Shroud-Client` ([ShroudClientHeader]). */
+    const val UPDATE_REQUIRED = "UPDATE_REQUIRED"
 
     /** Web PIN guard only (api-realtime §4.3); Android never calls those routes. */
     const val PIN_INCORRECT = "PIN_INCORRECT"

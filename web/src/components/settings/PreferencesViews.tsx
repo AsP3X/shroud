@@ -125,8 +125,9 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
       </SettingsCard>
 
       <SettingsNote>
-        Clearing is safe: history is re-fetched and re-decrypted from the server the next time you
-        open a chat. Chat list previews will look empty until then.
+        Newer messages are fetched and decrypted again the next time you open a chat. Messages from
+        before 23 September 2026 can't be read again after clearing: they were sent in an older
+        format this app no longer trusts. Chat list previews will look empty until then.
       </SettingsNote>
     </>
   );

@@ -67,7 +67,7 @@ sealed interface SealResult {
  *   anchor, call secrets, the UnifiedPush keys (P3a).
  * - **WU** (`WhenUnlockedThisDeviceOnly`): [unlockedDeviceRequired] = true
  *   (`setUnlockedDeviceRequired`). Usable only while the phone is unlocked — the identity record,
- *   the vault record, ratchets, sender tags and peer pins under `keys/` share one such key,
+ *   the vault record, ratchets and peer pins under `keys/` share one such key,
  *   `shroud.local.v1`.
  *
  * The key lives in the TEE (StrongBox is slow and meant for wrapping keys, which this is not),

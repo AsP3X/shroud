@@ -1781,6 +1781,38 @@ each WebSocket reconnect. A failed request changes nothing. `400 VALIDATION_ERRO
 unknown platform, or a missing version, one over 64 characters, or one without a number to compare
 (a part over 4294967295 counts as none).
 
+#### The minimum on every request
+
+The minimum is enforced by the server too, not only by the apps' own check. Every app names itself
+on every request in `X-Shroud-Client: <platform>/<version>` (`ios/1.1`, `android/0.2.0`,
+`web/<build id>`). A browser can't set headers on a WebSocket, so the web client sends the same value
+as the `client` query parameter on `/ws` and `/link-relay`; the header wins when both are there.
+
+With no `<PLATFORM>_MIN_VERSION` set, nothing is checked. Once either is set, every route except
+`/health*`, `/metrics` and `/client-version` answers `426 UPDATE_REQUIRED` to:
+
+- an iOS or Android app below its platform's minimum, or whose version has no number to compare;
+- a request without the header, or with an unknown platform, on either platform whichever minimum
+  is set. Every build that sends the header is newer than the ones a minimum is there to stop, so an
+  unnamed request is one of those: iOS builds before 1.1, Android builds from before the header,
+  and web tabs loaded before it (a reload fixes those).
+
+A request carrying a token that no longer authenticates gets its `401` first (`UNAUTHORIZED`, or
+`DEVICE_REMOVED` for a removed device), as without the gate, so an old build still learns it was
+signed out or removed and wipes itself. Only a working session is told to update; the lookup runs
+on refused requests only.
+
+`GET /client-version` answers in kind: an iOS or Android check that names no version in the header
+gets `update_required` whenever the API would refuse it, even if its own platform has no minimum.
+So every build with the version check (iOS since 1.0 of 2026-10-04, every Android build) shows its
+blocking "Update required" screen, and the newer ones also check at once when a request gets the
+426; none of them signs out. Older iOS builds, which never ask, just see their requests fail. Web
+tabs are only ever offered a reload. The header carries nothing the version check doesn't already
+send.
+
+426 is HTTP's protocol-upgrade status, borrowed here; the response has no `Upgrade` header, and
+clients go by the `UPDATE_REQUIRED` code.
+
 ### Later routes (outline)
 
 | Area | Routes |
@@ -1799,7 +1831,7 @@ unknown platform, or a missing version, one over 64 characters, or one without a
 | `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` | Newest released app version (`1.2.3`); older apps offer an update (`GET /client-version`) |
-| `IOS_MIN_VERSION` / `ANDROID_MIN_VERSION` | Oldest app version still served; older apps block until updated. Must not be newer than the latest |
+| `IOS_MIN_VERSION` / `ANDROID_MIN_VERSION` | Oldest app version still served; older apps block until updated, and the API answers them (and any request without `X-Shroud-Client`) with `426 UPDATE_REQUIRED`. Must not be newer than the latest |
 | `IOS_UPDATE_URL` / `ANDROID_UPDATE_URL` | Link the update prompt opens (TestFlight / App Store, an APK page): https for iOS, http(s) for Android |
 | `WEB_BUILD_FILE` | File holding the deployed web bundle's build id, re-read on each question; Compose points it at `.shroud-run/web-build`, which `./deploy.sh` writes after each deploy. Tabs from another build are offered a reload |
 | `WEB_BUILD` | A fixed web build id instead of `WEB_BUILD_FILE` (not both) |

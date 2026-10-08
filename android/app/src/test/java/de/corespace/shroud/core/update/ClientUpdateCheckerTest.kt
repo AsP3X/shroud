@@ -146,6 +146,34 @@ class ClientUpdateCheckerTest {
         assertEquals(2, server.versions.size)
     }
 
+    /** A request refused with `426 UPDATE_REQUIRED` asks at once, inside the ten minutes too. */
+    @Test
+    fun updateRequiredAsksAtOnceUntilTheBlockingScreenShows() = runTest(UnconfinedTestDispatcher()) {
+        val checker = checker(this)
+        server.queue(current, required())
+        checker.onForeground()
+        clock.advanceBy(1_000)
+        checker.onUpdateRequired()
+        assertEquals(2, server.versions.size)
+        assertEquals(UpdatePrompt.Required("0.1.0", "0.3.0", "https://example.org/shroud"), checker.prompt.value)
+        // The screen is up: further refusals ask nothing.
+        repeat(3) { checker.onUpdateRequired() }
+        assertEquals(2, server.versions.size)
+    }
+
+    /** A burst of refused requests while a check is on its way asks once. */
+    @Test
+    fun updateRequiredJoinsARunningCheck() = runTest(UnconfinedTestDispatcher()) {
+        val checker = checker(this)
+        val gate = CompletableDeferred<Unit>()
+        server.gate = gate
+        server.queue(required())
+        repeat(3) { checker.onUpdateRequired() }
+        assertEquals(1, server.versions.size)
+        gate.complete(Unit)
+        assertTrue(checker.prompt.value is UpdatePrompt.Required)
+    }
+
     @Test
     fun onlyAnAnswerStartsTheTenMinutes() = runTest(UnconfinedTestDispatcher()) {
         val checker = checker(this)

@@ -24,7 +24,6 @@ import de.corespace.shroud.core.net.wire.WireText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
-import java.time.Instant
 import java.util.UUID
 
 /**
@@ -47,7 +46,6 @@ fun interface EnvelopeOpener {
         ourPublic: ByteArray,
         senderPublic: ByteArray,
         role: OpenAs,
-        sentAt: Instant,
     ): ByteArray
 }
 
@@ -234,9 +232,9 @@ class MessageDecoder(
             val plain = withContext(compute) {
                 keys.withKeys { ourPrivate, ourPublic ->
                     if (isMine) {
-                        opener.open(envelope, if (isSelfNote) me else peer, ourPrivate, ourPublic, ourPublic, OpenAs.Sender, dto.createdAt)
+                        opener.open(envelope, if (isSelfNote) me else peer, ourPrivate, ourPublic, ourPublic, OpenAs.Sender)
                     } else {
-                        opener.open(envelope, dto.senderUserId, ourPrivate, ourPublic, senderKey!!, OpenAs.Recipient, dto.createdAt)
+                        opener.open(envelope, dto.senderUserId, ourPrivate, ourPublic, senderKey!!, OpenAs.Recipient)
                     }
                 } ?: throw CryptoError.Locked
             }

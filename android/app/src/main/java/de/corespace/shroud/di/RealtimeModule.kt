@@ -38,6 +38,8 @@ class RealtimeModule(container: AppContainer) : AppModule(container) {
             scope = container.appScope,
             authOutcomes = { authOutcomes },
             isForeground = { container.appPhase.isStarted },
+            // A refused upgrade (426 UPDATE_REQUIRED) asks the version check at once; main thread.
+            onUpdateRequired = { container.update.checker.onUpdateRequired() },
         )
     }
 

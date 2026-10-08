@@ -19,9 +19,8 @@ object ContactNameSeal {
         } catch (_: Exception) {
             return null
         }
-        if (box.t == null) return null
         return try {
-            if (!IdentityBoxes.verifyTag(box, ourPrivate, theirPublic, ourPublic)) return null
+            // Refuses a box without a tag, or with one that is not theirs.
             val name = IdentityBoxes.open(box, ourPrivate, theirPublic, ourPublic).decodeToString()
             name.takeIf { namePattern.matches(it) }
         } catch (_: Exception) {

@@ -11,7 +11,8 @@ import { b64ToBytes, bytesToB64, concatBytes, randomBytes, utf8 } from "./bytes"
  * The box key comes from ECDH(ephemeral, recipient) alone, so anyone holding the two public
  * identity keys can build a box that opens. `t` is what says who sent it: an HMAC over the
  * box under a key from the static ECDH of the two identity keys, which only the sender and
- * the recipient can compute. Builds from before the tag ignore it and still open the box.
+ * the recipient can compute. A box without `t` (builds from before the tag sealed them) is
+ * never opened: nothing says who built it.
  */
 export type SealedBox = { ek: string; ct: string; t?: string };
 
@@ -78,17 +79,14 @@ export async function sealBox(
   return { ek: bytesToB64(ek), ct: bytesToB64(combined), t: bytesToB64(tag) };
 }
 
-/**
- * `true` when the tag proves the sender, `false` for an untagged box from an older build.
- * Throws on a tag that does not verify: a box that carries one is never read without it.
- */
-export function verifyBoxTag(
+/** Throws unless the box carries a tag that proves `senderIdentityPublic` sealed it. */
+function verifyBoxTag(
   box: SealedBox,
   ourPrivate: Uint8Array,
   senderIdentityPublic: Uint8Array,
   recipientIdentityPublic: Uint8Array,
-): boolean {
-  if (box.t == null) return false;
+): void {
+  if (box.t == null) throw new Error("box: no sender tag");
   const expected = boxTag(
     ourPrivate,
     senderIdentityPublic,
@@ -98,19 +96,19 @@ export function verifyBoxTag(
     b64ToBytes(box.ct),
   );
   if (!constantTimeEqual(expected, b64ToBytes(box.t))) throw new Error("box: sender tag mismatch");
-  return true;
 }
 
+/** Opens a box `senderIdentityPublic` sealed; throws for an untagged box or a tag that fails. */
 export async function openBox(
   box: SealedBox,
   ourPrivate: Uint8Array,
   senderIdentityPublic: Uint8Array,
   recipientIdentityPublic: Uint8Array,
-): Promise<{ plaintext: Uint8Array; authenticated: boolean }> {
-  const authenticated = verifyBoxTag(box, ourPrivate, senderIdentityPublic, recipientIdentityPublic);
+): Promise<Uint8Array> {
+  verifyBoxTag(box, ourPrivate, senderIdentityPublic, recipientIdentityPublic);
   const ek = b64ToBytes(box.ek);
   const combined = b64ToBytes(box.ct);
   const shared = x25519.getSharedSecret(ourPrivate, ek);
   const key = deriveMessageKey(shared, ek, senderIdentityPublic, recipientIdentityPublic);
-  return { plaintext: await aesGcmOpen(key, combined), authenticated };
+  return aesGcmOpen(key, combined);
 }

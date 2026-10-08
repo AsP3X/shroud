@@ -36,7 +36,8 @@ enum class WipeReason {
          * The reason the overlay states once the server answered the wipe's own logout
          * (`DeviceWipeController.reason(_:after:)`, `DeviceWipeController.swift:293-301`): a removal can
          * reach the wipe as an ended session; the server's `DEVICE_REMOVED` settles it. A Log Out the
-         * user chose stays a Log Out, and an offline server leaves the reason as it was.
+         * user chose stays a Log Out, and an offline server (or one that refused this build) leaves
+         * the reason as it was.
          */
         fun after(current: WipeReason, outcome: ServerSessionOutcome): WipeReason =
             if (current == SessionEnded && outcome == ServerSessionOutcome.Removed) Removed else current
@@ -53,4 +54,10 @@ enum class ServerSessionOutcome {
 
     /** No answer (offline, or not within the 4 s timeout): only this phone forgot it. */
     Offline,
+
+    /**
+     * `426 UPDATE_REQUIRED`: the server refused this build before it ran the logout, so, as when
+     * offline, only this phone forgot the session.
+     */
+    UpdateRequired,
 }

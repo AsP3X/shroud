@@ -225,6 +225,16 @@ class DeviceWipeControllerTest {
         assertEquals("Ended here · server offline", h.controller.details.value[WipeStep.Session])
     }
 
+    /** A server that refuses this build never ran the logout: only this phone forgot the session. */
+    @Test
+    fun anUpdateRequiredAnswerEndsTheSessionHereOnly() = runTest {
+        val h = Harness(this, endServer = { throw ApiError.Server("UPDATE_REQUIRED", "Update the app.", 426) })
+        h.controller.start(WipeReason.SessionEnded)
+        advanceUntilIdle()
+        assertEquals("Ended here · app update needed", h.controller.details.value[WipeStep.Session])
+        assertEquals(WipeReason.SessionEnded, h.controller.reason.value)
+    }
+
     @Test
     fun a401OnTheLogoutMeansTheServerHeardIt() = runTest {
         val h = Harness(this, endServer = { throw ApiError.Server("UNAUTHORIZED", "This session was signed out.", 401) })
@@ -278,6 +288,12 @@ class DeviceWipeControllerTest {
         assertEquals(ServerSessionOutcome.Ended, DeviceWipeController.serverSessionOutcome(serverError))
         assertEquals(ServerSessionOutcome.Offline, DeviceWipeController.serverSessionOutcome(ApiError.Transport("offline")))
         assertEquals(ServerSessionOutcome.Ended, DeviceWipeController.serverSessionOutcome(ApiError.Decoding("bad")))
+        assertEquals(
+            ServerSessionOutcome.UpdateRequired,
+            DeviceWipeController.serverSessionOutcome(ApiError.Server("UPDATE_REQUIRED", "Update the app.", 426)),
+        )
+        // Only the update code: another 426 was heard like any answer.
+        assertEquals(ServerSessionOutcome.Ended, DeviceWipeController.serverSessionOutcome(ApiError.Server("OTHER", "m", 426)))
     }
 
     // ---- A failed check ----

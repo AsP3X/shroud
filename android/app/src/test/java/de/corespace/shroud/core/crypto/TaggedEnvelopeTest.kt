@@ -20,8 +20,7 @@ import java.util.UUID
  */
 class TaggedEnvelopeTest {
     private val records = InMemoryRatchetSessionRecords()
-    private val tags = InMemorySenderTagWatermarks()
-    private val crypto = MessageCrypto(records, tags)
+    private val crypto = MessageCrypto(records)
 
     private fun json(bytes: ByteArray) = CryptoJson.parseToJsonElement(String(bytes, Charsets.UTF_8)) as JsonObject
 
@@ -61,9 +60,8 @@ class TaggedEnvelopeTest {
         val forUs = crypto.openTagged(sealed, ours.private, ours.public, ours.public, OpenAs.Sender)
         assertEquals(json(plaintext), json(forPeer))
         assertEquals(json(plaintext), json(forUs))
-        // No ratchet and no watermark: a record per emoji must not cost a store write (`:321-322`).
+        // No ratchet: a record per emoji must not cost a store write (`:321-322`).
         assertEquals(0, records.saveCount)
-        assertEquals(0, tags.count())
     }
 
     /**

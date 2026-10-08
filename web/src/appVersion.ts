@@ -1,4 +1,5 @@
 import { api, type ClientVersion, type ClientVersionStatus } from "./api/client";
+import { webBuild } from "./config";
 
 /*
  * "A new version of Shroud is available." A tab keeps running the bundle it loaded, so after a
@@ -34,11 +35,6 @@ export type Dismissal = { latest: string | null } | null;
 export type UpdateStatus = "idle" | "checking" | "current" | "available" | "failed";
 
 export type UpdateSnapshot = { status: UpdateStatus; serverVersion: string | null };
-
-/** This bundle's build id, stamped by the deploy (`VITE_WEB_BUILD`). Empty in `npm run dev`. */
-export function webBuild(): string {
-  return (import.meta.env?.VITE_WEB_BUILD ?? "").trim();
-}
 
 /** web/package.json's version, stamped by vite.config.ts. Empty outside a Vite build. */
 export function webVersion(): string {

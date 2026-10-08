@@ -1,4 +1,4 @@
-import { b64ToBytes, bytesEqual, bytesToB64, bytesToHex, utf8, utf8decode } from "./bytes";
+import { b64ToBytes, bytesEqual, bytesToB64, utf8, utf8decode } from "./bytes";
 import {
   deserializeSession,
   initiateAsSender,
@@ -10,7 +10,7 @@ import {
   type RatchetMessage,
   type RatchetSession,
 } from "./ratchet";
-import { openBox, sealBox, verifyBoxTag, type SealedBox } from "./sealedBox";
+import { openBox, sealBox, type SealedBox } from "./sealedBox";
 import { storageSealed } from "../storageSeal";
 import { isVaultOpen, vaultGet, vaultName, vaultSet } from "./vault";
 
@@ -71,75 +71,6 @@ export function deleteRatchet(ourUserId: string, peerUserId: string): void {
   } catch {
     /* the next send finds whatever is still there */
   }
-}
-
-/**
- * Untagged identity boxes (every v1 box, and v2/v3 boxes from builds before the sender tag)
- * say nothing about who sealed them: the server could have. They are read only while the
- * sender has no tagged history here:
- *
- * - The first verified tag from a sender records its server time as that sender's
- *   watermark; the watermark only ever moves earlier.
- * - From then on an untagged box is refused unless its message predates the watermark, so a
- *   fresh device still reads the history from before the upgrade.
- * - `LEGACY_BOX_CUTOFF` (server time, ms) refuses untagged boxes from everyone at or after
- *   it. Unset until the builds that cannot tag are gone.
- *
- * Double Ratchet bodies need none of this: their root comes from the identity ECDH.
- */
-export const LEGACY_BOX_CUTOFF: number | null = null;
-
-/**
- * Keyed by the sender's identity key, not their user id: a new phrase starts a new identity,
- * and our own self boxes need no separate slot.
- */
-function boxAuthStorageName(senderIdentityPublic: Uint8Array): string | null {
-  return vaultName("shroud.boxauth.", bytesToHex(senderIdentityPublic));
-}
-
-function taggedSince(senderIdentityPublic: Uint8Array): number | null {
-  const name = boxAuthStorageName(senderIdentityPublic);
-  const raw = name ? vaultGet(name) : null;
-  if (raw == null) return null;
-  // Unreadable is not "never tagged": that would reopen the door this closes.
-  const since = Number(raw);
-  return Number.isFinite(since) ? since : -Infinity;
-}
-
-function noteTagged(senderIdentityPublic: Uint8Array, sentAt: number): void {
-  if (!Number.isFinite(sentAt)) return;
-  const since = taggedSince(senderIdentityPublic);
-  if (since != null && since <= sentAt) return;
-  const name = boxAuthStorageName(senderIdentityPublic);
-  if (name) vaultSet(name, String(sentAt));
-}
-
-/** Throws unless the policy above still lets this sender's untagged box through. */
-function requireLegacyAllowed(senderIdentityPublic: Uint8Array, sentAt: number): void {
-  // An unreadable time sorts after every watermark: fail closed.
-  const at = Number.isFinite(sentAt) ? sentAt : Infinity;
-  if (LEGACY_BOX_CUTOFF != null && at >= LEGACY_BOX_CUTOFF) {
-    throw new Error("open: untagged box after the cutoff");
-  }
-  const since = taggedSince(senderIdentityPublic);
-  if (since != null && at >= since) throw new Error("open: untagged box from a tagged sender");
-}
-
-/** Opens an identity box and applies the policy; a verified tag moves the watermark. */
-async function openIdentityBox(
-  box: SealedBox,
-  ourPrivate: Uint8Array,
-  senderIdentityPublic: Uint8Array,
-  recipientIdentityPublic: Uint8Array,
-  sentAt: number,
-): Promise<Uint8Array> {
-  const opened = await openBox(box, ourPrivate, senderIdentityPublic, recipientIdentityPublic);
-  if (opened.authenticated) {
-    noteTagged(senderIdentityPublic, sentAt);
-  } else {
-    requireLegacyAllowed(senderIdentityPublic, sentAt);
-  }
-  return opened.plaintext;
 }
 
 function peekVersion(data: Uint8Array): number | null {
@@ -228,10 +159,9 @@ async function sealV2(
 }
 
 /**
- * Opens a v2 envelope whose box must carry a sender tag that verifies — for records that never
- * existed untagged (reactions). Accepting an untagged or v1 box, as history must for messages
- * from before the tag, would let the server build one from public keys alone. No ratchet state
- * and no untagged-box watermark are touched.
+ * Opens a v2 envelope — for records overwritten in place (reactions), which never come as v1 or
+ * v3. Its box must carry a sender tag that verifies, like every identity box (see
+ * `openMessage`). No ratchet state is touched.
  */
 export async function openTaggedEnvelope(opts: {
   envelopeData: Uint8Array;
@@ -247,11 +177,17 @@ export async function openTaggedEnvelope(opts: {
   if (!box) throw new Error("open: missing box");
   // Our own boxes are sealed from and to our identity.
   const sender = opts.asSender ? opts.ourIdentityPublic : opts.senderIdentityPublic;
-  const opened = await openBox(box, opts.ourPrivate, sender, opts.ourIdentityPublic);
-  if (!opened.authenticated) throw new Error("open: untagged box");
-  return opened.plaintext;
+  return openBox(box, opts.ourPrivate, sender, opts.ourIdentityPublic);
 }
 
+/**
+ * Identity boxes open only with a sender tag that verifies (`sealedBox.ts`). An untagged box
+ * (every v1 box, and v2/v3 boxes from builds before the tag) says nothing about who sealed it:
+ * the server could have, from the two public keys alone. It is refused like a forgery and
+ * shows as "Unable to decrypt"; what this browser already opened and cached stays readable.
+ *
+ * Double Ratchet bodies need no tag: their root comes from the identity ECDH.
+ */
 export async function openMessage(opts: {
   envelopeData: Uint8Array;
   peerUserId: string;
@@ -260,14 +196,12 @@ export async function openMessage(opts: {
   ourIdentityPublic: Uint8Array;
   senderIdentityPublic: Uint8Array;
   asSender: boolean;
-  /** Server time of the message (ms); the untagged-box policy is keyed on it. */
-  sentAt: number;
 }): Promise<Uint8Array> {
   if (!isVaultOpen()) throw new Error("open: vault is locked");
   const openOwn = (box: SealedBox) =>
-    openIdentityBox(box, opts.ourPrivate, opts.ourIdentityPublic, opts.ourIdentityPublic, opts.sentAt);
+    openBox(box, opts.ourPrivate, opts.ourIdentityPublic, opts.ourIdentityPublic);
   const openPeer = (box: SealedBox) =>
-    openIdentityBox(box, opts.ourPrivate, opts.senderIdentityPublic, opts.ourIdentityPublic, opts.sentAt);
+    openBox(box, opts.ourPrivate, opts.senderIdentityPublic, opts.ourIdentityPublic);
   const version = peekVersion(opts.envelopeData);
   if (version === 3) {
     const v3 = JSON.parse(utf8decode(opts.envelopeData)) as RatchetEnvelope;
@@ -275,32 +209,18 @@ export async function openMessage(opts: {
       if (!v3.self) throw new Error("open: missing self box");
       return openOwn(v3.self);
     }
-    let plain: Uint8Array;
     try {
-      plain = await openRatchetRecipient(v3, opts);
+      return await openRatchetRecipient(v3, opts);
     } catch (err) {
       if (!v3.peer) throw err;
       // Sibling devices share IK but not ephemeral DH. Opening the identity box
       // must not write ratchet state — a failed DR attempt may have mutated a clone.
       return await openPeer(v3.peer);
     }
-    // The ratchet body is authentic on its own. A tag on its peer box still marks the
-    // sender as upgraded, or the device that reads by ratchet would never learn it.
-    try {
-      if (v3.peer && verifyBoxTag(v3.peer, opts.ourPrivate, opts.senderIdentityPublic, opts.ourIdentityPublic)) {
-        noteTagged(opts.senderIdentityPublic, opts.sentAt);
-      }
-    } catch {
-      // A bad tag next to a good ratchet body proves nothing either way.
-    }
-    return plain;
   }
   const envelope = JSON.parse(utf8decode(opts.envelopeData)) as SealedEnvelope;
-  if (envelope.v === 1) {
-    if (!envelope.ek || !envelope.ct) throw new Error("open: bad v1");
-    // v1 never carried a tag; it only ever went peer-ward.
-    return openPeer({ ek: envelope.ek, ct: envelope.ct });
-  }
+  // v1 (one peer-ward box) never carried a sender tag, so none can open.
+  if (envelope.v === 1) throw new Error("open: v1 has no sender tag");
   if (envelope.v === 2) {
     const box = opts.asSender ? envelope.self : envelope.peer;
     if (!box) throw new Error("open: missing v2 box");

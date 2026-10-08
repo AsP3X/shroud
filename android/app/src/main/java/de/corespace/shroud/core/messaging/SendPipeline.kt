@@ -261,9 +261,9 @@ class SendDependencies(
     fun ourPublicKey(): ByteArray? = keyring.withKeys { _, ourPublic -> ourPublic.copyOf() }
 
     /** Opens [envelope] (`MessageCrypto.open`); [senderPublic] null = our own key. Null while locked. */
-    suspend fun open(envelope: ByteArray, peerUserId: UUID, senderPublic: ByteArray?, role: OpenAs, sentAt: Instant): ByteArray? =
+    suspend fun open(envelope: ByteArray, peerUserId: UUID, senderPublic: ByteArray?, role: OpenAs): ByteArray? =
         withContext(compute) {
-            keyring.withKeys { ourPrivate, ourPublic -> crypto.open(envelope, peerUserId, ourPrivate, ourPublic, senderPublic ?: ourPublic, role, sentAt) }
+            keyring.withKeys { ourPrivate, ourPublic -> crypto.open(envelope, peerUserId, ourPrivate, ourPublic, senderPublic ?: ourPublic, role) }
         }
 
     /** Opens a tagged v2 record (`MessageCrypto.openTagged`); [senderPublic] null = our own key. Null while locked. */
@@ -2030,7 +2030,7 @@ class SendPipeline(
             return stored
         }
         val kept = try {
-            dto.ciphertext?.let(MessageCrypto::fromWire)?.let { deps.open(it, apiPeer, null, OpenAs.Sender, dto.createdAt) }
+            dto.ciphertext?.let(MessageCrypto::fromWire)?.let { deps.open(it, apiPeer, null, OpenAs.Sender) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {

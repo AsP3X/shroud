@@ -1,12 +1,13 @@
 /**
  * Sender tags on identity boxes: a box built from public keys alone (what the server can do)
- * must not open as the peer once the peer is known to tag. Run: `npx tsx src/crypto/boxAuth.selftest.ts`.
+ * never opens, whatever the envelope, while tagged boxes and ratchet bodies do.
+ * Run: `npx tsx src/crypto/boxAuth.selftest.ts`.
  */
 import { x25519 } from "@noble/curves/ed25519.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { aesGcmSeal } from "./aes";
-import { bytesToB64, concatBytes, randomBytes, utf8, utf8decode } from "./bytes";
+import { aesGcmOpen, aesGcmSeal } from "./aes";
+import { b64ToBytes, bytesToB64, concatBytes, randomBytes, utf8, utf8decode } from "./bytes";
 
 try {
   void globalThis.localStorage;
@@ -46,7 +47,6 @@ const aPub = x25519.getPublicKey(alice);
 const bPub = x25519.getPublicKey(bob);
 const aliceId = "00000000-0000-4000-8000-00000000000a";
 const bobId = "00000000-0000-4000-8000-00000000000b";
-const T = Date.parse("2026-09-01T12:00:00Z");
 
 /** An untagged box as builds before the tag sealed it — and as anyone with the public keys can. */
 async function forgedBox(plaintext: string, senderPub: Uint8Array, recipientPub: Uint8Array) {
@@ -55,6 +55,19 @@ async function forgedBox(plaintext: string, senderPub: Uint8Array, recipientPub:
   const info = concatBytes(utf8("shroud-msg-v1"), ek, senderPub, recipientPub);
   const key = hkdf(sha256, x25519.getSharedSecret(eph, recipientPub), utf8("shroud-v1"), info, 32);
   return { ek: bytesToB64(ek), ct: bytesToB64(await aesGcmSeal(key, utf8(plaintext))) };
+}
+
+/** What the recipient's key alone makes of a forged box: the forgery is real ciphertext. */
+async function openWithoutTag(
+  box: { ek: string; ct: string },
+  ourPrivate: Uint8Array,
+  senderPub: Uint8Array,
+  recipientPub: Uint8Array,
+): Promise<string> {
+  const ek = b64ToBytes(box.ek);
+  const info = concatBytes(utf8("shroud-msg-v1"), ek, senderPub, recipientPub);
+  const key = hkdf(sha256, x25519.getSharedSecret(ourPrivate, ek), utf8("shroud-v1"), info, 32);
+  return utf8decode(await aesGcmOpen(key, b64ToBytes(box.ct)));
 }
 
 function envelope(value: unknown): Uint8Array {
@@ -71,7 +84,7 @@ function freshVault(): Promise<void> {
   );
 }
 
-const bobOpens = (data: Uint8Array, sentAt: number) =>
+const bobOpens = (data: Uint8Array) =>
   openMessage({
     envelopeData: data,
     peerUserId: aliceId,
@@ -80,10 +93,9 @@ const bobOpens = (data: Uint8Array, sentAt: number) =>
     ourIdentityPublic: bPub,
     senderIdentityPublic: aPub,
     asSender: false,
-    sentAt,
   }).then(utf8decode);
 
-const aliceOpensOwn = (data: Uint8Array, sentAt: number) =>
+const aliceOpensOwn = (data: Uint8Array) =>
   openMessage({
     envelopeData: data,
     peerUserId: bobId,
@@ -92,7 +104,6 @@ const aliceOpensOwn = (data: Uint8Array, sentAt: number) =>
     ourIdentityPublic: aPub,
     senderIdentityPublic: aPub,
     asSender: true,
-    sentAt,
   }).then(utf8decode);
 
 async function rejects(label: string, run: () => Promise<unknown>): Promise<void> {
@@ -117,10 +128,9 @@ const aliceSeals = (text: string) =>
 // Box level: a tag binds the box to the sender's identity and to its bytes.
 {
   const box = await sealBox(utf8("hi"), alice, aPub, bPub);
-  const opened = await openBox(box, bob, aPub, bPub);
-  if (!opened.authenticated || utf8decode(opened.plaintext) !== "hi") throw new Error("tagged box");
-  const untagged = await openBox({ ek: box.ek, ct: box.ct }, bob, aPub, bPub);
-  if (untagged.authenticated) throw new Error("untagged box reported authenticated");
+  if (!box.t) throw new Error("sealBox left out the tag");
+  if (utf8decode(await openBox(box, bob, aPub, bPub)) !== "hi") throw new Error("tagged box");
+  await rejects("untagged box", () => openBox({ ek: box.ek, ct: box.ct }, bob, aPub, bPub));
   // Mallory tags with her own identity: the static ECDH does not match Alice's.
   const byMallory = await sealBox(utf8("hi"), mallory, aPub, bPub);
   await rejects("tag from a key that is not the sender's", () => openBox(byMallory, bob, aPub, bPub));
@@ -133,65 +143,68 @@ const aliceSeals = (text: string) =>
   await rejects("reflected box", () => openBox(bobToAlice, bob, aPub, bPub));
 }
 
-// The reported issue: with nothing tagged seen yet, a forged v2 opens as Alice (transition).
+// Junk ratchet body, so a v3 envelope can only open through its peer box.
+const junkV3 = (peer: unknown) =>
+  envelope({ v: 3, dh: bytesToB64(randomBytes(32)), n: 0, pn: 0, ct: bytesToB64(randomBytes(40)), peer });
+
+// Untagged boxes are refused on a fresh device, before anything tagged was ever seen.
 await freshVault();
 {
-  const forged = envelope({ v: 2, peer: await forgedBox("forged", aPub, bPub) });
-  if ((await bobOpens(forged, T)) !== "forged") throw new Error("legacy v2 no longer opens");
+  const sample = await forgedBox("forged", aPub, bPub);
+  if ((await openWithoutTag(sample, bob, aPub, bPub)) !== "forged") throw new Error("forged boxes don't decrypt");
+  await rejects("untagged v1", async () => bobOpens(envelope({ v: 1, ...(await forgedBox("v1", aPub, bPub)) })));
+  await rejects("untagged v2 peer box", async () =>
+    bobOpens(envelope({ v: 2, peer: await forgedBox("v2", aPub, bPub) })),
+  );
+  await rejects("untagged v3 peer-box fallback", async () => bobOpens(junkV3(await forgedBox("v3", aPub, bPub))));
+  await rejects("untagged v2 self box", async () =>
+    aliceOpensOwn(envelope({ v: 2, self: await forgedBox("fake own", aPub, aPub) })),
+  );
+  await rejects("untagged v3 self box", async () => {
+    const own = JSON.parse(utf8decode(await aliceSeals("own"))) as Record<string, unknown>;
+    return aliceOpensOwn(envelope({ ...own, self: await forgedBox("fake own", aPub, aPub) }));
+  });
 }
 
-// Once Bob has a tagged message from Alice, untagged boxes after it are refused.
+// Tagged boxes open; a tag that doesn't verify does not.
+await freshVault();
+{
+  const taggedV2 = envelope({ v: 2, peer: await sealBox(utf8("tagged v2"), alice, aPub, bPub) });
+  if ((await bobOpens(taggedV2)) !== "tagged v2") throw new Error("tagged v2 peer box");
+  const ownV2 = envelope({ v: 2, self: await sealBox(utf8("own v2"), alice, aPub, aPub) });
+  if ((await aliceOpensOwn(ownV2)) !== "own v2") throw new Error("tagged v2 self box");
+  if ((await bobOpens(junkV3(await sealBox(utf8("tagged v3"), alice, aPub, bPub)))) !== "tagged v3") {
+    throw new Error("tagged v3 peer-box fallback");
+  }
+  await rejects("v3 fallback tagged by mallory", async () =>
+    bobOpens(junkV3(await sealBox(utf8("mallory"), mallory, aPub, bPub))),
+  );
+  const real = await sealBox(utf8("real"), alice, aPub, bPub);
+  const other = await sealBox(utf8("other"), alice, aPub, bPub);
+  await rejects("v2 with a tag from another box", () =>
+    bobOpens(envelope({ v: 2, peer: { ek: other.ek, ct: other.ct, t: real.t } })),
+  );
+}
+
+// What this build sends: every box tagged, read by ratchet, by self box and by a sibling device.
 await freshVault();
 {
   const real = await aliceSeals("real");
-  const parsed = JSON.parse(utf8decode(real)) as { v: number; peer: { t?: string }; self: { t?: string } };
+  const parsed = JSON.parse(utf8decode(real)) as Record<string, unknown> & {
+    v: number;
+    peer: { ek: string; ct: string; t?: string };
+    self: { t?: string };
+  };
   if (parsed.v !== 3 || !parsed.peer.t || !parsed.self.t) throw new Error("v3 boxes are not tagged");
-  // Bob reads this by ratchet; the peer box tag alone must set the watermark.
-  if ((await bobOpens(real, T)) !== "real") throw new Error("bob open real");
-
-  const forgedV2 = envelope({ v: 2, peer: await forgedBox("forged v2", aPub, bPub) });
-  await rejects("forged v2 after the watermark", () => bobOpens(forgedV2, T + 1000));
-  const forgedV1 = { v: 1, ...(await forgedBox("forged v1", aPub, bPub)) };
-  await rejects("forged v1 after the watermark", () => bobOpens(envelope(forgedV1), T + 1000));
-  // Junk ratchet body so the peer-box fallback runs.
-  const junkV3 = (peer: unknown) =>
-    envelope({ v: 3, dh: bytesToB64(randomBytes(32)), n: 0, pn: 0, ct: bytesToB64(randomBytes(40)), peer });
-  await rejects("forged v3 fallback", async () =>
-    bobOpens(junkV3(await forgedBox("forged v3", aPub, bPub)), T + 1000),
-  );
-  await rejects("v3 fallback tagged by mallory", async () =>
-    bobOpens(junkV3(await sealBox(utf8("mallory"), mallory, aPub, bPub)), T + 1000),
-  );
-  await rejects("untagged box with no readable time", () => bobOpens(forgedV2, NaN));
-
-  // Pre-upgrade history (older than the watermark) still reads on a fresh device.
-  const oldV2 = envelope({ v: 2, peer: await forgedBox("old", aPub, bPub) });
-  if ((await bobOpens(oldV2, T - 1000)) !== "old") throw new Error("pre-watermark history refused");
-
-  // A tagged v2 from Alice still opens, and an older tagged one moves the watermark back.
-  const taggedV2 = envelope({ v: 2, peer: await sealBox(utf8("tagged v2"), alice, aPub, bPub) });
-  if ((await bobOpens(taggedV2, T - 5000)) !== "tagged v2") throw new Error("tagged v2");
-  await rejects("untagged between the old and the new watermark", () => bobOpens(oldV2, T - 1000));
-}
-
-// A sibling device with no ratchet state reads through the tagged peer box.
-await freshVault();
-{
-  const real = await aliceSeals("to sibling");
-  const parsed = JSON.parse(utf8decode(real)) as Record<string, unknown>;
+  if ((await aliceOpensOwn(real)) !== "real") throw new Error("alice open own");
+  // A sibling device with no ratchet state reads through the tagged peer box.
   const drBroken = envelope({ ...parsed, ct: bytesToB64(randomBytes(40)) });
-  if ((await bobOpens(drBroken, T)) !== "to sibling") throw new Error("sibling peer-box read");
-  const forged = envelope({ v: 2, peer: await forgedBox("forged", aPub, bPub) });
-  await rejects("forged v2 after a peer-box read", () => bobOpens(forged, T + 1));
-}
-
-// Self boxes: "sent by me" can no longer be forged either.
-await freshVault();
-{
-  const real = await aliceSeals("own");
-  if ((await aliceOpensOwn(real, T)) !== "own") throw new Error("alice open own");
-  const forgedSelf = envelope({ v: 2, self: await forgedBox("fake own", aPub, aPub) });
-  await rejects("forged self box", () => aliceOpensOwn(forgedSelf, T + 1));
+  if ((await bobOpens(drBroken)) !== "real") throw new Error("sibling peer-box read");
+  // The ratchet body is authentic on its own: it opens even beside an untagged peer box.
+  const untaggedPeer = envelope({ ...parsed, peer: { ek: parsed.peer.ek, ct: parsed.peer.ct } });
+  if ((await bobOpens(untaggedPeer)) !== "real") throw new Error("ratchet read");
+  const next = await aliceSeals("next");
+  if ((await bobOpens(next)) !== "next") throw new Error("ratchet read of the next message");
 }
 
 console.log("box auth selftest ok");

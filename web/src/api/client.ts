@@ -1,4 +1,4 @@
-import { apiBase } from "../config";
+import { apiBase, CLIENT_HEADER, clientName } from "../config";
 import { normalizeUsername, usernameHashB64 } from "../crypto/username";
 import type { Invite } from "../invite";
 
@@ -185,6 +185,7 @@ async function request<T>(
     headers.set("Content-Type", "application/json");
   }
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  headers.set(CLIENT_HEADER, clientName());
 
   let res: Response;
   try {
@@ -227,7 +228,11 @@ async function requestBytes(
   expectedBytes?: number,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  const headers = new Headers({ Accept: "*/*", Authorization: `Bearer ${token}` });
+  const headers = new Headers({
+    Accept: "*/*",
+    Authorization: `Bearer ${token}`,
+    [CLIENT_HEADER]: clientName(),
+  });
   let res: Response;
   try {
     res = await fetch(`${apiBase()}${path}`, { headers, signal });
@@ -301,6 +306,7 @@ function putBytesWithProgress(
     xhr.setRequestHeader("Accept", "application/json");
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader(CLIENT_HEADER, clientName());
     xhr.upload.onprogress = (event) => {
       onProgress(event.loaded, event.lengthComputable ? event.total : body.size);
     };
@@ -332,6 +338,7 @@ async function putBytes(path: string, token: string, data: Uint8Array | Blob): P
     Accept: "application/json",
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/octet-stream",
+    [CLIENT_HEADER]: clientName(),
   });
   let res: Response;
   try {

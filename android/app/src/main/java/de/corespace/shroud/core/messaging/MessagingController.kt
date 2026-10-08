@@ -93,7 +93,7 @@ interface MessagingSocket {
  * @param scope `Dispatchers.Main.immediate` in the app (plan §1.1 rule 3).
  * @param hasMedia the decrypted media of a message is in the local media cache (`LocalMediaStore.has`).
  * @param isResumed one of our activities is resumed (`AppPhaseMonitor.isResumed`).
- * @param wipeKeyRecords deletes every ratchet session and sender-tag watermark (sign-out).
+ * @param wipeKeyRecords deletes every ratchet session, and the sender-tag watermarks older builds left (sign-out).
  * @param refreshCallSecrets after a start, as iOS (`refreshCallSecrets`, plan C29: the calls package's).
  * @param pushCovers a UnifiedPush distributor is registered, so a server that heard `focus:false`
  *   pushes to this phone ([de.corespace.shroud.core.push.PushDelivery.suppressesLocalAnnouncements]).
@@ -373,7 +373,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     /**
      * Stops realtime work and drops memory (`stop`, `MessagingController.swift:494-507`). [wipeDisk]
      * (sign-out not handled by the wipe overlay) also deletes the user's sealed store, the caches, peer
-     * pins, ratchet sessions and sender tags; otherwise the snapshot is written first and kept for an
+     * pins and ratchet sessions; otherwise the snapshot is written first and kept for an
      * offline reopen.
      */
     suspend fun stop(wipeDisk: Boolean) {
@@ -435,7 +435,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         state.bumpLockGeneration()
     }
 
-    /** Sign-out: the user's sealed store, the caches, pins, ratchets and sender tags (`clearLocalData`, `:558-564`). */
+    /** Sign-out: the user's sealed store, the caches, pins and ratchets (`clearLocalData`, `:558-564`). */
     private suspend fun clearLocalData() {
         val userId = state.myUserId
         state.onDiskAwait { deps.store.clear(userId) }

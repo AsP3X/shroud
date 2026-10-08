@@ -24,6 +24,7 @@ class WipeReasonTest {
         assertEquals(WipeReason.Removed, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.Removed))
         assertEquals(WipeReason.SessionEnded, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.Ended))
         assertEquals(WipeReason.SessionEnded, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.Offline))
+        assertEquals(WipeReason.SessionEnded, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.UpdateRequired))
         assertEquals(WipeReason.Logout, WipeReason.after(WipeReason.Logout, ServerSessionOutcome.Removed))
         assertEquals(WipeReason.Removed, WipeReason.after(WipeReason.Removed, ServerSessionOutcome.Offline))
     }

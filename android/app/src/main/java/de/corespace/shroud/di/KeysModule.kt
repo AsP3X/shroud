@@ -15,7 +15,6 @@ import de.corespace.shroud.core.keys.KeyMaterialWipe
 import de.corespace.shroud.core.keys.PeerIdentityStore
 import de.corespace.shroud.core.keys.RatchetSessionStore
 import de.corespace.shroud.core.keys.SealedLocalState
-import de.corespace.shroud.core.keys.SenderTagStore
 import de.corespace.shroud.core.keys.SystemBiometricAuthenticator
 import de.corespace.shroud.core.storage.KeystoreSealer
 import de.corespace.shroud.core.storage.PrefsFiles
@@ -35,18 +34,18 @@ import java.io.File
  *
  * Storage (00-plan §1.5; crypto spec §11.2): every record under `keys/` is sealed by one
  * WhenUnlocked Keystore key, `shroud.local.v1` ([localSealer], `setUnlockedDeviceRequired`) —
- * iOS `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Inside it, private values, ratchets and sender
- * tags are sealed again under the history key (`LocalHistoryCrypto`), so they are exactly as
+ * iOS `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Inside it, private values and ratchets are
+ * sealed again under the history key (`LocalHistoryCrypto`), so they are exactly as
  * locked as the chats. The vault's wrap keys are separate auth-bound aliases
  * (`shroud.vault.wrap.<hex8>`). Every writer gets [AppContainer.storageSeal].
  *
- * W1-CRYPTO's [MessageCrypto] is built here too, on [ratchetSessions] and [senderTags] (its seams,
+ * W1-CRYPTO's [MessageCrypto] is built here too, on [ratchetSessions] (its seam,
  * `core/keys/KeyRecords.kt`).
  */
 class KeysModule(container: AppContainer) : AppModule(container) {
     private val app: Context get() = container.appContext
 
-    /** `noBackupFilesDir/keys/` — identity, vault record, ratchets, sender tags, peer pins (00-plan §1.5). */
+    /** `noBackupFilesDir/keys/` — identity, vault record, ratchets, peer pins (00-plan §1.5). */
     val keysDir: File by lazy { File(app.noBackupFilesDir, KEYS_DIR) }
 
     val bip39: Bip39 by lazy {
@@ -91,16 +90,19 @@ class KeysModule(container: AppContainer) : AppModule(container) {
         RatchetSessionStore(SealedDirectoryStore(File(keysDir, RATCHETS_DIR), localSealer), sealedLocalState, container.storageSeal)
     }
 
-    /** Sender-tag watermarks (`keys/sender-tags/`), the `SenderTagWatermarks` seam of `MessageCrypto`. */
-    val senderTags: SenderTagStore by lazy {
-        SenderTagStore(SealedDirectoryStore(File(keysDir, SENDER_TAGS_DIR), localSealer), sealedLocalState, container.storageSeal)
-    }
+    /**
+     * Deletes `keys/sender-tags/`: the per-sender watermarks under which builds before 2026-10 still
+     * read untagged identity boxes. Untagged boxes are refused outright now, so nothing reads or
+     * writes them; this only clears what an install kept, on sign-out with the ratchets (the Log
+     * Out wipe deletes all of `keys/` anyway). Works while locked; never throws.
+     */
+    fun deleteLegacySenderTags() = deleteLegacySenderTags(keysDir)
 
     /**
      * The process's one envelope sealer/opener (W1-CRYPTO, plan §1.7.4) for the W2 messaging
      * engines. Blocking and thread-safe: call it on `Dispatchers.Default`.
      */
-    val messageCrypto: MessageCrypto by lazy { MessageCrypto(ratchetSessions, senderTags) }
+    val messageCrypto: MessageCrypto by lazy { MessageCrypto(ratchetSessions) }
 
     /** Pinned peer identity keys and verified flags (`keys/peer-identity.v1`); logic in W2-CONTACTS. */
     val peerIdentities: PeerIdentityStore by lazy {
@@ -158,6 +160,13 @@ class KeysModule(container: AppContainer) : AppModule(container) {
         const val VAULT_FILE = "history-vault.v1"
         const val PEER_IDENTITY_FILE = "peer-identity.v1"
         const val RATCHETS_DIR = "ratchets"
-        const val SENDER_TAGS_DIR = "sender-tags"
+
+        /** Where older builds kept sender-tag watermarks; only [deleteLegacySenderTags] still names it. */
+        const val LEGACY_SENDER_TAGS_DIR = "sender-tags"
+
+        /** [deleteLegacySenderTags] on [keysDir] (`noBackupFilesDir/keys/`); the rest of it stays. */
+        fun deleteLegacySenderTags(keysDir: File) {
+            runCatching { File(keysDir, LEGACY_SENDER_TAGS_DIR).deleteRecursively() }
+        }
     }
 }

@@ -79,7 +79,7 @@ class MessagingModule(container: AppContainer) : AppModule(container) {
             isResumed = { container.appPhase.isResumed },
             wipeKeyRecords = {
                 keys.ratchetSessions.deleteAll()
-                keys.senderTags.deleteAll()
+                keys.deleteLegacySenderTags()
             },
             // Every contact's call secret from the pinned keys (plan C29; `refreshCallSecrets`, MC:486).
             refreshCallSecrets = { container.calls.secrets.refreshAll() },

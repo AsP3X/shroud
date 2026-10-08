@@ -252,10 +252,37 @@ pub async fn run() -> Result<(), AppError> {
     // never leaves anyone busy; both sides hear `call.ended`.
     crate::routes::calls::spawn_call_gc(state.clone());
 
-    // Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.
-    // Agent: OUTER CORS (if any) → request_id → metrics → TraceLayer → routes.
+    let app = app(state, &config.cors_allowed_origins);
+
+    let addr: SocketAddr = config.socket_addr()?;
+    tracing::info!(%addr, "shroud-server listening");
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|err| AppError::Internal(format!("bind failed: {err}")))?;
+
+    // Human: Drain in-flight HTTP after SIGTERM/Ctrl-C so orchestrators can stop cleanly.
+    // Agent: CALLS axum::serve.with_graceful_shutdown; WS clients see close on process exit.
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .map_err(|err| AppError::Internal(format!("server error: {err}")))?;
+
+    tracing::info!("shroud-server shut down");
+    Ok(())
+}
+
+/// The whole HTTP app: every route behind the middleware stack `run` serves.
+///
+/// Human: Last `.layer` is outermost — request-id runs first, then metrics, then TraceLayer.
+/// Agent: OUTER CORS (if any) → request_id → metrics → TraceLayer → client gate → routes. Tests
+/// build the app here too, so they cover the same stack.
+pub fn app(state: AppState, cors_allowed_origins: &[String]) -> Router {
     let mut app = Router::new()
         .merge(routes::router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            client_version::require_supported_client,
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(make_request_span)
@@ -281,31 +308,16 @@ pub async fn run() -> Result<(), AppError> {
         .layer(middleware::from_fn(request_tracking::request_id_middleware))
         .with_state(state);
 
-    if !config.cors_allowed_origins.is_empty() {
+    if !cors_allowed_origins.is_empty() {
         tracing::info!(
-            origins = ?config.cors_allowed_origins,
+            origins = ?cors_allowed_origins,
             "cors: allowing web client origins"
         );
-        if let Some(layer) = cors_layer(&config.cors_allowed_origins) {
+        if let Some(layer) = cors_layer(cors_allowed_origins) {
             app = app.layer(layer);
         }
     }
-
-    let addr: SocketAddr = config.socket_addr()?;
-    tracing::info!(%addr, "shroud-server listening");
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|err| AppError::Internal(format!("bind failed: {err}")))?;
-
-    // Human: Drain in-flight HTTP after SIGTERM/Ctrl-C so orchestrators can stop cleanly.
-    // Agent: CALLS axum::serve.with_graceful_shutdown; WS clients see close on process exit.
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|err| AppError::Internal(format!("server error: {err}")))?;
-
-    tracing::info!("shroud-server shut down");
-    Ok(())
+    app
 }
 
 /// Nebular when `NEBULAR_URL` is set, with the local volume kept readable while its blobs move
@@ -351,6 +363,7 @@ fn cors_layer(origins: &[String]) -> Option<CorsLayer> {
                 header::CONTENT_TYPE,
                 header::ACCEPT,
                 HeaderName::from_static("x-request-id"),
+                client_version::CLIENT_HEADER.clone(),
             ])
             .max_age(Duration::from_secs(3600)),
     )

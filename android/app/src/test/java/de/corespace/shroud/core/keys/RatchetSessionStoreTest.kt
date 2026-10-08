@@ -7,7 +7,6 @@ import de.corespace.shroud.core.storage.SealedDirectoryStore
 import de.corespace.shroud.core.storage.StorageSeal
 import de.corespace.shroud.core.crypto.CryptoError
 import de.corespace.shroud.core.crypto.CryptoFixtures
-import de.corespace.shroud.core.crypto.InMemorySenderTagWatermarks
 import de.corespace.shroud.core.crypto.MessageCrypto
 import de.corespace.shroud.core.crypto.TestIdentity
 import de.corespace.shroud.core.crypto.hex
@@ -133,7 +132,7 @@ class RatchetSessionStoreTest {
         val (ourUser, peerUser) = CryptoFixtures.sortedUserIds()
         val us = TestIdentity.random()
         val peer = TestIdentity.random()
-        val crypto = MessageCrypto(store, InMemorySenderTagWatermarks())
+        val crypto = MessageCrypto(store)
         crypto.seal("first".toByteArray(), peerUser, peer.public, us.private, us.public, ourUser)
         val name = LocalNames.derive(SealedTestKey.bytes()).name(LocalNames.Kind.RATCHET, peerUser)
         val stored = File(dir, name).readBytes()

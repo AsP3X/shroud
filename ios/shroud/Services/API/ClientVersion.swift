@@ -69,14 +69,33 @@ nonisolated enum ClientVersionPolicy {
         case manual
         /// Another server was saved in Server Settings.
         case serverChanged
+        /// The server refused a request with `426 UPDATE_REQUIRED`: this build is below its
+        /// minimum. Asks at once, so the blocking screen comes up, whatever other checks
+        /// answered just before; throttled only against the previous `.refused` check.
+        case refused
     }
 
     /// Foreground re-checks run at most this often.
     static let foregroundInterval: TimeInterval = 10 * 60
 
+    /// `.refused` checks start at most this often, counted from the last one that started,
+    /// answered or not. Every request after the first is refused too; this keeps a server whose
+    /// `/client-version` disagrees with its gate (or fails) from being asked once per refused
+    /// request.
+    static let refusedInterval: TimeInterval = 30
+
+    /// `lastCheck` is when the last answer arrived for every trigger but `.refused`, and when the
+    /// last `.refused` check started for `.refused`.
     static func shouldCheck(_ trigger: Trigger, lastCheck: Date?, now: Date) -> Bool {
-        guard trigger == .foreground, let lastCheck else { return true }
-        return now.timeIntervalSince(lastCheck) >= foregroundInterval
+        guard let lastCheck else { return true }
+        switch trigger {
+        case .foreground:
+            return now.timeIntervalSince(lastCheck) >= foregroundInterval
+        case .refused:
+            return now.timeIntervalSince(lastCheck) >= refusedInterval
+        case .launch, .manual, .serverChanged:
+            return true
+        }
     }
 
     /// The prompt for `answer`. An "available" whose version was dismissed in this process shows
@@ -170,6 +189,24 @@ nonisolated enum ClientVersionPolicy {
     }
 }
 
+/// Names this build on every request to the Shroud API: `X-Shroud-Client: ios/<version>`.
+///
+/// Human: A server with `IOS_MIN_VERSION` set refuses requests from older builds (or with no
+/// header) with `426 UPDATE_REQUIRED`; `ClientVersionBridge` turns that into a version check,
+/// which brings up the blocking "Update required" screen.
+/// Agent: Set by `APIClient` (every request it builds) and `RealtimeClient` (the `/ws`
+/// upgrade), the only code that talks to the configured server. Never on requests to other
+/// hosts: link previews, TURN, anything third-party.
+nonisolated enum ClientIdentity {
+    static let headerField = "X-Shroud-Client"
+    /// `ios/` + `CFBundleShortVersionString`, the version `/client-version` compares too.
+    static let headerValue = "ios/\(ClientVersionService.currentVersion)"
+
+    static func apply(to request: inout URLRequest) {
+        request.setValue(headerValue, forHTTPHeaderField: headerField)
+    }
+}
+
 /// Asks the configured server about this build. No session needed: it runs on Welcome and on the
 /// lock screen too.
 nonisolated struct ClientVersionService: Sendable {
@@ -183,9 +220,12 @@ nonisolated struct ClientVersionService: Sendable {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
     }
 
+    /// The route, relative to the API base. `APIClient` never turns a 426 on it into another check.
+    static let path = "client-version"
+
     func check(configuration: ServerConfiguration, version: String) async throws -> ClientVersionResponse {
         try await APIClient.makeConfiguredClient(configuration: configuration).get(
-            "client-version",
+            Self.path,
             query: ["platform": "ios", "version": version],
             as: ClientVersionResponse.self
         )
