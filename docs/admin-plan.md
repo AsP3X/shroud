@@ -197,6 +197,27 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `index.html` on `127.0.0.1:8082`. Cargo will not accept a member outside `server/`, so
     `server/crates/shroud-admin` is a symlink to `admin/api`. The API image still builds from
     `./server`; it carries a copy of the admin manifest so that workspace loads.
+- [ ] **G0.5 Make `admin/api` its own Cargo workspace; remove the symlink.** G0.1 wired the
+  crate into `server/Cargo.toml` through `server/crates/shroud-admin → ../../admin/api`, plus a
+  copy of its manifest in `server/docker/shroud-admin-member.toml` for the API image. That couples
+  three things that must now be kept in step by hand: the manifest copy (a dependency added to
+  `admin/api/Cargo.toml` and not to the copy breaks the API image's `cargo build` against the
+  shared `Cargo.lock`), the API's `Dockerfile` (it now builds a dummy `shroud-admin` on every
+  image), and every checkout on Windows (`deploy.ps1` and `scripts/setup.ps1` exist; Git there
+  checks a symlink out as a text file unless `core.symlinks` is on, and the workspace fails to
+  load). It also puts the console's build in the API's critical path, which §2 and §7 set out to
+  avoid.
+  - Change: `admin/api/Cargo.toml` gets its own `[workspace]` table (empty) and its own
+    `Cargo.lock` and `rust-toolchain.toml` (copy the server's); remove `crates/shroud-admin` from
+    `server/Cargo.toml`, the symlink, `server/docker/shroud-admin-member.toml`, the admin lines
+    in `server/Dockerfile` and the admin entries in `server/Cargo.lock`. `admin/Dockerfile` copies
+    `admin/api` as a plain directory. For G1.4 the constants come in through
+    `shroud-server = { path = "../../server/crates/shroud-server", default-features = false }`,
+    a path dependency a standalone crate may have; if that pulls too much, expose the constants
+    from a tiny `shroud-constants` crate under `server/crates/` that both depend on.
+  - Done when: `cargo build` in `admin/api` and in `server/` each succeed on their own, `git
+    ls-files -s server/crates` shows no symlink (mode 120000), the API image builds without any
+    admin file, and the admin image builds from the repository root as before.
 - [ ] **G0.2 Compose, env, deploy.** Service `admin` with `profiles: ["admin"]`; host port in
   `docker-compose.host-ports.yml`, `proxy-network` in `docker-compose.npm.yml`; `ADMIN_PORT`,
   `ADMIN_PUBLIC_URL`, `ADMIN_DATABASE_URL`, `ADMIN_SECRET_KEY`, `OPERATOR_PORT`, `OPERATOR_TOKEN`
