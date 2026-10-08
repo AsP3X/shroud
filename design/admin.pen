@@ -1197,7 +1197,7 @@
                           "content": "PostgreSQL"
                         },
                         "vMfvD": {
-                          "content": "30 migrations applied · pool 4 of 10 in use"
+                          "content": "30 migrations applied"
                         },
                         "LrwTX": {
                           "fill": "$ok-bg"
@@ -35882,7 +35882,7 @@
                           "content": "PostgreSQL"
                         },
                         "vMfvD": {
-                          "content": "30 migrations applied · pool 4 of 10 in use"
+                          "content": "30 migrations applied"
                         },
                         "LrwTX": {
                           "fill": "$ok-bg"
