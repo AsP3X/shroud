@@ -372,8 +372,19 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `cargo clippy --all-targets -- -D warnings` passed. G2.1 is not in this change.
 
 ### Phase G3 — Hardening and tests
-- [ ] **G3.1** CSP `default-src 'self'; img-src 'self' data:` (the enrolment QR is inline SVG),
+- [x] **G3.1** CSP `default-src 'self'; img-src 'self' data:` (the enrolment QR is inline SVG),
   `Referrer-Policy: no-referrer`, bodies capped at 16 KiB, request ids in logs, no IP in logs.
+  - Done 2026-10-09: `cargo test --offline --lib` and `cargo test --offline --test request_log`
+    in `admin/api`. Every response carries
+    `Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src-attr 'unsafe-inline'`
+    and `Referrer-Policy: no-referrer`. `style-src-attr 'unsafe-inline'` is in addition to the
+    policy named above: the UI sets style attributes, and `default-src 'self'` alone would block
+    them. Scripts stay on `'self'`. The enrolment QR is a `data:` image, which `img-src` allows.
+    A body of 16 KiB is still accepted. A `Content-Length` over 16 KiB, and a body of that size
+    with no length, are `413`. An `X-Request-Id` of 1–64 characters from `[A-Za-z0-9_-]` is
+    echoed and logged with the method, the path and the status. Anything else is replaced. The
+    line has no query string and no address from `X-Forwarded-For` or `Forwarded`.
+    `cargo clippy --all-targets --offline -- -D warnings` passed.
 - [ ] **G3.2** Tests: grants (R3), session flow, re-auth timing, every route against a seeded
   throwaway database with schema validation, operator-API token checks, `cargo clippy -D warnings`.
   They run with `cargo test` in the workspace.

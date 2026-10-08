@@ -4,6 +4,10 @@
 //! Hashed files under `/assets/` are cached for a year. `index.html` and client-side
 //! routes are `Cache-Control: no-store`.
 //!
+//! Every response carries a content security policy and `Referrer-Policy: no-referrer`.
+//! Request bodies are capped at 16 KiB. Each request is logged with an id, the method,
+//! the path and the status. The log line has no client address and no query string.
+//!
 //! This crate is its own Cargo workspace. Build it from `admin/api`.
 
 use std::net::{IpAddr, SocketAddr};
@@ -29,15 +33,23 @@ mod writes;
 pub use state::AppState;
 
 use axum::Router;
-use axum::extract::Request;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tower_http::services::{ServeDir, ServeFile};
+use tracing::Instrument;
 
 const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 const NO_STORE: &str = "no-store";
+const BODY_LIMIT: usize = 16 * 1024;
+/// Scripts, connections and fonts stay on this origin. The enrolment QR is a `data:` image.
+/// Style attributes are allowed because the UI sets them; `default-src 'self'` alone blocks
+/// those attributes.
+const CONTENT_SECURITY_POLICY: &str =
+    "default-src 'self'; img-src 'self' data:; style-src-attr 'unsafe-inline'";
+const REFERRER_POLICY: &str = "no-referrer";
 
 /// Process configuration. `HOST` defaults to `0.0.0.0`, `PORT` to `8082`,
 /// and `ADMIN_DIST` to `admin/ui/dist` (relative to the working directory).
@@ -105,6 +117,9 @@ pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
         router = router.nest("/assets", assets).fallback_service(spa);
     }
     router
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(middleware::from_fn(cap_body))
+        .layer(middleware::from_fn(harden))
 }
 
 /// Listen on `HOST`:`PORT` and serve until the process is stopped.
@@ -206,6 +221,103 @@ fn insert_cache_control(response: &mut Response, value: &'static str) {
         .insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
 }
 
+/// Refuse a body over [`BODY_LIMIT`] before a handler maps the rejection to 400.
+async fn cap_body(request: Request, next: Next) -> Response {
+    if request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|len| len > BODY_LIMIT as u64)
+    {
+        return payload_too_large();
+    }
+    let (parts, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, BODY_LIMIT).await {
+        Ok(bytes) => bytes,
+        Err(err) if length_limit(&err) => return payload_too_large(),
+        Err(_) => {
+            tracing::error!("request body could not be read");
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+    next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await
+}
+
+fn payload_too_large() -> Response {
+    (
+        StatusCode::PAYLOAD_TOO_LARGE,
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "length limit exceeded",
+    )
+        .into_response()
+}
+
+fn length_limit(err: &impl std::error::Error) -> bool {
+    let mut current = Some(err as &dyn std::error::Error);
+    while let Some(err) = current {
+        if err.to_string() == "length limit exceeded" {
+            return true;
+        }
+        current = err.source();
+    }
+    false
+}
+
+/// Security headers, a request id, and one log line. The line is the method, the path
+/// without the query, the status and the id. It does not include an address.
+async fn harden(request: Request, next: Next) -> Response {
+    let request_id = request_id(request.headers());
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let span = tracing::info_span!(
+        "http",
+        request_id = %request_id,
+        method = %method,
+        path = %path,
+    );
+    async move {
+        let mut response = next.run(request).await;
+        let headers = response.headers_mut();
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+        );
+        headers.insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static(REFERRER_POLICY),
+        );
+        headers.insert(
+            HeaderName::from_static("x-request-id"),
+            HeaderValue::from_str(&request_id).expect("request id is a token"),
+        );
+        tracing::info!(status = response.status().as_u16(), "request");
+        response
+    }
+    .instrument(span)
+    .await
+}
+
+/// Keep a caller's id only when it cannot break a log line. Anything else gets a new one.
+fn request_id(headers: &axum::http::HeaderMap) -> String {
+    if let Some(value) = headers
+        .get(HeaderName::from_static("x-request-id"))
+        .and_then(|value| value.to_str().ok())
+        && is_request_id(value)
+    {
+        return value.to_owned();
+    }
+    crypto::random_hex(16)
+}
+
+fn is_request_id(value: &str) -> bool {
+    (1..=64).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -216,7 +328,9 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use super::{ASSET_CACHE, NO_STORE, router};
+    use super::{
+        ASSET_CACHE, BODY_LIMIT, CONTENT_SECURITY_POLICY, NO_STORE, REFERRER_POLICY, router,
+    };
 
     static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -388,5 +502,137 @@ mod tests {
         let actual: serde_json::Value = serde_json::from_str(&actual).unwrap();
         let expected: serde_json::Value = serde_json::from_str(fixture).unwrap();
         assert_eq!(actual, expected);
+    }
+
+    fn assert_hardened(response: &axum::response::Response) {
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|value| value.to_str().ok()),
+            Some(CONTENT_SECURITY_POLICY)
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::REFERRER_POLICY)
+                .and_then(|value| value.to_str().ok()),
+            Some(REFERRER_POLICY)
+        );
+        let id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap();
+        assert!(super::is_request_id(id), "{id}");
+    }
+
+    #[tokio::test]
+    async fn responses_carry_the_content_security_policy_and_no_referrer() {
+        let dir = TempDir::new("csp");
+        dir.write("index.html", "<p>ui</p>");
+        dir.write("assets/app.js", "console.log(1)");
+        let app = router(Some(&dir.path));
+
+        let health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+        assert_hardened(&health);
+
+        let page = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/users")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        assert_hardened(&page);
+
+        let asset = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/assets/app.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK);
+        assert_hardened(&asset);
+
+        let api = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(api.status(), StatusCode::UNAUTHORIZED);
+        assert_hardened(&api);
+    }
+
+    #[tokio::test]
+    async fn bodies_over_16_kib_are_rejected() {
+        let app = router(None);
+        let kept = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/admin/session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::CONTENT_LENGTH, BODY_LIMIT.to_string())
+                    .body(Body::from(vec![b'a'; BODY_LIMIT]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(kept.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_hardened(&kept);
+
+        let declared = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/admin/session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::CONTENT_LENGTH, (BODY_LIMIT + 1).to_string())
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(declared.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_hardened(&declared);
+
+        let streamed = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/admin/session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(vec![b'{'; BODY_LIMIT + 1]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(streamed.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_hardened(&streamed);
     }
 }
