@@ -437,6 +437,12 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     sign-in through the UI with a real TOTP, then every GET route pulled through a curl session.
     All 16 live responses validate against the fixture schemas, none carries a seeded secret,
     and every page renders. No contract bug found. The write routes and Operators wait for G2.
+  - Writes and Operators done 2026-10-08 against G2.3 (ab40bcd1) on the same stack: inviting an
+    operator asked for a fresh code (real `403 REAUTH_REQUIRED`), then returned a working setup
+    link; role change, authenticator reset (new link) and disable all landed; Sign out all
+    devices and Remove device reached the operator-API client and came back as `502 UPSTREAM`
+    with the frames' dialog, since G2.1 is not built, and the audit log shows every attempt with
+    its outcome. Only the three API-backed writes remain to be seen succeed, after G2.1.
 - [x] **C3.2** Keyboard and screen-reader pass; focus order in dialogs; no colour-only state.
   - Done 2026-10-08 for the C1 pages: skip link, `main` landmark, document title per page,
     card titles as `h2`, labelled search fields and user rows, stat tiles as named groups, the
