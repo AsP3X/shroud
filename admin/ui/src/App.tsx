@@ -5,6 +5,8 @@ import { Overview } from "./pages/Overview";
 import { Setup } from "./pages/Setup";
 import { SignIn } from "./pages/SignIn";
 import { Stub } from "./pages/Stub";
+import { UserDetail } from "./pages/UserDetail";
+import { Users } from "./pages/Users";
 
 /** One route per frame of design/admin.pen (docs/admin-plan.md §5). Pages fill in through C1 and C2. */
 export function App() {
@@ -16,8 +18,8 @@ export function App() {
         <Route element={<Shell />}>
           <Route index element={<Overview />} />
           <Route path="/privacy-checks" element={<Stub title="Privacy checks" task="C1.4" />} />
-          <Route path="/users" element={<Stub title="Users" task="C1.3" />} />
-          <Route path="/users/:id" element={<Stub title="User detail" task="C1.3" />} />
+          <Route path="/users" element={<Users />} />
+          <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/sign-ups" element={<Stub title="Sign-ups" task="C1.4" />} />
           <Route path="/operators" element={<Stub title="Operators" task="C2.3" />} />
           <Route path="/storage" element={<Stub title="Storage" task="C1.4" />} />

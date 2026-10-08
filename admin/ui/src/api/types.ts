@@ -82,6 +82,11 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
+/** `GET /users`: the page plus the totals the header and the status filter show (§3.9 #3). */
+export interface UsersPage extends Page<UserRow> {
+  totals: { accounts: number; active: number; deleted: number };
+}
+
 export type Platform = "ios" | "web" | "android" | "unknown";
 export type DevicePush = "apns" | "apns+voip" | "web" | "unifiedpush" | "none";
 
