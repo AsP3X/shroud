@@ -253,12 +253,20 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `SELECT body` is 42703 (the column does not exist), which does not prove the grant. The same
     test returns immediately when `GRANT_TEST_SUPER_URL` and `GRANT_TEST_ADMIN_URL` are unset, so
     a green run without them is not this proof. `cargo clippy --all-targets -- -D warnings` passed.
+    The throwaway container was still running after that commit; G1.1 reused it.
 
 ### Phase G1 — Session and read routes (no API change)
-- [ ] **G1.1 Bootstrap and session (C1).** `shroud-admin bootstrap [--recover]`, setup links,
+- [x] **G1.1 Bootstrap and session (C1).** `shroud-admin bootstrap [--recover]`, setup links,
   argon2id, TOTP (RFC 6238, 30 s, ±1 step), recovery codes, cookie session, CSRF, 10-per-15-min
   limit, `audit_log` rows for sign-in, failed sign-in, sign-out, setup.
   - Done when: fixtures' error cases reproduce; a `psql` dump shows no secret in the clear.
+  - Done 2026-10-08: `cargo test --test session` with `ADMIN_TEST_DATABASE_URL` set, against the
+    throwaway `postgres:16` on `127.0.0.1:54341`, runs
+    `session_flow_matches_the_fixtures_and_stores_no_secret` (4.89s, not a skip). Wrong password,
+    a used setup link and a lockout match the fixture bodies, and the admin tables hold none of
+    the password, authenticator secret, setup token or recovery codes. The same test returns
+    immediately when `ADMIN_TEST_DATABASE_URL` is unset, so a green run without it is not this
+    proof. `cargo clippy --all-targets -- -D warnings` passed.
 - [ ] **G1.2 Overview (C2).** Postgres counts (R8), `/health/ready`, `/metrics` parsed by name,
   `configured` from the console's environment, `attention` rules.
   - Done when: stopping Postgres yields `502 UPSTREAM upstream=postgres`, and

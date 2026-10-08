@@ -43,3 +43,13 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
     unlocked?;
     Ok(())
 }
+
+/// Log a database failure without a connection string. sqlx sometimes includes the URL.
+pub(crate) fn log_db(context: &str, err: &sqlx::Error) {
+    let text = err.to_string();
+    if text.contains("://") || text.contains('@') {
+        tracing::error!(context, "database error");
+    } else {
+        tracing::error!(context, error = %text, "database error");
+    }
+}

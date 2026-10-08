@@ -4,13 +4,21 @@
 //! Hashed files under `/assets/` are cached for a year. `index.html` and client-side
 //! routes are `Cache-Control: no-store`.
 //!
-//! This crate is its own Cargo workspace. Build it from `admin/api`. Rate-limit and
-//! retention constants come in later as a path dependency, not by joining `server/`.
+//! This crate is its own Cargo workspace. Build it from `admin/api`.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
+pub mod auth;
+mod crypto;
 pub mod db;
+mod error;
+mod limit;
+mod password;
+mod state;
+pub mod totp;
+
+pub use state::AppState;
 
 use axum::Router;
 use axum::extract::Request;
@@ -55,13 +63,24 @@ pub enum StartupError {
     },
     #[error("admin console stopped")]
     Serve(#[source] std::io::Error),
-    #[error("database: {0}")]
-    Database(String),
+    #[error("could not connect to the database or migrate it")]
+    Database,
+    #[error("{0}")]
+    Config(&'static str),
 }
 
-/// Router for `/healthz` and, when `dist/index.html` exists, the built UI.
+/// Router for `/healthz`, `/api/admin`, and, when `dist/index.html` exists, the built UI.
 pub fn router(dist: Option<&Path>) -> Router {
-    let mut router = Router::new().route("/healthz", get(healthz));
+    router_with(dist, AppState::disconnected())
+}
+
+pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
+    let api = auth::routes()
+        .layer(middleware::from_fn(no_store))
+        .with_state(state);
+    let mut router = Router::new()
+        .route("/healthz", get(healthz))
+        .nest("/api/admin", api);
     if let Some(dist) = dist.filter(|path| path.join("index.html").is_file()) {
         let assets = Router::new()
             .fallback_service(ServeDir::new(dist.join("assets")))
@@ -81,18 +100,8 @@ pub async fn run() -> Result<(), StartupError> {
     let addr = SocketAddr::from((config.host, config.port));
     let ui = config.dist.join("index.html").is_file();
     tracing::info!(%addr, ui, dist = %config.dist.display(), "admin console listening");
-    if let Ok(url) = std::env::var("ADMIN_DATABASE_URL")
-        && !url.is_empty()
-    {
-        let pool = db::connect(&url)
-            .await
-            .map_err(|err| StartupError::Database(err.to_string()))?;
-        db::migrate(&pool)
-            .await
-            .map_err(|err| StartupError::Database(err.to_string()))?;
-        tracing::info!("admin schema ready");
-    }
-    let app = router(Some(&config.dist));
+    let state = load_state().await?;
+    let app = router_with(Some(&config.dist), state);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|source| StartupError::Bind { addr, source })?;
@@ -102,7 +111,39 @@ pub async fn run() -> Result<(), StartupError> {
     Ok(())
 }
 
-fn init_tracing() {
+async fn load_state() -> Result<AppState, StartupError> {
+    let url = nonempty_env("ADMIN_DATABASE_URL");
+    let key_hex = nonempty_env("ADMIN_SECRET_KEY");
+    match (url, key_hex) {
+        (None, _) => Ok(AppState::disconnected()),
+        (Some(_), None) => Err(StartupError::Config(
+            "ADMIN_SECRET_KEY is required when ADMIN_DATABASE_URL is set",
+        )),
+        (Some(url), Some(key_hex)) => {
+            let Some(key) = crypto::key_from_hex(&key_hex) else {
+                return Err(StartupError::Config(
+                    "ADMIN_SECRET_KEY must be 64 hex characters",
+                ));
+            };
+            let pool = db::connect(&url).await.map_err(|err| {
+                db::log_db("connect", &err);
+                StartupError::Database
+            })?;
+            db::migrate(&pool).await.map_err(|err| {
+                db::log_db("migrate", &err);
+                StartupError::Database
+            })?;
+            tracing::info!("admin schema ready");
+            Ok(AppState::connected(pool, key))
+        }
+    }
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+pub(crate) fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     // A second call (tests, or a restarted binary in-process) leaves the first subscriber.
@@ -281,5 +322,57 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let health = call(Some(&dir.path), "/healthz").await;
         assert_eq!(health.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_routes_answer_json_when_there_is_no_database() {
+        let dir = TempDir::new("api");
+        dir.write("index.html", "<p>ui</p>");
+        let app = router(Some(&dir.path));
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(cache(&missing), NO_STORE);
+        assert_json(
+            body(missing).await,
+            include_str!("../fixtures/error.unauthenticated.json"),
+        );
+
+        let down = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/admin/session")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"operator":"operator","password":"correct-horse","totp":"123456"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(down.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(cache(&down), NO_STORE);
+        let text = body(down).await;
+        assert_ne!(text, "<p>ui</p>");
+        assert_json(
+            text,
+            include_str!("../fixtures/error.upstream-postgres.json"),
+        );
+    }
+
+    fn assert_json(actual: String, fixture: &str) {
+        let actual: serde_json::Value = serde_json::from_str(&actual).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        assert_eq!(actual, expected);
     }
 }
