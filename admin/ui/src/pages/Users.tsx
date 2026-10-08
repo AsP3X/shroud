@@ -238,6 +238,7 @@ function UserTableRow({ row, onOpen }: { row: UserRow; onOpen: () => void }) {
       link
       role="link"
       tabIndex={0}
+      aria-label={`Account ${row.id.slice(0, 8)}, ${deleted ? "deleted" : "active"}, ${row.devices} ${row.devices === 1 ? "device" : "devices"}, last active ${relativeDay(row.last_active_on)}`}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {

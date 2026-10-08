@@ -18,8 +18,10 @@ export function PageHeader({ title, meta, children }: { title: string; meta?: Re
 
 export function StatTile({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="stat-tile">
-      <div className="stat-tile__label">{label}</div>
+    <div className="stat-tile" role="group" aria-label={label}>
+      <div className="stat-tile__label" aria-hidden="true">
+        {label}
+      </div>
       <div className="stat-tile__value">{value}</div>
       {sub ? <div className="stat-tile__sub">{sub}</div> : null}
     </div>
@@ -66,7 +68,7 @@ export function SearchField(props: React.InputHTMLAttributes<HTMLInputElement>) 
   return (
     <label className="search">
       <Search aria-hidden="true" />
-      <input type="search" {...props} />
+      <input type="search" aria-label={typeof props.placeholder === "string" ? props.placeholder : "Search"} {...props} />
     </label>
   );
 }
@@ -79,7 +81,7 @@ export function CardHead({ title, sub, children }: { title: string; sub?: ReactN
   return (
     <div className="card__head">
       <div className="card__head-text">
-        <div className="card__title">{title}</div>
+        <h2 className="card__title">{title}</h2>
         {sub ? <div className="card__sub">{sub}</div> : null}
       </div>
       {children}

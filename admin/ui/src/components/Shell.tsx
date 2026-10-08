@@ -1,5 +1,5 @@
 import { Menu } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
 import type { Session } from "../api/types";
@@ -46,31 +46,71 @@ export function Shell() {
 
   useEffect(() => setDrawerOpen(false), [location.pathname]);
 
+  const title = NAV.find((entry) => (entry.to === "/" ? location.pathname === "/" : location.pathname.startsWith(entry.to)))?.label ?? "Shroud Admin";
+
+  // Screen readers announce the document title on navigation; keep it current.
+  useEffect(() => {
+    document.title = `${title} · Shroud Admin`;
+  }, [title]);
+
+  // The drawer is modal: Escape closes it, focus starts on its first link and stays inside.
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const drawer = drawerRef.current;
+    const focusable = () => Array.from(drawer?.querySelectorAll<HTMLElement>("a[href], button:not([disabled])") ?? []);
+    focusable()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDrawerOpen(false);
+        menuButtonRef.current?.focus();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
   const signOut = async () => {
     await api<void>("/session", { method: "DELETE" });
     navigate("/sign-in", { replace: true });
   };
 
-  const title = NAV.find((entry) => (entry.to === "/" ? location.pathname === "/" : location.pathname.startsWith(entry.to)))?.label ?? "Shroud Admin";
   const host = window.location.hostname;
 
   return (
     <SessionContext.Provider value={{ session, refresh }}>
+      <a className="skip-link" href="#content">
+        Skip to content
+      </a>
       <div className="shell">
         <Sidebar host={host} session={session} onSignOut={signOut} />
         <header className="topbar">
           <Mark size={28} />
           <span className="topbar__title">{title}</span>
           <span className="admin-tag">ADMIN</span>
-          <button type="button" className="topbar__menu" aria-label="Menu" onClick={() => setDrawerOpen(true)}>
+          <button ref={menuButtonRef} type="button" className="topbar__menu" aria-label="Menu" aria-expanded={drawerOpen} aria-controls="drawer" onClick={() => setDrawerOpen(true)}>
             <Menu aria-hidden="true" />
           </button>
         </header>
-        <main className="main">
+        <main className="main" id="content" tabIndex={-1}>
           <Outlet />
         </main>
         {drawerOpen ? (
-          <div className="drawer" role="dialog" aria-label="Pages">
+          <div className="drawer" role="dialog" aria-modal="true" aria-label="Pages" id="drawer" ref={drawerRef}>
             <Sidebar host={host} session={session} onSignOut={signOut} onNavigate={() => setDrawerOpen(false)} />
             <button type="button" className="drawer__close" aria-label="Close menu" onClick={() => setDrawerOpen(false)} />
           </div>
