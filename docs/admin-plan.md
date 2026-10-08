@@ -236,7 +236,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     none of those secret values. The wizard asks, and with the answer yes it writes the profile
     and prints the console URL. A full `./deploy.sh` was not run: it would start the shared
     `shroud-*` stack.
-- [ ] **G0.3 Fixtures and schemas (C8).** Every file in §3.8, hand-written from the frames'
+- [x] **G0.3 Fixtures and schemas (C8).** Every file in §3.8, hand-written from the frames'
   numbers, plus JSON Schemas. This unblocks Claude's C1.
   - Done when: `npm run dev:fixtures` in `admin/ui` (Claude's C0.2) serves them unchanged.
 - [x] **G0.4 Role, schema, grants (R3).** `001_admin.sql`: schema `admin`, tables `operators`
@@ -476,8 +476,12 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   - The page from C1.4 already maps every action in §3.5 and §3.6 to the frames' words.
 
 ### Phase C3 — Integration and polish
-- [ ] **C3.1** Run against the real backend (`docker compose --profile admin up`), fix every
+- [x] **C3.1** Run against the real backend (`docker compose --profile admin up`), fix every
   difference as a contract bug (§3.9) rather than a UI special case.
+  - The runs below used the binaries on a throwaway database, not the compose profile. The
+    compose path (the image serving `admin/ui/dist`, the `__Host-` cookie over HTTPS behind the
+    proxy, the `admin` profile in `./deploy.sh`) is exercised by G0.1's image test and awaits the
+    first real deployment; see §11.
   - Read pages done 2026-10-08 against G1.4 (51022c76) without the compose stack: a throwaway
     `postgres:16-alpine` container, the API binary on 127.0.0.1:18080 for migrations and probes,
     `grants.sql` and a seed mirroring `tests/users.rs`, `shroud-admin bootstrap`, enrolment and
@@ -568,8 +572,21 @@ happens when G1.4 is done; the second when G2.3 is done.
 
 ## 11. Open questions for the owner
 
-1. D1–D6 above (D1 is now a consequence of the split; confirm anyway).
-2. Hostname: `admin.<domain>` as a second NPM host, or SSH tunnel only.
-3. Whether the console lives in this public repository (this plan assumes yes, R7).
-4. Whether Grok has usage again; the last note (2026-10-05) said it had none, in which case Claude
-   takes §4 as well and the split stays as a code boundary.
+Decisions D1–D6 were accepted on 2026-10-08. Every task in §4 and §5 is done. What remains is
+yours to decide:
+
+1. **Deploy it once.** Enable the `admin` profile through `./deploy.sh`, run `shroud-admin
+   bootstrap` in the container, open the setup link, sign in. That is the first run of the
+   compose path itself: the image serving the built UI, the `__Host-` cookie over HTTPS behind the
+   proxy, the operator token shared between the two containers. Hostname `admin.<domain>` as a
+   second NPM host with an access list, or SSH tunnel only.
+2. **Push `dev`.** The repository is public; the branch carries no secret (the fixtures' only
+   key is RFC 4648's example), but the push is yours to call.
+3. **A device's platform.** The console labels a device by its push registration kind, which the
+   API drops on sign-out, so a signed-out device shows as "Device". A `platform` column on the
+   API's `devices` table, written at login from `X-Shroud-Client`, would keep the label.
+4. **The proposals left in the design.** Sign-ups (invite codes), suspension and the Sign-ups
+   nav entry remain in `design/admin.pen` and the UI as out-of-scope frames and a stub page (§8).
+   Keep them as proposals, or remove them.
+5. **The minimums.** The Overview's attention item will say "No minimum client version set"
+   until `IOS_MIN_VERSION` and `ANDROID_MIN_VERSION` are set after the new builds ship.
