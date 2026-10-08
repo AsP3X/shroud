@@ -1,0 +1,95 @@
+/* The variables of design/admin.pen, one custom property each. Dark is the default theme; light
+   follows the system unless <html data-theme="dark" | "light"> pins one. The light block is
+   written twice because plain CSS has no way to share it between a media query and an attribute. */
+:root {
+  --bg: #000000;
+  --surface-1: #0a0a0e;
+  --surface-2: #17171d;
+  --surface-3: #22222a;
+  --canvas: #0e0e14;
+  --text-primary: #ffffff;
+  --text-secondary: #a6a6b0;
+  --text-tertiary: #8a8a99;
+  --accent: #6464f2;
+  --accent-hover: #7878f6;
+  --accent-soft: #23234a;
+  --accent-text: #a7a7fa;
+  --on-accent: #ffffff;
+  --separator: #2a2a31;
+  --hover: #ffffff0e;
+  --scrim: #000000a8;
+  --danger: #ff6b61;
+  --danger-bg: #c0271d;
+  --danger-soft: #3a1512;
+  --ok-bg: #14331c;
+  --ok-text: #7ddea0;
+  --online: #34c759;
+  --warn-bg: #3a2a12;
+  --warn-text: #f5d9a6;
+  --warn: #f2a93b;
+
+  --font-ui: "Inter Variable", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --radius: 14px;
+  --radius-sm: 10px;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ffffff;
+    --surface-1: #f7f7fa;
+    --surface-2: #ffffff;
+    --surface-3: #ffffff;
+    --canvas: #f1f1f6;
+    --text-primary: #0b0b12;
+    --text-secondary: #555562;
+    --text-tertiary: #6c6c7a;
+    --accent: #5e5ce6;
+    --accent-hover: #4b49d6;
+    --accent-soft: #ececfc;
+    --accent-text: #4b49d6;
+    --separator: #e2e2e8;
+    --hover: #0a0a190b;
+    --scrim: #12121e57;
+    --danger: #d02a1b;
+    --danger-bg: #c62716;
+    --danger-soft: #fdecea;
+    --ok-bg: #e4f7ea;
+    --ok-text: #1d7a3e;
+    --online: #1b7e3f;
+    --warn-bg: #fff4de;
+    --warn-text: #7a5310;
+    --warn: #b86e00;
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface-1: #f7f7fa;
+  --surface-2: #ffffff;
+  --surface-3: #ffffff;
+  --canvas: #f1f1f6;
+  --text-primary: #0b0b12;
+  --text-secondary: #555562;
+  --text-tertiary: #6c6c7a;
+  --accent: #5e5ce6;
+  --accent-hover: #4b49d6;
+  --accent-soft: #ececfc;
+  --accent-text: #4b49d6;
+  --separator: #e2e2e8;
+  --hover: #0a0a190b;
+  --scrim: #12121e57;
+  --danger: #d02a1b;
+  --danger-bg: #c62716;
+  --danger-soft: #fdecea;
+  --ok-bg: #e4f7ea;
+  --ok-text: #1d7a3e;
+  --online: #1b7e3f;
+  --warn-bg: #fff4de;
+  --warn-text: #7a5310;
+  --warn: #b86e00;
+  color-scheme: light;
+}
