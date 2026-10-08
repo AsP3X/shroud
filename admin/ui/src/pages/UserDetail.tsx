@@ -81,10 +81,11 @@ export function UserDetail() {
     const outcome = await write(what, () => api<void>(path, { method: "POST", body }));
     setBusy(false);
     setPending(null);
+    // Refused and failed attempts are audited too, so the list below refreshes either way.
+    if (outcome.title !== "Cancelled") audit.reload();
     if (outcome.ok) {
       toast(done);
       user.reload();
-      audit.reload();
       after?.();
     } else if (outcome.title !== "Cancelled") {
       setFailure(outcome);
