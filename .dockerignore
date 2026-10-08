@@ -1,0 +1,18 @@
+# Build context for admin/Dockerfile (repo root). The API and web images use
+# their own contexts and their own dockerignore files.
+.git
+.claude
+**/.DS_Store
+**/node_modules
+**/target
+**/dist
+android
+ios
+design
+docs
+**/*.pen
+web
+*.md
+.env
+.env.*
+!.env.example

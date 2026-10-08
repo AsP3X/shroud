@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/shroud-server"]
+# shroud-admin's sources live in admin/api (fixtures included). Cargo rejects a
+# member outside this directory, so crates/shroud-admin is a symlink there.
+members = ["crates/shroud-server", "crates/shroud-admin"]
 default-members = ["crates/shroud-server"]
 
 [workspace.package]

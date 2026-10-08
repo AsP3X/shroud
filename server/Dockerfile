@@ -8,11 +8,18 @@ WORKDIR /app
 # Cache dependency builds when only sources change.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/shroud-server/Cargo.toml crates/shroud-server/Cargo.toml
+# crates/shroud-admin is a symlink to admin/api, outside this build context.
+# Cargo still loads every workspace member. This image only compiles
+# shroud-server, so the member manifest (same dependencies as admin/api) and
+# a dummy source are enough.
+COPY docker/shroud-admin-member.toml crates/shroud-admin/Cargo.toml
 
-# Dummy main so `cargo build` can resolve deps before full sources copy.
-RUN mkdir -p crates/shroud-server/src \
+# Dummy mains so `cargo build` can resolve deps before full sources copy.
+RUN mkdir -p crates/shroud-server/src crates/shroud-admin/src \
     && echo 'fn main() {}' > crates/shroud-server/src/main.rs \
     && echo 'pub fn placeholder() {}' > crates/shroud-server/src/lib.rs \
+    && echo 'fn main() {}' > crates/shroud-admin/src/main.rs \
+    && echo 'pub fn placeholder() {}' > crates/shroud-admin/src/lib.rs \
     && cargo build --release -p shroud-server \
     && rm -rf crates/shroud-server/src
 

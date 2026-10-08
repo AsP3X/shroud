@@ -1,4 +1,5 @@
-# Full stack: Postgres, Redis, Nebular OS, shroud-server API, and the web client.
+# Full stack: Postgres, Redis, Nebular OS, shroud-server API, the web client,
+# and (with --profile admin) the admin console.
 # Agent: READS .env; WRITES volumes. Public entry is either host ports (local overlay)
 #        or Nginx Proxy Manager (npm overlay) — see ./deploy.sh.
 #
@@ -230,6 +231,35 @@ services:
       timeout: 5s
       retries: 6
       start_period: 10s
+    restart: unless-stopped
+
+  # Operator console. Off unless the admin profile is selected. G0.1 serves
+  # /healthz and the built UI; it does not connect to Postgres or the API.
+  # The host port is on this service so `docker compose --profile admin up`
+  # binds 127.0.0.1:8082 without an overlay. G0.2 adds env and the npm network
+  # and must not publish this port a second time.
+  admin:
+    profiles: ["admin"]
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+    container_name: shroud-admin
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8082"
+      ADMIN_DIST: /ui/dist
+      RUST_LOG: info
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-8082}:8082"
+    networks:
+      - shroud-internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
 
   # TURN relay for calls whose networks refuse a direct path. Host networking: it hands out

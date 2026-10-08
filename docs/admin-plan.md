@@ -189,12 +189,14 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 ## 4. Grok backlog (backend: `admin/api`, `shroud-server`, compose)
 
 ### Phase G0 — Skeleton, contract fixtures, deployment
-- [ ] **G0.1 Crate and image.** `admin/api` as `shroud-admin` in the workspace; `/healthz`;
+- [x] **G0.1 Crate and image.** `admin/api` as `shroud-admin` in the workspace; `/healthz`;
   serves `admin/ui/dist` when present (static, `index.html` fallback, hashed assets cached a year,
   `index.html` `no-store`); `admin/Dockerfile` two-stage (Node 22 for `ui`, Rust for `api`,
   distroless final, non-root, `read_only: true`).
-  - Done when: `docker compose --profile admin up -d --build` serves `/healthz` and a placeholder
-    `index.html` on `127.0.0.1:8082`.
+  - Done 2026-10-08: `docker compose --profile admin` serves `/healthz` (`ok`) and the built
+    `index.html` on `127.0.0.1:8082`. Cargo will not accept a member outside `server/`, so
+    `server/crates/shroud-admin` is a symlink to `admin/api`. The API image still builds from
+    `./server`; it carries a copy of the admin manifest so that workspace loads.
 - [ ] **G0.2 Compose, env, deploy.** Service `admin` with `profiles: ["admin"]`; host port in
   `docker-compose.host-ports.yml`, `proxy-network` in `docker-compose.npm.yml`; `ADMIN_PORT`,
   `ADMIN_PUBLIC_URL`, `ADMIN_DATABASE_URL`, `ADMIN_SECRET_KEY`, `OPERATOR_PORT`, `OPERATOR_TOKEN`
