@@ -385,9 +385,23 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     echoed and logged with the method, the path and the status. Anything else is replaced. The
     line has no query string and no address from `X-Forwarded-For` or `Forwarded`.
     `cargo clippy --all-targets --offline -- -D warnings` passed.
-- [ ] **G3.2** Tests: grants (R3), session flow, re-auth timing, every route against a seeded
+- [x] **G3.2** Tests: grants (R3), session flow, re-auth timing, every route against a seeded
   throwaway database with schema validation, operator-API token checks, `cargo clippy -D warnings`.
   They run with `cargo test` in the workspace.
+  - Done 2026-10-09: `cargo test --offline --jobs 1 -- --test-threads=1` in `admin/api` with
+    `ADMIN_TEST_DATABASE_URL`, `GRANT_TEST_ADMIN_URL` and `GRANT_TEST_SUPER_URL` set, against a
+    throwaway `postgres:16` (`pg-admin-g3` on `127.0.0.1:54344`, removed after the run). Nothing
+    skipped. `shroud_admin_cannot_read_forbidden_columns` returns SQLSTATE 42501 for the columns
+    in R3. `session_flow_matches_the_fixtures_and_stores_no_secret` opens a session and checks the
+    re-auth window is five minutes. `writes_require_reauth_and_audit_each_attempt` refuses a stale
+    re-auth and checks the operator-API bearer. `operators_list_invites_and_end_sessions`,
+    `overview_matches_the_schema_and_a_failing_probe_is_not_ready`,
+    `read_only_pages_match_the_schema` and
+    `users_list_and_detail_match_the_schema_and_hide_sealed_names` match the fixture schemas.
+    `lost_push_registration_is_platform_unknown`: after the device's push rows are deleted the
+    way a sign-out deletes them, `GET /users/{id}` still matches `user.schema.json` and that
+    device is `platform: "unknown"`, `push: "none"`, not revoked.
+    `cargo clippy --all-targets --offline -- -D warnings` passed.
 - [ ] **G3.3** `docs/admin.md` operations note: backup (schema `admin`), lost `ADMIN_SECRET_KEY`
   (re-enrol TOTP), `bootstrap --recover`.
 

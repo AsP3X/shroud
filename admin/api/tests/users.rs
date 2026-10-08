@@ -32,6 +32,12 @@ const SEALED: &[u8] = b"SEALED-DEVICE-NAME-DO-NOT-LEAK!!";
 const TOKEN: &str = "apns-token-do-not-leak";
 const ENDPOINT: &str = "https://leak.example/endpoint-do-not-leak";
 const OBJECT_KEY: &str = "secret/object-key-do-not-leak";
+const LOST_OPERATOR: &str = "00000000-0000-4000-8000-00000000b1c3";
+const LOST_SESSION: &str = "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc";
+const LOST_USER: &str = "a11ce000-0000-4000-8000-0000000000c3";
+const LOST_DEVICE: &str = "a11ce000-0000-4000-8000-00000000c3d1";
+const LOST_TOKEN: &str = "lost-apns-token-do-not-leak";
+const LOST_ENDPOINT: &str = "https://leak.example/lost-endpoint-do-not-leak";
 
 #[tokio::test]
 async fn users_list_and_detail_match_the_schema_and_hide_sealed_names() {
@@ -168,6 +174,131 @@ async fn users_list_and_detail_match_the_schema_and_hide_sealed_names() {
     assert_eq!(missing.body["code"], "NOT_FOUND");
 
     clear(&admin, &owner, operator, &users).await;
+}
+
+/// A sign-out deletes push registrations and leaves the device. The detail still matches
+/// the schema, and the platform is `unknown` because the devices table stores none.
+#[tokio::test]
+async fn lost_push_registration_is_platform_unknown() {
+    let Some(admin_url) = nonempty("ADMIN_TEST_DATABASE_URL") else {
+        eprintln!("ADMIN_TEST_DATABASE_URL unset; lost push registration test not run");
+        return;
+    };
+    let Some(super_url) = nonempty("GRANT_TEST_SUPER_URL") else {
+        eprintln!("GRANT_TEST_SUPER_URL unset; lost push registration test not run");
+        return;
+    };
+    let admin = PgPoolOptions::new()
+        .connect(&admin_url)
+        .await
+        .expect("shroud_admin connection");
+    shroud_admin::db::migrate(&admin)
+        .await
+        .expect("admin migrations");
+    let owner = PgPoolOptions::new()
+        .connect(&super_url)
+        .await
+        .expect("owner connection");
+    let operator = Uuid::parse_str(LOST_OPERATOR).unwrap();
+    let user = Uuid::parse_str(LOST_USER).unwrap();
+    let device = Uuid::parse_str(LOST_DEVICE).unwrap();
+    clear(&admin, &owner, operator, &[user]).await;
+
+    sqlx::query(
+        "INSERT INTO admin.operators (id, name, role, enabled) VALUES ($1, 'lost-push-probe', 'read', true)",
+    )
+    .bind(operator)
+    .execute(&admin)
+    .await
+    .unwrap();
+    let digest = Sha256::digest(LOST_SESSION.as_bytes());
+    let mut id_hash = [0u8; 32];
+    id_hash.copy_from_slice(&digest);
+    sqlx::query(
+        "INSERT INTO admin.operator_sessions (id_hash, operator_id, csrf) VALUES ($1, $2, 'csrf')",
+    )
+    .bind(id_hash.as_slice())
+    .bind(operator)
+    .execute(&admin)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO users (id, username_hash, password_hash, share_code, created_at)
+         VALUES ($1, $2, 'overview-secret-hash', $3, $4)",
+    )
+    .bind(user)
+    .bind(vec![0xc3_u8; 32])
+    .bind("LOST0001")
+    .bind(sql_time("2026-10-01 12:00:00+0000"))
+    .execute(&owner)
+    .await
+    .unwrap();
+    insert_device(
+        &owner,
+        device,
+        user,
+        "2026-10-01 12:00:00+0000",
+        Some("2026-10-08 08:00:00+0000"),
+        None,
+        None,
+    )
+    .await;
+    for kind in ["alert", "voip"] {
+        sqlx::query(
+            "INSERT INTO push_tokens (device_id, apns_token, environment, kind) VALUES ($1, $2, 'sandbox', $3)",
+        )
+        .bind(device)
+        .bind(format!("{LOST_TOKEN}-{kind}"))
+        .bind(kind)
+        .execute(&owner)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO web_push_subscriptions (device_id, endpoint, p256dh, auth, client)
+         VALUES ($1, $2, $3, $4, 'browser')",
+    )
+    .bind(device)
+    .bind(LOST_ENDPOINT)
+    .bind(vec![7_u8; 65])
+    .bind(vec![8_u8; 16])
+    .execute(&owner)
+    .await
+    .unwrap();
+    for table in [
+        "push_tokens",
+        "web_push_subscriptions",
+        "device_notification_settings",
+        "device_pin_guards",
+    ] {
+        let sql = format!("DELETE FROM {table} WHERE device_id = $1");
+        sqlx::query(&sql)
+            .bind(device)
+            .execute(&owner)
+            .await
+            .unwrap();
+    }
+
+    let app = shroud_admin::router_with(None, AppState::connected(admin.clone(), [9_u8; 32]));
+    let detail = send(
+        &app,
+        &format!("/api/admin/users/{LOST_USER}"),
+        Some(LOST_SESSION),
+    )
+    .await;
+    assert_eq!(detail.status, StatusCode::OK, "{}", detail.text);
+    assert_schema("user.schema.json", &detail.body);
+    assert!(!detail.text.contains(LOST_TOKEN), "{}", detail.text);
+    assert!(!detail.text.contains(LOST_ENDPOINT), "{}", detail.text);
+    let devices = detail.body["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0]["id"], LOST_DEVICE);
+    assert_eq!(devices[0]["platform"], "unknown");
+    assert_eq!(devices[0]["push"], "none");
+    assert_eq!(devices[0]["revoked"], false);
+    assert_eq!(devices[0]["session"], "none");
+
+    clear(&admin, &owner, operator, &[user]).await;
 }
 
 fn assert_private(text: &str) {
