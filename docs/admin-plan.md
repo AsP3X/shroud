@@ -582,9 +582,11 @@ yours to decide:
    second NPM host with an access list, or SSH tunnel only.
 2. **Push `dev`.** The repository is public; the branch carries no secret (the fixtures' only
    key is RFC 4648's example), but the push is yours to call.
-3. **A device's platform.** The console labels a device by its push registration kind, which the
-   API drops on sign-out, so a signed-out device shows as "Device". A `platform` column on the
-   API's `devices` table, written at login from `X-Shroud-Client`, would keep the label.
+3. **A device's platform** — decided 2026-10-09: no `platform` column. The server stores as
+   little as it can, so that no one but the user can read what is theirs; a label the console
+   would like is not a reason to keep data. The console labels a device by its push registration
+   kind, a sign-out deletes those rows, and the device then shows as "Device"
+   (`platform: "unknown"`). That loss is accepted and is how §3.3 already reads.
 4. **The proposals left in the design.** Sign-ups (invite codes), suspension and the Sign-ups
    nav entry remain in `design/admin.pen` and the UI as out-of-scope frames and a stub page (§8).
    Keep them as proposals, or remove them.
