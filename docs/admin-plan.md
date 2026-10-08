@@ -21,7 +21,7 @@ server really knows; see the rules in §2.
 
 ```
 admin/
-├── api/                     Grok · crate `shroud-admin`, member of server/Cargo.toml's workspace
+├── api/                     Grok · crate `shroud-admin`, its own Cargo workspace
 │   ├── src/                 axum, sqlx, TOTP, sessions, audit log, operator-API client
 │   ├── migrations/          schema `admin` (operators, operator_sessions, audit_log)
 │   └── fixtures/            JSON samples of every response in §3 (the contract's test data)
@@ -194,10 +194,9 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
   `index.html` `no-store`); `admin/Dockerfile` two-stage (Node 22 for `ui`, Rust for `api`,
   distroless final, non-root, `read_only: true`).
   - Done 2026-10-08: `docker compose --profile admin` serves `/healthz` (`ok`) and the built
-    `index.html` on `127.0.0.1:8082`. Cargo will not accept a member outside `server/`, so
-    `server/crates/shroud-admin` is a symlink to `admin/api`. The API image still builds from
-    `./server`; it carries a copy of the admin manifest so that workspace loads.
-- [ ] **G0.5 Make `admin/api` its own Cargo workspace; remove the symlink.** G0.1 wired the
+    `index.html` on `127.0.0.1:8082`. The symlink that first put the crate under `server/crates/`
+    is removed in G0.5; `admin/api` is its own workspace.
+- [x] **G0.5 Make `admin/api` its own Cargo workspace; remove the symlink.** G0.1 wired the
   crate into `server/Cargo.toml` through `server/crates/shroud-admin → ../../admin/api`, plus a
   copy of its manifest in `server/docker/shroud-admin-member.toml` for the API image. That couples
   three things that must now be kept in step by hand: the manifest copy (a dependency added to
@@ -215,9 +214,9 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `shroud-server = { path = "../../server/crates/shroud-server", default-features = false }`,
     a path dependency a standalone crate may have; if that pulls too much, expose the constants
     from a tiny `shroud-constants` crate under `server/crates/` that both depend on.
-  - Done when: `cargo build` in `admin/api` and in `server/` each succeed on their own, `git
-    ls-files -s server/crates` shows no symlink (mode 120000), the API image builds without any
-    admin file, and the admin image builds from the repository root as before.
+  - Done 2026-10-08: `cargo build` succeeds in `admin/api` and in `server/` separately. `git
+    ls-files -s server/crates` has no symlink. The API image builds from `./server` with no admin
+    file in its Dockerfile or context, and the admin image builds from the repository root.
 - [ ] **G0.2 Compose, env, deploy.** Service `admin` with `profiles: ["admin"]`; host port in
   `docker-compose.host-ports.yml`, `proxy-network` in `docker-compose.npm.yml`; `ADMIN_PORT`,
   `ADMIN_PUBLIC_URL`, `ADMIN_DATABASE_URL`, `ADMIN_SECRET_KEY`, `OPERATOR_PORT`, `OPERATOR_TOKEN`

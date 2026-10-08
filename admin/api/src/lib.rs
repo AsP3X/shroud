@@ -4,8 +4,8 @@
 //! Hashed files under `/assets/` are cached for a year. `index.html` and client-side
 //! routes are `Cache-Control: no-store`.
 //!
-//! The package is a member of the server workspace through `server/crates/shroud-admin`
-//! (a symlink to this directory). Build it from `server/`: `cargo test -p shroud-admin`.
+//! This crate is its own Cargo workspace. Build it from `admin/api`. Rate-limit and
+//! retention constants come in later as a path dependency, not by joining `server/`.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;

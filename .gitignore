@@ -1,5 +1,6 @@
 # Rust
 /server/target/
+/admin/api/target/
 **/*.rs.bk
 
 # iOS / Xcode

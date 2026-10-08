@@ -14,23 +14,17 @@ RUN npm run build
 
 FROM rust:1-bookworm AS rust
 
+# admin/api is its own workspace. This stage copies that directory only.
 WORKDIR /src
-COPY server/Cargo.toml server/Cargo.lock server/rust-toolchain.toml ./
-COPY server/crates/shroud-server/Cargo.toml crates/shroud-server/Cargo.toml
-# The workspace member crates/shroud-admin is a symlink to admin/api, which
-# Docker will not follow out of the server build context. Copy the crate in
-# as a real directory. Only its manifest is needed to cache dependencies.
-COPY admin/api/Cargo.toml crates/shroud-admin/Cargo.toml
-RUN mkdir -p crates/shroud-server/src crates/shroud-admin/src \
-    && printf '%s\n' 'fn main() {}' > crates/shroud-server/src/main.rs \
-    && printf '%s\n' 'pub fn placeholder() {}' > crates/shroud-server/src/lib.rs \
-    && printf '%s\n' 'fn main() {}' > crates/shroud-admin/src/main.rs \
-    && printf '%s\n' 'pub fn placeholder() {}' > crates/shroud-admin/src/lib.rs \
-    && cargo build --release -p shroud-admin \
-    && rm -rf crates/shroud-admin/src
-COPY admin/api/src crates/shroud-admin/src
-RUN touch crates/shroud-admin/src/lib.rs crates/shroud-admin/src/main.rs \
-    && cargo build --release -p shroud-admin
+COPY admin/api/Cargo.toml admin/api/Cargo.lock admin/api/rust-toolchain.toml ./
+RUN mkdir -p src \
+    && printf '%s\n' 'fn main() {}' > src/main.rs \
+    && printf '%s\n' 'pub fn placeholder() {}' > src/lib.rs \
+    && cargo build --release \
+    && rm -rf src
+COPY admin/api/src ./src
+RUN touch src/lib.rs src/main.rs \
+    && cargo build --release
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 
