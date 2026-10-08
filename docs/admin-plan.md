@@ -260,16 +260,21 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 ## 5. Claude backlog (frontend: `admin/ui`, `design/admin.pen`)
 
 ### Phase C0 — Project, tokens, fixtures server
-- [ ] **C0.1 Project.** `admin/ui` with Vite + React 19 + TypeScript (strict), ESLint as in
-  `web/`, no dependency on `web/`; `npm run build` to `dist/`; routes for every frame.
-- [ ] **C0.2 Fixture dev server.** `dev-server.ts` serving `admin/api/fixtures` under
+- [x] **C0.1 Project.** `admin/ui` with Vite + React 19 + TypeScript (strict, like `web/`, which
+  has no ESLint either), no dependency on `web/`; `npm run build` to `dist/`; routes for every frame.
+  - Done 2026-10-08: `npm run build` passes `tsc -b`; every frame has a route (pages are stubs
+    until C1/C2).
+- [x] **C0.2 Fixture dev server.** `dev-server.ts` serving `admin/api/fixtures` under
   `/api/admin/*`, with `?state=` to pick the `<route>.<state>.json` variants, a fake session, and
   latency/failure switches for the loading and error frames. Unblocked by G0.3.
-- [ ] **C0.3 Tokens and shell.** The `.pen` variables as CSS custom properties (both themes,
+  - Done 2026-10-08: `npm run dev:fixtures`; switches on `/__fixtures`; `?state=error:<name>`
+    answers with that error file and status; writes need the fake re-auth (`admin/ui/README.md`).
+- [x] **C0.3 Tokens and shell.** The `.pen` variables as CSS custom properties (both themes,
   `prefers-color-scheme` with a manual override), Inter and JetBrains Mono self-hosted, the Sidebar,
   NavItem, StatTile, StatusPill, Button, SearchField and table components; the phone top bar.
   Design task: drop "pool 4 of 10 in use" from the three Overview frames (§3.2).
-  - Done when: a Storybook-free gallery route renders each component beside its frame's values.
+  - Done 2026-10-08: `/gallery` renders each component beside its frame's values; the phone layout
+    (≤ 600 px) shows the top bar and a drawer with the sidebar.
 
 ### Phase C1 — Sign-in and read-only pages (against fixtures)
 - [ ] **C1.1 Sign in** [Sign in, Sign in · Error], setup/enrolment page with the QR, recovery
