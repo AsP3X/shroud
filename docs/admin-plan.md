@@ -282,10 +282,19 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     answers 503. A closed `API_INTERNAL_URL` returns `error.upstream-api.json`. The response for
     the seeded device contains no byte of its sealed name. Each view runs `SELECT 1`; the counts
     run at most once a minute. `cargo clippy --all-targets -- -D warnings` passed.
-- [ ] **G1.3 Users and user detail (C3).** Cursor pagination on `(created_at, id)`, id-prefix
+- [x] **G1.3 Users and user detail (C3).** Cursor pagination on `(created_at, id)`, id-prefix
   search, platform and push from registrations, day-level dates, placeholder detection.
   - Done when: responses validate against the schemas, and a response for a seeded account with a
     sealed device name contains no byte of that name (test).
+  - Done 2026-10-08: `cargo test --test users` with `ADMIN_TEST_DATABASE_URL` and
+    `GRANT_TEST_SUPER_URL` against the throwaway `postgres:16` on `127.0.0.1:54341` runs
+    `users_list_and_detail_match_the_schema_and_hide_sealed_names` (not a skip). The list and the
+    detail validate against `schema/users.schema.json` and `schema/user.schema.json`. `status`
+    filters the page and `totals` stays the whole table (§3.9 #3). A search that is not 4–36 hex
+    or dashes matches `error.validation.json`. The seeded response contains none of the sealed
+    device name, the APNs token, the push endpoint or the object key. Without either URL the test
+    returns immediately, so a green run is not this proof. `cargo clippy --all-targets -- -D warnings`
+    passed.
 - [ ] **G1.4 Read-only pages (C4).** `storage`, `client-versions`, `rate-limits`, `retention`,
   `push`, `calls`, `privacy-checks`, `configuration`, `audit-log`. Rate limits and retention come
   from the API crate's constants through a tiny `shroud-server` dependency on the `budgets` module

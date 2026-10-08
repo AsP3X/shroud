@@ -70,6 +70,14 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", "No such admin route.")
     }
 
+    pub fn missing_account() -> Self {
+        Self::new(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "No account has that id.",
+        )
+    }
+
     pub fn validation(message: &'static str) -> Self {
         Self::new(StatusCode::BAD_REQUEST, "VALIDATION_ERROR", message)
     }

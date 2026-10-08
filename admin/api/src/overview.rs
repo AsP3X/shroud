@@ -174,7 +174,7 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Result<R
     .into_response())
 }
 
-async fn load_counts(state: &AppState) -> Result<Counts, ApiError> {
+pub(crate) async fn load_counts(state: &AppState) -> Result<Counts, ApiError> {
     let pool = state
         .pool()
         .cloned()

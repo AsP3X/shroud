@@ -19,6 +19,7 @@ mod password;
 mod probe;
 mod state;
 pub mod totp;
+mod users;
 
 pub use state::AppState;
 
@@ -79,6 +80,7 @@ pub fn router(dist: Option<&Path>) -> Router {
 pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
     let api = auth::routes()
         .merge(overview::routes())
+        .merge(users::routes())
         .fallback(auth::unknown)
         .layer(middleware::from_fn(no_store))
         .with_state(state);
