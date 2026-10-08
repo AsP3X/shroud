@@ -1,0 +1,101 @@
+/* Page-specific pieces, each named after its frame in design/admin.pen. */
+
+/* Overview · Services (ServiceRow component: 60 high, icon well 32, name 14/500, detail 12) */
+.services {
+  display: flex;
+  flex-direction: column;
+}
+
+.service {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--separator);
+}
+
+.service:last-child {
+  border-bottom: 0;
+}
+
+.service__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
+
+.service__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.service__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.service__name {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.service__detail {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Overview · Needs attention */
+.attention {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 20px;
+}
+
+.attention__item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--separator);
+}
+
+.attention__item:last-child {
+  border-bottom: 0;
+}
+
+a.attention__item:hover .attention__title {
+  text-decoration: underline;
+}
+
+.attention__item svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--warn);
+}
+
+.attention__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.attention__title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.attention__body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}

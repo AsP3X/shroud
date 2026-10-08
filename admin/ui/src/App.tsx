@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Shell } from "./components/Shell";
 import { Gallery } from "./pages/Gallery";
+import { Overview } from "./pages/Overview";
 import { Setup } from "./pages/Setup";
 import { SignIn } from "./pages/SignIn";
 import { Stub } from "./pages/Stub";
@@ -13,7 +14,7 @@ export function App() {
         <Route path="/sign-in" element={<SignIn />} />
         <Route path="/setup/:token" element={<Setup />} />
         <Route element={<Shell />}>
-          <Route index element={<Stub title="Overview" task="C1.2" />} />
+          <Route index element={<Overview />} />
           <Route path="/privacy-checks" element={<Stub title="Privacy checks" task="C1.4" />} />
           <Route path="/users" element={<Stub title="Users" task="C1.3" />} />
           <Route path="/users/:id" element={<Stub title="User detail" task="C1.3" />} />
