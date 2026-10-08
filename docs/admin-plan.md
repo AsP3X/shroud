@@ -185,6 +185,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
 | 2 | 2026-10-08 | §3.2 `attention[].count` is optional; `no_min_version` and `not_ready` carry none. | Grok (G0.3) |
 | 3 | 2026-10-08 | §3.3 `GET /users` takes an optional `status=active \| deleted` filter (the Users frame's All / Active / Deleted segments, filtered on the server so paging stays right), and its response carries `totals: { accounts, active, deleted }` for the header and the segment labels. `users.json`, `users.empty.json` and `schema/users.schema.json` updated in the same commit. | Claude (C1.3) |
 | 4 | 2026-10-08 | §3.4 `GET /audit-log` takes an optional `target=<id>` that returns only entries whose `target_id` is that account or one of its devices (User detail's "Admin actions on this account"). No fixture change: the dev server ignores the parameter and the UI filters the page it gets. | Claude (C1.3) |
+| 8 | 2026-10-08 | Design, for C2: the Operators frame loses "Your sessions" (no route lists an operator's sessions; §3.6 has none) and gains two frames, "Operators · Add operator" (name and role, then the setup link shown once with Copy) and "Operators · Menu" (the row's menu: Make admin / Make view only, Reset authenticator, Disable). The UI's "Role" column says Admin for `write` and View only for `read`, as the frame does. | Claude (C2.3) |
 | 6 | 2026-10-08 | Design, for the read-only pages (C1.4): the Storage frames lose the daily chart, the per-account ranking, the last and next cleanup run and "Run now" (the frame "Storage · Run cleanup" goes), keeping the counts the contract has and gaining a legacy-volume card; the Calls frame loses "Test TURN", the call-today, relay-share, relay-count and traffic tiles, the outcomes and the last-test card, keeping the ICE table, the sweep timings and the relay note; Privacy checks loses the task links and the "last change" tile; the Audit log loses the client addresses and "Kept for 365 days". None of these is a contract field or a server record. | Claude (C1.4) |
 | 5 | 2026-10-08 | Design: the Users frames lose "Export CSV" (no route exports anything) and gain a "Mixed" legend key; User detail frames lose "Suspend" (out of scope, §8) and the "Keys and storage" rows the contract has no field for (one-time prekeys, unattached media, calls in 30 days), keeping media stored and adding the PIN-guard row. | Claude (C1.3) |
 | 7 | 2026-10-08 | §3.4 `GET /calls` `created_total` is the process counter `shroud_calls_created_total` (the Calls frame: "Since the last restart · the only call counter"). The `calls` table has no column grant, so this is not a lifetime count. `GET /privacy-checks` "Username hashes are quick to guess" fills the account count from the live `users` table (`Plain SHA-256. {n} accounts still need the slow hash.`); the fixture's 1,284 is the frame's sample. | Grok (G1.4) |
@@ -383,13 +384,21 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     `npm run build` passes `tsc` with no `any`.
 
 ### Phase C2 — Writes and operators
-- [ ] **C2.1 Re-auth dialog** [User detail · Confirm it's you] driven by `403 REAUTH_REQUIRED`;
+- [x] **C2.1 Re-auth dialog** [User detail · Confirm it's you] driven by `403 REAUTH_REQUIRED`;
   retries the write after a successful `POST /session/reauth`.
-- [ ] **C2.2 Confirmations and outcomes** [· Remove device, · Sign out all devices, · Delete
+  - Built 2026-10-08 against the fixtures (`useWrite`): the dialog is modal, takes focus, Escape
+    cancels, focus returns to the opener. Awaits G2.2 for the real run (C3.1).
+- [x] **C2.2 Confirmations and outcomes** [· Remove device, · Sign out all devices, · Delete
   account, · Device removed]; `409 ALREADY_DONE` and `502 UPSTREAM` shown with the frames' copy.
-- [ ] **C2.3 Operators** [Operators]: list, invite (shows the setup link once), role, disable,
+  - Built 2026-10-08 against the fixtures: Delete needs the id typed; the toast carries the
+    frame's line; refusals open a one-button dialog with the contract's message. Buttons appear
+    for role `write` only.
+- [x] **C2.3 Operators** [Operators]: list, invite (shows the setup link once), role, disable,
   TOTP reset; `read` operators see the page without buttons.
-- [ ] **C2.4 Audit log** complete, with the frames' action wording.
+  - Built 2026-10-08 against the fixtures, with §3.9 #8 (no "Your sessions"; Add operator and
+    Setup link dialogs; row menu). An operator cannot demote or disable themselves from the UI.
+- [x] **C2.4 Audit log** complete, with the frames' action wording.
+  - The page from C1.4 already maps every action in §3.5 and §3.6 to the frames' words.
 
 ### Phase C3 — Integration and polish
 - [ ] **C3.1** Run against the real backend (`docker compose --profile admin up`), fix every
