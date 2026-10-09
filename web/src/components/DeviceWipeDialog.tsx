@@ -12,15 +12,16 @@ import {
 } from "../deviceWipe";
 
 /**
- * Why the browser is being cleared: the user logged out, the server ended the session, or this
- * browser was removed from the account's Devices list on another device.
+ * Why the browser is being cleared: the user logged out, the server ended the session, this
+ * browser was removed from the account, or the account was deleted.
  */
-export type WipeReason = "logout" | "ended" | "removed";
+export type WipeReason = "logout" | "ended" | "removed" | "accountDeleted";
 
 const LEAD: Record<WipeReason, string> = {
   logout: "",
   ended: "Your session ended. ",
   removed: "This browser was removed from your account. ",
+  accountDeleted: "This account was deleted. ",
 };
 
 type RowState = "pending" | "active" | "done" | "failed";
@@ -282,7 +283,7 @@ export function DeviceWipeDialog({
               Try again
             </button>
           </div>
-        ) : (
+        ) : done || reason !== "accountDeleted" ? (
           <p className="wipe-foot">
             {done ? (
               <LoaderCircle className="wipe-foot-spinner" size={14} aria-hidden="true" />
@@ -293,7 +294,7 @@ export function DeviceWipeDialog({
               ? "Taking you to the welcome screen…"
               : "Your account and chats on other devices stay as they are."}
           </p>
-        )}
+        ) : null}
         <span className="sr-only" role="status" aria-live="polite">
           {announcement}
         </span>

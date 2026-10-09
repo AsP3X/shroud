@@ -15,6 +15,7 @@ export function SettingsRow({
   danger = false,
   disabled = false,
   dot,
+  wrapSubtitle = false,
 }: {
   title: string;
   subtitle?: string;
@@ -28,6 +29,8 @@ export function SettingsRow({
   disabled?: boolean;
   /** An accent dot after the value, read out as this text (e.g. "Update available"). */
   dot?: string;
+  /** The subtitle may wrap. Other rows stay on one line. */
+  wrapSubtitle?: boolean;
 }) {
   const interactive = Boolean(onClick) && !soon;
   const body = (
@@ -37,7 +40,7 @@ export function SettingsRow({
       </span>
       <span className="set-row-copy">
         <strong className={danger ? "danger" : undefined}>{title}</strong>
-        {subtitle ? <span>{subtitle}</span> : null}
+        {subtitle ? <span className={wrapSubtitle ? "wrap" : undefined}>{subtitle}</span> : null}
       </span>
       {value ? <span className="set-row-value">{value}</span> : null}
       {dot ? <span className="set-dot" role="img" aria-label={dot} /> : null}

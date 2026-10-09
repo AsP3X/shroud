@@ -55,8 +55,13 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("push", (event) => {
   const data = payloadOf(event);
-  event.waitUntil(data.kind === REMOVED ? deviceRemoved() : show(data));
+  event.waitUntil(data.kind === REMOVED ? deviceRemoved(data) : show(data));
 });
+
+/** Only a deleted account adds a reason. Anything else stays today's removal wipe. */
+function removalReason(data) {
+  return data && data.reason === "account_deleted" ? "account_deleted" : null;
+}
 
 function payloadOf(event) {
   try {
@@ -97,9 +102,10 @@ async function show(data) {
   });
 }
 
-async function deviceRemoved() {
+async function deviceRemoved(data) {
+  const reason = removalReason(data);
   // First: a worker stopped halfway still leaves the next page load the whole job.
-  await leaveRemovalMarker();
+  await leaveRemovalMarker(reason);
   const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true })).filter(
     (client) => !isAdminConsole(client),
   );
@@ -113,7 +119,7 @@ async function deviceRemoved() {
     windows[0];
   if (runner) {
     try {
-      runner.postMessage({ type: REMOVED_MESSAGE });
+      runner.postMessage(reason ? { type: REMOVED_MESSAGE, reason } : { type: REMOVED_MESSAGE });
     } catch {
       /* the marker still reaches it on its next load */
     }
@@ -139,10 +145,12 @@ async function deviceRemoved() {
   });
 }
 
-async function leaveRemovalMarker() {
+async function leaveRemovalMarker(reason) {
   try {
     const cache = await caches.open(REMOVED_MARKER_CACHE);
-    await cache.put("/device-removed", new Response(String(Date.now())));
+    // A timestamp, as before, unless the account was deleted — then the next load reads the reason.
+    const body = reason ? JSON.stringify({ reason }) : String(Date.now());
+    await cache.put("/device-removed", new Response(body));
   } catch {
     /* no Cache Storage: open tabs still hear the message, and the next unlock gets a 401 */
   }

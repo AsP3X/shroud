@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Lock, QrCode, ShieldCheck } from "lucide-react";
+import { Lock, QrCode, ShieldCheck, Trash2 } from "lucide-react";
 import { api, ApiError, type BlockItem, type PrivacySettings, type Session } from "../../api/client";
 import { setPrivacySettings, usePrivacySettings } from "../../privacy";
 import { lockOnHidden, saveShareCode, setLockOnHidden } from "../../session";
@@ -8,6 +8,7 @@ import { alwaysRelaysCalls, setAlwaysRelaysCalls } from "../../calls/relay";
 import { CONTACT_PLACEHOLDER, displayContactName } from "../../contactNames";
 import { Avatar } from "../Avatar";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DELETE_ACCOUNT_COPY } from "./deleteAccount";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow, Switch } from "./SettingsRow";
 
 export function PrivacyView({
@@ -15,12 +16,14 @@ export function PrivacyView({
   onLockNow,
   onShareCodeChanged,
   onUnauthorized,
+  onDeleteAccount,
 }: {
   session: Session;
   onLockNow: () => void;
   onShareCodeChanged: (shareCode: string) => void;
   /** `err` tells a removed device (`DEVICE_REMOVED`) from a session that merely ended. */
   onUnauthorized: (err?: unknown) => void;
+  onDeleteAccount: () => void;
 }) {
   const [background, setBackground] = useState(() => lockOnHidden());
   const [linkPreviews, setLinkPreviews] = useState(() => generatesLinkPreviews());
@@ -278,6 +281,18 @@ export function PrivacyView({
       <SettingsNote>
         Blocking someone is done from their profile in the iOS app; this list is where you undo it.
       </SettingsNote>
+
+      <SettingsCard>
+        <SettingsRow
+          title={DELETE_ACCOUNT_COPY.rowTitle}
+          subtitle={DELETE_ACCOUNT_COPY.rowSubtitle}
+          Icon={Trash2}
+          tint="var(--danger-bg)"
+          danger
+          wrapSubtitle
+          onClick={onDeleteAccount}
+        />
+      </SettingsCard>
     </>
   );
 }

@@ -8,6 +8,7 @@ import {
   clearRemovalMarker,
   installRemovalMessages,
   onDeviceRemoved,
+  pendingRemovalReason,
   REMOVED_MARKER_CACHE,
   removalPending,
   removedWhileClosed,
@@ -184,6 +185,31 @@ answer = async () => Response.json({ removed: false });
   offApp();
 }
 
+{
+  let seen: string | null | undefined = "missing";
+  const off = onDeviceRemoved("app", (reason) => {
+    seen = reason;
+  });
+  signalDeviceRemoved("account_deleted");
+  check(seen === "account_deleted", "a listener hears that the account was deleted");
+  signalDeviceRemoved();
+  check(seen === null, "a signal without a reason stays a plain removal");
+  signalDeviceRemoved("other");
+  check(seen === null, "any other reason stays a plain removal");
+  off();
+
+  signalDeviceRemoved("account_deleted");
+  check(removalPending() && pendingRemovalReason() === "account_deleted", "it waits, and keeps the reason");
+  seen = "missing";
+  const offLater = onDeviceRemoved("app", (reason) => {
+    seen = reason;
+  });
+  check(!removalPending(), "the listener takes the waiting removal");
+  await flush();
+  check(seen === "account_deleted", "and then receives the reason");
+  offLater();
+}
+
 /* --- the service worker -------------------------------------------------------------------- */
 
 type Stored = Map<string, Map<string, string>>;
@@ -302,6 +328,8 @@ const REMOVED_PUSH = { v: 1, kind: "device_removed" };
   const run = await runWorker(REMOVED_PUSH, 0);
   check(run.posted.length === 0, "nobody to tell");
   check(run.stored.has(REMOVED_MARKER_CACHE), "leaves the marker the page looks for");
+  const plainMarker = [...(run.stored.get(REMOVED_MARKER_CACHE)?.values() ?? [])].join("\n");
+  check(!plainMarker.includes("account_deleted"), "a push without a reason leaves no deletion reason");
   check(run.stored.has("transformers-cache"), "keeps the Whisper weights");
   check(!run.stored.has("offline-v1"), "deletes every other cache");
   check(
@@ -327,15 +355,15 @@ const REMOVED_PUSH = { v: 1, kind: "device_removed" };
   });
   // No hash to ask with: the marker is trusted.
   memory.delete(TOKEN_HASH_KEY);
-  check(await removedWhileClosed(), "the page sees the marker");
+  check((await removedWhileClosed()) != null, "the page sees the marker");
   // With a hash, the server is asked first: a stale marker must not wipe a newer login.
   memory.set(TOKEN_HASH_KEY, tokenHash("token-2"));
   answer = async () => {
     throw new TypeError("offline");
   };
-  check(await removedWhileClosed(), "offline, the marker is trusted");
+  check((await removedWhileClosed()) != null, "offline, the marker is trusted");
   answer = async () => Response.json({ removed: true });
-  check(await removedWhileClosed(), "the server confirms it");
+  check((await removedWhileClosed()) != null, "the server confirms it");
   answer = async () => Response.json({ removed: false });
   check(!(await removedWhileClosed()), "the server says this session is fine: no wipe");
   check(!run.stored.has(REMOVED_MARKER_CACHE), "and the stale marker is dropped");
@@ -406,11 +434,19 @@ const REMOVED_PUSH = { v: 1, kind: "device_removed" };
   });
   installRemovalMessages();
   let wiped = 0;
-  const offApp = onDeviceRemoved("app", () => wiped++);
+  let seen: string | null = "unset";
+  const offApp = onDeviceRemoved("app", (reason) => {
+    wiped++;
+    seen = reason;
+  });
   container.listener?.({ data: { type: "shroud.open-chat" } });
   check(wiped === 0, "other worker messages are not a removal");
   container.listener?.({ data: run.posted[0] });
-  check(wiped === 1, "the worker's message starts the wipe");
+  check(wiped === 1 && seen === null, "a push without a reason starts a plain removal");
+  container.listener?.({ data: { type: "shroud.device-removed", reason: "account_deleted" } });
+  check(wiped === 2 && seen === "account_deleted", "a push that names account_deleted says so");
+  container.listener?.({ data: { type: "shroud.device-removed", reason: "nope" } });
+  check(wiped === 3 && seen === null, "any other push reason stays a plain removal");
   offApp();
 }
 
@@ -419,6 +455,99 @@ const REMOVED_PUSH = { v: 1, kind: "device_removed" };
   const run = await runWorker({ kind: "message", peer_user_id: "x", tag: "c1" }, 0);
   check(run.shown.length === 1 && run.shown[0].body === "New message", "a message push still notifies");
   check(!run.stored.has(REMOVED_MARKER_CACHE) && run.deletedDbs.length === 0, "and deletes nothing");
+}
+
+{
+  // A deleted account: the worker still deletes the same things, and writes the reason down.
+  const run = await runWorker({ v: 1, kind: "device_removed", reason: "account_deleted" }, 0);
+  const markerBody = [...(run.stored.get(REMOVED_MARKER_CACHE)?.values() ?? [])].join("\n");
+  check(markerBody.includes("account_deleted"), `the marker carries the reason: ${markerBody}`);
+  check(
+    run.deletedDbs.sort().join() === "shroud-media,shroud-other",
+    `still deletes every database: ${run.deletedDbs.join()}`,
+  );
+  check(run.stored.has("transformers-cache") && !run.stored.has("offline-v1"), "still keeps only the Whisper weights");
+  check(run.unsubscribed, "still drops the push subscription");
+  check(run.shown.length === 1 && run.shown[0].body === "This browser was signed out.", "the notice is unchanged");
+}
+{
+  const run = await runWorker({ v: 1, kind: "device_removed", reason: "account_deleted" }, 2, 0);
+  check(
+    JSON.stringify(run.posted[0]) === JSON.stringify({ type: "shroud.device-removed", reason: "account_deleted" }),
+    `the open tab is told why: ${JSON.stringify(run.posted[0])}`,
+  );
+  check(run.deletedDbs.length === 0 && run.stored.has("offline-v1"), "an open tab still does the deleting");
+}
+{
+  const run = await runWorker({ v: 1, kind: "device_removed", reason: "other" }, 1, 0);
+  check(
+    JSON.stringify(run.posted[0]) === JSON.stringify({ type: "shroud.device-removed" }),
+    `an unknown reason is not forwarded: ${JSON.stringify(run.posted[0])}`,
+  );
+}
+
+{
+  // Locked: session-status carries the reason. A removed answer without one stays plain.
+  memory.set(TOKEN_HASH_KEY, tokenHash("token-deleted"));
+  answer = async () => Response.json({ removed: true, reason: "account_deleted" });
+  let reason: string | null | undefined = "missing";
+  const stopDeleted = watchForRemoval((next) => {
+    reason = next;
+  });
+  await flush();
+  check(reason === "account_deleted", "session-status account_deleted wipes as the account deleted");
+  stopDeleted();
+
+  answer = async () => Response.json({ removed: true });
+  reason = "missing";
+  const stopPlain = watchForRemoval((next) => {
+    reason = next;
+  });
+  await flush();
+  check(reason === null, "session-status removed without a reason stays a plain removal");
+  stopPlain();
+  answer = async () => Response.json({ removed: false });
+}
+
+{
+  // Closed: the next load reads the reason out of the marker. The server wins when it answers.
+  memory.delete(TOKEN_HASH_KEY);
+  const entries = new Map<string, string>([["/device-removed", JSON.stringify({ reason: "account_deleted" })]]);
+  Object.defineProperty(globalThis, "caches", {
+    value: {
+      has: async (name: string) => name === REMOVED_MARKER_CACHE && entries.size > 0,
+      delete: async () => {
+        entries.clear();
+        return true;
+      },
+      open: async () => ({
+        match: async (url: string) => {
+          const text = entries.get(url);
+          return text == null ? undefined : new Response(text);
+        },
+      }),
+    },
+    configurable: true,
+  });
+  const fromMarker = await removedWhileClosed();
+  check(fromMarker?.reason === "account_deleted", "a closed tab reads account_deleted from the marker");
+
+  memory.set(TOKEN_HASH_KEY, tokenHash("token-closed"));
+  entries.set("/device-removed", String(Date.now()));
+  answer = async () => Response.json({ removed: true, reason: "account_deleted" });
+  const fromStatus = await removedWhileClosed();
+  check(fromStatus?.reason === "account_deleted", "session-status names the deletion when the marker does not");
+
+  entries.set("/device-removed", JSON.stringify({ reason: "account_deleted" }));
+  answer = async () => Response.json({ removed: true });
+  const plain = await removedWhileClosed();
+  check(plain?.reason === null, "session-status without a reason stays a plain removal");
+
+  answer = async () => {
+    throw new TypeError("offline");
+  };
+  const offline = await removedWhileClosed();
+  check(offline?.reason === "account_deleted", "offline, the marker's reason is trusted");
 }
 
 console.log("device removal selftest ok");

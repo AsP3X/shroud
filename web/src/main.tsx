@@ -28,7 +28,7 @@ const root = createRoot(document.getElementById("root")!);
 // A removal that arrived while no tab was open left a marker (Cache Storage, which the worker
 // can reach). Look before the first render, so the first screen is the wipe, not the account.
 void removedWhileClosed().then((removed) => {
-  if (removed) signalDeviceRemoved();
+  if (removed) signalDeviceRemoved(removed.reason);
   root.render(
     <StrictMode>
       <BrowserRouter>

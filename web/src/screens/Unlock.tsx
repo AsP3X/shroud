@@ -22,8 +22,10 @@ type Choreography = "idle" | "verified" | "releasing";
 /** Asked before the session is dropped: a removed browser is wiped, not sent to sign in. */
 async function removedFromAccount(): Promise<boolean> {
   const hash = readTokenHash();
-  if (!hash || (await askSessionRemoved(hash)) !== true) return false;
-  signalDeviceRemoved();
+  if (!hash) return false;
+  const status = await askSessionRemoved(hash);
+  if (!status?.removed) return false;
+  signalDeviceRemoved(status.reason);
   return true;
 }
 

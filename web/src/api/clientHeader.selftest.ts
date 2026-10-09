@@ -130,7 +130,8 @@ try {
   check(err instanceof ApiError, "a 426 is an ApiError");
   const error = err as ApiError;
   check(error.status === 426 && error.code === "UPDATE_REQUIRED", `code and status: ${error.code} ${error.status}`);
-  check(!error.isAuthFailure && !error.isDeviceRemoved, "a 426 never signs out or wipes");
+  check(!error.isAuthFailure && !error.isDeviceRemoved && !error.isAccountDeleted, "a 426 never signs out or wipes");
+  check(error.reason === null && !error.keepsSession, "no reason, and it is not a kept session");
 }
 
 console.log("client header selftest ok");

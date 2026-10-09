@@ -5,24 +5,62 @@ import type { Invite } from "../invite";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/** `error.reason` when the body has one; absent, or not a string, is null. */
+function reasonFrom(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const reason = (body as { error?: { reason?: unknown } }).error?.reason;
+  return typeof reason === "string" ? reason : null;
+}
+
+function apiErrorFrom(status: number, statusText: string, body: unknown): ApiError {
+  let code = "http";
+  let message = statusText || `HTTP ${status}`;
+  if (body && typeof body === "object") {
+    const error = (body as { error?: { code?: string; message?: string } }).error;
+    if (error?.code) code = error.code;
+    if (error?.message) message = error.message;
+  }
+  return new ApiError(code, message, status, body);
+}
+
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
   /** The error response's JSON, for answers that carry data (a reaction's `409`). */
   readonly body: unknown;
-  constructor(code: string, message: string, status: number, body?: unknown) {
+  /** From `error.reason`. Absent is null. `"account_deleted"` means the account is gone. */
+  readonly reason: string | null;
+  /**
+   * A 401 that must not sign the browser out: the wrong password on Delete Account.
+   * `isAuthFailure` is then false, so the usual sign-out checks leave it alone.
+   */
+  readonly keepsSession: boolean;
+  constructor(code: string, message: string, status: number, body?: unknown, keepsSession = false) {
     super(message);
     this.code = code;
     this.status = status;
     this.body = body;
+    this.reason = reasonFrom(body);
+    this.keepsSession = keepsSession;
   }
   get isAuthFailure(): boolean {
-    return this.status === 401;
+    return this.status === 401 && !this.keepsSession;
   }
-  /** A 401 because this device was removed from the account's Devices list: wipe, don't just sign out. */
+  /** A 401 `DEVICE_REMOVED`, with or without a reason: wipe, don't just sign out. */
   get isDeviceRemoved(): boolean {
     return this.status === 401 && this.code === "DEVICE_REMOVED";
   }
+  /** A 401 `DEVICE_REMOVED` whose reason is `account_deleted`. */
+  get isAccountDeleted(): boolean {
+    return this.status === 401 && this.code === "DEVICE_REMOVED" && this.reason === "account_deleted";
+  }
+}
+
+/** How a dead session ends: the account was deleted, this device was removed, or it just ended. */
+export function sessionEndOf(err: ApiError): "accountDeleted" | "removed" | "ended" {
+  if (err.isAccountDeleted) return "accountDeleted";
+  if (err.isDeviceRemoved) return "removed";
+  return "ended";
 }
 
 export type Session = {
@@ -195,18 +233,13 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    let code = "http";
-    let message = res.statusText || `HTTP ${res.status}`;
     let body: unknown;
     try {
       body = await res.json();
-      const envelope = body as { error?: { code?: string; message?: string } };
-      if (envelope.error?.code) code = envelope.error.code;
-      if (envelope.error?.message) message = envelope.error.message;
     } catch {
       /* envelope optional */
     }
-    throw new ApiError(code, message, res.status, body);
+    throw apiErrorFrom(res.status, res.statusText, body);
   }
   if (res.status === 204) return undefined as T;
   const text = await res.text();
@@ -241,16 +274,13 @@ async function requestBytes(
     throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
   }
   if (!res.ok) {
-    let code = "http";
-    let message = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: { code?: string; message?: string } };
-      if (body.error?.code) code = body.error.code;
-      if (body.error?.message) message = body.error.message;
+      body = await res.json();
     } catch {
       /* envelope optional */
     }
-    throw new ApiError(code, message, res.status);
+    throw apiErrorFrom(res.status, res.statusText, body);
   }
   if (!onProgress || !res.body) return new Uint8Array(await res.arrayBuffer());
   // Read in chunks so a photo can show how far along it is.
@@ -315,16 +345,13 @@ function putBytesWithProgress(
         resolve();
         return;
       }
-      let code = "http";
-      let message = xhr.statusText || `HTTP ${xhr.status}`;
+      let parsed: unknown;
       try {
-        const body = JSON.parse(xhr.responseText) as { error?: { code?: string; message?: string } };
-        if (body.error?.code) code = body.error.code;
-        if (body.error?.message) message = body.error.message;
+        parsed = JSON.parse(xhr.responseText) as unknown;
       } catch {
         /* envelope optional */
       }
-      reject(new ApiError(code, message, xhr.status));
+      reject(apiErrorFrom(xhr.status, xhr.statusText, parsed));
     };
     xhr.onerror = () => reject(new ApiError("transport", "Network error", 0));
     xhr.onabort = () => reject(new ApiError("transport", "Upload cancelled", 0));
@@ -351,16 +378,13 @@ async function putBytes(path: string, token: string, data: Uint8Array | Blob): P
     throw new ApiError("transport", err instanceof Error ? err.message : "Network error", 0);
   }
   if (!res.ok) {
-    let code = "http";
-    let message = res.statusText || `HTTP ${res.status}`;
+    let body: unknown;
     try {
-      const body = (await res.json()) as { error?: { code?: string; message?: string } };
-      if (body.error?.code) code = body.error.code;
-      if (body.error?.message) message = body.error.message;
+      body = await res.json();
     } catch {
       /* envelope optional */
     }
-    throw new ApiError(code, message, res.status);
+    throw apiErrorFrom(res.status, res.statusText, body);
   }
 }
 
@@ -412,12 +436,31 @@ export const api = {
   me: (token: string) => request<{ user: Session["user"]; device: Session["device"] }>("/auth/me", { token }),
   logout: (token: string) => request<void>("/auth/logout", { method: "POST", token }),
   /**
+   * Deletes the signed-in account. Body is `{ password }` and is not logged.
+   * A wrong password (`401 INVALID_CREDENTIALS`) keeps the session: `keepsSession` makes
+   * `isAuthFailure` false. Every other 401 still ends it.
+   */
+  deleteAccount: async (token: string, password: string) => {
+    try {
+      await request<void>("/auth/account", {
+        method: "DELETE",
+        token,
+        body: JSON.stringify({ password }),
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401 && err.code === "INVALID_CREDENTIALS") {
+        throw new ApiError(err.code, err.message, err.status, err.body, true);
+      }
+      throw err;
+    }
+  },
+  /**
    * No session: a locked page cannot read its token, only the token's SHA-256 (see
    * `deviceRemoval.ts`). `removed` is true only when the session with that hash belongs to a
-   * removed device or a deleted account.
+   * removed device or a deleted account. `reason` is `account_deleted` when the account is gone.
    */
   sessionStatus: (tokenHash: string) =>
-    request<{ removed: boolean }>("/auth/session-status", {
+    request<{ removed: boolean; reason?: string }>("/auth/session-status", {
       method: "POST",
       body: JSON.stringify({ token_hash: tokenHash }),
     }),

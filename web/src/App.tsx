@@ -5,7 +5,13 @@ import { isVaultOpen } from "./crypto/vault";
 import { hasPin, needsPhrase } from "./crypto/vaultAccess";
 import { DeviceWipeDialog } from "./components/DeviceWipeDialog";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { clearRemovalMarker, onDeviceRemoved, removalPending, watchForRemoval } from "./deviceRemoval";
+import {
+  clearRemovalMarker,
+  onDeviceRemoved,
+  pendingRemovalReason,
+  removalPending,
+  watchForRemoval,
+} from "./deviceRemoval";
 import { finishWipeOnLoad } from "./deviceWipe";
 import { AppShell } from "./screens/AppShell";
 import { Auth } from "./screens/Auth";
@@ -41,10 +47,13 @@ export function App() {
    * or a load that found the worker's marker — the wipe runs here, in place of every screen.
    * The snapshot names the account (the token, if this page has one, ends the server session).
    */
-  const [removal, setRemoval] = useState<Session | null>(() =>
-    removalPending() ? (loadSession() ?? storedSessionMeta()) : null,
-  );
-  const removed = useCallback(() => {
+  const [removal, setRemoval] = useState<{ session: Session; accountDeleted: boolean } | null>(() => {
+    if (!removalPending()) return null;
+    const session = loadSession() ?? storedSessionMeta();
+    if (!session) return null;
+    return { session, accountDeleted: pendingRemovalReason() === "account_deleted" };
+  });
+  const removed = useCallback((reason?: string | null) => {
     const snapshot = loadSession() ?? storedSessionMeta();
     if (!snapshot) {
       // Nobody is signed in here. Data without a session (a sign-in screen reached after the
@@ -52,7 +61,8 @@ export function App() {
       void (finishWipeOnLoad() ?? Promise.resolve()).then(clearRemovalMarker);
       return;
     }
-    setRemoval((current) => current ?? snapshot);
+    const accountDeleted = reason === "account_deleted";
+    setRemoval((current) => current ?? { session: snapshot, accountDeleted });
   }, []);
   useEffect(() => onDeviceRemoved("app", removed), [removed]);
 
@@ -73,7 +83,11 @@ export function App() {
 
   // No routes behind it: they would follow the emptied store into the shell or the welcome
   // screen mid-wipe. The dialog ends with a reload onto the welcome screen.
-  if (removal) return <DeviceWipeDialog session={removal} reason="removed" />;
+  if (removal) {
+    return (
+      <DeviceWipeDialog session={removal.session} reason={removal.accountDeleted ? "accountDeleted" : "removed"} />
+    );
+  }
 
   return (
     <>

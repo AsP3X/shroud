@@ -20,6 +20,23 @@ export function deviceRemovedByAuthError(raw: Record<string, unknown>): boolean 
   return (error as { code?: unknown }).code === "DEVICE_REMOVED";
 }
 
+function authErrorReason(raw: Record<string, unknown>): string | null {
+  const error = raw.error;
+  if (!error || typeof error !== "object") return null;
+  const reason = (error as { reason?: unknown }).reason;
+  return typeof reason === "string" ? reason : null;
+}
+
+/**
+ * What a fatal `auth.error` does. Null for `RATE_LIMITED`: the session stays, and the socket
+ * reconnects. `reason` is set only for `DEVICE_REMOVED` (`account_deleted` when the account is gone).
+ */
+export function fatalAuth(raw: Record<string, unknown>): { deviceRemoved: boolean; reason: string | null } | null {
+  if (!sessionEndedByAuthError(raw)) return null;
+  const deviceRemoved = deviceRemovedByAuthError(raw);
+  return { deviceRemoved, reason: deviceRemoved ? authErrorReason(raw) : null };
+}
+
 /** The user is looking at this tab. A background tab does not count: its timers stall. */
 export function pageInForeground(): boolean {
   return (
@@ -48,8 +65,11 @@ export type Realtime = {
 export function connectRealtime(opts: {
   token: string;
   onEvent: (event: RealtimeEvent) => void;
-  /** The session is over; `deviceRemoved` when the server says this device was removed. */
-  onFatalAuth?: (deviceRemoved: boolean) => void;
+  /**
+   * The session is over. `deviceRemoved` when the server says this device was removed;
+   * `reason` is `account_deleted` when the account itself was deleted, otherwise null.
+   */
+  onFatalAuth?: (deviceRemoved: boolean, reason: string | null) => void;
   /** Keep the socket while the tab is hidden (a call still needs its signaling). */
   keepWhenHidden?: () => boolean;
   /** Signed in again after the socket dropped (not after a hidden tab parked it). */
@@ -129,10 +149,11 @@ export function connectRealtime(opts: {
       }
       if (type === "auth.error") {
         // Too many sockets: the session is still good. The server closes; onclose reconnects.
-        if (!sessionEndedByAuthError(raw)) return;
+        const fatal = fatalAuth(raw);
+        if (!fatal) return;
         closed = true;
         ws.close();
-        opts.onFatalAuth?.(deviceRemovedByAuthError(raw));
+        opts.onFatalAuth?.(fatal.deviceRemoved, fatal.reason);
         return;
       }
       if (type) opts.onEvent({ type, raw });

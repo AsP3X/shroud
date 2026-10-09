@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft } from "lucide-react";
-import { api, ApiError, type Session } from "../api/client";
+import { api, ApiError, sessionEndOf, type Session } from "../api/client";
 import type { WipeReason } from "./DeviceWipeDialog";
 import type { IdentityMaterial } from "../crypto/identity";
 import { LogoutDialog } from "./LogoutDialog";
 import { AboutView, LicensesView } from "./settings/AboutView";
+import { DeleteAccountView } from "./settings/DeleteAccountView";
 import { DevicesView } from "./settings/DevicesView";
 import { NotificationsView, type MutedChat } from "./settings/NotificationsView";
 import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
@@ -24,6 +25,7 @@ export function SettingsPane({
   onShareCodeChanged,
   mutedChats,
   onUnmute,
+  onDismissLocked,
 }: {
   session: Session;
   identity: IdentityMaterial | null;
@@ -40,14 +42,19 @@ export function SettingsPane({
   /** For Notifications and Sounds: the chats muted now, and a way to unmute one. */
   mutedChats: MutedChat[];
   onUnmute: (peerId: string) => Promise<void>;
+  /** Delete Account is running: the shell must not switch away from settings. */
+  onDismissLocked: (locked: boolean) => void;
 }) {
   const [route, setRoute] = useState<SettingsRoute | null>(null);
   const [deviceCount, setDeviceCount] = useState<number | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  /** Delete Account's request is in flight: Back and Escape must not leave the screen.
+   * The ref updates in the same turn as the request, before React disables the button. */
+  const [dismissLocked, setDismissLocked] = useState(false);
+  const dismissLockedRef = useRef(false);
 
   const forceLogout = useCallback(
-    (err?: unknown) =>
-      onSessionEnded(err instanceof ApiError && err.isDeviceRemoved ? "removed" : "ended"),
+    (err?: unknown) => onSessionEnded(err instanceof ApiError ? sessionEndOf(err) : "ended"),
     [onSessionEnded],
   );
   const forceLogoutRef = useRef(forceLogout);
@@ -70,14 +77,34 @@ export function SettingsPane({
     };
   }, [session.token, route]);
 
-  const back = useCallback(() => setRoute((current) => (current && SETTINGS_PARENTS[current]) ?? null), []);
+  const back = useCallback(() => {
+    if (dismissLockedRef.current) return;
+    setRoute((current) => (current && SETTINGS_PARENTS[current]) ?? null);
+  }, []);
   const parent = route ? SETTINGS_PARENTS[route] : undefined;
+
+  const lockDismiss = useCallback(
+    (locked: boolean) => {
+      dismissLockedRef.current = locked;
+      setDismissLocked(locked);
+      onDismissLocked(locked);
+    },
+    [onDismissLocked],
+  );
+
+  useEffect(() => {
+    if (route === "delete-account") return;
+    dismissLockedRef.current = false;
+    setDismissLocked(false);
+    onDismissLocked(false);
+  }, [route, onDismissLocked]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       // The logout dialog handles its own Escape; never leave the page behind it.
-      if (confirmLogout) return;
+      // Delete Account swallows Escape while its request runs.
+      if (confirmLogout || dismissLockedRef.current) return;
       if (route) back();
     }
     document.addEventListener("keydown", onKeyDown);
@@ -93,6 +120,7 @@ export function SettingsPane({
               type="button"
               className="icon-btn"
               onClick={back}
+              disabled={dismissLocked}
               aria-label={parent ? `Back to ${SETTINGS_TITLES[parent]}` : "Back to settings"}
             >
               <ChevronLeft size={20} />
@@ -122,6 +150,16 @@ export function SettingsPane({
                 onLockNow={onLockNow}
                 onShareCodeChanged={onShareCodeChanged}
                 onUnauthorized={forceLogout}
+                onDeleteAccount={() => setRoute("delete-account")}
+              />
+            ) : null}
+            {route === "delete-account" ? (
+              <DeleteAccountView
+                session={session}
+                onCancel={back}
+                onAccountDeleted={() => onSessionEnded("accountDeleted")}
+                onUnauthorized={forceLogout}
+                onBusyChange={lockDismiss}
               />
             ) : null}
             {route === "data" ? <DataStorageView onCleared={onCacheCleared} /> : null}

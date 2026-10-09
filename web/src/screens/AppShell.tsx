@@ -4,6 +4,7 @@ import { Bell, BellOff, Phone, QrCode, Video, X } from "lucide-react";
 import {
   api,
   ApiError,
+  sessionEndOf,
   type CallModality,
   type ChatMute,
   type Contact,
@@ -244,6 +245,12 @@ export function AppShell({ session }: { session: Session }) {
   const [confirmLogout, setConfirmLogout] = useState(false);
   /** Clearing this browser: after "Log Out", or because the server ended the session. */
   const [wipe, setWipe] = useState<WipeReason | null>(null);
+  /** Delete Account is in flight: the rail must not leave that screen. A ref, so a click in the
+   * same turn as the request (before this re-renders) still sees the lock. */
+  const deleteLocked = useRef(false);
+  const lockDelete = useCallback((locked: boolean) => {
+    deleteLocked.current = locked;
+  }, []);
   const endSession = useCallback(
     (reason: WipeReason = "ended") => setWipe((current) => current ?? reason),
     [],
@@ -710,7 +717,7 @@ export function AppShell({ session }: { session: Session }) {
       refresh().catch((err: unknown) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isAuthFailure) {
-          endSession(err.isDeviceRemoved ? "removed" : "ended");
+          endSession(sessionEndOf(err));
           return;
         }
         setLoading(false);
@@ -1411,8 +1418,13 @@ export function AppShell({ session }: { session: Session }) {
   );
 
   /* Removed from the account on another device (the worker relays the push): the shell runs
-     the wipe while it is mounted, so a call is hung up first. See `deviceRemoval.ts`. */
-  useEffect(() => onDeviceRemoved("shell", () => endSession("removed")), [endSession]);
+     the wipe while it is mounted, so a call is hung up first. See `deviceRemoval.ts`.
+     `account_deleted` says the account was deleted, not that this browser was removed. */
+  useEffect(
+    () =>
+      onDeviceRemoved("shell", (reason) => endSession(reason === "account_deleted" ? "accountDeleted" : "removed")),
+    [endSession],
+  );
 
   /* Signing out (or a session the server ended) hangs up before the browser is cleared. */
   useEffect(() => {
@@ -1426,7 +1438,8 @@ export function AppShell({ session }: { session: Session }) {
   useEffect(() => {
     const connection = connectRealtime({
       token: session.token,
-      onFatalAuth: (deviceRemoved) => endSession(deviceRemoved ? "removed" : "ended"),
+      onFatalAuth: (deviceRemoved, reason) =>
+        endSession(deviceRemoved ? (reason === "account_deleted" ? "accountDeleted" : "removed") : "ended"),
       // A call's signaling stays up when the tab is in the background. Otherwise the socket
       // closes, and a message or a call arrives as a notification.
       keepWhenHidden: () => {
@@ -2513,6 +2526,7 @@ export function AppShell({ session }: { session: Session }) {
   }
 
   function openTab(next: Tab) {
+    if (deleteLocked.current) return;
     setQuery("");
     if (next === tab && selected) {
       setSelected(null);
@@ -2575,8 +2589,14 @@ export function AppShell({ session }: { session: Session }) {
         requestCount={requests.length}
         unreadCount={unreadTotal}
         user={{ id: session.user.id, username: session.user.username }}
-        onProfile={() => setShowProfile(true)}
-        onLogout={() => setConfirmLogout(true)}
+        onProfile={() => {
+          if (deleteLocked.current) return;
+          setShowProfile(true);
+        }}
+        onLogout={() => {
+          if (deleteLocked.current) return;
+          setConfirmLogout(true);
+        }}
       />
 
       <div className="shell-body">
@@ -2596,6 +2616,7 @@ export function AppShell({ session }: { session: Session }) {
                 onShareCodeChanged={setNewShareCode}
                 mutedChats={mutedChats}
                 onUnmute={(peerId) => setChatMute(peerId, "off")}
+                onDismissLocked={lockDelete}
               />
             </Suspense>
           </ChunkBoundary>

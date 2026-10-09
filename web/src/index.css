@@ -2046,6 +2046,42 @@ button.reply-quote { cursor: pointer; }
 }
 .set-explainer p { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
 
+/* Delete Account, the last card on Privacy and Security and its own page. */
+.delete-account { display: flex; flex-direction: column; gap: 14px; }
+.delete-account-title {
+  margin: 4px 0 0;
+  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+}
+.delete-account-list { list-style: none; margin: 0; padding: 0; }
+.delete-account-list li {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--separator);
+  font-size: var(--fs-base); line-height: 1.45;
+}
+.delete-account-list li:first-child { border-top: 0; }
+.delete-account-list svg { flex-shrink: 0; margin-top: 2px; color: var(--danger); }
+.delete-account-form { display: flex; flex-direction: column; gap: 12px; }
+.delete-account-note {
+  margin: 0;
+  font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary);
+}
+.delete-account-error {
+  margin: 2px 0 0;
+  color: var(--danger); font-size: var(--fs-sm); line-height: 1.4;
+}
+.delete-account .afield-input:disabled {
+  opacity: 1; color: var(--text-primary); -webkit-text-fill-color: var(--text-primary);
+}
+.delete-account .afield-reveal:disabled { opacity: 1; cursor: default; }
+.delete-account .afield-reveal:disabled:hover { background: transparent; color: var(--text-tertiary); }
+.delete-account-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.delete-account-actions .btn {
+  width: auto; height: 40px; padding: 0 16px; gap: 8px;
+  font-size: var(--fs-md); white-space: nowrap;
+}
+.delete-account-actions .btn-destructive.is-busy:disabled { opacity: 1; cursor: default; }
+
 .set-confirm {
   background: var(--surface-2);
   border: 1px solid var(--danger);
