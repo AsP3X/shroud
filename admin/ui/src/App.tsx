@@ -22,7 +22,7 @@ import { Users } from "./pages/Users";
 /** One route per frame of design/admin.pen (docs/admin-plan.md §5). Operators arrive in C2. */
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/admin">
       <ToastProvider>
       <Routes>
         <Route path="/sign-in" element={<SignIn />} />

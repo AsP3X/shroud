@@ -34,6 +34,16 @@ Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the 
 .\deploy.ps1           # Windows
 ```
 
+The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`). Turn it on without re-running the setup wizard:
+
+```bash
+./deploy.sh --admin              # turn it on and deploy it
+./deploy.sh --admin bootstrap    # one-time operator setup link
+./deploy.sh --admin off          # turn it off; the key stays in .env
+```
+
+See [docs/admin.md](docs/admin.md). Windows uses `.\deploy.ps1 -Admin` with the same words (`off`, `bootstrap`).
+
 | `PROXY_MODE` | How you reach it |
 | --- | --- |
 | `local` (default) | Web `http://localhost:8081`, API `http://localhost:8080/api/v1` |

@@ -2,32 +2,46 @@
 
 The console is the `admin` Compose service (`shroud-admin`). It uses role `shroud_admin` and schema `admin` in the API's Postgres database. `ADMIN_SECRET_KEY` is 64 hex characters. The console will not start while `ADMIN_DATABASE_URL` is set and the key is missing or not that length.
 
-## Turning the console off and on
+## Deploying the console
 
-For a while, without touching `.env`:
+The API and web client come up with `./deploy.sh`. The console is its own command, and it does not run the setup wizard:
+
+```
+./deploy.sh --admin
+```
+
+That turns the console on and deploys it. A secret already in `.env` is kept. Open it at the Shroud site's address plus `/admin`. If the site is `https://shroud-app.com`, the console is `https://shroud-app.com/admin`. Local mode is the same rule: the web URL in `.env`, plus `/admin`. There is no separate admin host and no extra port to publish.
+
+The web client proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer.
+
+The sign-in cookie is `__Host-admin`. Browsers require that name to use `Path=/` and to omit `Domain`, so it is sent to the whole site. It is `HttpOnly`. The messenger cannot read it, and the API ignores it.
+
+Create the first operator after that. The link is shown once:
+
+```
+./deploy.sh --admin bootstrap
+```
+
+Open it and choose a password and an authenticator.
+
+Turn the console off with the same command. The container goes away. `ADMIN_SECRET_KEY`, the console's database password and the operator token stay in `.env`. Operators, their authenticators and the audit log stay in schema `admin`:
+
+```
+./deploy.sh --admin off
+```
+
+`./deploy.sh --admin` turns it back on with the same key, so existing authenticators still work.
+
+To stop it for a while without changing `.env`:
 
 ```
 docker compose --profile admin stop admin
 docker compose --profile admin start admin
 ```
 
-The next `./deploy.sh` starts it again, because the `admin` profile is still on.
+The next `./deploy.sh` starts it again while the `admin` profile is on.
 
-Until you want it back, so deploys leave it off:
-
-```
-./deploy.sh --init
-```
-
-Answer `n` at "Enable the admin console?". The wizard drops the `admin` profile and the next
-deploy removes the container, but keeps `ADMIN_SECRET_KEY`, the console's database password
-and the operator token in `.env`. Operators, their authenticators and the audit log stay in
-schema `admin`. To turn it back on, run `./deploy.sh --init` again and answer `y`: the same key
-reads the same secrets, and everyone signs in as before.
-
-While the profile is off, the API still binds its internal operator port, since
-`OPERATOR_TOKEN` is set; nothing publishes that port and nothing calls it. Blank the token in
-`.env` and redeploy if you want the API not to bind it at all.
+While the profile is off, the API still binds its internal operator port when `OPERATOR_TOKEN` is set. Nothing publishes that port and nothing calls it. Blank the token in `.env` and redeploy if the API should not bind it.
 
 ## What to back up
 
@@ -59,12 +73,12 @@ If an operator already exists, bootstrap stops and tells you to re-enrol.
 
 `shroud-admin bootstrap --recover` re-enrols the only operator. When more than one exists, pass `--name`. For that operator it clears the password hash and the authenticator secret, deletes sessions and recovery codes, and retires unused setup links. The audit log stays. It then prints a new one-time setup URL.
 
-Both commands need `ADMIN_DATABASE_URL` and `ADMIN_PUBLIC_URL`. From the repository, with the admin profile:
+Both commands need `ADMIN_DATABASE_URL` and `ADMIN_PUBLIC_URL`, and the console's profile has to be on. From the repository:
 
 ```
-docker compose --profile admin run --rm --entrypoint /shroud-admin admin bootstrap
-docker compose --profile admin run --rm --entrypoint /shroud-admin admin bootstrap --recover
-docker compose --profile admin run --rm --entrypoint /shroud-admin admin bootstrap --recover --name NAME
+./deploy.sh --admin bootstrap
+./deploy.sh --admin bootstrap --recover
+./deploy.sh --admin bootstrap --recover --name NAME
 ```
 
-The image has no shell. `--entrypoint` runs the binary. After `--recover`, open the new link and enrol again.
+The script runs the `shroud-admin` binary in a one-off container. The image has no shell. After `--recover`, open the new link and enrol again. Windows: `.\deploy.ps1 -Admin bootstrap` and the same flags.

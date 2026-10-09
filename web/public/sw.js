@@ -100,9 +100,13 @@ async function show(data) {
 async function deviceRemoved() {
   // First: a worker stopped halfway still leaves the next page load the whole job.
   await leaveRemovalMarker();
-  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true })).filter(
+    (client) => !isAdminConsole(client),
+  );
   // One tab runs the wipe; its "wipe" broadcast reloads the others onto the emptied store.
   // Telling every tab would start several wipes that fight over the same databases.
+  // The operator console is not one of those tabs. With only that open, the worker wipes
+  // what it can, and the marker finishes the job the next time Shroud itself loads.
   const runner =
     windows.find((client) => client.focused) ||
     windows.find((client) => client.visibilityState === "visible") ||
@@ -222,9 +226,22 @@ function isAppWindow(client) {
   }
 }
 
+/** The operator console is on this origin at /admin. It is not a Shroud chat window. */
+function isAdminConsole(client) {
+  try {
+    const path = new URL(client.url).pathname;
+    return path === "/admin" || path.startsWith("/admin/");
+  } catch {
+    return false;
+  }
+}
+
 async function openApp(open) {
   // Most recently focused first: the focused window, else Shroud's chats, else any of its tabs.
-  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  // Skip the operator console, or a notification click would focus that tab instead of a chat.
+  const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true })).filter(
+    (client) => !isAdminConsole(client),
+  );
   const client = windows.find((w) => w.focused) || windows.find(isAppWindow) || windows[0];
   if (client) {
     try {

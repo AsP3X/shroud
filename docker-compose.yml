@@ -229,6 +229,7 @@ services:
         condition: service_healthy
     environment:
       API_UPSTREAM: http://api:8080
+      ADMIN_UPSTREAM: http://admin:8082
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
     networks:
       - shroud-internal
@@ -240,9 +241,9 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Operator console. Off unless COMPOSE_PROFILES includes admin (the wizard asks).
-  # The host port is only on the local overlay, so npm mode does not publish it;
-  # that overlay reaches the container as shroud-admin:8082. API secrets are not
+  # Operator console. Off unless COMPOSE_PROFILES includes admin (./deploy.sh --admin).
+  # The web client proxies https://<shroud-host>/admin and /api/admin to this
+  # container. It has no host port of its own. API secrets are not
   # copied in: a secret the console must know about arrives as <NAME>_SET=true.
   admin:
     profiles: ["admin"]
@@ -256,7 +257,7 @@ services:
       ADMIN_DIST: /ui/dist
       RUST_LOG: ${RUST_LOG:-info}
       RUST_LOG_FORMAT: ${RUST_LOG_FORMAT:-text}
-      ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-http://127.0.0.1:8082}
+      ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-http://localhost:8081/admin}
       ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:-}
       ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:-}
       OPERATOR_PORT: ${OPERATOR_PORT:-8090}

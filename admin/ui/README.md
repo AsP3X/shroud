@@ -5,8 +5,8 @@ that the `shroud-admin` binary serves from `dist/`. It shares no code with `web/
 
 ```bash
 npm install
-npm run dev:fixtures   # the UI on http://localhost:5174 against admin/api/fixtures
-npm run dev            # against a running shroud-admin (ADMIN_API_URL, default http://127.0.0.1:8082)
+npm run dev:fixtures   # the UI on http://localhost:5174/admin against admin/api/fixtures
+npm run dev            # http://localhost:5174/admin, API at ADMIN_API_URL (default http://127.0.0.1:8082)
 npm run build          # tsc -b, then dist/
 ```
 
@@ -25,8 +25,8 @@ examples). Switches live in memory:
 | `/__fixtures?role=read` | the fake operator's role |
 | `/__fixtures?reset` | defaults |
 
-A page's own `?state=` reaches the fixtures too, so `/users?state=empty` renders the "No results"
-frame and `/users?state=error:upstream-postgres` the "Couldn't load" one. Production builds never
+A page's own `?state=` reaches the fixtures too, so `/admin/users?state=empty` renders the "No results"
+frame and `/admin/users?state=error:upstream-postgres` the "Couldn't load" one. Production builds never
 send it.
 
 ## Layout

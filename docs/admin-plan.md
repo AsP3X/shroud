@@ -1,8 +1,10 @@
 # Server admin console — implementation plan (Grok = backend, Claude = frontend)
 
 **Status:** proposed 2026-10-08. Nothing here is built yet; `design/admin.pen` is the only artefact.
+**Access (2026-10-09):** operators open the console at the Shroud site plus `/admin`
+(`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`). It is not a separate hostname.
 **Scope:** a console for the operator of one Shroud server, built as its own application: its own
-code, container, hostname, database role and sign-in. It is not part of `web/` and not part of
+code, container, database role and sign-in. It is not part of `web/` and not part of
 the API in `server/crates/shroud-server`.
 **Split:** Grok builds the backend (`admin/api`, Rust) and the one API change this needs. Claude
 builds the frontend (`admin/ui`, TypeScript). Both build against the frozen contract in §3; neither
@@ -32,11 +34,11 @@ admin/
 └── Dockerfile               stage 1 builds ui/, stage 2 builds api/, final: distroless, non-root
 ```
 
-- **One deployable.** The Rust binary serves `/api/admin/*` and the built UI from `/` (static files,
-  `index.html` fallback for client routes, long cache headers for hashed assets). No nginx in the
-  image. Compose service `admin` under profile `admin`, port `127.0.0.1:${ADMIN_PORT:-8082}` in
-  `local` mode, `admin.<domain>` on `proxy-network` in `npm` mode. Never behind the web client's
-  nginx; `web/` never links to it.
+- **One deployable.** The Rust binary serves `/api/admin/*` and the built UI under `/admin/`
+  (static files, `index.html` fallback for client routes, long cache headers for hashed assets
+  under `/admin/assets/`). No nginx in the image. Compose service `admin` under profile `admin`
+  has no published host port. The web client proxies `WEB_PUBLIC_URL` + `/admin` and `/api/admin`
+  to it (for example `https://shroud-app.com/admin`). `web/` does not link to the console.
 - **Reads:** Postgres as role `shroud_admin` (column grants, R3) and the API's existing
   `GET /api/v1/health/ready`, `/metrics`, `/client-version` over `shroud-internal`.
 - **Writes:** only through a new internal operator listener on the API server (`OPERATOR_PORT`,
@@ -236,6 +238,8 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     none of those secret values. The wizard asks, and with the answer yes it writes the profile
     and prints the console URL. A full `./deploy.sh` was not run: it would start the shared
     `shroud-*` stack.
+  - Superseded 2026-10-09: the console is the Shroud site plus `/admin`. Host port 8082 is not
+    published, and npm mode does not put the admin service on `proxy-network`.
 - [x] **G0.3 Fixtures and schemas (C8).** Every file in §3.8, hand-written from the frames'
   numbers, plus JSON Schemas. This unblocks Claude's C1.
   - Done when: `npm run dev:fixtures` in `admin/ui` (Claude's C0.2) serves them unchanged.

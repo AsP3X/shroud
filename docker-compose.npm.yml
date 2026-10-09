@@ -4,9 +4,8 @@
 #   docker compose -f docker-compose.yml -f docker-compose.npm.yml up -d --build
 #
 # NPM proxy hosts:
-#   web  → http://shroud-web:80
+#   web  → http://shroud-web:80     (the operator console is https://<that host>/admin)
 #   api  → http://shroud-api:8080   (iOS and any client that does not go through the web nginx)
-#   admin → http://shroud-admin:8082   (only when the admin profile is on; its own proxy host)
 #
 # NPM writes an access log per proxy host with each client's address and user agent. Matched by
 # time with the API's own log, that ties people to addresses. In each host's Advanced tab, add:
@@ -19,11 +18,6 @@ services:
       - proxy-network
 
   web:
-    networks:
-      - shroud-internal
-      - proxy-network
-
-  admin:
     networks:
       - shroud-internal
       - proxy-network

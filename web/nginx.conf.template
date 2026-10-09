@@ -1,5 +1,5 @@
 # Rendered by the nginx image envsubst entrypoint.
-# Substitutes ${API_UPSTREAM} and ${MAX_UPLOAD_BYTES} only (other $vars are nginx).
+# Substitutes ${API_UPSTREAM}, ${ADMIN_UPSTREAM} and ${MAX_UPLOAD_BYTES} only (other $vars are nginx).
 
 server {
     listen 80;
@@ -46,6 +46,25 @@ server {
         include /etc/nginx/api-proxy.conf;
         set $shroud_api ${API_UPSTREAM};
         proxy_pass $shroud_api;
+    }
+
+    # The operator console lives on this same host, at /admin. ^~ so a hashed
+    # .wasm or .mjs under /admin is not taken by the regex locations below.
+    # /api/admin is longer than /api/, so the console's API is not sent to the Shroud API.
+    location ^~ /api/admin/ {
+        include /etc/nginx/admin-proxy.conf;
+        set $shroud_admin ${ADMIN_UPSTREAM};
+        proxy_pass $shroud_admin;
+    }
+
+    location = /admin {
+        return 308 /admin/;
+    }
+
+    location ^~ /admin/ {
+        include /etc/nginx/admin-proxy.conf;
+        set $shroud_admin ${ADMIN_UPSTREAM};
+        proxy_pass $shroud_admin;
     }
 
     location /assets/ {

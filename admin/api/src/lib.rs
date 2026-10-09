@@ -1,8 +1,8 @@
 //! Admin console HTTP process.
 //!
-//! Serves `GET /healthz` and, when `admin/ui/dist/index.html` is present, the built UI.
-//! Hashed files under `/assets/` are cached for a year. `index.html` and client-side
-//! routes are `Cache-Control: no-store`.
+//! Serves `GET /healthz` and, when `admin/ui/dist/index.html` is present, the built UI
+//! under `/admin/`. Hashed files under `/admin/assets/` are cached for a year.
+//! `index.html` and client-side routes are `Cache-Control: no-store`.
 //!
 //! Every response carries a content security policy and `Referrer-Policy: no-referrer`.
 //! Request bodies are capped at 16 KiB. Each request is logged with an id, the method,
@@ -36,7 +36,7 @@ use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::Instrument;
@@ -89,7 +89,7 @@ pub enum StartupError {
     Config(&'static str),
 }
 
-/// Router for `/healthz`, `/api/admin`, and, when `dist/index.html` exists, the built UI.
+/// Router for `/healthz`, `/api/admin`, and, when `dist/index.html` exists, the built UI at `/admin/`.
 pub fn router(dist: Option<&Path>) -> Router {
     router_with(dist, AppState::disconnected())
 }
@@ -111,10 +111,21 @@ pub fn router_with(dist: Option<&Path>, state: AppState) -> Router {
         let assets = Router::new()
             .fallback_service(ServeDir::new(dist.join("assets")))
             .layer(middleware::from_fn(cache_hashed_asset));
-        let spa = Router::new()
+        // no-store covers the pages only. The asset nest is a sibling, so a hashed file
+        // keeps its year-long cache.
+        let pages = Router::new()
             .fallback_service(ServeDir::new(dist).fallback(ServeFile::new(dist.join("index.html"))))
             .layer(middleware::from_fn(no_store));
-        router = router.nest("/assets", assets).fallback_service(spa);
+        let ui = Router::new()
+            .nest("/assets", assets)
+            .fallback_service(pages);
+        // Axum's nest matches `/admin/` only when the prefix itself ends in a slash,
+        // and matches `/admin` only when it does not. The console is a path on the
+        // Shroud site. Both spellings land on `/admin/`.
+        router = router
+            .route("/", get(|| async { Redirect::permanent("/admin/") }))
+            .route("/admin", get(|| async { Redirect::permanent("/admin/") }))
+            .nest("/admin/", ui);
     }
     router
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
@@ -197,7 +208,7 @@ async fn healthz() -> impl IntoResponse {
     )
 }
 
-/// Successful responses under `/assets/` are content-addressed by the UI build.
+/// Successful responses under `/admin/assets/` are content-addressed by the UI build.
 async fn cache_hashed_asset(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     let value = if response.status().is_success() {
@@ -407,21 +418,39 @@ mod tests {
         dir.write("index.html", "<p>ui</p>");
         dir.write("favicon.svg", "<svg></svg>");
 
-        let index = call(Some(&dir.path), "/").await;
+        let root = call(Some(&dir.path), "/").await;
+        assert_eq!(root.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            root.headers()
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("/admin/")
+        );
+
+        let bare = call(Some(&dir.path), "/admin").await;
+        assert_eq!(bare.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            bare.headers()
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok()),
+            Some("/admin/")
+        );
+
+        let index = call(Some(&dir.path), "/admin/").await;
         assert_eq!(index.status(), StatusCode::OK);
         assert_eq!(cache(&index), NO_STORE);
         assert_eq!(body(index).await, "<p>ui</p>");
 
-        let route = call(Some(&dir.path), "/users").await;
+        let route = call(Some(&dir.path), "/admin/users").await;
         assert_eq!(route.status(), StatusCode::OK);
         assert_eq!(cache(&route), NO_STORE);
         assert_eq!(body(route).await, "<p>ui</p>");
 
-        let named = call(Some(&dir.path), "/index.html").await;
+        let named = call(Some(&dir.path), "/admin/index.html").await;
         assert_eq!(named.status(), StatusCode::OK);
         assert_eq!(cache(&named), NO_STORE);
 
-        let icon = call(Some(&dir.path), "/favicon.svg").await;
+        let icon = call(Some(&dir.path), "/admin/favicon.svg").await;
         assert_eq!(icon.status(), StatusCode::OK);
         assert_eq!(cache(&icon), NO_STORE);
     }
@@ -432,12 +461,12 @@ mod tests {
         dir.write("index.html", "<p>ui</p>");
         dir.write("assets/app.js", "console.log(1)");
 
-        let asset = call(Some(&dir.path), "/assets/app.js").await;
+        let asset = call(Some(&dir.path), "/admin/assets/app.js").await;
         assert_eq!(asset.status(), StatusCode::OK);
         assert_eq!(cache(&asset), ASSET_CACHE);
         assert_eq!(body(asset).await, "console.log(1)");
 
-        let missing = call(Some(&dir.path), "/assets/missing.js").await;
+        let missing = call(Some(&dir.path), "/admin/assets/missing.js").await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         assert_eq!(cache(&missing), NO_STORE);
     }
@@ -446,7 +475,7 @@ mod tests {
     async fn a_dist_without_index_html_serves_only_healthz() {
         let dir = TempDir::new("no-index");
         dir.write("assets/app.js", "console.log(1)");
-        let response = call(Some(&dir.path), "/assets/app.js").await;
+        let response = call(Some(&dir.path), "/admin/assets/app.js").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let health = call(Some(&dir.path), "/healthz").await;
         assert_eq!(health.status(), StatusCode::OK);
@@ -551,7 +580,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/users")
+                    .uri("/admin/users")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -564,7 +593,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri("/assets/app.js")
+                    .uri("/admin/assets/app.js")
                     .body(Body::empty())
                     .unwrap(),
             )

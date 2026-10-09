@@ -1186,6 +1186,10 @@ mod tests {
             clean_public_url("http://127.0.0.1:8082/").unwrap(),
             "http://127.0.0.1:8082"
         );
+        assert_eq!(
+            clean_public_url("https://shroud-app.com/admin/").unwrap(),
+            "https://shroud-app.com/admin"
+        );
         assert!(clean_public_url("admin.example.com").is_err());
     }
 }

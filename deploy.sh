@@ -4,6 +4,9 @@
 #
 #   ./deploy.sh                  first-time setup or start / redeploy
 #   ./deploy.sh --init           force the setup wizard
+#   ./deploy.sh --admin          turn the admin console on and deploy it
+#   ./deploy.sh --admin off      turn the admin console off (its secrets stay)
+#   ./deploy.sh --admin bootstrap   one-time operator setup link
 #   ./deploy.sh --status         URLs + container table
 #   ./deploy.sh --ps             container table
 #   ./deploy.sh --logs [svc...]  follow logs
@@ -56,6 +59,10 @@ show_help() {
   ${BOLD}Usage:${NC}
     ./deploy.sh                    First-time setup, or start / redeploy
     ./deploy.sh --init             Force the setup wizard again
+    ./deploy.sh --admin            Turn the admin console on and deploy it
+    ./deploy.sh --admin off        Turn it off; its key and passwords stay in .env
+    ./deploy.sh --admin bootstrap  Print a one-time operator setup link
+                                   (--recover, and --name NAME when several exist)
     ./deploy.sh --status           Show URLs and container status
     ./deploy.sh --ps               Container table only
     ./deploy.sh --logs [svc...]    Follow logs (all, or named services)
@@ -78,7 +85,7 @@ show_help() {
   ${BOLD}After deploy:${NC}
     Web:   http://localhost:8081   (PROXY_MODE=local; --status shows the real URL)
     API:   http://localhost:8080/api/v1
-    Admin: off until ./deploy.sh --init enables it (then --status prints its URL)
+    Admin: the web address plus /admin   (./deploy.sh --admin, then --admin bootstrap)
     iOS:   point the app at the API URL from --status
 
   ${BOLD}Environment:${NC}
@@ -138,6 +145,8 @@ run_wizard() {
 }
 
 CMD=""
+ADMIN_ACTION=""
+ADMIN_ARGS=()
 PASSTHRU=()
 DOWN_VOLUMES=0
 STORAGE=""        # "", dir or volumes
@@ -165,6 +174,33 @@ while (( $# )); do
     --down|down|--stop|stop) set_cmd down ;;
     --volumes)               DOWN_VOLUMES=1 ;;
     --init|init|--setup|setup) set_cmd init ;;
+    --admin|admin)
+      set_cmd admin
+      # Consumed here, including bootstrap's own flags, so the loop does not treat
+      # --recover as a deploy.sh option. The loop's own shift does not run after break.
+      shift
+      if (( $# )) && [[ "$1" != -* ]]; then
+        ADMIN_ACTION="$1"
+        shift
+      else
+        ADMIN_ACTION="on"
+      fi
+      case "$ADMIN_ACTION" in
+        on|off) ;;
+        bootstrap) ADMIN_ARGS=("$@"); set -- ;;
+        *) die "unknown admin command: ${ADMIN_ACTION}
+  Valid: ./deploy.sh --admin [off | bootstrap [--recover] [--name NAME]]" ;;
+      esac
+      while (( $# )); do
+        case "$1" in
+          --yes|-y) export SHROUD_SETUP_ASSUME_YES=1 ;;
+          *) die "unexpected argument: $1
+  Valid: ./deploy.sh --admin [off | bootstrap [--recover] [--name NAME]]" ;;
+        esac
+        shift
+      done
+      break
+      ;;
     --up|up)                 set_cmd up ;;
     --yes|-y)                export SHROUD_SETUP_ASSUME_YES=1 ;;
     --data-dir=*)            set_storage dir; DATA_DIR_VALUE="${1#--data-dir=}" ;;
@@ -180,7 +216,7 @@ while (( $# )); do
     --migrate)               MIGRATE=1 ;;
     --)                      shift; PASSTHRU+=("$@"); break ;;
     -*)                      die "unknown option: $1
-  Valid: --init --status --ps --logs --restart --rebuild --down --volumes
+  Valid: --init --admin --status --ps --logs --restart --rebuild --down --volumes
          --data-dir [path] --named-volumes --migrate --yes --help" ;;
     *)                       PASSTHRU+=("$1") ;;
   esac
@@ -235,9 +271,92 @@ require_docker
 # shellcheck disable=SC1091
 source scripts/compose-env.sh
 
+# The console is the web address plus /admin. A refused address leaves the profile unchanged.
+shroud_admin_set_public_url() {
+  local url
+  url="$(shroud_admin_public_url)" ||
+    die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin."
+  shroud_set_env_value ADMIN_PUBLIC_URL "$url"
+}
+
+shroud_admin_next() {
+  local url user db count
+  url="$(shroud_env_value ADMIN_PUBLIC_URL)"
+  user="$(shroud_env_value POSTGRES_USER)"
+  db="$(shroud_env_value POSTGRES_DB)"
+  user="${user:-shroud}"
+  db="${db:-shroud}"
+  echo ""
+  ok "Admin console: ${url}"
+  count="$(shroud_compose exec -T postgres psql -q -t -A -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+    -c "SELECT count(*) FROM admin.operators" 2>/dev/null || true)"
+  count="${count//$'\r'/}"
+  count="${count//[[:space:]]/}"
+  echo ""
+  if [[ "$count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "  Operators are already enrolled. Open ${url}"
+  else
+    echo "  Create the first operator. The link is shown once:"
+    echo "    ./deploy.sh --admin bootstrap"
+  fi
+}
+
+shroud_admin_on() {
+  local already=0
+  if shroud_profile_enabled admin; then
+    already=1
+  fi
+  # The address is settled before anything else is written, so a refused URL leaves .env alone.
+  shroud_admin_set_public_url
+  [[ -n "$(shroud_env_value ADMIN_PORT)" ]] || shroud_set_env_value ADMIN_PORT 8082
+  shroud_enable_profile admin
+  if [[ "$already" -eq 1 ]]; then
+    step "Admin console is already on. Deploying it…"
+  else
+    step "Turning the admin console on…"
+  fi
+  shroud_up
+  shroud_admin_next
+}
+
+shroud_admin_off() {
+  if ! shroud_profile_enabled admin; then
+    ok "Admin console is already off."
+    echo "  Turn it on with ./deploy.sh --admin"
+    return 0
+  fi
+  step "Turning the admin console off…"
+  shroud_disable_profile admin
+  shroud_up
+  echo ""
+  ok "Admin console is off."
+  echo "  Its key, database password and operator token stay in .env."
+  echo "  Operators and the audit log stay in schema admin."
+  echo "  Turn it back on with ./deploy.sh --admin"
+}
+
+shroud_admin_bootstrap() {
+  shroud_profile_enabled admin ||
+    die "the admin console is off. Run ./deploy.sh --admin first."
+  shroud_admin_set_public_url
+  step "Creating a one-time setup link…"
+  shroud_compose run --rm --no-deps -T admin bootstrap ${ADMIN_ARGS[@]+"${ADMIN_ARGS[@]}"}
+}
+
+shroud_admin_command() {
+  [[ -f .env ]] ||
+    die "there is no .env yet. Set up the API and web client first: ./deploy.sh"
+  case "$ADMIN_ACTION" in
+    on) shroud_admin_on ;;
+    off) shroud_admin_off ;;
+    bootstrap) shroud_admin_bootstrap ;;
+  esac
+}
+
 CURRENT_STAGE="$CMD"
 case "$CMD" in
   status) shroud_info; exit 0 ;;
+  admin)  shroud_admin_command; exit 0 ;;
   ps)     shroud_compose ps; exit 0 ;;
   logs)
     step "Following logs (Ctrl-C to stop)…"

@@ -25,7 +25,7 @@ function csrfToken(): string | undefined {
 }
 
 /** In development the page's own `?state=` reaches the fixture server, so a frame state can be
- *  opened by URL (`/users?state=empty`). Production builds never add it. */
+ *  opened by URL (`/admin/users?state=empty`). Production builds never add it. */
 function devState(): string | null {
   if (!import.meta.env.DEV) return null;
   return new URLSearchParams(window.location.search).get("state");

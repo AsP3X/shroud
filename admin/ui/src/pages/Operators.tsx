@@ -322,9 +322,17 @@ function InviteDialog({ busy, onClose, onInvite }: { busy: boolean; onClose: () 
   );
 }
 
+/** The API returns a relative `/setup/{token}`. The page lives under `/admin`. */
+function consoleUrl(path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return new URL(`${base}${suffix}`, window.location.origin).toString();
+}
+
 function LinkDialog({ name, url, onClose }: { name: string; url: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
-  const full = new URL(url, window.location.origin).toString();
+  const full = consoleUrl(url);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(full);

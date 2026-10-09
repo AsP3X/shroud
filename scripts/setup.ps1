@@ -147,8 +147,8 @@ if ($TURN_HOST) {
 
 Write-Host ""
 Write-Host "── Admin console ──"
-Write-Host "  The operator console is its own site, not a page of the web client. Local mode binds it"
-Write-Host "  to 127.0.0.1. Nginx Proxy Manager mode puts it on proxy-network as shroud-admin:8082."
+Write-Host "  The operator console is a page of this site: $($WEB_PUBLIC_URL.TrimEnd('/'))/admin."
+Write-Host "  To turn it on or off later, use .\deploy.ps1 -Admin. That does not run this wizard."
 $adminChoice = "n"
 if ($env:SHROUD_SETUP_ASSUME_YES -eq "1") {
     Write-Host "  Enable the admin console? [y/N]: n"
@@ -165,28 +165,39 @@ function Get-ReusedOrNewSecret([string]$Name) {
     if ($current -and $current -ne "GENERATE_ME") { return $current }
     return New-Secret
 }
-$ADMIN_PORT = "8082"
-$ADMIN_PUBLIC_URL = ""
-$ADMIN_DB_PASSWORD = ""
-$ADMIN_DATABASE_URL = ""
-$ADMIN_SECRET_KEY = ""
-$OPERATOR_PORT = "8090"
-$OPERATOR_TOKEN = ""
+function Get-KeptAdminValue([string]$Name) {
+    $current = Get-EnvValue $Name
+    if ($current -and $current -ne "GENERATE_ME") { return $current }
+    return ""
+}
+$ADMIN_PORT = Get-KeptAdminValue "ADMIN_PORT"
+if (-not $ADMIN_PORT) { $ADMIN_PORT = "8082" }
+$ADMIN_PUBLIC_URL = Get-KeptAdminValue "ADMIN_PUBLIC_URL"
+$ADMIN_DB_PASSWORD = Get-KeptAdminValue "ADMIN_DB_PASSWORD"
+$ADMIN_DATABASE_URL = Get-KeptAdminValue "ADMIN_DATABASE_URL"
+$ADMIN_SECRET_KEY = Get-KeptAdminValue "ADMIN_SECRET_KEY"
+$OPERATOR_PORT = Get-KeptAdminValue "OPERATOR_PORT"
+if (-not $OPERATOR_PORT) { $OPERATOR_PORT = "8090" }
+$OPERATOR_TOKEN = Get-KeptAdminValue "OPERATOR_TOKEN"
 if ($adminChoice -match '^[yY]') {
     if ($COMPOSE_PROFILES) { $COMPOSE_PROFILES = "$COMPOSE_PROFILES,admin" } else { $COMPOSE_PROFILES = "admin" }
-    $ADMIN_PORT = Read-Prompt "Admin host port" "8082"
-    if ($PROXY_MODE -eq "npm") {
-        $ADMIN_PUBLIC_URL = Read-Prompt "Public admin URL" "https://admin.example.com"
-    } else {
-        $ADMIN_PUBLIC_URL = "http://127.0.0.1:${ADMIN_PORT}"
+    $web = $WEB_PUBLIC_URL
+    if ($web) { $web = $web.TrimEnd('/') }
+    if (-not $web -or $web -notmatch '^https?://' -or $web -match '[\s$]') {
+        Write-Die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin."
     }
+    $ADMIN_PUBLIC_URL = "$web/admin"
     $ADMIN_DB_PASSWORD = Get-ReusedOrNewSecret "ADMIN_DB_PASSWORD"
     $ADMIN_DATABASE_URL = "postgres://shroud_admin:${ADMIN_DB_PASSWORD}@postgres:5432/shroud"
     $ADMIN_SECRET_KEY = Get-ReusedOrNewSecret "ADMIN_SECRET_KEY"
     $OPERATOR_TOKEN = Get-ReusedOrNewSecret "OPERATOR_TOKEN"
     Write-Host "  Admin console: on at $ADMIN_PUBLIC_URL" -ForegroundColor Green
 } else {
-    Write-Host "  Admin console: off"
+    if ($ADMIN_SECRET_KEY) {
+        Write-Host "  Admin console: off (its settings and secrets stay in .env for when you turn it back on)"
+    } else {
+        Write-Host "  Admin console: off"
+    }
 }
 
 $envLines = @(

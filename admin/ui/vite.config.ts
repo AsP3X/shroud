@@ -8,6 +8,8 @@ import { fixtureServer } from "./dev-server";
 const fixturesDir = fileURLToPath(new URL("../api/fixtures/", import.meta.url));
 
 export default defineConfig(({ mode }) => ({
+  // Served at the Shroud site's /admin (https://<shroud-host>/admin).
+  base: "/admin/",
   plugins: [react(), ...(mode === "fixtures" ? [fixtureServer(fixturesDir)] : [])],
   server: {
     port: 5174,

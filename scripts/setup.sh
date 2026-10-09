@@ -271,8 +271,8 @@ fi
 
 echo ""
 echo "${BOLD}── Admin console ──${NC}"
-echo "  The operator console is its own site, not a page of the web client. Local mode binds it"
-echo "  to 127.0.0.1. Nginx Proxy Manager mode puts it on proxy-network as shroud-admin:8082."
+echo "  The operator console is a page of this site: ${WEB_PUBLIC_URL%/}/admin."
+echo "  To turn it on or off later, use ./deploy.sh --admin. That does not run this wizard."
 case ",$(current COMPOSE_PROFILES)," in
   *,admin,*) admin_default="y"; admin_hint="[Y/n]" ;;
   *) admin_default="n"; admin_hint="[y/N]" ;;
@@ -304,15 +304,17 @@ case "$(printf '%s' "${admin_choice:-$admin_default}" | tr '[:upper:]' '[:lower:
     else
       COMPOSE_PROFILES="admin"
     fi
-    admin_port_default="$(current ADMIN_PORT)"
-    ADMIN_PORT="$(prompt "Admin host port" "${admin_port_default:-8082}")"
-    if [[ "$PROXY_MODE" == "npm" ]]; then
-      admin_url_default="$(current ADMIN_PUBLIC_URL)"
-      case "$admin_url_default" in https://*) ;; *) admin_url_default="https://admin.example.com" ;; esac
-      ADMIN_PUBLIC_URL="$(prompt "Public admin URL" "$admin_url_default")"
-    else
-      ADMIN_PUBLIC_URL="http://127.0.0.1:${ADMIN_PORT}"
+    admin_web="${WEB_PUBLIC_URL}"
+    while [[ "$admin_web" == */ ]]; do
+      admin_web="${admin_web%/}"
+    done
+    if [[ "$admin_web" != http://* && "$admin_web" != https://* ]]; then
+      die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin."
     fi
+    case "$admin_web" in
+      *' '*|*'$*') die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin." ;;
+    esac
+    ADMIN_PUBLIC_URL="${admin_web}/admin"
     ADMIN_DB_PASSWORD="$(reuse_or_generate "$(current ADMIN_DB_PASSWORD)")"
     ADMIN_DATABASE_URL="postgres://shroud_admin:${ADMIN_DB_PASSWORD}@postgres:5432/shroud"
     ADMIN_SECRET_KEY="$(reuse_or_generate "$(current ADMIN_SECRET_KEY)")"

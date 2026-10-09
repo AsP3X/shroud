@@ -9,11 +9,14 @@
 .EXAMPLE
     .\deploy.ps1
     .\deploy.ps1 -Init
+    .\deploy.ps1 -Admin
+    .\deploy.ps1 -Admin bootstrap
     .\deploy.ps1 -Logs api
     .\deploy.ps1 -DataDir D:\shroud-data
 #>
 param(
     [switch]$Init,
+    [switch]$Admin,
     [switch]$Status,
     [switch]$Ps,
     [switch]$Logs,
@@ -127,6 +130,106 @@ function Add-NebularSecrets {
 
 # The secret coturn and the API share (docs/calls.md), for an .env from before calls had one.
 # Generated once and kept: a new one only ends the TURN logins handed out so far.
+function Test-ProfileEnabled {
+    param([string]$Name)
+    $current = (Get-EnvValue "COMPOSE_PROFILES")
+    if (-not $current) { $current = "" }
+    $current = ($current -replace '\s', '').Trim(',')
+    return ("," + $current + ",").Contains("," + $Name + ",")
+}
+
+function Enable-Profile {
+    param([string]$Name)
+    if (Test-ProfileEnabled $Name) { return }
+    $current = Get-EnvValue "COMPOSE_PROFILES"
+    if ($current) { $current = ($current -replace '\s', '').Trim(',') }
+    if (-not $current) { Set-EnvValue "COMPOSE_PROFILES" $Name }
+    else { Set-EnvValue "COMPOSE_PROFILES" "$current,$Name" }
+}
+
+function Disable-Profile {
+    param([string]$Name)
+    $current = Get-EnvValue "COMPOSE_PROFILES"
+    if (-not $current) { $current = "" }
+    $next = @()
+    foreach ($part in (($current -replace '\s', '').Trim(',') -split ',')) {
+        if ($part -and $part -ne $Name) { $next += $part }
+    }
+    Set-EnvValue "COMPOSE_PROFILES" ($next -join ',')
+}
+
+# Secrets the console needs once its profile is on. Generated once and never replaced.
+function Add-AdminSecrets {
+    if (-not (Test-ProfileEnabled "admin")) { return }
+    # Refuse a bad web address before writing a port or a secret.
+    Set-AdminPublicUrl
+    foreach ($key in @("ADMIN_DB_PASSWORD", "ADMIN_SECRET_KEY", "OPERATOR_TOKEN")) {
+        $current = Get-EnvValue $key
+        if ($current -and $current -ne "GENERATE_ME") { continue }
+        Set-EnvValue $key (New-HexSecret)
+        Write-Line "Added the admin console secret to .env: $key" "Green"
+    }
+    $url = Get-EnvValue "ADMIN_DATABASE_URL"
+    if (-not $url -or $url -eq "GENERATE_ME") {
+        $password = Get-EnvValue "ADMIN_DB_PASSWORD"
+        Set-EnvValue "ADMIN_DATABASE_URL" "postgres://shroud_admin:${password}@postgres:5432/shroud"
+    }
+    if (-not (Get-EnvValue "ADMIN_PORT")) { Set-EnvValue "ADMIN_PORT" "8082" }
+    if (-not (Get-EnvValue "OPERATOR_PORT")) { Set-EnvValue "OPERATOR_PORT" "8090" }
+}
+
+# The console's public address: WEB_PUBLIC_URL plus /admin. $null when that address is not http(s).
+function Get-AdminPublicUrl {
+    $web = Get-EnvValue "WEB_PUBLIC_URL"
+    if ($web) { $web = $web.TrimEnd('/') }
+    if (-not $web -or $web -notmatch '^https?://' -or $web -match '[\s$]') { return $null }
+    return "$web/admin"
+}
+
+# Writes that address into .env. A refused address leaves the profile unchanged when called first.
+function Set-AdminPublicUrl {
+    $url = Get-AdminPublicUrl
+    if (-not $url) {
+        Write-Die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin."
+    }
+    Set-EnvValue "ADMIN_PUBLIC_URL" $url
+}
+
+# The init script only runs on an empty data directory. This creates shroud_admin on a volume
+# that already existed, then re-applies the column grants.
+function Apply-AdminDb {
+    if (-not (Test-ProfileEnabled "admin")) { return }
+    $user = Get-EnvValue "POSTGRES_USER"; if (-not $user) { $user = "shroud" }
+    $db = Get-EnvValue "POSTGRES_DB"; if (-not $db) { $db = "shroud" }
+    $pass = Get-EnvValue "ADMIN_DB_PASSWORD"
+    if (-not $pass) { Write-Die "the admin profile is on and ADMIN_DB_PASSWORD is empty." }
+    $files = Get-ComposeArgs
+    $roleSql = @'
+SELECT set_config('shroud.admin_password', :'pwd', false);
+DO $body$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shroud_admin') THEN
+    EXECUTE format(
+      'CREATE ROLE shroud_admin LOGIN PASSWORD %L',
+      current_setting('shroud.admin_password')
+    );
+  END IF;
+END
+$body$;
+GRANT CONNECT, CREATE ON DATABASE :"dbname" TO shroud_admin;
+GRANT USAGE ON SCHEMA public TO shroud_admin;
+'@
+    Invoke-WithDataDirEnv {
+        $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "pwd=$pass" -v "dbname=$db" | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) { throw "could not create the shroud_admin role" }
+    $grants = Join-Path $repoRoot "admin\api\grants.sql"
+    Invoke-WithDataDirEnv {
+        Get-Content -Raw -LiteralPath $grants | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -f - | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) { throw "could not apply admin/api/grants.sql" }
+}
+
 function Add-TurnSecret {
     $path = Join-Path $repoRoot ".env"
     if (-not (Test-Path -LiteralPath $path)) { return }
@@ -501,6 +604,13 @@ function Show-Info {
     else { Write-Host "  Storage:     named Docker volumes" }
     Write-Host "  Web client:  $web"
     Write-Host "  API (iOS):   $api/api/v1"
+    if (Test-ProfileEnabled "admin") {
+        $adminUrl = Get-AdminPublicUrl
+        if (-not $adminUrl) { $adminUrl = Get-EnvValue "ADMIN_PUBLIC_URL" }
+        Write-Host "  Admin console: $adminUrl"
+    } else {
+        Write-Host "  Admin console: off (.\deploy.ps1 -Admin to turn it on)"
+    }
     if ($mode -eq "npm") {
         Write-Host ""
         Write-Host "  Nginx Proxy Manager hosts:"
@@ -517,6 +627,10 @@ function Show-Help {
     Write-Host ""
     Write-Host "    .\deploy.ps1                     First-time setup, or start / redeploy"
     Write-Host "    .\deploy.ps1 -Init               Force the setup wizard again"
+    Write-Host "    .\deploy.ps1 -Admin              Turn the admin console on and deploy it"
+    Write-Host "    .\deploy.ps1 -Admin off          Turn it off; its key and passwords stay in .env"
+    Write-Host "    .\deploy.ps1 -Admin bootstrap    Print a one-time operator setup link"
+    Write-Host "                                     (--recover, and --name NAME when several exist)"
     Write-Host "    .\deploy.ps1 -Status             Show URLs and container status"
     Write-Host "    .\deploy.ps1 -Ps                 Container table only"
     Write-Host "    .\deploy.ps1 -Logs [svc...]      Follow logs"
@@ -539,6 +653,7 @@ if ($Help) { Show-Help; exit 0 }
 
 $verbs = @()
 if ($Init)    { $verbs += "init" }
+if ($Admin)   { $verbs += "admin" }
 if ($Status)  { $verbs += "status" }
 if ($Ps)      { $verbs += "ps" }
 if ($Logs)    { $verbs += "logs" }
@@ -558,6 +673,9 @@ if ($Yes) { $env:SHROUD_SETUP_ASSUME_YES = "1" }
 $storage = ""
 $dataDirValue = ""
 $switchCommand = ""
+if ($Admin -and ($DataDir -or $NamedVolumes)) {
+    Write-Die "-Admin does not change where data is stored."
+}
 if ($DataDir -and $NamedVolumes) { Write-Die "-DataDir and -NamedVolumes can't be used together." }
 if ($DataDir -or $NamedVolumes) {
     if ($cmd -notin @("up", "rebuild", "init")) {
@@ -604,7 +722,60 @@ function Invoke-Wizard {
         }
     }
     Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
+    Apply-AdminDb
     Show-Info
+}
+
+$script:adminNote = ""
+if ($cmd -eq "admin") {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".env"))) {
+        Write-Die "there is no .env yet. Set up the API and web client first: .\deploy.ps1"
+    }
+    $action = "on"
+    $extra = @()
+    if ($services.Count -ge 1) {
+        $action = $services[0]
+        if ($services.Count -gt 1) { $extra = @($services | Select-Object -Skip 1) }
+    }
+    switch ($action) {
+        "on" {
+            if ($extra.Count -gt 0) { Write-Die "unexpected argument: $($extra -join ' ')" }
+            $already = Test-ProfileEnabled "admin"
+            Set-AdminPublicUrl
+            if (-not (Get-EnvValue "ADMIN_PORT")) { Set-EnvValue "ADMIN_PORT" "8082" }
+            Enable-Profile "admin"
+            if ($already) { Write-Step "Admin console is already on. Deploying it..." }
+            else { Write-Step "Turning the admin console on..." }
+            $script:adminNote = "on"
+            $cmd = "up"
+        }
+        "off" {
+            if ($extra.Count -gt 0) { Write-Die "unexpected argument: $($extra -join ' ')" }
+            if (-not (Test-ProfileEnabled "admin")) {
+                Write-Ok "Admin console is already off."
+                Write-Host "  Turn it on with .\deploy.ps1 -Admin"
+                exit 0
+            }
+            Write-Step "Turning the admin console off..."
+            Disable-Profile "admin"
+            $script:adminNote = "off"
+            $cmd = "up"
+        }
+        "bootstrap" {
+            if (-not (Test-ProfileEnabled "admin")) {
+                Write-Die "the admin console is off. Run .\deploy.ps1 -Admin first."
+            }
+            Set-AdminPublicUrl
+            Write-Step "Creating a one-time setup link..."
+            $files = Get-ComposeArgs
+            Invoke-WithDataDirEnv { & docker compose @files run --rm --no-deps -T admin bootstrap @extra }
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            exit 0
+        }
+        default {
+            Write-Die "unknown admin command: $action`n  Valid: .\deploy.ps1 -Admin [off | bootstrap [--recover] [--name NAME]]"
+        }
+    }
 }
 
 try {
@@ -654,6 +825,7 @@ try {
 
     Add-NebularSecrets
     Add-TurnSecret
+    Add-AdminSecrets
     $envFile = Join-Path $repoRoot ".env"
     if (Select-String -LiteralPath $envFile -Pattern '=(GENERATE_ME)\s*$' -Quiet) {
         Write-Die ".env still contains GENERATE_ME placeholders. Run .\deploy.ps1 -Init."
@@ -692,10 +864,36 @@ try {
         }
         throw
     }
+    Apply-AdminDb
     $elapsed = (Get-Date) - $startedAt
     Write-Host ""
     Write-Ok ("Deploy finished in {0}m {1}s." -f [int][math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds)
     Show-Info
+    if ($script:adminNote -eq "on") {
+        $user = Get-EnvValue "POSTGRES_USER"; if (-not $user) { $user = "shroud" }
+        $db = Get-EnvValue "POSTGRES_DB"; if (-not $db) { $db = "shroud" }
+        $files = Get-ComposeArgs
+        $count = ""
+        try {
+            $count = Invoke-WithDataDirEnv {
+                & docker compose @files exec -T postgres psql -q -t -A -v ON_ERROR_STOP=1 -U $user -d $db -c "SELECT count(*) FROM admin.operators"
+            }
+        } catch { $count = "" }
+        if ($count) { $count = ($count | Out-String).Trim() }
+        Write-Host ""
+        if ($count -match '^[1-9][0-9]*$') {
+            Write-Host "  Operators are already enrolled. Open $(Get-EnvValue 'ADMIN_PUBLIC_URL')"
+        } else {
+            Write-Host "  Create the first operator. The link is shown once:"
+            Write-Host "    .\deploy.ps1 -Admin bootstrap"
+        }
+    } elseif ($script:adminNote -eq "off") {
+        Write-Host ""
+        Write-Ok "Admin console is off."
+        Write-Host "  Its key, database password and operator token stay in .env."
+        Write-Host "  Operators and the audit log stay in schema admin."
+        Write-Host "  Turn it back on with .\deploy.ps1 -Admin"
+    }
 }
 catch {
     Write-Host ""

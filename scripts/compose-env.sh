@@ -158,17 +158,62 @@ shroud_ensure_turn_secret() {
   echo "Added the TURN relay secret to .env: TURN_SECRET"
 }
 
-# True when COMPOSE_PROFILES in .env lists this compose profile.
+# True when COMPOSE_PROFILES in .env lists this compose profile. Spaces around commas still count.
 shroud_profile_enabled() {
-  [[ ",$(shroud_env_value COMPOSE_PROFILES)," == *",$1,"* ]]
+  [[ ",$(shroud_profiles_raw)," == *",$1,"* ]]
+}
+
+# COMPOSE_PROFILES with spaces and a trailing comma removed, so a hand-edited line still splits.
+shroud_profiles_raw() {
+  local current
+  current="$(shroud_env_value COMPOSE_PROFILES)"
+  current="${current// /}"
+  current="${current#,}"
+  current="${current%,}"
+  printf '%s\n' "$current"
+}
+
+# Adds a compose profile. A second call leaves the line as it is.
+shroud_enable_profile() {
+  local name="$1" current
+  shroud_profile_enabled "$name" && return 0
+  current="$(shroud_profiles_raw)"
+  if [[ -z "$current" ]]; then
+    shroud_set_env_value COMPOSE_PROFILES "$name"
+  else
+    shroud_set_env_value COMPOSE_PROFILES "${current},${name}"
+  fi
+}
+
+# Drops a compose profile and leaves every other one. Secrets that belonged to it stay in .env.
+shroud_disable_profile() {
+  local name="$1" current part next="" old_ifs
+  current="$(shroud_profiles_raw)"
+  old_ifs="$IFS"
+  IFS=','
+  for part in $current; do
+    [[ -z "$part" || "$part" == "$name" ]] && continue
+    if [[ -z "$next" ]]; then
+      next="$part"
+    else
+      next="${next},${part}"
+    fi
+  done
+  IFS="$old_ifs"
+  shroud_set_env_value COMPOSE_PROFILES "$next"
 }
 
 # Secrets the console needs once its profile is on. Generated once, like TURN_SECRET, and
 # left empty while the profile is off so a stock deploy does not invent a console.
 shroud_ensure_admin_secrets() {
-  local file="${SHROUD_REPO_ROOT}/.env" key value port
+  local file="${SHROUD_REPO_ROOT}/.env" key value port public
   [[ -f "$file" ]] || return 0
   shroud_profile_enabled admin || return 0
+  # Refuse a bad web address before writing a port or a secret.
+  public="$(shroud_admin_public_url)" || {
+    echo "ERROR: WEB_PUBLIC_URL is not set. The console is served at that address plus /admin." >&2
+    return 1
+  }
   for key in ADMIN_DB_PASSWORD ADMIN_SECRET_KEY OPERATOR_TOKEN; do
     value="$(shroud_env_value "$key")"
     [[ -n "$value" && "$value" != "GENERATE_ME" ]] && continue
@@ -184,16 +229,28 @@ shroud_ensure_admin_secrets() {
   [[ -n "$port" ]] || shroud_set_env_value ADMIN_PORT 8082
   value="$(shroud_env_value OPERATOR_PORT)"
   [[ -n "$value" ]] || shroud_set_env_value OPERATOR_PORT 8090
-  value="$(shroud_env_value ADMIN_PUBLIC_URL)"
-  if [[ -z "$value" ]]; then
-    shroud_load_proxy_mode
-    port="$(shroud_env_value ADMIN_PORT)"
-    if [[ "$PROXY_MODE" == "npm" ]]; then
-      shroud_set_env_value ADMIN_PUBLIC_URL "https://admin.example.com"
-    else
-      shroud_set_env_value ADMIN_PUBLIC_URL "http://127.0.0.1:${port:-8082}"
-    fi
+  # The console is the web address plus /admin, in both proxy modes. An old separate
+  # host in .env is replaced so the two cannot drift.
+  if [[ "$(shroud_env_value ADMIN_PUBLIC_URL)" != "$public" ]]; then
+    shroud_set_env_value ADMIN_PUBLIC_URL "$public"
   fi
+}
+
+# The console's public address: WEB_PUBLIC_URL, one or more trailing slashes removed, plus /admin.
+# Prints nothing and returns 1 when that address is not http(s).
+shroud_admin_public_url() {
+  local web
+  web="$(shroud_env_value WEB_PUBLIC_URL)"
+  while [[ "$web" == */ ]]; do
+    web="${web%/}"
+  done
+  if [[ "$web" != http://* && "$web" != https://* ]]; then
+    return 1
+  fi
+  case "$web" in
+    *' '*|*'$*') return 1 ;;
+  esac
+  printf '%s/admin\n' "$web"
 }
 
 shroud_assert_env() {
@@ -649,7 +706,7 @@ shroud_info() {
   fi
   echo "  Web client:  ${web}"
   echo "  API (iOS):   ${api}/api/v1"
-  if [[ ",$(shroud_env_value COMPOSE_PROFILES)," == *",calls,"* ]]; then
+  if shroud_profile_enabled calls; then
     local min max
     min="$(shroud_env_value TURN_MIN_PORT)"
     max="$(shroud_env_value TURN_MAX_PORT)"
@@ -659,18 +716,18 @@ shroud_info() {
     echo "  TURN relay:  off (calls use STUN only; ./deploy.sh --init to turn it on)"
   fi
   if shroud_profile_enabled admin; then
-    echo "  Admin console: $(shroud_env_value ADMIN_PUBLIC_URL)"
+    local admin_url
+    admin_url="$(shroud_admin_public_url || true)"
+    [[ -n "$admin_url" ]] || admin_url="$(shroud_env_value ADMIN_PUBLIC_URL)"
+    echo "  Admin console: ${admin_url}"
   else
-    echo "  Admin console: off (./deploy.sh --init to turn it on)"
+    echo "  Admin console: off (./deploy.sh --admin to turn it on)"
   fi
   if [[ "$PROXY_MODE" == "npm" ]]; then
     echo ""
     echo "  Nginx Proxy Manager hosts:"
     echo "    web  →  http://shroud-web:80"
     echo "    api  →  http://shroud-api:8080"
-    if shroud_profile_enabled admin; then
-      echo "    admin →  http://shroud-admin:8082"
-    fi
   fi
   echo ""
   shroud_compose ps
