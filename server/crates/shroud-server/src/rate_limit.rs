@@ -61,6 +61,16 @@ pub mod budgets {
     pub const PUSH_TEST_DEVICE: (u64, Duration) = (6, Duration::from_secs(60));
 }
 
+/// Where the limiter keeps its counts (see [`RateLimiter::store`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Store {
+    Redis,
+    /// `REDIS_URL` is set but Redis doesn't answer: each process counts on its own meanwhile.
+    RedisDown,
+    /// No Redis: counted in this process.
+    Process,
+}
+
 struct MemoryWindow {
     count: u64,
     reset_at: Instant,
@@ -249,6 +259,42 @@ impl RateLimiter {
         if let Some(report) = report {
             report();
         }
+    }
+
+    /// Where counts are kept, for the console's rate-limit check: `None` when the limiter is off.
+    ///
+    /// Agent: A PING that gets no answer is reported like a silent check
+    /// ([`Self::on_silent_redis`]), so the console's check also gets the connection replaced.
+    /// An error isn't: the connection manager reconnects on I/O errors itself.
+    pub(crate) async fn store(&self) -> Option<Store> {
+        if !self.inner.enabled {
+            return None;
+        }
+        let Some(mut conn) = self.inner.redis.read().await.clone() else {
+            return Some(Store::Process);
+        };
+        let ping = redis::cmd("PING");
+        let answered =
+            tokio::time::timeout(REDIS_TIMEOUT, ping.query_async::<String>(&mut conn)).await;
+        Some(match answered {
+            Ok(Ok(_)) => Store::Redis,
+            failed => {
+                self.redis_failed();
+                if failed.is_err() {
+                    self.report_silent_redis();
+                }
+                Store::RedisDown
+            }
+        })
+    }
+
+    /// Drops one counter at once, wherever it is kept: the rate-limit check's own keys.
+    pub(crate) async fn forget(&self, scope: &str, id: &str) {
+        let key = format!("rl:{scope}:{id}");
+        if let Some(mut conn) = self.redis().await {
+            let _ = tokio::time::timeout(REDIS_TIMEOUT, conn.del::<_, ()>(&key)).await;
+        }
+        self.inner.memory.write().await.windows.remove(&key);
     }
 
     /// Convenience: check with a `(limit, window)` budget tuple.
@@ -467,6 +513,67 @@ mod tests {
                 .is_err()
         );
         assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(rl.store().await, Some(Store::RedisDown));
+    }
+
+    /// A Redis that answers the connection's setup with OK and every PING with `ping`, or
+    /// never when it is `None`.
+    async fn redis_answering_ping(ping: Option<&'static str>) -> ConnectionManager {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = vec![0u8; 4096];
+            loop {
+                let Ok(read) = socket.read(&mut buffer).await else {
+                    return;
+                };
+                if read == 0 {
+                    return;
+                }
+                let text = String::from_utf8_lossy(&buffer[..read]).to_ascii_uppercase();
+                let reply = if text.contains("PING") {
+                    let Some(ping) = ping else {
+                        continue;
+                    };
+                    ping.to_string()
+                } else {
+                    let commands = text.lines().filter(|line| line.starts_with('*')).count();
+                    "+OK\r\n".repeat(commands.max(1))
+                };
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        let client = redis::Client::open(format!("redis://{address}")).expect("client");
+        ConnectionManager::new(client).await.expect("manager")
+    }
+
+    /// The console's check reports a PING that gets no answer, so the connection is replaced,
+    /// but not one Redis answered with an error.
+    #[tokio::test]
+    async fn store_reports_a_silent_redis_only() {
+        for (ping, reported) in [(None, 1), (Some("-ERR busy\r\n"), 0)] {
+            let rl = RateLimiter::new();
+            rl.set_redis(redis_answering_ping(ping).await).await;
+            let reports = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counter = reports.clone();
+            rl.on_silent_redis(move || {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            });
+
+            assert_eq!(rl.store().await, Some(Store::RedisDown), "{ping:?}");
+            assert_eq!(
+                reports.load(std::sync::atomic::Ordering::SeqCst),
+                reported,
+                "{ping:?}"
+            );
+        }
     }
 
     #[tokio::test]

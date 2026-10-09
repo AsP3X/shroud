@@ -66,6 +66,14 @@
     },
     {
       "method": "GET",
+      "path": "/rate-limits/check",
+      "file": "rate-limits-check.json",
+      "states": {
+        "failing": "rate-limits-check.failing.json"
+      }
+    },
+    {
+      "method": "GET",
       "path": "/retention",
       "file": "retention.json"
     },
@@ -203,6 +211,8 @@
     "client-versions.json": "client-versions.schema.json",
     "client-versions.nothing-set.json": "client-versions.schema.json",
     "rate-limits.json": "rate-limits.schema.json",
+    "rate-limits-check.json": "rate-limits-check.schema.json",
+    "rate-limits-check.failing.json": "rate-limits-check.schema.json",
     "retention.json": "retention.schema.json",
     "retention-check.json": "retention-check.schema.json",
     "retention-check.failing.json": "retention-check.schema.json",

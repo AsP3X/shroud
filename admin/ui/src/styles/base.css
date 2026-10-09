@@ -723,6 +723,12 @@ h1 {
   flex: 1;
 }
 
+/* A card straight on the page, not in a column: the page scrolls, so it keeps its height (its
+   overflow: hidden would otherwise let the page's flex column squash it to nothing). */
+.main > .card {
+  flex: none;
+}
+
 .card__head {
   display: flex;
   align-items: center;
@@ -861,6 +867,10 @@ h1 {
 
 .text-primary {
   color: var(--text-primary);
+}
+
+.text-danger {
+  color: var(--danger);
 }
 
 .small {

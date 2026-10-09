@@ -1,0 +1,112 @@
+[
+  {
+    "item": "Counter store",
+    "state": "ok",
+    "detail": "Redis answers: every API process shares the counts."
+  },
+  {
+    "item": "Register or log in · per IP",
+    "state": "ok",
+    "detail": "Let 10 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Register or log in · per username",
+    "state": "ok",
+    "detail": "Let 5 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Password change, account delete · per account",
+    "state": "ok",
+    "detail": "Let 5 through in an hour, refused the next · counted in Redis."
+  },
+  {
+    "item": "Session status from locked clients · per IP",
+    "state": "ok",
+    "detail": "Let 60 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "PIN-guard unlock · per IP",
+    "state": "ok",
+    "detail": "Let 20 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "PIN change · per account",
+    "state": "ok",
+    "detail": "Let 10 through in an hour, refused the next · counted in Redis."
+  },
+  {
+    "item": "User lookup · per IP",
+    "state": "ok",
+    "detail": "Let 30 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "New share code · per account",
+    "state": "ok",
+    "detail": "Let 10 through in an hour, refused the next · counted in Redis."
+  },
+  {
+    "item": "Contact request · per account",
+    "state": "ok",
+    "detail": "Let 10 through in an hour, refused the next · counted in Redis."
+  },
+  {
+    "item": "Key bundle or identity fetch · per account",
+    "state": "ok",
+    "detail": "Let 60 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Key bundle or identity fetch · per IP",
+    "state": "ok",
+    "detail": "Let 120 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Device rename · per account",
+    "state": "ok",
+    "detail": "Let 60 through in an hour, refused the next · counted in Redis."
+  },
+  {
+    "item": "Message send · per account",
+    "state": "ok",
+    "detail": "Let 120 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Reaction set, replace or remove · per account",
+    "state": "ok",
+    "detail": "Let 120 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Placing a call · per account",
+    "state": "ok",
+    "detail": "Let 30 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Call signals and heartbeats · per account",
+    "state": "ok",
+    "detail": "Let 600 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Media upload registration · per account",
+    "state": "ok",
+    "detail": "Let 60 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "WebSocket connect · per IP",
+    "state": "ok",
+    "detail": "Let 30 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Link-preview relay connect · per IP",
+    "state": "ok",
+    "detail": "Let 120 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Link-preview relay connect · per account",
+    "state": "ok",
+    "detail": "Let 60 through in a minute, refused the next · counted in Redis."
+  },
+  {
+    "item": "Test notification · per device",
+    "state": "ok",
+    "detail": "Let 6 through in a minute, refused the next · counted in Redis."
+  }
+]

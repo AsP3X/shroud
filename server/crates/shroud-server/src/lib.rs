@@ -15,6 +15,7 @@ pub mod media_store;
 pub mod metrics;
 pub mod push;
 pub mod rate_limit;
+pub mod rate_limit_check;
 pub mod realtime;
 pub mod request_tracking;
 pub mod retention_check;

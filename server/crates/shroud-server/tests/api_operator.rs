@@ -287,6 +287,33 @@ async fn retention_check_counts_what_the_jobs_left_behind() {
     }
 }
 
+/// The rate-limit check tries every budget on the live limiter; in-process here (no Redis).
+#[tokio::test]
+async fn rate_limit_check_tries_every_budget() {
+    let app = shroud_server::routes::operator::router(Arc::from(TOKEN)).with_state(
+        AppState::for_integration_tests_with_limiter(
+            lazy_pool(),
+            shroud_server::rate_limit::RateLimiter::new(),
+        ),
+    );
+    let response = call(
+        &app,
+        "GET",
+        "/operator/rate-limits/check",
+        Some(&format!("Bearer {TOKEN}")),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let lines: Vec<Value> = serde_json::from_slice(&body_bytes(response).await).expect("json");
+    assert_eq!(lines.len(), 22);
+    assert_eq!(lines[0]["item"], "Counter store");
+    assert_eq!(lines[0]["state"], "off");
+    for line in &lines[1..] {
+        assert_eq!(line["state"], "ok", "{line}");
+    }
+    assert_eq!(lines[21]["item"], "Test notification · per device");
+}
+
 async fn test_pool() -> Option<sqlx::PgPool> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()

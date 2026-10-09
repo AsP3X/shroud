@@ -1,10 +1,11 @@
 //! Read-only pages (§3.4, §3.9 #4).
 //!
-//! `GET /push/check` (§3.9 #10), `GET /calls/check` (#11) and `GET /retention/check` (#12) are
-//! the API's `GET /operator/…/check` passed through after a shape check: the API asks Apple,
-//! the push services and distributors, and every STUN and TURN server callers are handed
-//! whether this server's setup works, notifying no one, and counts rows its retention jobs
-//! should already have removed.
+//! `GET /push/check` (§3.9 #10), `GET /calls/check` (#11), `GET /retention/check` (#12) and
+//! `GET /rate-limits/check` (#13) are the API's `GET /operator/…/check` passed through after a
+//! shape check: the API asks Apple, the push services and distributors, and every STUN and
+//! TURN server callers are handed whether this server's setup works, notifying no one; counts
+//! rows its retention jobs should already have removed; and tries every rate-limit budget on
+//! its live limiter with throwaway keys.
 //!
 //! Rate limits and retention are the tables in [`crate::published`]. Storage counts and push
 //! counts use the granted columns. `GET /calls` `created_total` is the process counter
@@ -50,6 +51,7 @@ pub fn routes() -> Router<AppState> {
         .route("/push/check", get(push_check))
         .route("/calls/check", get(calls_check))
         .route("/retention/check", get(retention_check))
+        .route("/rate-limits/check", get(rate_limits_check))
         .route("/calls", get(calls))
         .route("/privacy-checks", get(privacy_checks))
         .route("/configuration", get(configuration))
@@ -412,6 +414,16 @@ async fn retention_check(
         return Ok(response);
     }
     operator_check("/operator/retention/check").await
+}
+
+async fn rate_limits_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(response) = require(&state, &headers).await? {
+        return Ok(response);
+    }
+    operator_check("/operator/rate-limits/check").await
 }
 
 /// An operator-port check, passed on when it has the contract's shape.

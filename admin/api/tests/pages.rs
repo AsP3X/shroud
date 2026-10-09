@@ -219,6 +219,11 @@ async fn read_only_pages_match_the_schema() {
     );
     assert_private(&push.text);
 
+    let limits_check = send(&app, "/api/admin/rate-limits/check", Some(SESSION)).await;
+    assert_eq!(limits_check.status, StatusCode::OK, "{}", limits_check.text);
+    assert_schema("rate-limits-check.schema.json", &limits_check.body);
+    assert_eq!(limits_check.body, fixture("rate-limits-check.json"));
+
     let retention_check = send(&app, "/api/admin/retention/check", Some(SESSION)).await;
     assert_eq!(
         retention_check.status,
@@ -447,6 +452,7 @@ fn fixture(name: &str) -> Value {
         "push-check.json" => include_str!("../fixtures/push-check.json"),
         "calls-check.json" => include_str!("../fixtures/calls-check.json"),
         "retention-check.json" => include_str!("../fixtures/retention-check.json"),
+        "rate-limits-check.json" => include_str!("../fixtures/rate-limits-check.json"),
         "client-versions.json" => include_str!("../fixtures/client-versions.json"),
         "client-versions.nothing-set.json" => {
             include_str!("../fixtures/client-versions.nothing-set.json")
@@ -467,6 +473,9 @@ fn assert_schema(name: &str, body: &Value) {
         "push.schema.json" => include_str!("../fixtures/schema/push.schema.json"),
         "push-check.schema.json" => include_str!("../fixtures/schema/push-check.schema.json"),
         "calls-check.schema.json" => include_str!("../fixtures/schema/calls-check.schema.json"),
+        "rate-limits-check.schema.json" => {
+            include_str!("../fixtures/schema/rate-limits-check.schema.json")
+        }
         "retention-check.schema.json" => {
             include_str!("../fixtures/schema/retention-check.schema.json")
         }
@@ -741,6 +750,14 @@ async fn spawn_api(mode: Arc<AtomicU8>, web_build: Arc<Mutex<Option<String>>>) -
                          shroud_media_migrated_total 9\n\
                          shroud_calls_created_total 5\n"
                             .to_owned(),
+                    )
+                } else if path.starts_with("/operator/rate-limits/check")
+                    && request.contains("Authorization: Bearer operator-test-token\r\n")
+                {
+                    (
+                        200,
+                        "application/json",
+                        include_str!("../fixtures/rate-limits-check.json").to_owned(),
                     )
                 } else if path.starts_with("/operator/retention/check")
                     && request.contains("Authorization: Bearer operator-test-token\r\n")

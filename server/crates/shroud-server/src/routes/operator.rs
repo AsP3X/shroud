@@ -10,7 +10,8 @@
 //! ([`crate::push::PushService::check`]), notifying no one; `GET /operator/calls/check` asks
 //! each STUN and TURN server callers are handed to do its job ([`crate::ice_check`]);
 //! `GET /operator/retention/check` counts rows the retention jobs should already have removed
-//! ([`crate::retention_check`]).
+//! ([`crate::retention_check`]); `GET /operator/rate-limits/check` tries every budget on the live
+//! limiter with throwaway keys ([`crate::rate_limit_check`]).
 //! Health and the public API are not mounted.
 
 use std::sync::Arc;
@@ -46,6 +47,7 @@ pub fn router(token: Arc<str>) -> Router<AppState> {
         .route("/operator/push/check", get(push_check))
         .route("/operator/calls/check", get(calls_check))
         .route("/operator/retention/check", get(retention_check))
+        .route("/operator/rate-limits/check", get(rate_limits_check))
         .fallback(unknown)
         .layer(middleware::from_fn(move |request: Request, next: Next| {
             let token = Arc::clone(&token);
@@ -66,6 +68,12 @@ async fn retention_check(
     State(state): State<AppState>,
 ) -> Json<Vec<crate::retention_check::RetentionCheck>> {
     Json(crate::retention_check::check(&state.pool).await)
+}
+
+async fn rate_limits_check(
+    State(state): State<AppState>,
+) -> Json<Vec<crate::rate_limit_check::RateLimitCheck>> {
+    Json(crate::rate_limit_check::check(&state.rate_limiter).await)
 }
 
 async fn unknown() -> StatusCode {
