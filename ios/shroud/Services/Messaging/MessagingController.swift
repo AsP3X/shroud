@@ -1964,7 +1964,7 @@ final class MessagingController {
         if let token = sessionController?.bearerToken, connectivity.isOnline {
             do {
                 try await messagesService.delete(messageID: message.id, scope: .me, token: token)
-            } catch let APIError.server(_, _, statusCode) where statusCode == 404 {
+            } catch let APIError.server(_, _, statusCode, _) where statusCode == 404 {
                 // Local-only note (written offline, or never mirrored).
             } catch {
                 let text = SessionController.userMessage(for: error)
@@ -2099,7 +2099,7 @@ final class MessagingController {
                 scope: scope,
                 token: token
             )
-        } catch let APIError.server(_, _, statusCode) where statusCode == 404 {
+        } catch let APIError.server(_, _, statusCode, _) where statusCode == 404 {
             // Peer account is gone, or the chat never reached the server — clearing the
             // local copy is still the right outcome.
             clearChatLocally(peerUserID: peerUserID)
@@ -3466,7 +3466,8 @@ final class MessagingController {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "Media message is too large to send. Try a shorter video or smaller photo.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         return (payloadData, sealed, includePreview ? safePreview : nil)
@@ -3826,7 +3827,8 @@ final class MessagingController {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "Media message is too large to send. Try a shorter voice note.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         let dto = try await messagesService.send(
@@ -4415,7 +4417,7 @@ final class MessagingController {
               let payload = MediaMessagePayload.parse(cached), payload.isFile,
               let size = payload.s, size > 0
         else {
-            throw APIError.server(code: "VALIDATION_ERROR", message: "This file is no longer on this device.", statusCode: 400)
+            throw APIError.server(code: "VALIDATION_ERROR", message: "This file is no longer on this device.", statusCode: 400, reason: nil)
         }
 
         let blobURL = local.fileStore.url(for: optimisticID)
@@ -6249,7 +6251,7 @@ extension MessagingController {
         if (error as? APIError)?.isUpdateRequired == true { return true }
         switch error as? APIError {
         case .transport: return true
-        case let .server(_, _, statusCode): return statusCode >= 500 || statusCode == 429
+        case let .server(_, _, statusCode, _): return statusCode >= 500 || statusCode == 429
         default: return false
         }
     }
@@ -6683,7 +6685,7 @@ extension MessagingController {
                 let sealed = try ContactNameBook.seal(merged, owner: owner, historyKey: historyKey)
                 _ = try await contactsService.putContactNames(sealed: sealed, version: remote.version, token: token)
                 return
-            } catch let APIError.server(code, _, _) where code == "VERSION_CONFLICT" {
+            } catch let APIError.server(code, _, _, _) where code == "VERSION_CONFLICT" {
                 continue
             } catch {
                 return

@@ -287,6 +287,8 @@ final class RealtimeClient {
     nonisolated enum AuthErrorOutcome: Equatable, Sendable {
         /// `DEVICE_REMOVED`: stop for good and wipe this iPhone.
         case removed
+        /// `DEVICE_REMOVED` with `reason` `account_deleted`: stop and wipe as an account deletion.
+        case accountDeleted
         /// `RATE_LIMITED` ("Too many WebSocket connections for this account."): the session is
         /// fine, the account just has as many sockets as the server allows. Try again later.
         case retryLater
@@ -298,9 +300,10 @@ final class RealtimeClient {
     /// `auth.error` policy (web `realtime.ts:9-21` and its selftest; android-port-specs
     /// api-realtime §11.8). iOS used to stop on every code, so an account over the socket cap
     /// lost real-time delivery on this iPhone until the next launch.
-    nonisolated static func authErrorOutcome(code: String?) -> AuthErrorOutcome {
+    nonisolated static func authErrorOutcome(code: String?, reason: String? = nil) -> AuthErrorOutcome {
         switch code ?? "" {
-        case APIError.deviceRemovedCode: .removed
+        case APIError.deviceRemovedCode:
+            reason == APIError.accountDeletedReason ? .accountDeleted : .removed
         case "RATE_LIMITED": .retryLater
         default: .stop
         }
@@ -361,7 +364,11 @@ final class RealtimeClient {
             // A reconnect: a call checks what it may have missed meanwhile.
             emit(.raw(type: type, json: json))
         case "auth.error":
-            let outcome = Self.authErrorOutcome(code: (json["error"] as? [String: Any])?["code"] as? String)
+            let errorObject = (json["error"] as? [String: Any])
+            let outcome = Self.authErrorOutcome(
+                code: errorObject?["code"] as? String,
+                reason: errorObject?["reason"] as? String
+            )
             switch outcome {
             case .retryLater:
                 // Too many sockets for this account: the session is still good, so keep
@@ -371,14 +378,22 @@ final class RealtimeClient {
                 disconnect(reconnect: true)
                 state = .failed("Too many WebSocket connections for this account.")
                 scheduleReconnect()
-            case .removed, .stop:
+            case .removed, .accountDeleted, .stop:
                 state = .failed("WebSocket authentication failed")
                 // Bad token — do not hammer reconnect with same token.
                 intentionalDisconnect = true
                 disconnect(reconnect: false)
-                // The account removed this iPhone while the socket was open: wipe it now.
-                if outcome == .removed, let token {
-                    SessionAuthBridge.noteDeviceRemoved(token: token)
+                // The account removed this iPhone, or deleted the account, while the socket
+                // was open: wipe it now. The reason on the error decides which wording.
+                if let token {
+                    switch outcome {
+                    case .accountDeleted:
+                        SessionAuthBridge.noteAccountDeleted(token: token)
+                    case .removed:
+                        SessionAuthBridge.noteDeviceRemoved(token: token)
+                    case .retryLater, .stop:
+                        break
+                    }
                 }
             }
         case "message.new":

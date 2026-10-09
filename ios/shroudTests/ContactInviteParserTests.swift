@@ -146,7 +146,7 @@ struct ContactInviteParserTests {
 
     @Test @MainActor
     func aMissingShareCodeIsNotLookedUpAsAUsername() async {
-        let notFound = APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404)
+        let notFound = APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404, reason: nil)
         let calls = LookupLog()
         await #expect(throws: notFound) {
             try await MessagingController.lookUpShareCode("NIKLASVORBERG") { code in

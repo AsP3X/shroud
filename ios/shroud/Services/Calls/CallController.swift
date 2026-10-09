@@ -1421,7 +1421,7 @@ final class CallController {
                 try await service.signal(callID: id, signalType: signal.signalType, payload: payload, token: token)
                 return
             } catch let error as APIError {
-                if case let .server(code, _, status) = error {
+                if case let .server(code, _, status, _) = error {
                     if code == "CALL_ENDED" {
                         await reconcile(machine, fallback: "Call ended")
                         return
@@ -1586,7 +1586,7 @@ final class CallController {
             guard current(machine) else { return }
             applyServerStatus(info, machine)
         } catch let error as APIError {
-            if case let .server(_, _, status) = error, status == 404 {
+            if case let .server(_, _, status, _) = error, status == 404 {
                 finish(machine, text: "Call ended", notify: nil, status: "ended", close: .report(.remoteEnded))
             }
         } catch {
@@ -1601,7 +1601,7 @@ final class CallController {
             guard current(machine) else { return }
             applyServerStatus(info, machine)
         } catch let error as APIError {
-            if case let .server(_, _, status) = error, status == 404 {
+            if case let .server(_, _, status, _) = error, status == 404 {
                 finish(machine, text: fallback ?? "Call ended", notify: nil, status: "ended", close: .report(.remoteEnded))
             }
         } catch {
@@ -2188,7 +2188,7 @@ final class CallController {
         }
         if let api = error as? APIError {
             switch api {
-            case let .server(code, _, _):
+            case let .server(code, _, _, _):
                 switch code {
                 case "CALL_BUSY": return "\(peer) is on another call."
                 case "CALL_IN_PROGRESS": return "You’re already in a call."

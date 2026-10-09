@@ -17,16 +17,29 @@ struct DeviceWipeControllerTests {
             DeviceWipeController.lead(for: .removed, device: "iPad")
                 == "This iPad was removed from your account. "
         )
+        #expect(DeviceWipeController.lead(for: .accountDeleted, device: "iPhone") == "This account was deleted. ")
+        #expect(DeviceWipeController.lead(for: .accountDeleted, device: "iPad") == "This account was deleted. ")
+        #expect(DeviceWipeController.showsOtherDevicesFootnote(reason: .removed))
+        #expect(DeviceWipeController.showsOtherDevicesFootnote(reason: .logout))
+        #expect(DeviceWipeController.showsOtherDevicesFootnote(reason: .sessionEnded))
+        #expect(!DeviceWipeController.showsOtherDevicesFootnote(reason: .accountDeleted))
     }
 
     /// The server's answer to the wipe's own logout: `DEVICE_REMOVED` is a removal, any other
     /// answer ends the session, only "could not connect" is offline.
     @Test
     func theLogoutAnswerSaysWhetherThisDeviceWasRemoved() {
-        let removed = APIError.server(code: "DEVICE_REMOVED", message: "This device was removed from your account.", statusCode: 401)
-        let revoked = APIError.server(code: "UNAUTHORIZED", message: "This session was signed out.", statusCode: 401)
-        let serverError = APIError.server(code: "INTERNAL", message: "Something went wrong.", statusCode: 500)
+        let removed = APIError.server(code: "DEVICE_REMOVED", message: "This device was removed from your account.", statusCode: 401, reason: nil)
+        let revoked = APIError.server(code: "UNAUTHORIZED", message: "This session was signed out.", statusCode: 401, reason: nil)
+        let serverError = APIError.server(code: "INTERNAL", message: "Something went wrong.", statusCode: 500, reason: nil)
+        let deleted = APIError.server(
+            code: "DEVICE_REMOVED",
+            message: "This account was deleted.",
+            statusCode: 401,
+            reason: "account_deleted"
+        )
         #expect(DeviceWipeController.serverSessionOutcome(of: removed) == .removed)
+        #expect(DeviceWipeController.serverSessionOutcome(of: deleted) == .accountDeleted)
         #expect(DeviceWipeController.serverSessionOutcome(of: revoked) == .ended)
         #expect(DeviceWipeController.serverSessionOutcome(of: serverError) == .ended)
         #expect(DeviceWipeController.serverSessionOutcome(of: .transport("offline")) == .offline)
@@ -42,6 +55,15 @@ struct DeviceWipeControllerTests {
         #expect(DeviceWipeController.reason(.sessionEnded, after: .offline) == .sessionEnded)
         #expect(DeviceWipeController.reason(.logout, after: .removed) == .logout)
         #expect(DeviceWipeController.reason(.removed, after: .offline) == .removed)
+        #expect(DeviceWipeController.reason(.sessionEnded, after: .accountDeleted) == .accountDeleted)
+        #expect(DeviceWipeController.reason(.removed, after: .accountDeleted) == .accountDeleted)
+        #expect(DeviceWipeController.reason(.logout, after: .accountDeleted) == .logout)
+        #expect(DeviceWipeController.reason(.accountDeleted, after: .removed) == .accountDeleted)
+        #expect(DeviceWipeController.reason(.accountDeleted, after: .offline) == .accountDeleted)
+        #expect(DeviceWipeController.reason(.removed, whenStarting: .accountDeleted) == .accountDeleted)
+        #expect(DeviceWipeController.reason(.sessionEnded, whenStarting: .accountDeleted) == .accountDeleted)
+        #expect(DeviceWipeController.reason(.logout, whenStarting: .accountDeleted) == .logout)
+        #expect(DeviceWipeController.reason(.accountDeleted, whenStarting: .removed) == .accountDeleted)
     }
 
     /// Whole subtitle as it reads while the wipe runs (web-parity §22.7 for the phone wording).
@@ -51,6 +73,11 @@ struct DeviceWipeControllerTests {
         #expect(
             "\(lead)Removing everything Shroud stored for @x."
                 == "This iPhone was removed from your account. Removing everything Shroud stored for @x."
+        )
+        let deletedLead = DeviceWipeController.lead(for: .accountDeleted, device: "iPhone")
+        #expect(
+            "\(deletedLead)Removing everything Shroud stored for @ada."
+                == "This account was deleted. Removing everything Shroud stored for @ada."
         )
     }
 }

@@ -107,6 +107,21 @@ nonisolated struct AuthService: Sendable {
         }
     }
 
+    /// Deletes the signed-in account. `204` on success. A wrong password is
+    /// `401 INVALID_CREDENTIALS` and does not count toward the 401 streak.
+    /// The password is sent once and not stored here.
+    func deleteAccount(password: String, token: String) async throws {
+        let (status, data) = try await client.response(
+            "DELETE",
+            path: "auth/account",
+            jsonBody: try JSONEncoder.api.encode(DeleteAccountRequest(password: password)),
+            bearerToken: token
+        )
+        guard (200 ..< 300).contains(status) else {
+            throw APIError.from(data: data, statusCode: status)
+        }
+    }
+
     func fetchMe(session: SessionStore.Session) async throws -> MeResponse {
         try await client.get("auth/me", as: MeResponse.self, bearerToken: session.token)
     }

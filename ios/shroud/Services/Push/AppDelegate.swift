@@ -40,8 +40,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             completionHandler(.noData)
             return
         }
+        // The payload's `reason` is passed through. It does not skip the `/auth/me` confirm.
+        let reason = userInfo["reason"] as? String
         Task { @MainActor in
-            completionHandler(await DeviceRemovalWake.handle())
+            completionHandler(await DeviceRemovalWake.handle(pushReason: reason))
         }
     }
 

@@ -33,6 +33,11 @@ nonisolated struct LoginRequest: Encodable, Equatable, Sendable {
     }
 }
 
+/// `DELETE /auth/account` body. The password is the only field; it is not logged.
+nonisolated struct DeleteAccountRequest: Encodable, Sendable {
+    let password: String
+}
+
 // MARK: - Responses
 
 /// Register / login success body (token shown once).

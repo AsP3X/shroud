@@ -32,6 +32,9 @@ struct RealtimeClientURLTests {
         #expect(RealtimeClient.authErrorOutcome(code: "RATE_LIMITED") == .retryLater)
         #expect(RealtimeClient.authErrorOutcome(code: nil) == .stop)
         #expect(RealtimeClient.authErrorOutcome(code: "DEVICE_REMOVED") == .removed)
+        #expect(RealtimeClient.authErrorOutcome(code: "DEVICE_REMOVED", reason: "account_deleted") == .accountDeleted)
+        #expect(RealtimeClient.authErrorOutcome(code: "DEVICE_REMOVED", reason: nil) == .removed)
+        #expect(RealtimeClient.authErrorOutcome(code: "UNAUTHORIZED", reason: "account_deleted") == .stop)
         #expect(RealtimeClient.authErrorOutcome(code: "rate_limited") == .stop)
     }
 

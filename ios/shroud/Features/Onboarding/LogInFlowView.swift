@@ -850,7 +850,7 @@ struct LogInFlowView: View {
 
     /// The server's "this account has no keys" answer to `GET keys/identity/{id}`.
     nonisolated static func isKeysRequired(_ error: Error) -> Bool {
-        guard case let .server(code, _, _)? = error as? APIError else { return false }
+        guard case let .server(code, _, _, _)? = error as? APIError else { return false }
         return code == "KEYS_REQUIRED"
     }
 

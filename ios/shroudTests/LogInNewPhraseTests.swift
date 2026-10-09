@@ -10,10 +10,11 @@ struct LogInNewPhraseTests {
         let keysRequired = APIError.server(
             code: "KEYS_REQUIRED",
             message: "No pre-key bundle is available for this user.",
-            statusCode: 404
+            statusCode: 404,
+            reason: nil
         )
-        let notFound = APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404)
-        let unauthorized = APIError.server(code: "UNAUTHORIZED", message: "Unauthorized", statusCode: 401)
+        let notFound = APIError.server(code: "NOT_FOUND", message: "User not found.", statusCode: 404, reason: nil)
+        let unauthorized = APIError.server(code: "UNAUTHORIZED", message: "Unauthorized", statusCode: 401, reason: nil)
         #expect(LogInFlowView.isKeysRequired(keysRequired))
         #expect(!LogInFlowView.isKeysRequired(notFound))
         #expect(!LogInFlowView.isKeysRequired(unauthorized))

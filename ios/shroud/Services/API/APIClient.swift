@@ -285,7 +285,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
+        Self.noteOutcome(method: "PUT", path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
@@ -310,7 +310,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
+        Self.noteOutcome(method: "GET", path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
         return data
     }
@@ -345,7 +345,7 @@ nonisolated final class APIClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
+        Self.noteOutcome(method: "PUT", path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
         try Self.throwIfNeeded(data: data, status: http.statusCode)
     }
 
@@ -378,11 +378,11 @@ nonisolated final class APIClient: Sendable {
             // An error body is a small JSON document, not the blob.
             let data = (try? Data(contentsOf: location)) ?? Data()
             try? FileManager.default.removeItem(at: location)
-            noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
+            Self.noteOutcome(method: "GET", path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
             try Self.throwIfNeeded(data: data, status: http.statusCode)
             throw APIError.transport("Unexpected status \(http.statusCode)")
         }
-        noteOutcome(path: path, status: http.statusCode, data: Data(), bearerToken: bearerToken)
+        Self.noteOutcome(method: "GET", path: path, status: http.statusCode, data: Data(), bearerToken: bearerToken)
         return location
     }
 
@@ -405,29 +405,86 @@ nonisolated final class APIClient: Sendable {
         return request
     }
 
+    /// What an authenticated response does to the session. Pure: `noteOutcome` applies it.
+    enum SessionAuthNote: Equatable, Sendable {
+        case none
+        case success
+        case authenticationFailure
+        case deviceRemoved
+        case accountDeleted
+    }
+
     /// Version policy: `426 UPDATE_REQUIRED` (with or without a Bearer) asks the server about this
     /// build at once, so "Update required" comes up. It never counts toward the 401 streak.
     ///
     /// Session policy: only authenticated requests contribute to the 401 streak.
     /// Login/register (no Bearer) must not force-logout an existing local session.
-    /// `DEVICE_REMOVED` is final on the first answer: the account removed this iPhone.
-    private func noteOutcome(path: String, status: Int, data: Data, bearerToken: String?) {
+    /// `DEVICE_REMOVED` is final on the first answer. `reason` `account_deleted` — and any
+    /// `DEVICE_REMOVED` from `DELETE auth/account` — wipes as an account deletion.
+    /// A wrong password on that delete (`401 INVALID_CREDENTIALS`) is not a dead session.
+    static func noteOutcome(method: String, path: String, status: Int, data: Data, bearerToken: String?) {
         if status == 426 {
-            if Self.startsVersionCheck(path: path, status: status, data: data) {
+            if startsVersionCheck(path: path, status: status, data: data) {
                 ClientVersionBridge.noteUpdateRequired()
             }
             return
         }
-        guard bearerToken.map({ !$0.isEmpty }) == true else { return }
-        if (200 ..< 300).contains(status) {
+        let hasBearer = bearerToken.map { !$0.isEmpty } == true
+        switch sessionAuthNote(method: method, path: path, status: status, data: data, hasBearer: hasBearer) {
+        case .none:
+            break
+        case .success:
             SessionAuthBridge.noteAuthenticationSuccess()
-        } else if status == 401 {
-            if let bearerToken, APIError.from(data: data, statusCode: status).isDeviceRemoval {
+        case .authenticationFailure:
+            SessionAuthBridge.noteAuthenticationFailure()
+        case .deviceRemoved:
+            if let bearerToken {
                 SessionAuthBridge.noteDeviceRemoved(token: bearerToken)
-            } else {
-                SessionAuthBridge.noteAuthenticationFailure()
+            }
+        case .accountDeleted:
+            if let bearerToken {
+                SessionAuthBridge.noteAccountDeleted(token: bearerToken)
             }
         }
+    }
+
+    /// Classifies one response for the 401 streak. `DELETE auth/account` + `INVALID_CREDENTIALS`
+    /// is `.none`: a wrong delete password must not sign the device out. The same call's
+    /// `DEVICE_REMOVED` (any `reason`) is an account deletion.
+    static func sessionAuthNote(
+        method: String,
+        path: String,
+        status: Int,
+        data: Data,
+        hasBearer: Bool
+    ) -> SessionAuthNote {
+        if status == 426 || !hasBearer { return .none }
+        if (200 ..< 300).contains(status) { return .success }
+        guard status == 401 else { return .none }
+        let error = APIError.from(data: data, statusCode: status)
+        if isDeleteAccountWrongPassword(method: method, path: path, error: error) {
+            return .none
+        }
+        if error.isDeviceRemoval {
+            if error.isAccountDeletion || isDeleteAccount(method: method, path: path) {
+                return .accountDeleted
+            }
+            return .deviceRemoved
+        }
+        return .authenticationFailure
+    }
+
+    /// `DELETE /auth/account`.
+    static func isDeleteAccount(method: String, path: String) -> Bool {
+        method.uppercased() == "DELETE"
+            && path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "auth/account"
+    }
+
+    /// Wrong password on the delete-account call. Not a session failure.
+    static func isDeleteAccountWrongPassword(method: String, path: String, error: APIError) -> Bool {
+        guard isDeleteAccount(method: method, path: path) else { return false }
+        guard case let .server(code, _, statusCode, _) = error else { return false }
+        return statusCode == 401 && code == "INVALID_CREDENTIALS"
     }
 
     /// A refusal of this build that should ask `/client-version` about it. Not when the refused
@@ -469,7 +526,7 @@ nonisolated final class APIClient: Sendable {
             throw APIError.transport("Invalid response")
         }
 
-        noteOutcome(path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
+        Self.noteOutcome(method: method, path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
 
         return (data, http)
     }

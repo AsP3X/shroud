@@ -141,7 +141,7 @@ struct DevicesView: View {
 
     /// A 404 means the device is already gone (removed elsewhere meanwhile) — the goal is met.
     private static func isAlreadyRemoved(_ error: Error) -> Bool {
-        if case let .server(_, _, statusCode) = error as? APIError { return statusCode == 404 }
+        if case let .server(_, _, statusCode, _) = error as? APIError { return statusCode == 404 }
         return false
     }
 

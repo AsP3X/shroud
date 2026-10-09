@@ -107,7 +107,7 @@ struct DeviceLimitLoginTests {
     /// An older server sends no `oldest_device`: the plain error, shown inline as before.
     @Test
     func deviceLimitWithoutOldestDeviceStaysAPlainError() {
-        #expect(throws: APIError.server(code: "DEVICE_LIMIT", message: Self.limitMessage, statusCode: 409)) {
+        #expect(throws: APIError.server(code: "DEVICE_LIMIT", message: Self.limitMessage, statusCode: 409, reason: nil)) {
             _ = try AuthService.loginAnswer(status: 409, data: Self.limitBody(oldest: nil))
         }
     }
@@ -116,7 +116,7 @@ struct DeviceLimitLoginTests {
     /// error on the credentials step.
     @Test
     func deviceLimitWithoutIdentityKeyStaysAPlainError() {
-        let expected = APIError.server(code: "DEVICE_LIMIT", message: Self.limitMessage, statusCode: 409)
+        let expected = APIError.server(code: "DEVICE_LIMIT", message: Self.limitMessage, statusCode: 409, reason: nil)
         #expect(throws: expected) {
             _ = try AuthService.loginAnswer(status: 409, data: Self.limitBody(oldest: Self.oldestJSON, identityKey: nil))
         }
@@ -136,7 +136,8 @@ struct DeviceLimitLoginTests {
         #expect(throws: APIError.server(
             code: "INVALID_CREDENTIALS",
             message: "Invalid username or password.",
-            statusCode: 401
+            statusCode: 401,
+            reason: nil
         )) {
             _ = try AuthService.loginAnswer(status: 401, data: wrongPassword)
         }
@@ -310,7 +311,7 @@ struct DeviceLimitLoginTests {
     @Test
     func otherErrorsCloseAndGoInline() async throws {
         let cases: [(Error, String)] = [
-            (APIError.server(code: "INVALID_CREDENTIALS", message: "Invalid username or password.", statusCode: 401),
+            (APIError.server(code: "INVALID_CREDENTIALS", message: "Invalid username or password.", statusCode: 401, reason: nil),
              "Invalid username or password."),
             (APIError.transport("The Internet connection appears to be offline."),
              "The Internet connection appears to be offline."),

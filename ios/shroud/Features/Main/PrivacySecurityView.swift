@@ -127,6 +127,15 @@ struct PrivacySecurityView: View {
                         .padding(14)
                     }
 
+                    settingsCard {
+                        NavigationLink {
+                            DeleteAccountView()
+                        } label: {
+                            deleteAccountRow
+                        }
+                        .buttonStyle(HighlightRowButtonStyle())
+                    }
+
                     Color.clear.frame(height: 24)
                 }
                 // An unblocked row (or the whole card, for the last one) and the load status
@@ -587,6 +596,38 @@ struct PrivacySecurityView: View {
         .padding(.vertical, 12)
     }
 
+
+    /// Last card. Same tile as "Lock chats now": red square, white trash, red title, subtitle, chevron.
+    private var deleteAccountRow: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Theme.danger)
+                    .frame(width: 30, height: 30)
+                Image(systemName: "trash")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white)
+            }
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(DeleteAccountCopy.rowTitle)
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.danger)
+                Text(DeleteAccountCopy.rowSubtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.chevron)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
 
     private func lockChatsNow() {
         Haptics.notification(.warning)

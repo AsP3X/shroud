@@ -21,7 +21,8 @@ enum UsernameHash {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "Username must be between 3 and 32 characters.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
@@ -29,7 +30,8 @@ enum UsernameHash {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "Username may only contain letters, digits, and underscores.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         let folded = trimmed.lowercased()
@@ -37,7 +39,8 @@ enum UsernameHash {
             throw APIError.server(
                 code: "USERNAME_RESERVED",
                 message: "That username is reserved.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         return folded
@@ -148,7 +151,7 @@ enum UsernameHash {
         do {
             params = try JSONDecoder.api.decode(UsernameKdfParams.self, from: data)
         } catch {
-            throw APIError.server(code: "VALIDATION_ERROR", message: weak, statusCode: 400)
+            throw APIError.server(code: "VALIDATION_ERROR", message: weak, statusCode: 400, reason: nil)
         }
         try params.validate()
         cacheLock.lock()
@@ -190,7 +193,8 @@ struct UsernameKdfParams: Decodable, Sendable {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "This server's username protection is too weak to sign in.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
     }

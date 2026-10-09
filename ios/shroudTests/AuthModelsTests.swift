@@ -37,7 +37,8 @@ struct AuthModelsTests {
         #expect(error == .server(
             code: "USERNAME_TAKEN",
             message: "That username is already taken.",
-            statusCode: 409
+            statusCode: 409,
+            reason: nil
         ))
     }
 }

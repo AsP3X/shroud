@@ -26,6 +26,8 @@ final class DeviceWipeController {
         /// The account removed this iPhone in Settings → Devices on another device (the
         /// server's `DEVICE_REMOVED`). Web `DeviceWipeDialog.tsx:18-24` "removed" (P11a).
         case removed
+        /// The account was deleted (`DEVICE_REMOVED` with `reason` `account_deleted`).
+        case accountDeleted
     }
 
     /// What the server said to the wipe's own `POST auth/logout`.
@@ -34,6 +36,8 @@ final class DeviceWipeController {
         case ended
         /// `401 DEVICE_REMOVED`: this device is no longer part of the account.
         case removed
+        /// `401 DEVICE_REMOVED` with `reason` `account_deleted`.
+        case accountDeleted
         /// No answer (offline, or not within `serverTimeout`): only this iPhone forgot it.
         case offline
     }
@@ -79,7 +83,13 @@ final class DeviceWipeController {
     // MARK: - Running
 
     func start(reason: Reason) {
-        guard phase == .idle else { return }
+        guard phase == .idle else {
+            let upgraded = Self.reason(self.reason, whenStarting: reason)
+            if upgraded != self.reason {
+                withAnimation(Motion.standard) { self.reason = upgraded }
+            }
+            return
+        }
         self.reason = reason
         handle = session?.username.map { "@\($0)" } ?? ""
         details = [:]
@@ -285,8 +295,9 @@ final class DeviceWipeController {
     }
 
     /// 401: already over — `DEVICE_REMOVED` says why. Anything but "could not connect" means
-    /// the server heard us.
+    /// the server heard us. Account deletion is the same code with `reason` `account_deleted`.
     nonisolated static func serverSessionOutcome(of error: APIError) -> ServerSessionOutcome {
+        if error.isAccountDeletion { return .accountDeleted }
         if error.isDeviceRemoval { return .removed }
         if case .transport = error { return .offline }
         return .ended
@@ -294,12 +305,27 @@ final class DeviceWipeController {
 
     /// The reason the overlay states once the server answered the session step.
     ///
-    /// Human: RootView and the removal push start this wipe as `.sessionEnded` for a removal
-    /// too, since `SessionController` keeps no reason. The server's own answer to this wipe's
-    /// logout settles it: `DEVICE_REMOVED` means this iPhone was removed. A Log Out the user
-    /// chose stays a Log Out, and an offline server leaves the reason as it was.
+    /// An ended session becomes a removal when the logout answer is `DEVICE_REMOVED`. That
+    /// removal, or the ended session, becomes an account deletion when the answer says the
+    /// account was deleted. A Log Out the user chose stays a Log Out. An offline server
+    /// leaves the reason as it was, and an account deletion does not drop back to a removal.
     nonisolated static func reason(_ current: Reason, after outcome: ServerSessionOutcome) -> Reason {
-        current == .sessionEnded && outcome == .removed ? .removed : current
+        if current == .logout { return .logout }
+        if outcome == .accountDeleted, current == .sessionEnded || current == .removed {
+            return .accountDeleted
+        }
+        if current == .sessionEnded, outcome == .removed { return .removed }
+        return current
+    }
+
+    /// A later `start` while a wipe is already running. Account deletion replaces a removal
+    /// or an ended session. A Log Out stays a Log Out. Anything else leaves the reason.
+    nonisolated static func reason(_ current: Reason, whenStarting requested: Reason) -> Reason {
+        guard requested == .accountDeleted else { return current }
+        switch current {
+        case .removed, .sessionEnded: return .accountDeleted
+        case .logout, .accountDeleted: return current
+        }
     }
 
     // MARK: - Launch
@@ -354,6 +380,12 @@ final class DeviceWipeController {
         }
     }
 
+    /// The running footnote "Your account and chats on other devices stay as they are."
+    /// Hidden for an account deletion: those devices are erased too.
+    nonisolated static func showsOtherDevicesFootnote(reason: Reason) -> Bool {
+        reason != .accountDeleted
+    }
+
     /// The sentence before "Removing everything Shroud stored …" while the wipe runs.
     /// `device` is "iPhone" or "iPad".
     nonisolated static func lead(for reason: Reason, device: String) -> String {
@@ -361,6 +393,7 @@ final class DeviceWipeController {
         case .logout: ""
         case .sessionEnded: "Your session ended. "
         case .removed: "This \(device) was removed from your account. "
+        case .accountDeleted: DeleteAccountCopy.accountDeletedLead
         }
     }
 

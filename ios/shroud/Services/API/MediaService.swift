@@ -46,7 +46,8 @@ struct MediaService: Sendable {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "This media is too large after encryption (\(mb) MB). Try a shorter video or lower photo quality.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         let path = "media/\(mediaID.uuidString.lowercased())/content"
@@ -83,7 +84,8 @@ struct MediaService: Sendable {
             throw APIError.server(
                 code: "VALIDATION_ERROR",
                 message: "This file is too large to send.",
-                statusCode: 400
+                statusCode: 400,
+                reason: nil
             )
         }
         try await client.putFile(

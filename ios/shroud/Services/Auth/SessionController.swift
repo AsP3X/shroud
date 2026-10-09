@@ -32,6 +32,14 @@ enum SessionAuthBridge {
             controller?.recordDeviceRemoved(token: token)
         }
     }
+
+    /// The server said the account was deleted (`DEVICE_REMOVED` with `reason` `account_deleted`,
+    /// or `DELETE auth/account` answering `DEVICE_REMOVED`). Same wipe, deletion wording.
+    nonisolated static func noteAccountDeleted(token: String) {
+        Task { @MainActor in
+            controller?.recordAccountDeleted(token: token)
+        }
+    }
 }
 
 /// App-wide session state (token never exposed to views as a free string for display).
@@ -54,6 +62,9 @@ final class SessionController {
     /// say "removed from your account" from its first frame (and when the wipe's own logout
     /// cannot reach the server). Cleared by `logout()`.
     private(set) var sessionEndedByDeviceRemoval = false
+    /// True when that removal is the account being deleted, so the wipe says so from its first
+    /// frame. Checked before `sessionEndedByDeviceRemoval`. Cleared by `logout()`.
+    private(set) var sessionEndedByAccountDeletion = false
 
     private let authService: AuthService
     private var isForceLoggingOut = false
@@ -99,6 +110,7 @@ final class SessionController {
         consecutiveAuthenticationFailures = 0
         isForceLoggingOut = false
         sessionEndedByDeviceRemoval = false
+        sessionEndedByAccountDeletion = false
     }
 
     /// Testing seam: inject a session without going through Keychain.
@@ -110,6 +122,7 @@ final class SessionController {
         pendingFullLocalWipe = false
         isForceLoggingOut = false
         sessionEndedByDeviceRemoval = false
+        sessionEndedByAccountDeletion = false
     }
 
     /// Probes `/auth/me`; does **not** logout on a single 401 — repeated 401s are handled by
@@ -189,6 +202,23 @@ final class SessionController {
         markSessionEnded()
     }
 
+    /// The account was deleted. One answer wipes, with deletion wording.
+    ///
+    /// A wipe already running as a removal or an ended session is upgraded. A Log Out the user
+    /// chose is left as a Log Out (`DeviceWipeController.start` keeps that reason). A late reply
+    /// for an older token does not wipe the session that replaced it.
+    func recordAccountDeleted(token: String) {
+        guard let session, session.token == token else { return }
+        sessionEndedByAccountDeletion = true
+        if let wipe = SessionAuthBridge.deviceWipe, wipe.isPresented {
+            wipe.start(reason: .accountDeleted)
+            isForceLoggingOut = true
+            return
+        }
+        guard !isForceLoggingOut else { return }
+        markSessionEnded()
+    }
+
     /// Launch: a wipe the app was killed in is being finished. Its server call answers
     /// `DEVICE_REMOVED` for a removed iPhone, which must not start a second wipe over it.
     func beginInterruptedWipe() {
@@ -215,7 +245,7 @@ final class SessionController {
     static func userMessage(for error: Error) -> String {
         if let api = error as? APIError {
             switch api {
-            case let .server(_, message, _):
+            case let .server(_, message, _, _):
                 return message
             case let .transport(message):
                 return message

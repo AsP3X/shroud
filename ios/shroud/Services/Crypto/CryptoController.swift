@@ -277,7 +277,7 @@ final class CryptoController {
                 throw CryptoControllerError.phraseDoesNotMatchAccount
             }
         } catch let error as APIError {
-            if case let .server(code, _, _) = error, code == "KEYS_REQUIRED" {
+            if case let .server(code, _, _, _) = error, code == "KEYS_REQUIRED" {
                 return
             }
             throw error

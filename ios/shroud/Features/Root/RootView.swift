@@ -280,7 +280,7 @@ struct RootView: View {
             // a second wipe after this one has already finished.
             guard pending, !deviceWipe.isPresented else { return }
             _ = sessionController.consumePendingFullLocalWipe()
-            deviceWipe.start(reason: sessionController.sessionEndedByDeviceRemoval ? .removed : .sessionEnded)
+            deviceWipe.start(reason: pendingSessionWipeReason)
         }
         // A server picked on the lock screen takes effect once its Log Out is over: the wipe
         // revoked the session on the old server, and nothing of it is left for the new one.
@@ -298,7 +298,7 @@ struct RootView: View {
                 router.hasUnlockedMessaging = false
                 if fullWipe {
                     if !deviceWipe.isPresented {
-                        deviceWipe.start(reason: sessionController.sessionEndedByDeviceRemoval ? .removed : .sessionEnded)
+                        deviceWipe.start(reason: pendingSessionWipeReason)
                     }
                     return
                 }
@@ -399,6 +399,13 @@ struct RootView: View {
                 break
             }
         }
+    }
+
+    /// Why a pending session wipe starts. Account deletion wins over a plain device removal.
+    private var pendingSessionWipeReason: DeviceWipeController.Reason {
+        if sessionController.sessionEndedByAccountDeletion { return .accountDeleted }
+        if sessionController.sessionEndedByDeviceRemoval { return .removed }
+        return .sessionEnded
     }
 
     /// Seals this iPhone's name for the device list; needs the history key, so only unlocked.

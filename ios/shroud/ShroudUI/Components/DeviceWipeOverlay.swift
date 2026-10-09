@@ -108,9 +108,9 @@ struct DeviceWipeOverlay: View {
                 ? "Nothing from your account is left on this \(device)."
                 : "Nothing from \(wipe.handle) is left on this device."
         default:
-            // Why: nothing for Log Out, "Your session ended. ", or "This iPhone was removed from
-            // your account. " (the third reason, web parity P11a). A removal reported first as
-            // an ended session turns into the removal once the server answers the first step.
+            // Why: nothing for Log Out, "Your session ended. ", "This iPhone was removed from
+            // your account. ", or "This account was deleted. ". A removal or an ended session
+            // turns into an account deletion once the server's answer says so.
             let lead = DeviceWipeController.lead(for: wipe.reason, device: device)
             let whose = wipe.handle.isEmpty ? "on this \(device)" : "for \(wipe.handle)"
             return "\(lead)Removing everything Shroud stored \(whose)."
@@ -202,7 +202,7 @@ struct DeviceWipeOverlay: View {
                 SecondaryButton(title: "Continue") { wipe.continueAfterFailure() }
             }
             .transition(reduceMotion ? AnyTransition.opacity : .opacity.combined(with: .move(edge: .bottom)))
-        } else {
+        } else if phase == .done || DeviceWipeController.showsOtherDevicesFootnote(reason: wipe.reason) {
             VStack(spacing: 6) {
                 if phase == .done {
                     ProgressView()
