@@ -1,6 +1,6 @@
 /** The Shroud veil on an accent tile, from web/public/favicon-simple.svg (copied, not imported). */
-export function Mark({ size }: { size: 28 | 32 }) {
-  const glyph = size === 32 ? 20 : 17;
+export function Mark({ size }: { size: 28 | 32 | 44 }) {
+  const glyph = size === 44 ? 26 : size === 32 ? 20 : 17;
   return (
     <span className={`mark mark--${size}`} aria-hidden="true">
       <svg width={glyph} height={glyph} viewBox="172 188 680 680">

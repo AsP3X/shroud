@@ -207,6 +207,12 @@ h2 {
   border-radius: 9px;
 }
 
+.mark--44 {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+}
+
 .admin-tag {
   padding: 3px 7px;
   border-radius: 6px;

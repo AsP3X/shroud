@@ -1,65 +1,427 @@
-/* Sign in and setup: the frames "Sign in", "Sign in · Error", "Set up sign-in" and
-   "Save your recovery codes" in design/admin.pen. */
+/* Sign in and setup, one step per screen: the frames "Sign in", "Sign in · Code", "Sign in ·
+   Recovery code", "Sign in · Error", "Set up · Password" … "Set up · Link used" and
+   "Phone · Set up · Authenticator" in design/admin.pen. The field, input, code and error styles
+   are shared with the console's dialogs.
+
+   Motion: every animation here moves only transform and opacity, so it stays on the compositor.
+   Step changes run as view transitions where the browser has them (scoped by
+   <html data-auth-step>, set in AuthLayout.tsx) and as a slide-in on the new step elsewhere;
+   base.css cuts all of it to nothing under prefers-reduced-motion. */
+
+:root {
+  --auth-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --auth-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --auth-shift: 28px;
+}
+
+/* Page */
 
 .auth {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  min-height: 100%;
-  padding: 28px 40px;
+  min-height: 100dvh;
 }
 
-.auth__top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-}
-
-.auth__top-name {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.auth__center {
+.auth__main {
   display: flex;
   flex: 1;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 24px 0;
+  padding: 40px 24px 24px;
 }
 
-.auth-card {
+.auth__column {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  align-items: center;
+  gap: 32px;
   width: 400px;
   max-width: 100%;
-  padding: 32px;
-  border: 1px solid var(--separator);
-  border-radius: 18px;
-  background: var(--surface-2);
+  margin: auto;
 }
 
-.auth-card__head {
+.auth__brand {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  view-transition-name: auth-brand;
+  animation: auth-rise 560ms var(--auth-ease) both;
+}
+
+.auth__brand svg {
+  width: 26px;
+  height: 26px;
+}
+
+.auth__wordmark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth__name {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+.auth__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  padding: 0 24px 28px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  text-align: center;
+  view-transition-name: auth-footer;
+  animation: auth-fade 600ms ease 240ms both;
+}
+
+.auth__host {
+  font-family: var(--font-mono);
+}
+
+.auth__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.only-compact {
+  display: none;
+}
+
+/* Progress: each bar's fill scales from its left edge. @starting-style lets the first bar fill
+   on arrival too, where the browser supports it. */
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  view-transition-name: auth-progress;
+}
+
+.progress__bars {
+  display: flex;
+  flex: 1;
   gap: 6px;
 }
 
-.auth-card__title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
+.progress__bar {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--separator);
 }
 
-.auth-card__sub {
-  font-size: 13px;
+.progress__fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 520ms var(--auth-ease) 60ms;
+}
+
+.progress__fill[data-on] {
+  transform: scaleX(1);
+}
+
+@starting-style {
+  .progress__fill[data-on] {
+    transform: scaleX(0);
+  }
+}
+
+.progress__count {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* Step */
+
+.auth-step {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  width: 100%;
+}
+
+.auth-step__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.auth-step__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 8px;
+  border-radius: 14px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  animation: auth-pop 420ms var(--auth-ease) 120ms both;
+}
+
+.auth-step__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.auth-step__title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.4px;
+}
+
+.auth-step__title:focus {
+  outline: none;
+}
+
+.auth-step__sub {
+  margin: 0;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--text-secondary);
 }
+
+.auth-step__form {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.auth-step__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-step__actions {
+  display: flex;
+  gap: 12px;
+}
+
+.auth-step__actions > * {
+  flex: 1;
+}
+
+.auth-step__below {
+  display: flex;
+  justify-content: center;
+  margin-top: -12px;
+}
+
+/* The fallback entrance, for browsers without view transitions and for the first paint. */
+
+.auth-step[data-enter="intro"] {
+  animation: auth-rise 560ms var(--auth-ease) 80ms both;
+}
+
+.auth-step[data-enter="forward"] {
+  animation: auth-in 420ms var(--auth-ease) both;
+}
+
+.auth-step[data-enter="back"] {
+  animation: auth-in-back 420ms var(--auth-ease) both;
+}
+
+.auth-step[data-enter="fade"] {
+  animation: auth-fade 320ms ease both;
+}
+
+/* View transitions. The page itself is not cross-faded; the brand, the progress bar and the
+   footer keep one live image that glides when the column re-centres; the step is named after
+   itself (auth-step-<id>), so the old and the new one never pair and each is alone in its group,
+   which :only-child picks out. */
+
+:root[data-auth-step]::view-transition-old(root),
+:root[data-auth-step]::view-transition-new(root) {
+  animation: none;
+}
+
+:root[data-auth-step]::view-transition-group(*) {
+  animation-duration: 440ms;
+  animation-timing-function: var(--auth-ease);
+}
+
+:root[data-auth-step]::view-transition-old(auth-brand),
+:root[data-auth-step]::view-transition-old(auth-progress) {
+  display: none;
+}
+
+:root[data-auth-step]::view-transition-new(auth-brand),
+:root[data-auth-step]::view-transition-new(auth-progress) {
+  animation: none;
+}
+
+:root[data-auth-step]::view-transition-old(*):only-child {
+  animation: auth-out 180ms var(--auth-ease-in) both;
+}
+
+:root[data-auth-step]::view-transition-new(*):only-child {
+  animation: auth-in 440ms var(--auth-ease) 70ms both;
+}
+
+:root[data-auth-step="back"]::view-transition-old(*):only-child {
+  animation-name: auth-out-back;
+}
+
+:root[data-auth-step="back"]::view-transition-new(*):only-child {
+  animation-name: auth-in-back;
+}
+
+:root[data-auth-step="fade"]::view-transition-old(*):only-child {
+  animation: auth-fade-out 160ms ease both;
+}
+
+:root[data-auth-step="fade"]::view-transition-new(*):only-child {
+  animation: auth-rise 480ms var(--auth-ease) 60ms both;
+}
+
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+@keyframes auth-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes auth-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes auth-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--auth-shift));
+  }
+}
+
+@keyframes auth-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--auth-shift)));
+  }
+}
+
+@keyframes auth-out {
+  to {
+    opacity: 0;
+    transform: translateX(calc(-0.5 * var(--auth-shift)));
+  }
+}
+
+@keyframes auth-out-back {
+  to {
+    opacity: 0;
+    transform: translateX(calc(0.5 * var(--auth-shift)));
+  }
+}
+
+@keyframes auth-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes auth-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* Buttons on these pages: taller, with a press. */
+
+.auth .button {
+  height: 44px;
+  font-size: 14px;
+  transition:
+    transform 140ms var(--auth-ease),
+    background-color 140ms ease;
+}
+
+.auth .button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-text);
+}
+
+.link-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.swap {
+  display: inline-flex;
+}
+
+.swap svg {
+  width: 1em;
+  height: 1em;
+}
+
+.button .swap svg {
+  width: 16px;
+  height: 16px;
+}
+
+.swap--animate {
+  animation: auth-pop 260ms var(--auth-ease) both;
+}
+
+.spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: auth-spin 700ms linear infinite;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Fields */
 
 .auth-form {
   display: flex;
@@ -96,10 +458,18 @@
   border: 1px solid var(--separator);
   border-radius: var(--radius-sm);
   background: var(--surface-1);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .input:focus-within {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.auth .input {
+  height: 44px;
 }
 
 .input input {
@@ -133,6 +503,20 @@
   height: 16px;
 }
 
+.auth-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  transition: color 140ms ease;
+}
+
+.auth-hint--problem {
+  color: var(--danger);
+}
+
+/* Code: the active cell is marked with colour and an inset ring rather than a thicker border, so
+   nothing in the row moves; a typed digit pops in. */
+
 .code {
   position: relative;
   display: flex;
@@ -159,10 +543,31 @@
   font-family: var(--font-mono);
   font-size: 18px;
   font-weight: 500;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.auth .code__cell {
+  height: 52px;
+  font-size: 20px;
 }
 
 .code__cell--active {
-  border: 1.5px solid var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 0.5px var(--accent);
+}
+
+.code__digit {
+  display: inline-block;
+  animation: code-pop 200ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes code-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.7);
+  }
 }
 
 .code__caret {
@@ -181,9 +586,10 @@
 .error-box {
   display: flex;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius-sm);
   background: var(--danger-soft);
+  animation: auth-drop 260ms var(--auth-ease) both;
 }
 
 .error-box svg {
@@ -205,89 +611,282 @@
   color: var(--text-secondary);
 }
 
-.auth-footnote {
-  display: flex;
-  gap: 8px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-tertiary);
-}
-
-.auth-footnote svg {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
-}
-
 .button--block {
   width: 100%;
   height: 40px;
 }
 
-.qr {
+/* Authenticator step */
+
+.enrol--wide {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 16px;
-  align-items: flex-start;
 }
 
-.qr__image {
+.enrol--compact {
+  display: none;
+}
+
+.qr-tile {
+  display: grid;
   flex: none;
-  width: 136px;
-  height: 136px;
-  padding: 8px;
-  border-radius: var(--radius-sm);
+  place-items: center;
   background: #ffffff;
 }
 
-.qr__image img {
+.qr-tile img {
   display: block;
   width: 100%;
   height: 100%;
 }
 
-.qr__text {
+.qr-tile--lg {
+  width: 200px;
+  height: 200px;
+  padding: 12px;
+  border-radius: 12px;
+  animation: auth-pop 560ms var(--auth-ease) 120ms both;
+}
+
+.qr-tile--sm {
+  width: 108px;
+  height: 108px;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.enrol__key {
   display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
   font-size: 12px;
-  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+.enrol__key code,
+.enrol__text code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.5px;
   color: var(--text-secondary);
 }
 
-.qr__key {
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--surface-1);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  letter-spacing: 1px;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
+.enrol__key .link-button,
+.enrol__key-head .link-button {
+  font-size: 12px;
+  font-weight: 600;
 }
+
+.enrol__or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.enrol__or::before,
+.enrol__or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--separator);
+}
+
+.enrol__panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.enrol__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.enrol__text code {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.enrol__title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.enrol__divider {
+  height: 1px;
+  background: var(--separator);
+}
+
+.enrol__key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: -8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Recovery codes: they arrive one after another. */
 
 .codes {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 12px 16px;
+  margin: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  list-style: none;
 }
 
 .codes__code {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--surface-1);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-family: var(--font-mono);
-  font-size: 14px;
-  text-align: center;
+  font-size: 12.5px;
+  white-space: nowrap;
+  animation: auth-rise 380ms var(--auth-ease) both;
+  animation-delay: calc(180ms + var(--i, 0) * 40ms);
 }
 
-.auth-actions {
+.codes__index {
+  min-width: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.auth-warning {
   display: flex;
   gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
-.auth-actions > * {
-  flex: 1;
+.auth-warning svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* base.css shortens every animation under reduced motion; drop the delays too, so nothing waits
+   invisible before it appears. */
+@media (prefers-reduced-motion: reduce) {
+  .auth,
+  .auth * {
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Phones: the brand becomes a top bar, headings align left, the buttons sit at the bottom and
+   the authenticator step leads with the otpauth: link (frame "Phone · Set up · Authenticator"). */
+
+@media (max-width: 600px) {
+  :root {
+    --auth-shift: 18px;
+  }
+
+  .auth__main {
+    padding: 0;
+  }
+
+  .auth__column {
+    flex: 1;
+    align-items: stretch;
+    gap: 24px;
+    width: 100%;
+    margin: 0;
+    padding: env(safe-area-inset-top) 20px 24px;
+  }
+
+  .auth__brand {
+    flex-direction: row;
+    gap: 10px;
+    min-height: 56px;
+  }
+
+  .auth__brand .mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+  }
+
+  .auth__brand svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .auth__name {
+    font-size: 15px;
+  }
+
+  .auth__footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 0 20px calc(20px + env(safe-area-inset-bottom));
+    text-align: left;
+  }
+
+  .auth__dot {
+    display: none;
+  }
+
+  .auth-step {
+    flex: 1;
+    gap: 28px;
+  }
+
+  .auth-step__head {
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .auth-step__title {
+    font-size: 22px;
+  }
+
+  .auth-step__form {
+    flex: 1;
+    gap: 28px;
+  }
+
+  .auth-step__actions {
+    margin-top: auto;
+  }
+
+  .only-wide,
+  .enrol--wide {
+    display: none;
+  }
+
+  .only-compact {
+    display: inline;
+  }
+
+  .enrol--compact {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
 }
