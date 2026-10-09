@@ -1,12 +1,16 @@
 //! One HTTP/1.1 GET to the API on the internal network. No TLS: compose calls `http://api:8080`.
 //! A request that does not finish in 10 seconds is the contract's upstream timeout.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// One address. A name can resolve to an IPv6 address that never answers; trying it
+/// for the whole budget would hide an IPv4 address that works.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug)]
@@ -90,9 +94,7 @@ async fn fetch(
     extra_headers: String,
     body: &[u8],
 ) -> Result<Fetched, ProbeError> {
-    let mut stream = TcpStream::connect((target.host.as_str(), target.port))
-        .await
-        .map_err(|_| ProbeError)?;
+    let mut stream = connect(&target.host, target.port).await?;
     let request = format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n{extra_headers}Connection: close\r\n\r\n",
         path = target.path,
@@ -120,6 +122,35 @@ async fn fetch(
         }
         buf.extend_from_slice(&tmp[..n]);
     }
+}
+
+/// IPv4 first, then each address on its own short budget. `TcpStream::connect` on a
+/// name tries `getaddrinfo` order and only moves on when that attempt returns an error.
+/// An IPv6 address with no route that drops the SYN (Docker DNS does this) would
+/// otherwise use the whole 10s and the console would report the operator as down.
+async fn connect(host: &str, port: u16) -> Result<TcpStream, ProbeError> {
+    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| ProbeError)?
+        .collect();
+    addrs.sort_by_key(|addr| addr.is_ipv6());
+    connect_in_order(addrs, CONNECT_TIMEOUT).await
+}
+
+async fn connect_in_order(
+    addrs: Vec<SocketAddr>,
+    per_try: Duration,
+) -> Result<TcpStream, ProbeError> {
+    if addrs.is_empty() {
+        return Err(ProbeError);
+    }
+    for addr in addrs {
+        match tokio::time::timeout(per_try, TcpStream::connect(addr)).await {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(_)) | Err(_) => continue,
+        }
+    }
+    Err(ProbeError)
 }
 
 fn parse_http_url(url: &str) -> Result<Target, ProbeError> {
@@ -315,5 +346,71 @@ mod tests {
         assert_eq!(target.host, "api");
         assert_eq!(target.port, 8080);
         assert_eq!(target.path, "/api/v1/metrics");
+    }
+
+    /// Axum answers `204` with no `Content-Length`. The operator delete and device-remove
+    /// routes do that. A client that waits for a length or for the peer to close hangs
+    /// when the server keeps the connection.
+    #[tokio::test]
+    async fn reads_an_axum_204_without_a_content_length() {
+        let app = axum::Router::new().route(
+            "/operator/users/{id}/delete",
+            axum::routing::post(|| async { axum::http::StatusCode::NO_CONTENT }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let started = std::time::Instant::now();
+        let fetched = call(
+            "POST",
+            &format!("http://{addr}/operator/users/00000000-0000-0000-0000-000000000001/delete"),
+            &[],
+            b"",
+        )
+        .await
+        .expect("204 from axum");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "reading the 204 took {elapsed:?}"
+        );
+        assert_eq!(fetched.status, 204);
+        assert_eq!(fetched.body, "");
+    }
+
+    #[test]
+    fn ipv4_is_tried_before_ipv6() {
+        let v4 = "192.0.2.1:9".parse::<SocketAddr>().unwrap();
+        let v6 = "[2001:db8::1]:9".parse::<SocketAddr>().unwrap();
+        let mut addrs = vec![v6, v4];
+        addrs.sort_by_key(|addr| addr.is_ipv6());
+        assert_eq!(addrs, vec![v4, v6]);
+    }
+
+    /// A first address that never answers must not hide one that does.
+    #[tokio::test]
+    async fn a_silent_address_does_not_use_the_whole_budget() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+        // TEST-NET-1. Nothing routes it here, so a connect waits until it is abandoned.
+        let silent: SocketAddr = "192.0.2.1:9".parse().unwrap();
+        let per_try = Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        let stream = connect_in_order(vec![silent, good], per_try)
+            .await
+            .expect("the second address answers");
+        assert_eq!(stream.peer_addr().unwrap(), good);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "falling through the silent address took {elapsed:?}"
+        );
+        drop(stream);
     }
 }

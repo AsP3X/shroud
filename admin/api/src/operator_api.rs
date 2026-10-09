@@ -23,9 +23,11 @@ pub(crate) enum Answer {
 
 pub(crate) async fn post(path: &str) -> Answer {
     let Ok(url) = endpoint(path) else {
+        tracing::warn!("operator call is not configured");
         return Answer::Failed;
     };
     let Some(token) = bearer() else {
+        tracing::warn!("operator call has no token");
         return Answer::Failed;
     };
     let header = format!("Bearer {token}");
@@ -35,7 +37,14 @@ pub(crate) async fn post(path: &str) -> Answer {
             detail: detail_of(&fetched.body),
         }),
         Ok(fetched) if fetched.status == 404 || fetched.status == 409 => Answer::Already,
-        _ => Answer::Failed,
+        Ok(fetched) => {
+            tracing::warn!(status = fetched.status, "operator call was refused");
+            Answer::Failed
+        }
+        Err(_) => {
+            tracing::warn!("operator call did not answer");
+            Answer::Failed
+        }
     }
 }
 

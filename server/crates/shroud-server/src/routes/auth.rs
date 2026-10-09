@@ -810,53 +810,74 @@ pub(crate) async fn delete_user_account(
 
     // Every device of the account is signed out, so none keeps listening on an open socket,
     // and the others wipe the account's data now (DEVICE_REMOVED, or the wake push).
-    state
-        .realtime
-        .close_sessions(user_id, &revoked_sessions)
-        .await;
+    // The console stops waiting after 10s. Closing sockets is bounded; a stuck Redis
+    // connection must not hold the answer past that. Local sockets are closed first
+    // inside `close_sessions`, before it talks to Redis.
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        state.realtime.close_sessions(user_id, &revoked_sessions),
+    )
+    .await
+    .is_err()
+    {
+        tracing::warn!(%user_id, "auth.account_delete socket close took too long");
+    }
     state.push.wake_removed_devices(wakes).await;
 
-    // The account is gone either way; blobs a failed purge leaves are unlinked, so the orphan
-    // GC takes them.
-    let media_purged = match crate::routes::media::purge_media_ids(state, &media_ids).await {
+    // Human: The account is already gone. The console stops waiting after 10s, so
+    // blob deletes and the peers' live updates get 5s and then stop. A slow store
+    // used to make the console say the delete had failed. A blob left behind is
+    // unlinked, and the orphan GC removes it. A peer who misses the live update
+    // hears it on the next poll.
+    // Agent: purge and PUBLISH are bounded by 5s and then dropped. A blob this drops
+    // stays unlinked for the orphan GC. A peer this drops hears it on the next poll.
+    let media_purged = match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let media_purged = match crate::routes::media::purge_media_ids(state, &media_ids).await {
+            Ok(purged) => purged,
+            Err(err) => {
+                tracing::warn!(%user_id, error = %err, "auth.account_delete media purge failed");
+                0
+            }
+        };
+
+        let mut events: Vec<(Uuid, serde_json::Value)> = Vec::new();
+        for chat in &chats {
+            let event = crate::routes::conversations::conversation_deleted_event(
+                Some(chat.conversation_id),
+                user_id,
+                chat.peer_user_id,
+                "everyone",
+                chat.cleared_for_peer,
+            );
+            events.push((chat.peer_user_id, event));
+        }
+        for contact_id in &contact_ids {
+            let event = serde_json::json!({
+                "type": "contact.removed",
+                "user_id": user_id,
+                "peer_user_id": contact_id,
+            });
+            events.push((*contact_id, event));
+        }
+        events.extend(ended_calls);
+        for (peer_user_id, event) in events {
+            if let Ok(payload) = serde_json::to_string(&event) {
+                state
+                    .realtime
+                    .publish_to_users([peer_user_id], None, &payload)
+                    .await;
+            }
+        }
+        media_purged
+    })
+    .await
+    {
         Ok(purged) => purged,
-        Err(err) => {
-            tracing::warn!(user_id = %user_id, error = %err, "auth.account_delete media purge failed");
+        Err(_) => {
+            tracing::warn!(%user_id, "auth.account_delete follow-up took too long");
             0
         }
     };
-
-    // Human: Peers' apps drop or reload the chat and the contact now rather than on their next
-    // poll. Same events as deleting the chat for both and removing the contact.
-    // Agent: PUBLISHES to peers only; the account's own devices are revoked.
-    let mut events: Vec<(Uuid, serde_json::Value)> = Vec::new();
-    for chat in &chats {
-        let event = crate::routes::conversations::conversation_deleted_event(
-            Some(chat.conversation_id),
-            user_id,
-            chat.peer_user_id,
-            "everyone",
-            chat.cleared_for_peer,
-        );
-        events.push((chat.peer_user_id, event));
-    }
-    for contact_id in &contact_ids {
-        let event = serde_json::json!({
-            "type": "contact.removed",
-            "user_id": user_id,
-            "peer_user_id": contact_id,
-        });
-        events.push((*contact_id, event));
-    }
-    events.extend(ended_calls);
-    for (peer_user_id, event) in events {
-        if let Ok(payload) = serde_json::to_string(&event) {
-            state
-                .realtime
-                .publish_to_users([peer_user_id], None, &payload)
-                .await;
-        }
-    }
 
     tracing::debug!(
         user_id = %user_id,
