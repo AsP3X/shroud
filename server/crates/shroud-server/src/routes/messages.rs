@@ -353,6 +353,11 @@ pub async fn send_message(
         .await
         .map_err(|err| AppError::Internal(format!("commit message failed: {err}")))?;
 
+    // Annotations attach to an earlier message, so they are not a message sent.
+    if !is_annotation {
+        state.metrics.inc_messages_sent();
+    }
+
     let response = MessageResponse {
         id: message_id,
         conversation_id,

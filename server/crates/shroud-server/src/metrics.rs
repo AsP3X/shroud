@@ -42,6 +42,11 @@ impl Metrics {
         self.http_errors_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// One new message stored by `POST /messages` (not a replay, not an annotation).
+    pub fn inc_messages_sent(&self) {
+        self.messages_sent_total.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Prometheus text format body.
     pub fn render(&self) -> String {
         let uptime = self
@@ -65,7 +70,7 @@ shroud_http_errors_total {}
 # HELP shroud_ws_connections Current authenticated WebSocket connections (approximate).
 # TYPE shroud_ws_connections gauge
 shroud_ws_connections {}
-# HELP shroud_messages_sent_total Successful message inserts.
+# HELP shroud_messages_sent_total New messages stored (text, media and Notes; annotations and replays not counted).
 # TYPE shroud_messages_sent_total counter
 shroud_messages_sent_total {}
 # HELP shroud_media_puts_total Media content PUT successes.

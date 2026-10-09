@@ -15,6 +15,16 @@ fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
 }
 
 async fn test_app() -> Option<axum::Router> {
+    test_app_with(axum::Router::new()).await
+}
+
+/// Bearer token for `/operator/*`, where the metrics are served.
+const OPERATOR_TOKEN: &str = "operator-test-token";
+
+/// [`test_app`] with `extra` routes merged in, on the same state.
+async fn test_app_with(
+    extra: axum::Router<shroud_server::state::AppState>,
+) -> Option<axum::Router> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -28,6 +38,7 @@ async fn test_app() -> Option<axum::Router> {
     Some(
         axum::Router::new()
             .merge(routes::router())
+            .merge(extra)
             .with_state(test_state(pool)),
     )
 }
@@ -469,4 +480,113 @@ async fn annotation_is_delivered_without_bumping_the_chat() {
     )
     .await;
     assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Reads `shroud_messages_sent_total` from the operator metrics endpoint.
+async fn messages_sent_total(app: &axum::Router) -> u64 {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/operator/metrics")
+                .header(header::AUTHORIZATION, format!("Bearer {OPERATOR_TOKEN}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let text = String::from_utf8(body.to_vec()).expect("utf-8");
+    text.lines()
+        .find_map(|line| line.strip_prefix("shroud_messages_sent_total "))
+        .expect("shroud_messages_sent_total sample")
+        .parse()
+        .expect("counter value")
+}
+
+#[tokio::test]
+async fn each_send_counts_one_message_sent() {
+    let operator = routes::operator::router(std::sync::Arc::from(OPERATOR_TOKEN));
+    let Some(app) = test_app_with(operator).await else {
+        eprintln!("skipping each_send_counts_one_message_sent: no DATABASE_URL");
+        return;
+    };
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    assert_eq!(messages_sent_total(&app).await, 0);
+
+    let client_message_id = Uuid::new_v4();
+    let text = json!({
+        "peer_user_id": user_b,
+        "client_message_id": client_message_id,
+        "content_type": "text",
+        "ciphertext": BASE64.encode(b"sealed-one")
+    });
+    let first = post_message(&app, &token_a, text.clone()).await;
+    assert_eq!(first.status(), StatusCode::CREATED);
+    assert_eq!(messages_sent_total(&app).await, 1);
+
+    let second = post_message(
+        &app,
+        &token_b,
+        json!({
+            "peer_user_id": user_a,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-two")
+        }),
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::CREATED);
+    assert_eq!(messages_sent_total(&app).await, 2);
+
+    // Saved Messages are messages the user sent.
+    let note = post_message(
+        &app,
+        &token_a,
+        json!({
+            "peer_user_id": user_a,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"sealed-note")
+        }),
+    )
+    .await;
+    assert_eq!(note.status(), StatusCode::CREATED);
+    assert_eq!(messages_sent_total(&app).await, 3);
+
+    // A retried send stores nothing new.
+    let replay = post_message(&app, &token_a, text).await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        messages_sent_total(&app).await,
+        3,
+        "a replay is not a new message"
+    );
+
+    let annotation = post_message(
+        &app,
+        &token_b,
+        json!({
+            "peer_user_id": user_a,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "annotation",
+            "ciphertext": BASE64.encode(b"sealed-transcript")
+        }),
+    )
+    .await;
+    assert_eq!(annotation.status(), StatusCode::CREATED);
+    assert_eq!(
+        messages_sent_total(&app).await,
+        3,
+        "an annotation is not a message sent"
+    );
 }
