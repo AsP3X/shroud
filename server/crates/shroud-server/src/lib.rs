@@ -170,6 +170,10 @@ pub async fn run() -> Result<(), AppError> {
                     Ok(manager) => {
                         realtime.set_redis(manager.clone()).await;
                         rate_limiter.set_redis(manager).await;
+                        relay_redis_replacements(
+                            realtime.redis_replacements(),
+                            rate_limiter.clone(),
+                        );
                         crate::realtime::spawn_redis_subscriber(realtime.clone(), redis_url);
                         tracing::info!("realtime fan-out + rate limits: Redis enabled");
                     }
@@ -347,14 +351,34 @@ pub async fn run() -> Result<(), AppError> {
 ///
 /// Human: The defaults retry 1 s and then 60 s apart, with no limit on one attempt: a Redis
 /// back after ten seconds was used again only a minute later, and an attempt against a host
-/// that accepts but never answers waited for good. Each call into Redis has its own bound
-/// besides (`realtime`, `rate_limit`). A connection that goes silent without an error is
-/// never reconnected by the manager; the realtime hub opens a fresh one itself.
+/// that accepts but never answers waited for good. The realtime hub bounds each of its calls
+/// into Redis besides. A connection that goes silent without an error is never reconnected
+/// by the manager; the hub opens a fresh one itself (see [`relay_redis_replacements`]).
 /// Agent: Attempts 1–2 s apart, 2 s each; after the 6 retries the next call starts again.
 fn redis_manager_config() -> redis::aio::ConnectionManagerConfig {
     redis::aio::ConnectionManagerConfig::new()
         .set_connection_timeout(Duration::from_secs(2))
         .set_max_delay(1_000)
+}
+
+/// Hands each connection manager the realtime hub swaps in for a silent one to the rate
+/// limiter, which was handed the same connection.
+///
+/// Human: Without it the limiter kept the silent connection after the hub had moved on, and
+/// counted in-process until the OS gave up on the socket, hours later.
+/// Agent: Runs until the hub's replacement channel closes (the hub is dropped).
+fn relay_redis_replacements(
+    mut replacements: tokio::sync::watch::Receiver<Option<redis::aio::ConnectionManager>>,
+    rate_limiter: RateLimiter,
+) {
+    tokio::spawn(async move {
+        while replacements.changed().await.is_ok() {
+            let manager = replacements.borrow_and_update().clone();
+            if let Some(manager) = manager {
+                rate_limiter.set_redis(manager).await;
+            }
+        }
+    });
 }
 
 fn serve_error(err: std::io::Error) -> AppError {

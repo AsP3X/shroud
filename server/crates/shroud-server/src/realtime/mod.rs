@@ -9,7 +9,7 @@ use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, watch};
 use uuid::Uuid;
 
 /// Per-device outbound event channel (JSON text frames).
@@ -170,6 +170,9 @@ struct RedisSlot {
     down_until: std::sync::Mutex<Option<Instant>>,
     /// A replacement is being opened.
     replacing: AtomicBool,
+    /// Each replacement, for whoever shares the connection (see
+    /// [`RealtimeHub::redis_replacements`]).
+    replaced: watch::Sender<Option<ConnectionManager>>,
 }
 
 impl RedisSlot {
@@ -186,8 +189,9 @@ impl RedisSlot {
     /// dropped NAT entry) never errors: the manager only reconnects on an I/O error, and TCP
     /// keepalive, at the OS defaults redis-rs leaves it on, takes hours to notice. Until then
     /// every call timed out and other replicas heard nothing from this one.
-    /// Agent: Ends the backoff once the new manager is in, so the next call uses it at once.
-    /// The attempt is bounded by the manager config's retries and connection timeout.
+    /// Agent: Ends the backoff once the new manager is in, so the next call uses it at once,
+    /// and announces it on `replaced`. The attempt is bounded by the manager config's retries
+    /// and connection timeout.
     fn replace(self: &Arc<Self>) {
         let Some(client) = self.client.lock().ok().and_then(|client| client.clone()) else {
             return;
@@ -199,10 +203,11 @@ impl RedisSlot {
         tokio::spawn(async move {
             match ConnectionManager::new_with_config(client, crate::redis_manager_config()).await {
                 Ok(manager) => {
-                    *slot.manager.write().await = Some(manager);
+                    *slot.manager.write().await = Some(manager.clone());
                     if let Ok(mut until) = slot.down_until.lock() {
                         *until = None;
                     }
+                    slot.replaced.send_replace(Some(manager));
                     tracing::info!("realtime redis connection replaced after it went silent");
                 }
                 Err(err) => tracing::warn!(
@@ -262,6 +267,16 @@ impl RealtimeHub {
         if let Ok(mut slot) = self.redis.client.lock() {
             *slot = Some(client);
         }
+    }
+
+    /// The connection managers the hub swaps in for one that went silent, so whatever was
+    /// handed the same connection (the rate limiter) can move with it.
+    ///
+    /// Human: Clones of a connection manager share its connection, so a silent connection
+    /// stalls every holder alike; the hub notices first, through its constant traffic and the
+    /// readiness PING the healthcheck sends every 10 s.
+    pub fn redis_replacements(&self) -> watch::Receiver<Option<ConnectionManager>> {
+        self.redis.replaced.subscribe()
     }
 
     /// True when a Redis connection manager is attached.
@@ -1385,8 +1400,8 @@ mod tests {
     /// drops off the network without a reset. Later connections answer everything.
     struct FakeRedis {
         url: String,
-        /// `silent_at` commands that later connections answered.
-        answered_later: Arc<AtomicU64>,
+        /// The names of the commands later connections answered.
+        answered_later: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
     impl FakeRedis {
@@ -1395,7 +1410,7 @@ mod tests {
                 .await
                 .expect("bind");
             let url = format!("redis://{}", listener.local_addr().expect("address"));
-            let answered_later = Arc::new(AtomicU64::new(0));
+            let answered_later = Arc::new(std::sync::Mutex::new(Vec::new()));
             let counter = answered_later.clone();
             tokio::spawn(async move {
                 let mut first = true;
@@ -1426,8 +1441,10 @@ mod tests {
                 .expect("manager")
         }
 
-        fn answered_later(&self) -> u64 {
-            self.answered_later.load(Ordering::SeqCst)
+        /// How many `name` commands later connections answered.
+        fn answered_later(&self, name: &str) -> usize {
+            let answered = self.answered_later.lock().expect("answered");
+            answered.iter().filter(|answered| *answered == name).count()
         }
     }
 
@@ -1435,7 +1452,7 @@ mod tests {
         mut socket: tokio::net::TcpStream,
         silent_at: &'static str,
         silent_from: Option<u64>,
-        answered_later: Arc<AtomicU64>,
+        answered_later: Arc<std::sync::Mutex<Vec<String>>>,
     ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -1452,12 +1469,16 @@ mod tests {
             let mut out = String::new();
             while let Some((args, used)) = parse_resp_command(&buffer) {
                 buffer.drain(..used);
-                if args[0].eq_ignore_ascii_case(silent_at) {
-                    seen += 1;
-                    match silent_from {
-                        Some(nth) => silent |= seen >= nth,
-                        None => {
-                            answered_later.fetch_add(1, Ordering::SeqCst);
+                match silent_from {
+                    Some(nth) => {
+                        if args[0].eq_ignore_ascii_case(silent_at) {
+                            seen += 1;
+                            silent |= seen >= nth;
+                        }
+                    }
+                    None => {
+                        if let Ok(mut answered) = answered_later.lock() {
+                            answered.push(args[0].to_ascii_uppercase());
                         }
                     }
                 }
@@ -1510,6 +1531,7 @@ mod tests {
             "PING" => "+PONG\r\n".into(),
             "GET" | "HGET" => "$-1\r\n".into(),
             "HGETALL" => "*0\r\n".into(),
+            "INCR" | "INCRBY" => ":1\r\n".into(),
             "PUBLISH" | "HSET" | "HDEL" | "EXPIRE" | "EVALSHA" | "EVAL" => ":0\r\n".into(),
             _ => "+OK\r\n".into(),
         }
@@ -1599,7 +1621,7 @@ mod tests {
 
         hub.publish_to_users([user], None, "unanswered").await;
         let started = Instant::now();
-        while redis.answered_later() == 0 {
+        while redis.answered_later("PUBLISH") == 0 {
             assert!(
                 started.elapsed() < Duration::from_secs(2),
                 "still not back on Redis"
@@ -1608,6 +1630,34 @@ mod tests {
             hub.publish_to_users([user], None, "again").await;
         }
         assert!(hub.ping_redis().await.is_ok());
+    }
+
+    /// The rate limiter, handed the same connection, moves to the replacement with the hub.
+    #[tokio::test]
+    async fn the_rate_limiter_moves_with_a_replaced_connection() {
+        let redis = FakeRedis::start("PUBLISH", 1).await;
+        let manager = redis.manager().await;
+        let hub = Arc::new(RealtimeHub::new());
+        hub.set_redis(manager.clone()).await;
+        hub.set_redis_client(redis.client());
+        let limiter = crate::rate_limit::RateLimiter::new();
+        limiter.set_redis(manager).await;
+        crate::relay_redis_replacements(hub.redis_replacements(), limiter.clone());
+
+        hub.publish_to_users([Uuid::new_v4()], None, "unanswered")
+            .await;
+        let started = Instant::now();
+        while redis.answered_later("INCRBY") == 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "the rate limiter kept the silent connection"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            // On the silent connection the check may wait; this test only needs to see where
+            // it goes.
+            let check = limiter.check("test", "relay", 100, Duration::from_secs(60));
+            let _ = tokio::time::timeout(Duration::from_millis(200), check).await;
+        }
     }
 
     /// The subscriber gives up a connection that stops answering its probe, so the loop
