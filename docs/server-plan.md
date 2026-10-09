@@ -805,9 +805,9 @@ The removed device must wipe the account's data at once, wherever it is:
 - Its open WebSocket gets `auth.error` with code `DEVICE_REMOVED` and closes.
 - Every request it makes answers `401 DEVICE_REMOVED` (its session rows are never purged). Clients wipe on the first one; a plain `401 UNAUTHORIZED` still only counts toward the iPhone's three-in-a-row sign-out.
 - Once the removal commits, the server sends one last push to the registration it just deleted: APNs `background` (priority 5) `{ "aps": { "content-available": 1 }, "type": "device_removed" }`, or Web Push `{ "v": 1, "kind": "device_removed" }` (`Urgency: high`; a browser's, or the Android app's through its distributor). The iPhone and the Android app confirm with `GET /auth/me` before they delete anything.
-- A locked browser asks `POST /auth/session-status`.
+- A locked browser asks `POST /auth/session-status` and gets `{ "removed": true }`.
 
-`DELETE /auth/account` does the same for the account's other devices.
+`DELETE /auth/account` does the same for the account's other devices, and every one of those answers adds `"reason": "account_deleted"`: the HTTP `error` object (message "This account was deleted."), the WebSocket `auth.error`, the wake payload, and `POST /auth/session-status` (`{ "removed": true, "reason": "account_deleted" }`). A device that was only removed has no `reason`. An account that is deleted and whose device was revoked earlier still answers `account_deleted`. The code stays `DEVICE_REMOVED`, so an older build still wipes.
 
 #### PIN guard (web vault)
 
@@ -829,7 +829,7 @@ The web client wraps its vault key under PIN **and** a server-held pepper, so a 
 | `INVALID_CREDENTIALS` | Failed login (no user enumeration) |
 | `DEVICE_LIMIT` | Would exceed 5 devices and all 5 are signed in; carries `oldest_device` (see `POST /auth/login`) |
 | `UNAUTHORIZED` | Missing / invalid / revoked token |
-| `DEVICE_REMOVED` | The token's device was removed from the account (401); the client wipes itself |
+| `DEVICE_REMOVED` | The token's device was removed, or its account was deleted (401); the client wipes itself. A deleted account adds `"reason": "account_deleted"` and the message "This account was deleted." A removed device has no `reason` and the message "This device was removed from your account." |
 | `FORBIDDEN` | Authenticated but not allowed |
 | `NOT_FOUND` | Device not found for user |
 | `RATE_LIMITED` | Budget exceeded |
@@ -1208,7 +1208,7 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
    ```json
    { "type": "auth.error", "error": { "code": "UNAUTHORIZED", "message": "This session was signed out." } }
    ```
-   (with code `DEVICE_REMOVED` and message "This device was removed from your account." when the device was removed or the account deleted; authenticating with such a token gets the same frame) and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
+   (with code `DEVICE_REMOVED` and message "This device was removed from your account." when the device was removed, or message "This account was deleted." and `"reason": "account_deleted"` when the account was deleted; authenticating with such a token gets the same frame) and closes the socket, on every replica (Redis `shroud:sessions:revoked`). The socket also re-checks its session right after `auth.ok` and every 30 s, so a revocation its replica missed still closes it. Clients treat `auth.error` as final and do not reconnect with that token. A newer socket from the same device replaces the older one, which closes without a frame.
 6. The server pings every 30 s and closes a socket 75 s after the last frame it heard (any frame, a pong too). A write the socket does not take within 10 s closes it as well: a full send buffer must not stall the loop. Browsers and URLSession answer pings on their own (the iOS app also pings every 25 s to notice a dead socket). A device whose socket closed counts as offline and gets pushes again; with Redis, a closing socket clears the device's online entry only while it is still the one that socket wrote.
 7. Right after `auth.ok`, a call still ringing for the user reaches the new socket (see [Calls](#calls-m9)).
 8. The client says when its app comes to the front or leaves it:
@@ -1495,7 +1495,10 @@ Add optional:
   The name and code can be registered again; `GET /users/*` and contact requests answer `404`.
 - Devices are revoked as by `DELETE /devices/:id` (sessions, keys, push tokens, Web Push subscriptions,
   notification settings, PIN guards, undelivered deliveries) and their names cleared; their open
-  WebSockets close. Saved Messages, my uploads (rows and blobs), contacts, contact requests, blocks,
+  WebSockets close with `DEVICE_REMOVED` and `"reason": "account_deleted"`. The same reason is on
+  the wake push and on `POST /auth/session-status`. A later request with a token of this account
+  answers `401` with that reason. `DELETE /auth/account` itself is still `204`; if the account was
+  already deleted, that `401` carries the reason too. Saved Messages, my uploads (rows and blobs), contacts, contact requests, blocks,
   hides, reaction seen marks, read markers and chat mutes (mine, and others' of me) are deleted. Ringing or
   active calls end as if I hung up, then all my call rows are deleted.
 - WS to peers after commit: `conversation.deleted` per chat (`user_id` me, `scope: "everyone"`,

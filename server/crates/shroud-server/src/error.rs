@@ -47,6 +47,11 @@ pub struct LimitDevice {
 pub struct ErrorDetail {
     pub code: String,
     pub message: String,
+    /// Why a `DEVICE_REMOVED` happened. `"account_deleted"` when the account is gone;
+    /// absent when only this device was removed. Old builds ignore an unknown field and
+    /// still wipe on the code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Application-wide error type; maps to HTTP status and JSON body.
@@ -75,6 +80,11 @@ pub enum AppError {
     /// Rate limit exceeded; `retry_after_secs` drives the `Retry-After` response header.
     #[error("Too many requests. Try again later.")]
     RateLimited { retry_after_secs: u64 },
+
+    /// The account this token belonged to was deleted. The code stays `DEVICE_REMOVED` so an
+    /// old build still wipes; `reason` tells a current build the account is gone.
+    #[error("This account was deleted.")]
+    AccountDeleted,
 
     #[error("{0}")]
     Internal(String),
@@ -152,6 +162,13 @@ impl AppError {
             code: "DEVICE_REMOVED",
             message: "This device was removed from your account.".into(),
         }
+    }
+
+    /// The account was deleted. Same code as [`Self::device_removed`], plus `reason`, so an
+    /// old build still wipes and a current one can say the account is gone. An account that
+    /// was deleted and whose device was revoked earlier still answers this.
+    pub fn account_deleted() -> Self {
+        Self::AccountDeleted
     }
 
     pub fn forbidden(message: impl Into<String>) -> Self {
@@ -279,6 +296,7 @@ impl AppError {
             error: ErrorDetail {
                 code: self.code().into(),
                 message: self.client_message(),
+                reason: self.reason().map(str::to_string),
             },
             oldest_device: match self {
                 Self::DeviceLimit { devices, .. } => devices.first().cloned(),
@@ -298,6 +316,7 @@ impl AppError {
     pub(crate) fn status(&self) -> StatusCode {
         match self {
             Self::Api { status, .. } => *status,
+            Self::AccountDeleted => StatusCode::UNAUTHORIZED,
             Self::DeviceLimit { .. } => StatusCode::CONFLICT,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -307,6 +326,7 @@ impl AppError {
     pub(crate) fn code(&self) -> &'static str {
         match self {
             Self::Api { code, .. } => code,
+            Self::AccountDeleted => "DEVICE_REMOVED",
             Self::DeviceLimit { .. } => "DEVICE_LIMIT",
             Self::RateLimited { .. } => "RATE_LIMITED",
             Self::Internal(_) => "INTERNAL_ERROR",
@@ -317,10 +337,18 @@ impl AppError {
     fn client_message(&self) -> String {
         match self {
             Self::Api { message, .. } => message.clone(),
+            Self::AccountDeleted => "This account was deleted.".into(),
             Self::DeviceLimit { .. } => self.to_string(),
             Self::RateLimited { .. } => "Too many requests. Try again later.".into(),
             // Human: Internal errors get a generic message; details stay in server logs only.
             Self::Internal(_) => "An unexpected error occurred.".into(),
+        }
+    }
+
+    fn reason(&self) -> Option<&'static str> {
+        match self {
+            Self::AccountDeleted => Some("account_deleted"),
+            _ => None,
         }
     }
 

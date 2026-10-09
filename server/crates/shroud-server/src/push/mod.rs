@@ -401,22 +401,23 @@ impl PushService {
     ///
     /// Agent: spawns (a recording service sends inline); APNs `background` priority 5 with
     /// `apns_device_removed`, Web Push `web_device_removed`; nothing is read from the DB.
-    pub async fn wake_removed_devices(&self, wakes: Vec<RemovedDeviceWake>) {
+    /// `account_deleted` adds `reason` so the other devices can say the account is gone.
+    pub async fn wake_removed_devices(&self, wakes: Vec<RemovedDeviceWake>, account_deleted: bool) {
         if wakes.is_empty() {
             return;
         }
         if self.inner.recorder.is_some() {
-            self.send_removal_wakes(wakes).await;
+            self.send_removal_wakes(wakes, account_deleted).await;
             return;
         }
         let service = self.clone();
-        tokio::spawn(async move { service.send_removal_wakes(wakes).await });
+        tokio::spawn(async move { service.send_removal_wakes(wakes, account_deleted).await });
     }
 
-    async fn send_removal_wakes(&self, wakes: Vec<RemovedDeviceWake>) {
+    async fn send_removal_wakes(&self, wakes: Vec<RemovedDeviceWake>, account_deleted: bool) {
         for wake in wakes {
             if let (Some(token), Some(environment)) = (&wake.apns_token, &wake.apns_environment) {
-                let payload = payload::apns_device_removed();
+                let payload = payload::apns_device_removed(account_deleted);
                 self.send_apns(
                     wake.device_id,
                     token,
@@ -450,7 +451,7 @@ impl PushService {
                 self.send_web(
                     wake.device_id,
                     &subscription,
-                    &payload::web_device_removed(),
+                    &payload::web_device_removed(account_deleted),
                     &options,
                 )
                 .await;

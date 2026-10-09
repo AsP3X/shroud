@@ -106,9 +106,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             tracing::warn!(error = %err, "ws.auth failed");
             // A removed device is told so, and wipes itself; anything else stays a plain
             // UNAUTHORIZED, as clients have always seen it.
-            let removed = AppError::device_removed();
-            let error = if err.code() == removed.code() {
-                removed.body().error
+            // Keep `reason` when the account was deleted. Rebuilding a plain device-removed
+            // body would drop it, and an old build still wipes on the code alone.
+            let error = if err.code() == "DEVICE_REMOVED" {
+                err.body().error
             } else {
                 AppError::unauthorized().body().error
             };
@@ -289,10 +290,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         tracing::debug!(%user_id, %device_id, ?over, "ws.session_revoked");
         // Clients take auth.error as final: they stop reconnecting with the dead token, and
         // the web client signs out. DEVICE_REMOVED also makes the iPhone wipe itself now.
-        let error = if over == SessionState::Removed {
-            json!(AppError::device_removed().body().error)
-        } else {
-            json!({ "code": "UNAUTHORIZED", "message": "This session was signed out." })
+        let error = match over {
+            SessionState::AccountDeleted => json!(AppError::account_deleted().body().error),
+            SessionState::Removed => json!(AppError::device_removed().body().error),
+            SessionState::SignedOut | SessionState::Live => {
+                json!({ "code": "UNAUTHORIZED", "message": "This session was signed out." })
+            }
         };
         let _ = timeout(REVOKED_CLOSE_TIMEOUT, async {
             let _ = sink

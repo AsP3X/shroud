@@ -494,6 +494,20 @@ async fn assert_closed_with(socket: &mut Socket, code: &str) {
     let last = events.last().expect("a final frame");
     assert_eq!(last["type"], "auth.error");
     assert_eq!(last["error"]["code"], code);
+    assert!(
+        last["error"].get("reason").is_none(),
+        "a plain close named a reason: {last}"
+    );
+}
+
+/// The account is gone: `DEVICE_REMOVED` plus `reason`, so the device can say so.
+async fn assert_account_deleted(socket: &mut Socket) {
+    let events = events_until_closed(socket).await;
+    let last = events.last().expect("a final frame");
+    assert_eq!(last["type"], "auth.error");
+    assert_eq!(last["error"]["code"], "DEVICE_REMOVED");
+    assert_eq!(last["error"]["message"], "This account was deleted.");
+    assert_eq!(last["error"]["reason"], "account_deleted");
 }
 
 async fn assert_signed_out(socket: &mut Socket) {
@@ -716,8 +730,31 @@ async fn deleting_the_account_closes_its_sockets() {
         .expect("delete account");
     assert_eq!(deleted.status(), reqwest::StatusCode::NO_CONTENT);
 
-    assert_removed(&mut two.laptop).await;
-    assert_removed(&mut two.phone).await;
+    assert_account_deleted(&mut two.laptop).await;
+    assert_account_deleted(&mut two.phone).await;
+
+    // A device that missed the close hears the same reason when it connects again.
+    let (mut again, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/ws"))
+        .await
+        .expect("ws connect");
+    again
+        .send(Message::Text(
+            json!({ "type": "auth", "token": two.laptop_token }).to_string().into(),
+        ))
+        .await
+        .expect("send auth");
+    assert_account_deleted(&mut again).await;
+
+    let me = client
+        .get(format!("http://{addr}/api/v1/auth/me"))
+        .bearer_auth(&two.laptop_token)
+        .send()
+        .await
+        .expect("me");
+    assert_eq!(me.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let me: Value = me.json().await.expect("json");
+    assert_eq!(me["error"]["code"], "DEVICE_REMOVED");
+    assert_eq!(me["error"]["reason"], "account_deleted");
 
     let _ = shutdown_tx.send(());
     let _ = server.await;

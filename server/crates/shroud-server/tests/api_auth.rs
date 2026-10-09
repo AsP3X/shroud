@@ -977,7 +977,10 @@ async fn login_at_device_cap_signs_out_the_oldest_device_once_agreed() {
     // The signed-out device is told it was removed, so it wipes itself.
     let me = authed(&app, "GET", "/api/v1/auth/me", &oldest_token, None).await;
     assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(json_body(me).await["error"]["code"], "DEVICE_REMOVED");
+    let me = json_body(me).await;
+    assert_eq!(me["error"]["code"], "DEVICE_REMOVED");
+    assert_eq!(me["error"]["message"], "This device was removed from your account.");
+    assert!(me["error"].get("reason").is_none(), "{me}");
 
     let list = authed(&app, "GET", "/api/v1/devices", &new_token, None).await;
     assert_eq!(list.status(), StatusCode::OK);
@@ -1155,6 +1158,94 @@ async fn authed(
     }
     .expect("request");
     app.clone().oneshot(request).await.expect("response")
+}
+
+#[tokio::test]
+async fn a_wrong_password_does_not_delete_and_a_deleted_account_says_why() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping a_wrong_password_does_not_delete_and_a_deleted_account_says_why: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (name, password) = unique_user();
+    let (phone, _, _) = register_user(&app, &name, &password).await;
+    let login = login_request(&app, &name, &password).await;
+    assert_eq!(login.status(), StatusCode::OK);
+    let other = json_body(login).await;
+    let other_token = other["token"].as_str().unwrap().to_string();
+
+    let wrong = authed(
+        &app,
+        "DELETE",
+        "/api/v1/auth/account",
+        &phone,
+        Some(json!({ "password": "not-the-password" })),
+    )
+    .await;
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    let wrong = json_body(wrong).await;
+    assert_eq!(wrong["error"]["code"], "INVALID_CREDENTIALS");
+    assert!(wrong["error"].get("reason").is_none(), "{wrong}");
+    assert_eq!(
+        authed(&app, "GET", "/api/v1/auth/me", &phone, None)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let deleted = authed(
+        &app,
+        "DELETE",
+        "/api/v1/auth/account",
+        &phone,
+        Some(json!({ "password": password })),
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let me = authed(&app, "GET", "/api/v1/auth/me", &other_token, None).await;
+    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    let me = json_body(me).await;
+    assert_eq!(me["error"]["code"], "DEVICE_REMOVED");
+    assert_eq!(me["error"]["message"], "This account was deleted.");
+    assert_eq!(me["error"]["reason"], "account_deleted");
+
+    let again = authed(
+        &app,
+        "DELETE",
+        "/api/v1/auth/account",
+        &phone,
+        Some(json!({ "password": password })),
+    )
+    .await;
+    assert_eq!(again.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        json_body(again).await["error"]["reason"],
+        "account_deleted"
+    );
+
+    let hash = BASE64.encode(ring::digest::digest(
+        &ring::digest::SHA256,
+        other_token.as_bytes(),
+    ));
+    let status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/session-status")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "token_hash": hash }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(status.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(status).await,
+        json!({ "removed": true, "reason": "account_deleted" })
+    );
 }
 
 #[tokio::test]

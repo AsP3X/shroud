@@ -168,61 +168,88 @@ pub async fn ids_for_token(pool: &sqlx::PgPool, token: &str) -> Result<AuthIds, 
     }
 }
 
-/// Why a token that no longer authenticates was turned away: [`AppError::device_removed`] when
-/// its session belongs to a device the account removed (or an account that was deleted),
-/// otherwise a plain 401.
+/// Why a token that no longer authenticates was turned away: [`AppError::account_deleted`]
+/// when the account is gone (even if this device was revoked earlier),
+/// [`AppError::device_removed`] when only the device was removed, otherwise a plain 401.
 ///
 /// Human: A removed device must wipe the account's data at once. A plain 401 cannot tell it
 /// so: clients wait for several before signing out, so a server hiccup never costs anyone
 /// their local history. A removed device's sessions are never purged
 /// ([`purge_revoked_sessions`]), so the answer holds however long the device was offline.
-/// Agent: DB SELECT EXISTS sessions ⋈ devices ⋈ users WHERE token_hash AND (device revoked OR
-/// user deleted); only on the rejection path. A lookup error falls back to the plain 401.
+/// Agent: DB SELECT deleted, device-revoked FROM sessions ⋈ devices ⋈ users WHERE token_hash
+/// AND (device revoked OR user deleted); only on the rejection path. A lookup error falls
+/// back to the plain 401.
 async fn rejection_for(pool: &sqlx::PgPool, token_hash: &[u8]) -> AppError {
-    let removed: Result<bool, _> = sqlx::query_scalar(
+    let found: Result<Option<(bool, bool)>, _> = sqlx::query_as(
         r#"
-        SELECT EXISTS (
-            SELECT 1
-            FROM sessions s
-            INNER JOIN devices d ON d.id = s.device_id
-            INNER JOIN users u ON u.id = d.user_id
-            WHERE s.token_hash = $1 AND (d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL)
-        )
+        SELECT u.deleted_at IS NOT NULL, d.revoked_at IS NOT NULL
+        FROM sessions s
+        INNER JOIN devices d ON d.id = s.device_id
+        INNER JOIN users u ON u.id = d.user_id
+        WHERE s.token_hash = $1 AND (d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL)
         "#,
     )
     .bind(token_hash)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await;
-    if matches!(removed, Ok(true)) {
-        AppError::device_removed()
-    } else {
-        AppError::unauthorized()
+    match found {
+        Ok(Some((true, _))) => AppError::account_deleted(),
+        Ok(Some((false, true))) => AppError::device_removed(),
+        _ => AppError::unauthorized(),
     }
 }
 
-/// Whether a signed-out client's data should go: the session with this token hash belongs to
-/// a removed device or a deleted account. A session a password change or a logout signed out
-/// answers false (that device only has to log in again), and so does a hash the server does not
-/// know: only a removal the server can point to wipes anything.
+/// What a token hash is, for a locked client that cannot present the token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// Unknown, or only signed out. The client keeps its data.
+    None,
+    /// The device was removed. The account is still there.
+    Device,
+    /// The account was deleted. This wins when the device was revoked as well.
+    Account,
+}
+
+impl Removal {
+    pub fn removed(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// `"account_deleted"` when the account is gone. Absent for a removed device.
+    pub fn reason(self) -> Option<&'static str> {
+        match self {
+            Self::Account => Some("account_deleted"),
+            Self::None | Self::Device => None,
+        }
+    }
+}
+
+/// Whether a signed-out client's data should go, and why: the session with this token hash
+/// belongs to a removed device or a deleted account. A session a password change or a logout
+/// signed out answers [`Removal::None`] (that device only has to log in again), and so does a
+/// hash the server does not know: only a removal the server can point to wipes anything.
 ///
-/// Agent: DB SELECT EXISTS sessions ⋈ devices ⋈ users WHERE token_hash AND (device revoked OR
-/// user deleted).
-pub async fn token_hash_removed(pool: &sqlx::PgPool, token_hash: &[u8]) -> Result<bool, AppError> {
-    sqlx::query_scalar(
+/// Agent: DB SELECT deleted, device-revoked FROM sessions ⋈ devices ⋈ users WHERE token_hash
+/// AND (device revoked OR user deleted).
+pub async fn token_hash_removed(pool: &sqlx::PgPool, token_hash: &[u8]) -> Result<Removal, AppError> {
+    let found: Option<(bool, bool)> = sqlx::query_as(
         r#"
-        SELECT EXISTS (
-            SELECT 1
-            FROM sessions s
-            INNER JOIN devices d ON d.id = s.device_id
-            INNER JOIN users u ON u.id = d.user_id
-            WHERE s.token_hash = $1 AND (d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL)
-        )
+        SELECT u.deleted_at IS NOT NULL, d.revoked_at IS NOT NULL
+        FROM sessions s
+        INNER JOIN devices d ON d.id = s.device_id
+        INNER JOIN users u ON u.id = d.user_id
+        WHERE s.token_hash = $1 AND (d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL)
         "#,
     )
     .bind(token_hash)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
-    .map_err(|err| AppError::Internal(format!("session status failed: {err}")))
+    .map_err(|err| AppError::Internal(format!("session status failed: {err}")))?;
+    Ok(match found {
+        Some((true, _)) => Removal::Account,
+        Some((false, true)) => Removal::Device,
+        _ => Removal::None,
+    })
 }
 
 /// Where a WebSocket's session stands (see [`session_state`]).
@@ -232,8 +259,10 @@ pub enum SessionState {
     Live,
     /// Signed out (logout, a password change, a newer login): the device only logs in again.
     SignedOut,
-    /// Its device was removed or its account deleted: the device wipes itself.
+    /// Its device was removed. The account is still there. The device wipes itself.
     Removed,
+    /// Its account was deleted, even if this device was revoked earlier. The device wipes itself.
+    AccountDeleted,
 }
 
 /// Whether a session may keep its WebSocket open, and if not, why.
@@ -247,11 +276,12 @@ pub async fn session_state(
     pool: &sqlx::PgPool,
     session_id: Uuid,
 ) -> Result<SessionState, AppError> {
-    let row: Option<(bool, bool)> = sqlx::query_as(
+    let row: Option<(bool, bool, bool)> = sqlx::query_as(
         r#"
         SELECT
-            d.revoked_at IS NOT NULL OR u.deleted_at IS NOT NULL AS removed,
-            s.revoked_at IS NULL AS live
+            u.deleted_at IS NOT NULL,
+            d.revoked_at IS NOT NULL,
+            s.revoked_at IS NULL
         FROM sessions s
         INNER JOIN devices d ON d.id = s.device_id
         INNER JOIN users u ON u.id = d.user_id
@@ -263,8 +293,9 @@ pub async fn session_state(
     .await
     .map_err(|err| AppError::Internal(format!("session check failed: {err}")))?;
     Ok(match row {
-        Some((true, _)) => SessionState::Removed,
-        Some((false, true)) => SessionState::Live,
+        Some((true, _, _)) => SessionState::AccountDeleted,
+        Some((false, true, _)) => SessionState::Removed,
+        Some((false, false, true)) => SessionState::Live,
         _ => SessionState::SignedOut,
     })
 }

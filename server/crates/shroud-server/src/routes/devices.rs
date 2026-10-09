@@ -198,7 +198,7 @@ pub(crate) async fn commit_device_removal(
         .await;
     state
         .push
-        .wake_removed_devices(revoked.wake.into_iter().collect())
+        .wake_removed_devices(revoked.wake.into_iter().collect(), false)
         .await;
 
     Ok(())

@@ -747,6 +747,7 @@ fn changed_elsewhere(current: Option<ReactionEntry>) -> Response {
         error: ErrorDetail {
             code: "REACTION_CHANGED".into(),
             message: "Your reaction changed on another device.".into(),
+            reason: None,
         },
         current,
     };

@@ -223,14 +223,22 @@ pub fn apns_badge(badge: i64) -> Value {
 
 /// Wakes an iPhone the account just removed, so it wipes itself without being opened. It says
 /// nothing else: the app asks the server before it deletes anything.
-pub fn apns_device_removed() -> Value {
-    json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
+pub fn apns_device_removed(account_deleted: bool) -> Value {
+    let mut payload = json!({ "aps": { "content-available": 1 }, "type": "device_removed" });
+    if account_deleted {
+        payload["reason"] = json!("account_deleted");
+    }
+    payload
 }
 
 /// Tells a browser or the Android app the account just removed it; the service worker, or the
 /// app after asking `GET /auth/me`, starts the wipe.
-pub fn web_device_removed() -> Value {
-    json!({ "v": 1, "kind": "device_removed" })
+pub fn web_device_removed(account_deleted: bool) -> Value {
+    let mut payload = json!({ "v": 1, "kind": "device_removed" });
+    if account_deleted {
+        payload["reason"] = json!("account_deleted");
+    }
+    payload
 }
 
 /// Tells the Android app a chat was read on another device: it closes that chat's
@@ -521,6 +529,30 @@ mod tests {
                 Uuid::parse_str("3c7d1e9a-2b4f-4a6c-8d0e-1f2a3b4c5d6e").unwrap()
             ),
             "7ea6d1da93077abd7d59d5004985ff0b"
+        );
+    }
+
+    #[test]
+    fn a_removal_wake_names_a_deleted_account_and_only_that() {
+        assert_eq!(
+            apns_device_removed(false),
+            json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
+        );
+        assert_eq!(
+            apns_device_removed(true),
+            json!({
+                "aps": { "content-available": 1 },
+                "type": "device_removed",
+                "reason": "account_deleted"
+            })
+        );
+        assert_eq!(
+            web_device_removed(false),
+            json!({ "v": 1, "kind": "device_removed" })
+        );
+        assert_eq!(
+            web_device_removed(true),
+            json!({ "v": 1, "kind": "device_removed", "reason": "account_deleted" })
         );
     }
 

@@ -453,7 +453,7 @@ async fn next_text(socket: &mut Socket) -> Value {
     }
 }
 
-async fn assert_closed(socket: &mut Socket, code: &str) {
+async fn assert_closed(socket: &mut Socket, code: &str, reason: Option<&str>) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut saw = false;
     loop {
@@ -463,6 +463,7 @@ async fn assert_closed(socket: &mut Socket, code: &str) {
                 let event: Value = serde_json::from_str(&text).expect("json");
                 assert_eq!(event["type"], "auth.error");
                 assert_eq!(event["error"]["code"], code);
+                assert_eq!(event["error"]["reason"].as_str(), reason);
                 saw = true;
             }
             Ok(Some(Ok(Message::Close(_))) | Some(Err(_)) | None) => break,
@@ -617,7 +618,7 @@ async fn remove_device(client: &reqwest::Client, servers: &Servers, state: &AppS
 
     let removed = operator_post(client, servers.operator, &path, &format!("Bearer {TOKEN}")).await;
     assert_eq!(removed.status(), reqwest::StatusCode::NO_CONTENT);
-    assert_closed(&mut socket, "DEVICE_REMOVED").await;
+    assert_closed(&mut socket, "DEVICE_REMOVED", None).await;
     assert!(device_revoked(&state.pool, &account.device_id).await);
 
     let (mut again, _) =
@@ -632,7 +633,7 @@ async fn remove_device(client: &reqwest::Client, servers: &Servers, state: &AppS
         ))
         .await
         .expect("send auth");
-    assert_closed(&mut again, "DEVICE_REMOVED").await;
+    assert_closed(&mut again, "DEVICE_REMOVED", None).await;
 
     let again = operator_post(client, servers.operator, &path, &format!("bearer {TOKEN}")).await;
     assert_eq!(again.status(), reqwest::StatusCode::CONFLICT);
@@ -676,7 +677,7 @@ async fn sign_out(client: &reqwest::Client, servers: &Servers, state: &AppState)
     assert_eq!(signed_out.status(), reqwest::StatusCode::OK);
     let detail: Value = signed_out.json().await.expect("json");
     assert_eq!(detail, json!({ "detail": "2 sessions" }));
-    assert_closed(&mut socket, "UNAUTHORIZED").await;
+    assert_closed(&mut socket, "UNAUTHORIZED", None).await;
     assert!(!device_revoked(&state.pool, &account.device_id).await);
     assert!(!device_revoked(&state.pool, &second_device).await);
 
@@ -728,12 +729,41 @@ async fn sign_out(client: &reqwest::Client, servers: &Servers, state: &AppState)
 async fn delete_account(client: &reqwest::Client, servers: &Servers, state: &AppState) {
     let username = fresh_name();
     let account = register(client, servers.public, &username).await;
+    let payload_key = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode([9u8; 32])
+    };
+    let registered = client
+        .put(format!(
+            "http://{}/api/v1/push/token",
+            servers.public
+        ))
+        .bearer_auth(&account.token)
+        .json(&json!({
+            "token": format!("{:064x}", Uuid::new_v4().as_u128()),
+            "environment": "sandbox",
+            "kind": "alert",
+            "payload_key": payload_key,
+        }))
+        .send()
+        .await
+        .expect("register push");
+    assert_eq!(registered.status(), reqwest::StatusCode::NO_CONTENT);
     let mut socket = connect_authed(servers.public, &account.token).await;
     let path = format!("/operator/users/{}/delete", account.user_id);
 
     let deleted = operator_post(client, servers.operator, &path, &format!("bearer {TOKEN}")).await;
     assert_eq!(deleted.status(), reqwest::StatusCode::NO_CONTENT);
-    assert_closed(&mut socket, "DEVICE_REMOVED").await;
+    assert_closed(&mut socket, "DEVICE_REMOVED", Some("account_deleted")).await;
+    let wakes = state.push.recorded();
+    assert_eq!(
+        wakes.iter().map(|wake| &wake.payload).collect::<Vec<_>>(),
+        vec![&json!({
+            "aps": { "content-available": 1 },
+            "type": "device_removed",
+            "reason": "account_deleted"
+        })]
+    );
 
     let user_id = Uuid::parse_str(&account.user_id).expect("user id");
     let scrubbed: bool = sqlx::query_scalar(
@@ -767,6 +797,25 @@ async fn delete_account(client: &reqwest::Client, servers: &Servers, state: &App
         .await
         .expect("me");
     assert_eq!(me.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let me: Value = me.json().await.expect("json");
+    assert_eq!(me["error"]["code"], "DEVICE_REMOVED");
+    assert_eq!(me["error"]["message"], "This account was deleted.");
+    assert_eq!(me["error"]["reason"], "account_deleted");
+    let status = client
+        .post(format!(
+            "http://{}/api/v1/auth/session-status",
+            servers.public
+        ))
+        .json(&json!({ "token_hash": token_hash(&account.token) }))
+        .send()
+        .await
+        .expect("session-status");
+    assert_eq!(status.status(), reqwest::StatusCode::OK);
+    let status: Value = status.json().await.expect("json");
+    assert_eq!(
+        status,
+        json!({ "removed": true, "reason": "account_deleted" })
+    );
     let login = client
         .post(format!("http://{}/api/v1/auth/login", servers.public))
         .json(&json!({

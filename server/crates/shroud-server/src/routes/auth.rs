@@ -342,7 +342,7 @@ pub async fn login(
                 .await;
             state
                 .push
-                .wake_removed_devices(replaced.revoked.wake.into_iter().collect())
+                .wake_removed_devices(replaced.revoked.wake.into_iter().collect(), false)
                 .await;
             Some(replaced.id)
         }
@@ -560,6 +560,9 @@ pub struct SessionStatusResponse {
     /// The client should wipe the account's data: its device was removed or its account
     /// deleted. Unknown and merely signed-out sessions answer false.
     pub removed: bool,
+    /// `"account_deleted"` when the account is gone. Absent when only the device was removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
 }
 
 /// `POST /auth/session-status` — may a locked client keep its data?
@@ -585,8 +588,11 @@ pub async fn session_status(
         .ok()
         .filter(|bytes| bytes.len() == 32)
         .ok_or_else(|| AppError::validation("token_hash must be a Base64 SHA-256 digest."))?;
-    let removed = crate::auth::session::token_hash_removed(&state.pool, &token_hash).await?;
-    Ok(Json(SessionStatusResponse { removed }))
+    let removal = crate::auth::session::token_hash_removed(&state.pool, &token_hash).await?;
+    Ok(Json(SessionStatusResponse {
+        removed: removal.removed(),
+        reason: removal.reason(),
+    }))
 }
 
 /// `GET /auth/me` — current user + device.
@@ -619,8 +625,10 @@ pub struct DeleteAccountRequest {
 /// contacts, requests, blocks and calls go. No reaction of the account's, or on what it sent,
 /// stays sealed.
 /// Agent: one transaction: lock users row, revoke devices, tombstone messages, clear chats and
-/// reactions, scrub users; then close the account's sockets, purge media blobs and PUBLISH
-/// conversation.deleted / contact.removed / call.ended to the peers.
+/// reactions, scrub users. Then, on a task of its own, close the account's sockets, purge media
+/// blobs and PUBLISH conversation.deleted / contact.removed / call.ended to the peers. This
+/// function waits for that task. Cancelling the wait does not cancel the task, so a caller that
+/// hangs up still leaves the account fully deleted.
 pub async fn delete_account(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -635,15 +643,21 @@ pub async fn delete_account(
         )
         .await?;
 
-    let password_hash: Option<String> = sqlx::query_scalar(
-        r#"SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL"#,
+    let row: Option<(Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
+        r#"SELECT deleted_at, password_hash FROM users WHERE id = $1"#,
     )
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?
-    .flatten();
-    // Another device deleted the account a moment ago: this one is removed with it.
+    .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?;
+    // Another device deleted the account a moment ago: this one is removed with it, and the
+    // answer says the account is gone. A missing row is only a removed device.
+    let Some((deleted_at, password_hash)) = row else {
+        return Err(AppError::device_removed());
+    };
+    if deleted_at.is_some() {
+        return Err(AppError::account_deleted());
+    }
     let Some(password_hash) = password_hash else {
         return Err(AppError::device_removed());
     };
@@ -654,8 +668,8 @@ pub async fn delete_account(
 
     match delete_user_account(&state, auth.user_id, Some(auth.device_id)).await? {
         AccountDelete::Done => Ok(StatusCode::NO_CONTENT),
-        // Already a placeholder, or the row is gone: this device is removed with it.
-        AccountDelete::Missing | AccountDelete::Deleted => Err(AppError::device_removed()),
+        AccountDelete::Deleted => Err(AppError::account_deleted()),
+        AccountDelete::Missing => Err(AppError::device_removed()),
     }
 }
 
@@ -808,31 +822,26 @@ pub(crate) async fn delete_user_account(
         .await
         .map_err(|err| AppError::Internal(format!("commit account delete failed: {err}")))?;
 
-    // Every device of the account is signed out, so none keeps listening on an open socket,
-    // and the others wipe the account's data now (DEVICE_REMOVED, or the wake push).
-    // The console stops waiting after 10s. Closing sockets is bounded; a stuck Redis
-    // connection must not hold the answer past that. Local sockets are closed first
-    // inside `close_sessions`, before it talks to Redis.
-    if tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        state.realtime.close_sessions(user_id, &revoked_sessions),
-    )
-    .await
-    .is_err()
-    {
-        tracing::warn!(%user_id, "auth.account_delete socket close took too long");
-    }
-    state.push.wake_removed_devices(wakes).await;
+    // Human: The sign-in is already gone. Sockets, the wipe push, every blob and the peers'
+    // live updates still have to finish. The console stops waiting after 10s and hangs up;
+    // that must not leave the blobs in the store or skip telling the other person. A blob the
+    // store refuses stays unlinked, and the orphan GC retries that one.
+    // Agent: spawned before the await, so cancelling this function drops the JoinHandle and
+    // the task keeps running. Dropping a JoinHandle does not abort. purge_media_ids deletes
+    // each blob and then its row; a store error leaves that row for the orphan GC.
+    let state = state.clone();
+    let devices_revoked = device_ids.len();
+    let follow_up = tokio::spawn(async move {
+        state
+            .realtime
+            .close_sessions(user_id, &revoked_sessions)
+            .await;
+        state
+            .push
+            .wake_removed_devices(wakes, true)
+            .await;
 
-    // Human: The account is already gone. The console stops waiting after 10s, so
-    // blob deletes and the peers' live updates get 5s and then stop. A slow store
-    // used to make the console say the delete had failed. A blob left behind is
-    // unlinked, and the orphan GC removes it. A peer who misses the live update
-    // hears it on the next poll.
-    // Agent: purge and PUBLISH are bounded by 5s and then dropped. A blob this drops
-    // stays unlinked for the orphan GC. A peer this drops hears it on the next poll.
-    let media_purged = match tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        let media_purged = match crate::routes::media::purge_media_ids(state, &media_ids).await {
+        let media_purged = match crate::routes::media::purge_media_ids(&state, &media_ids).await {
             Ok(purged) => purged,
             Err(err) => {
                 tracing::warn!(%user_id, error = %err, "auth.account_delete media purge failed");
@@ -868,25 +877,19 @@ pub(crate) async fn delete_user_account(
                     .await;
             }
         }
-        media_purged
-    })
-    .await
-    {
-        Ok(purged) => purged,
-        Err(_) => {
-            tracing::warn!(%user_id, "auth.account_delete follow-up took too long");
-            0
-        }
-    };
 
-    tracing::debug!(
-        user_id = %user_id,
-        chats = chats.len(),
-        chats_cleared_for_peer = chats.iter().filter(|chat| chat.cleared_for_peer).count(),
-        devices_revoked = device_ids.len(),
-        media_purged,
-        "auth.account_delete ok"
-    );
+        tracing::debug!(
+            user_id = %user_id,
+            chats = chats.len(),
+            chats_cleared_for_peer = chats.iter().filter(|chat| chat.cleared_for_peer).count(),
+            devices_revoked,
+            media_purged,
+            "auth.account_delete ok"
+        );
+    });
+    if let Err(err) = follow_up.await {
+        tracing::warn!(%user_id, error = %err, "auth.account_delete follow-up stopped");
+    }
 
     Ok(AccountDelete::Done)
 }

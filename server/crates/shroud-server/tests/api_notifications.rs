@@ -1572,9 +1572,15 @@ async fn a_removed_device_is_woken_and_told_to_wipe() {
         let (status, body) = call(&app, "GET", "/api/v1/auth/me", &removed.token, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+        assert_eq!(
+            body["error"]["message"],
+            "This device was removed from your account."
+        );
+        assert!(body["error"].get("reason").is_none(), "{body}");
         let (status, body) = call(&app, "GET", "/api/v1/conversations", &removed.token, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+        assert!(body["error"].get("reason").is_none(), "{body}");
     }
     let session_id: Uuid =
         sqlx::query_scalar("SELECT id FROM sessions WHERE device_id = $1 ORDER BY created_at DESC")
@@ -1623,6 +1629,7 @@ async fn a_removed_device_is_woken_and_told_to_wipe() {
         let (status, body) = session_status(&app, &hash).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["removed"], removed);
+        assert!(body.get("reason").is_none(), "{body}");
     }
     for bad in ["", "not base64!", &BASE64.encode([1u8; 16])] {
         let (status, _) = session_status(&app, bad).await;
@@ -1817,24 +1824,31 @@ async fn deleting_the_account_wakes_its_other_devices() {
         pushes_to(&state, browser.device_id),
         vec![(
             PushChannel::Web,
-            json!({ "v": 1, "kind": "device_removed" })
+            json!({ "v": 1, "kind": "device_removed", "reason": "account_deleted" })
         )]
     );
     for device in [&other, &browser] {
         let (_, body) = session_status(&app, &token_hash(&device.token)).await;
         assert_eq!(body["removed"], true);
+        assert_eq!(body["reason"], "account_deleted");
     }
     assert_eq!(
         pushes_to(&state, other.device_id),
         vec![(
             PushChannel::Apns,
-            json!({ "aps": { "content-available": 1 }, "type": "device_removed" })
+            json!({
+                "aps": { "content-available": 1 },
+                "type": "device_removed",
+                "reason": "account_deleted"
+            })
         )]
     );
     // The device that deleted it wipes itself already.
     assert!(pushes_to(&state, phone.device_id).is_empty());
     let (_, body) = call(&app, "GET", "/api/v1/auth/me", &other.token, None).await;
     assert_eq!(body["error"]["code"], "DEVICE_REMOVED");
+    assert_eq!(body["error"]["message"], "This account was deleted.");
+    assert_eq!(body["error"]["reason"], "account_deleted");
 }
 
 // MARK: Android (UnifiedPush)
