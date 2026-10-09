@@ -39,6 +39,8 @@ export interface CheckRun<T> {
   runs: number;
   /** Rows whose state moved in the last run, or null before the first run. */
   changed: number | null;
+  /** False while `data` is still the placeholder of a run-on-mount page (nothing answered yet). */
+  answered: boolean;
   start: () => void;
   stepOf: (index: number) => Step;
   /** The state a row had before this run, when it differs from `state`. */
@@ -46,8 +48,15 @@ export interface CheckRun<T> {
 }
 
 /** Runs `path` again on `start()` and plays the answer back row by row. `rows` lists each row's key
- *  and state label in display order; it decides how many steps there are and what moved. */
-export function useCheckRun<T>(path: string, initial: T, rows: (data: T) => { key: string; state: string }[]): CheckRun<T> {
+ *  and state label in display order; it decides how many steps there are and what moved. With
+ *  `runOnMount`, `initial` is only the rows to wait on: the first run starts at once and compares
+ *  nothing. */
+export function useCheckRun<T>(
+  path: string,
+  initial: T,
+  rows: (data: T) => { key: string; state: string }[],
+  options: { runOnMount?: boolean } = {},
+): CheckRun<T> {
   const navigate = useNavigate();
   const location = useLocation();
   const [current, setCurrent] = useState(initial);
@@ -55,6 +64,7 @@ export function useCheckRun<T>(path: string, initial: T, rows: (data: T) => { ke
   const [runs, setRuns] = useState(0);
   const [checkedAt, setCheckedAt] = useState(() => new Date());
   const [before, setBefore] = useState<Map<string, string> | null>(null);
+  const [answered, setAnswered] = useState(!options.runOnMount);
   const latest = useRef(0);
   const rowsOf = useRef(rows);
   rowsOf.current = rows;
@@ -68,30 +78,40 @@ export function useCheckRun<T>(path: string, initial: T, rows: (data: T) => { ke
 
   const running = run.phase === "sweeping" || run.phase === "revealing";
 
-  const start = useCallback(() => {
-    if (running) return;
-    const mine = ++latest.current;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const started = performance.now();
-    setBefore(new Map(rowsOf.current(current).map((row) => [row.key, row.state])));
-    setRuns((value) => value + 1);
-    setRun({ phase: "sweeping" });
-    api<T>(path)
-      .then(async (results) => {
-        const left = reduced ? 0 : MIN_SWEEP_MS - (performance.now() - started);
-        if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
-        if (latest.current !== mine) return;
-        setRun({ phase: "revealing", results, revealed: reduced ? rowsOf.current(results).length : 0 });
-      })
-      .catch((failure: unknown) => {
-        if (latest.current !== mine) return;
-        if (failure instanceof ApiError && failure.status === 401) {
-          navigate("/sign-in", { replace: true, state: { from: location.pathname } });
-          return;
-        }
-        setRun({ phase: "failed", error: failure instanceof Error ? failure : new Error(String(failure)) });
-      });
-  }, [running, current, path, navigate, location.pathname]);
+  const startRun = useCallback(
+    (compare: boolean) => {
+      if (running) return;
+      const mine = ++latest.current;
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const started = performance.now();
+      setBefore(compare ? new Map(rowsOf.current(current).map((row) => [row.key, row.state])) : null);
+      setRuns((value) => value + 1);
+      setRun({ phase: "sweeping" });
+      api<T>(path)
+        .then(async (results) => {
+          const left = reduced ? 0 : MIN_SWEEP_MS - (performance.now() - started);
+          if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
+          if (latest.current !== mine) return;
+          setRun({ phase: "revealing", results, revealed: reduced ? rowsOf.current(results).length : 0 });
+        })
+        .catch((failure: unknown) => {
+          if (latest.current !== mine) return;
+          if (failure instanceof ApiError && failure.status === 401) {
+            navigate("/sign-in", { replace: true, state: { from: location.pathname } });
+            return;
+          }
+          setRun({ phase: "failed", error: failure instanceof Error ? failure : new Error(String(failure)) });
+        });
+    },
+    [running, current, path, navigate, location.pathname],
+  );
+  const start = useCallback(() => startRun(true), [startRun]);
+
+  // Runs once on mount when asked; StrictMode's second mount supersedes the first run.
+  const runOnMount = useRef(options.runOnMount);
+  useEffect(() => {
+    if (runOnMount.current) startRun(false);
+  }, []);
 
   // One answer per step, then a short settle so the last pill lands before the summary.
   useEffect(() => {
@@ -101,6 +121,7 @@ export function useCheckRun<T>(path: string, initial: T, rows: (data: T) => { ke
       () => {
         if (done) {
           setCurrent(run.results);
+          setAnswered(true);
           setCheckedAt(new Date());
           setRun({ phase: "idle" });
         } else {
@@ -140,6 +161,7 @@ export function useCheckRun<T>(path: string, initial: T, rows: (data: T) => { ke
     checkedAt,
     runs,
     changed,
+    answered,
     start,
     stepOf,
     wasOf,
@@ -288,7 +310,7 @@ export function RunFailed({ run }: { run: CheckRun<unknown> }) {
     <div className="run-failed" role="alert">
       <CircleAlert aria-hidden="true" />
       <div className="run-failed__text">
-        <div className="run-failed__title">The checks couldn't run. These are the last results.</div>
+        <div className="run-failed__title">The checks couldn't run.{run.answered ? " These are the last results." : ""}</div>
         <div className="run-failed__body">{message}</div>
       </div>
       <Button icon={RefreshCw} onClick={run.start}>

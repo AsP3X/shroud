@@ -362,6 +362,90 @@ async fn operator_writes_close_sockets_like_the_user() {
     }
 }
 
+/// The push check answers each line from the relays' setup and touches no subscription. Here:
+/// no APNs, the generated VAPID key, and a browser subscription on a host the policy doesn't
+/// allow, which is refused before anything is sent.
+#[tokio::test]
+async fn push_check_reports_each_relay_without_sending() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping push_check_reports_each_relay_without_sending: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let state = AppState::for_integration_tests(pool.clone());
+    let servers = spawn(state.clone()).await;
+    let client = reqwest::Client::new();
+    let account = register(&client, servers.public, &fresh_name()).await;
+    let host = format!(
+        "{}.example.invalid",
+        &Uuid::new_v4().simple().to_string()[..12]
+    );
+    sqlx::query(
+        "INSERT INTO web_push_subscriptions (device_id, endpoint, p256dh, auth, client)
+         VALUES ($1, $2, $3, $4, 'browser')",
+    )
+    .bind(Uuid::parse_str(&account.device_id).expect("device id"))
+    .bind(format!("https://{host}/send/{}", Uuid::new_v4()))
+    .bind(vec![4u8; 65])
+    .bind(vec![7u8; 16])
+    .execute(&pool)
+    .await
+    .expect("subscription");
+
+    let response = client
+        .get(format!("http://{}/operator/push/check", servers.operator))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .send()
+        .await
+        .expect("push check");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let lines: Vec<Value> = response.json().await.expect("json");
+    let items: Vec<&str> = lines
+        .iter()
+        .map(|line| line["item"].as_str().expect("item"))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            "APNs key",
+            "Apple accepts alerts",
+            "Apple accepts calls (VoIP)",
+            "Web Push key",
+            "Browser push services answer",
+            "UnifiedPush distributors answer",
+        ]
+    );
+    let state_of = |index: usize| lines[index]["state"].as_str().expect("state");
+    assert_eq!(
+        [state_of(0), state_of(1), state_of(2)],
+        ["off", "off", "off"]
+    );
+    assert_eq!(state_of(3), "ok", "{}", lines[3]);
+    assert_eq!(state_of(4), "failed", "{}", lines[4]);
+    let browsers = lines[4]["detail"].as_str().expect("detail");
+    assert!(
+        browsers.contains(&format!("{host} (1 subscription): no longer allowed")),
+        "{browsers}"
+    );
+    assert!(
+        !browsers.contains("/send/"),
+        "an endpoint leaked: {browsers}"
+    );
+
+    let refused = client
+        .get(format!("http://{}/operator/push/check", servers.operator))
+        .send()
+        .await
+        .expect("push check without token");
+    assert_eq!(refused.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let _ = servers.shutdown.send(true);
+    for task in servers.tasks {
+        let _ = task.await;
+    }
+}
+
 async fn remove_device(client: &reqwest::Client, servers: &Servers, state: &AppState) {
     let account = register(client, servers.public, &fresh_name()).await;
     let mut socket = connect_authed(servers.public, &account.token).await;

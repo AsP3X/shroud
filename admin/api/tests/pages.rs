@@ -194,6 +194,11 @@ async fn read_only_pages_match_the_schema() {
     let push = send(&app, "/api/admin/push", Some(SESSION)).await;
     assert_eq!(push.status, StatusCode::OK, "{}", push.text);
     assert_schema("push.schema.json", &push.body);
+    let check = send(&app, "/api/admin/push/check", Some(SESSION)).await;
+    assert_eq!(check.status, StatusCode::OK, "{}", check.text);
+    assert_schema("push-check.schema.json", &check.body);
+    assert_eq!(check.body, fixture("push-check.json"));
+
     let pushes = push_sql(&admin).await;
     assert_eq!(push.body["apns_tokens"], pushes.0);
     assert_eq!(push.body["apns_voip_tokens"], pushes.1);
@@ -421,6 +426,7 @@ fn fixture(name: &str) -> Value {
         "error.upstream-api.json" => include_str!("../fixtures/error.upstream-api.json"),
         "rate-limits.json" => include_str!("../fixtures/rate-limits.json"),
         "retention.json" => include_str!("../fixtures/retention.json"),
+        "push-check.json" => include_str!("../fixtures/push-check.json"),
         "client-versions.json" => include_str!("../fixtures/client-versions.json"),
         "client-versions.nothing-set.json" => {
             include_str!("../fixtures/client-versions.nothing-set.json")
@@ -439,6 +445,7 @@ fn assert_schema(name: &str, body: &Value) {
             include_str!("../fixtures/schema/client-versions.schema.json")
         }
         "push.schema.json" => include_str!("../fixtures/schema/push.schema.json"),
+        "push-check.schema.json" => include_str!("../fixtures/schema/push-check.schema.json"),
         "calls.schema.json" => include_str!("../fixtures/schema/calls.schema.json"),
         "privacy-checks.schema.json" => {
             include_str!("../fixtures/schema/privacy-checks.schema.json")
@@ -710,6 +717,14 @@ async fn spawn_api(mode: Arc<AtomicU8>, web_build: Arc<Mutex<Option<String>>>) -
                          shroud_media_migrated_total 9\n\
                          shroud_calls_created_total 5\n"
                             .to_owned(),
+                    )
+                } else if path.starts_with("/operator/push/check")
+                    && request.contains("Authorization: Bearer operator-test-token\r\n")
+                {
+                    (
+                        200,
+                        "application/json",
+                        include_str!("../fixtures/push-check.json").to_owned(),
                     )
                 } else if path.starts_with("/api/v1/client-version") {
                     (

@@ -1,5 +1,9 @@
 //! Read-only pages (§3.4, §3.9 #4).
 //!
+//! `GET /push/check` (§3.9 #10) is the API's `GET /operator/push/check` passed through after a
+//! shape check: the API asks Apple, the browser push services and the UnifiedPush distributors
+//! whether this server's setup works, notifying no one, and names hosts, never endpoints.
+//!
 //! Rate limits and retention are the tables in [`crate::published`]. Storage counts and push
 //! counts use the granted columns. `GET /calls` `created_total` is the process counter
 //! `shroud_calls_created_total` (the Calls frame: since the last restart); the `calls` table
@@ -41,6 +45,7 @@ pub fn routes() -> Router<AppState> {
         .route("/rate-limits", get(rate_limits))
         .route("/retention", get(retention))
         .route("/push", get(push))
+        .route("/push/check", get(push_check))
         .route("/calls", get(calls))
         .route("/privacy-checks", get(privacy_checks))
         .route("/configuration", get(configuration))
@@ -365,6 +370,44 @@ async fn push(State(state): State<AppState>, headers: HeaderMap) -> Result<Respo
         ],
     })
     .into_response())
+}
+
+#[derive(Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PushCheckLine {
+    item: String,
+    state: String,
+    detail: String,
+}
+
+async fn push_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(response) = require(&state, &headers).await? {
+        return Ok(response);
+    }
+    let fetched = operator_api::get("/operator/push/check")
+        .await
+        .map_err(|_| ApiError::upstream_api())?;
+    if fetched.status != 200 {
+        return Err(ApiError::upstream_api());
+    }
+    let lines = push_check_lines(&fetched.body).ok_or_else(ApiError::upstream_api)?;
+    Ok(Json(lines).into_response())
+}
+
+/// The API's push check, when it has the contract's shape: at least one line, each with a
+/// non-empty item and detail and a known state.
+fn push_check_lines(body: &str) -> Option<Vec<PushCheckLine>> {
+    let lines: Vec<PushCheckLine> = serde_json::from_str(body).ok()?;
+    let valid = !lines.is_empty()
+        && lines.iter().all(|line| {
+            !line.item.is_empty()
+                && !line.detail.is_empty()
+                && matches!(line.state.as_str(), "ok" | "failed" | "off")
+        });
+    valid.then_some(lines)
 }
 
 async fn calls(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
@@ -1532,6 +1575,22 @@ fn db_err(err: sqlx::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn push_check_lines_pass_only_the_contract_shape() {
+        let fine = r#"[{"item":"APNs key","state":"ok","detail":"Key K signs."},{"item":"Web Push key","state":"off","detail":"Not set."}]"#;
+        assert_eq!(push_check_lines(fine).map(|lines| lines.len()), Some(2));
+        for refused in [
+            "[]",
+            "{}",
+            r#"[{"item":"APNs key","state":"maybe","detail":"x"}]"#,
+            r#"[{"item":"","state":"ok","detail":"x"}]"#,
+            r#"[{"item":"APNs key","state":"ok","detail":""}]"#,
+            r#"[{"item":"APNs key","state":"ok","detail":"x","endpoint":"https://fcm.googleapis.com/fcm/send/t"}]"#,
+        ] {
+            assert!(push_check_lines(refused).is_none(), "{refused}");
+        }
+    }
 
     #[test]
     fn only_a_verbose_api_log_names_people() {

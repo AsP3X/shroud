@@ -38490,15 +38490,16 @@
     {
       "type": "frame",
       "id": "wFGEn",
-      "x": 3120,
+      "x": 4680,
       "y": 6417,
       "name": "Push delivery",
+      "context": "Push delivery after the delivery check ran on opening the page. The check asks Apple (a made-up device token: BadDeviceToken means the key, team and topic passed), signs a VAPID token, and sends a HEAD to the origin of each browser push service and UnifiedPush distributor subscriptions point at. Nobody is notified; details name hosts and counts, never an endpoint. Check again runs it again (frame \"Push delivery · Checking\"). This frame is taller than the others because the page scrolls.",
       "theme": {
         "mode": "dark"
       },
       "clip": true,
       "width": 1440,
-      "height": 900,
+      "height": 1106,
       "fill": "$bg",
       "children": [
         {
@@ -38570,6 +38571,20 @@
                       "fontWeight": "normal"
                     }
                   ]
+                },
+                {
+                  "id": "UhS3l",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Check again",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw"
+                    },
+                    "aK3lq": {
+                      "content": "Check again"
+                    }
+                  }
                 }
               ]
             },
@@ -38671,6 +38686,515 @@
                   "layout": "vertical",
                   "gap": 16,
                   "children": [
+                    {
+                      "type": "frame",
+                      "id": "DB272",
+                      "name": "Delivery check",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "T2ZIO",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "F9uSSM",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "qMzWC",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Delivery check",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ljvRC",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Asks Apple, the browser push services and the UnifiedPush distributors whether this server's setup works. Nobody is notified",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "IZZIM",
+                              "name": "Run status",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "vnLMq",
+                                  "name": "Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "circle-check",
+                                  "library": "lucide",
+                                  "fill": "$ok-text"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "CiPe9",
+                                  "name": "Label",
+                                  "fill": "$ok-text",
+                                  "content": "Checked 15:24",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "yx0x9",
+                          "name": "Check · APNs key",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "FmkXn",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "POjPO",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "UZ1F0",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "APNs key",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "d0yYa",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Key 7KX2M9QD4P signs Apple's provider token.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "BvDHn",
+                          "name": "Check · Apple accepts alerts",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "n13ih",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "VDeyJ",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "iXSUg",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Apple accepts alerts",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "T8QQy8",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Production and Sandbox accept the key, team and topic de.corespace.shroud.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sTBHp",
+                          "name": "Check · Apple accepts calls (VoIP)",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "cE3jL",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "mOCEW",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "A4CpD",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Apple accepts calls (VoIP)",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "uKQnF",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Production and Sandbox accept the key, team and topic de.corespace.shroud.voip.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "GX10f",
+                          "name": "Check · Web Push key",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "Z4M9p",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "a55Ff",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "wyuyd",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Web Push key",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "a81PFy",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Signs VAPID tokens · public key …Qm3vT8aE",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "kv7jD",
+                          "name": "Check · Browser push services answer",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "KWYCm",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "vHZYA",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Hep9E",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Browser push services answer",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Zk81k",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "fcm.googleapis.com (212 subscriptions), web.push.apple.com (71 subscriptions), updates.push.services.mozilla.com (35 subscriptions) answered.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Cg2hh",
+                          "name": "Check · UnifiedPush distributors answer",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "XhDFa",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "S3gkc",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "k8DvY",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "UnifiedPush distributors answer",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "CEYhf",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "ntfy.sh (168 subscriptions), up.example.org (44 subscriptions) answered.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
                     {
                       "type": "frame",
                       "id": "Na8vx",
@@ -39689,7 +40213,7 @@
     {
       "type": "frame",
       "id": "nNFEr",
-      "x": 4680,
+      "x": 3120,
       "y": 6417,
       "name": "Calls",
       "theme": {
@@ -67669,6 +68193,3629 @@
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
                               "content": "The migration job moves remaining blobs into Nebular until the local volume is empty. Both counters restart with the server.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "XCvQ8",
+      "x": 10920,
+      "y": 8457,
+      "name": "Push delivery · Checking",
+      "context": "Check again, mid-run, after Apple started refusing the key for Sandbox. While the API runs the check a scan sweeps the rows and the bar under the card head runs indeterminate (\"Running 6 checks\"); the answer then lands one row every 80 ms, the next row marked Checking, rows to come with an empty pill. A row whose state moved since the last check says what it was. On opening the page the same run plays without Changed chips, the rows waiting on \"Not checked yet\".",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 1144,
+      "fill": "$bg",
+      "children": [
+        {
+          "id": "AT9ws",
+          "type": "ref",
+          "ref": "xx7aa",
+          "name": "Sidebar",
+          "height": "fill_container",
+          "descendants": {
+            "f00lsz": {
+              "fill": "$accent-soft"
+            },
+            "f00lsz/Z80pw3": {
+              "fill": "$accent-text"
+            },
+            "f00lsz/Ws1sG": {
+              "fill": "$text-primary"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "FMBia",
+          "name": "Main",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "padding": [
+            28,
+            40
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "S2II5",
+              "name": "Header",
+              "width": "fill_container",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "KHrkV",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "M2Awj",
+                      "name": "H1",
+                      "fill": "$text-primary",
+                      "content": "Push delivery",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 24,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.3
+                    },
+                    {
+                      "type": "text",
+                      "id": "PNeMX",
+                      "name": "Meta",
+                      "fill": "$text-tertiary",
+                      "content": "Registrations and routing · deliveries are logged, never counted or kept per account",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "aK4mR",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Check again",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw",
+                      "fill": "$text-secondary"
+                    },
+                    "aK3lq": {
+                      "content": "Checking…",
+                      "fill": "$text-secondary"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "J1UA8",
+              "name": "Stats",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "iicyK",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · APNs tokens",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "APNs tokens"
+                    },
+                    "iY6vL": {
+                      "content": "1,204"
+                    },
+                    "SGZJY": {
+                      "content": "iPhone and iPad · production environment"
+                    }
+                  }
+                },
+                {
+                  "id": "NgZ4D",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Web Push subscriptions",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Web Push subscriptions"
+                    },
+                    "iY6vL": {
+                      "content": "318"
+                    },
+                    "SGZJY": {
+                      "content": "Browsers, through their push service"
+                    }
+                  }
+                },
+                {
+                  "id": "z7eN9V",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · UnifiedPush subscriptions",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "UnifiedPush subscriptions"
+                    },
+                    "iY6vL": {
+                      "content": "212"
+                    },
+                    "SGZJY": {
+                      "content": "Android · endpoints on allowed hosts"
+                    }
+                  }
+                },
+                {
+                  "id": "R5LXCA",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Notifications off",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Notifications off"
+                    },
+                    "iY6vL": {
+                      "content": "57"
+                    },
+                    "SGZJY": {
+                      "content": "Devices that turned pushes off in Settings"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "u3jBC",
+              "name": "Body",
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "kN1PV",
+                  "name": "Column",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "RdiEB",
+                      "name": "Delivery check",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Q8kidx",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "JRUaV",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "vnDJ3",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Delivery check",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "rqf5h",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Asks Apple, the browser push services and the UnifiedPush distributors whether this server's setup works. Nobody is notified",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "VLrKE",
+                              "name": "Run status",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "H6jp8",
+                                  "name": "Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "loader-circle",
+                                  "library": "lucide",
+                                  "fill": "$text-secondary"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "qh4KH",
+                                  "name": "Label",
+                                  "fill": "$text-secondary",
+                                  "content": "3 of 6",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "XmGMI",
+                          "name": "Run progress",
+                          "width": "fill_container",
+                          "height": 2,
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "id": "fIGkQ",
+                              "name": "Done",
+                              "fill": "$accent",
+                              "width": 378,
+                              "height": 2
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "vxIcv",
+                          "name": "Check · APNs key",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "K6LW4y",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "DRyod",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "QTKPe",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "APNs key",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "nFpDc",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Key 7KX2M9QD4P signs Apple's provider token.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "s8LZoc",
+                          "name": "Check · Apple accepts alerts",
+                          "width": "fill_container",
+                          "fill": "#ff6b6112",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "B7JMd4",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$danger-soft",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$danger"
+                                },
+                                "q1x3u": {
+                                  "content": "Fails",
+                                  "fill": "$danger"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "TIuTO",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "BCMCP",
+                                  "name": "Title row",
+                                  "gap": 8,
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "Z8CNk",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Apple accepts alerts",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "b7Rit",
+                                      "name": "Chip · Changed",
+                                      "fill": "$accent-soft",
+                                      "cornerRadius": 6,
+                                      "padding": [
+                                        3,
+                                        8
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "oDcRz",
+                                          "name": "Label",
+                                          "fill": "$accent-text",
+                                          "content": "Changed · was Works",
+                                          "fontFamily": "$font-ui",
+                                          "fontSize": 11,
+                                          "fontWeight": "600"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "MII8K",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Sandbox: Apple refused the key or topic (BadEnvironmentKeyInToken). Check APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC and that the key is enabled for Sandbox.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "XHfmL",
+                          "name": "Check · Apple accepts calls (VoIP)",
+                          "width": "fill_container",
+                          "fill": "#ff6b6124",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "GrSGM",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$danger-soft",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$danger"
+                                },
+                                "q1x3u": {
+                                  "content": "Fails",
+                                  "fill": "$danger"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "iFT85",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "Xtfsv",
+                                  "name": "Title row",
+                                  "gap": 8,
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "q6xT4",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Apple accepts calls (VoIP)",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "Bai02",
+                                      "name": "Chip · Changed",
+                                      "fill": "$accent-soft",
+                                      "cornerRadius": 6,
+                                      "padding": [
+                                        3,
+                                        8
+                                      ],
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "m7wPH",
+                                          "name": "Label",
+                                          "fill": "$accent-text",
+                                          "content": "Changed · was Works",
+                                          "fontFamily": "$font-ui",
+                                          "fontSize": 11,
+                                          "fontWeight": "600"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "w3qVO",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Sandbox: Apple refused the key or topic (BadEnvironmentKeyInToken). Check APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC and that the key is enabled for Sandbox.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "bZczL",
+                          "name": "Check · Web Push key",
+                          "width": "fill_container",
+                          "fill": "#6464f21f",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "inner",
+                            "color": "$accent",
+                            "offset": {
+                              "x": 2,
+                              "y": 0
+                            }
+                          },
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "eh9jC",
+                              "name": "Status · Checking",
+                              "width": 96,
+                              "height": 24,
+                              "fill": "$accent-soft",
+                              "cornerRadius": 12,
+                              "gap": 6,
+                              "padding": [
+                                0,
+                                10
+                              ],
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "LJWLA",
+                                  "name": "Spinner",
+                                  "width": 11,
+                                  "height": 11,
+                                  "icon": "loader-circle",
+                                  "library": "lucide",
+                                  "fill": "$accent-text"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "vogGj",
+                                  "name": "Label",
+                                  "fill": "$accent-text",
+                                  "content": "Checking",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "r7AoY",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "lsKUG",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Web Push key",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "hn3CU",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Signs VAPID tokens · public key …Qm3vT8aE",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mC92j",
+                          "name": "Check · Browser push services answer",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "NJoTH",
+                              "name": "Status · Waiting",
+                              "width": 96,
+                              "height": 24,
+                              "fill": "#8a8a9924",
+                              "cornerRadius": 12
+                            },
+                            {
+                              "type": "frame",
+                              "id": "VjZSH",
+                              "name": "Text",
+                              "opacity": 0.5,
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "XI6cu",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Browser push services answer",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "I1S72",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "fcm.googleapis.com (212 subscriptions), web.push.apple.com (71 subscriptions), updates.push.services.mozilla.com (35 subscriptions) answered.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "kTNRw",
+                          "name": "Check · UnifiedPush distributors answer",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "J0oPy",
+                              "name": "Status · Waiting",
+                              "width": 96,
+                              "height": 24,
+                              "fill": "#8a8a9924",
+                              "cornerRadius": 12
+                            },
+                            {
+                              "type": "frame",
+                              "id": "W6GXP",
+                              "name": "Text",
+                              "opacity": 0.5,
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "SEVns",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "UnifiedPush distributors answer",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Jl4VC",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "ntfy.sh (168 subscriptions), up.example.org (44 subscriptions) answered.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "E3fpCG",
+                      "name": "Channels",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "naula",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "dPCxX",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "CjF4A",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "By channel",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "TnNPn",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Every push carries only an opaque payload the device opens itself",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "YLuap",
+                          "name": "Header Row",
+                          "width": "fill_container",
+                          "height": 38,
+                          "fill": "$surface-1",
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "MKzrK",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "r3GAUK",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "CHANNEL",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "kgy0V",
+                              "name": "Cell",
+                              "width": 90,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "uFqT6",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "REGISTERED",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "IIJiX",
+                              "name": "Cell",
+                              "width": 240,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "XOgG4",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "SENT TO",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "unCXf",
+                              "name": "Cell",
+                              "width": 210,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "DgRZx",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "REGISTRATION DROPPED WHEN",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Km2oy",
+                          "name": "Row · APNs · alerts",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "LZZ6A",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "RpMxC",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "APNs · alerts",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "JQyMZ",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Messages, reactions, contact requests, badge",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "faOgE",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "j7C4Ep",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "1,204",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "QrtZW",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "sLDgK",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "api.push.apple.com · topic de.corespace.shroud",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Wlr4Z",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "u8ot6",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Apple answers BadDeviceToken, Unregistered, DeviceTokenNotForTopic or ExpiredToken",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Hro48",
+                          "name": "Row · APNs · calls (VoIP)",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "P4QHX",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "DBhvX",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "APNs · calls (VoIP)",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fv9ST",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Incoming calls through PushKit",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "xUGxv",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "nfmc9",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "1,180",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "twoNC",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "wozyS",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Same host · topic de.corespace.shroud.voip · a second token",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "CKka6",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Z1kWqV",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Same answers from Apple",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pLKHZ",
+                          "name": "Row · Web Push",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "G9Kw5",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "seMJY",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Web Push",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "HXzB7",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Browsers",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "S36RQ",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "iUsX2",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "318",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fxdWh",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "kyqGK",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The subscription's endpoint at the browser's push service",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "r1Sgi",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "K1EBrm",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The service answers 404 or 410 Gone",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "FwLZz",
+                          "name": "Row · UnifiedPush",
+                          "width": "fill_container",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "LEgjO",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "G5eRa",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "UnifiedPush",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "V64QX",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Android app",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Axswv",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "tHCxb",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "212",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "V0Cj6",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "dwp7G",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The device's distributor · hosts limited to ntfy.sh, up.example.org",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "i0sg51",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ttQiR",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The distributor answers 404 or 410 Gone",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "U7cahx",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "mgJG2",
+                              "name": "Icon",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "info",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "zJvD5",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "A dropped registration is not an error for the person: the device registers again the next time it opens. Sends, deliveries and failures are written to the log at warn level and nowhere else.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "EMp5M",
+                  "name": "Column",
+                  "width": 340,
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pG8oR",
+                      "name": "Failures",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "HyMY5",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "l6vG5",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "fzAr5",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "When a push fails",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Nkx2p",
+                          "name": "Body",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20,
+                            16,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "U7Iba",
+                              "name": "Item · Invalid token or gone subscription",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "e3f15l",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Invalid token or gone subscription",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "UMfhX",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The registration is deleted at once. Nothing is retried.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "WXZUf",
+                              "name": "Item · Apple refuses the server's own setup",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "HKwtW",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Apple refuses the server's own setup",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "MO2E6",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "BadEnvironmentKeyInToken, InvalidProviderToken and the like: every APNs push fails the same way until APNS_* is fixed, and the log says so instead of calling Apple unreachable.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ovZFi",
+                              "name": "Item · Any other error",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "cw3pE",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Any other error",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "n7trj6",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Logged with the device id and reason; no retry, no counter. The next message tries again.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "IzgKN",
+                              "name": "Item · Devices without a registration",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "CPMpD",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Devices without a registration",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Fz6V6",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Reached over their open WebSocket only. A suspended app with a stale socket still gets its push if it has one.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "r9QUhU",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "AhS1O",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "top": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "cz9Rh",
+                              "name": "Icon",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "bell-ring",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "aioRu",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Test notification: a button in each app's Settings, POST /push/test, at most 6 a minute per device.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "ozwKj",
+      "x": 12480,
+      "y": 8457,
+      "name": "Push delivery · Check failed",
+      "context": "Check again failed (here the console couldn't reach the API). The last answer stays, the card head says Couldn't check, and a banner gives the reason with Try again. When the run on opening the page fails, nothing has answered yet: the banner drops \"These are the last results\" and every row keeps an empty pill and \"Not checked yet\".",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 1166,
+      "fill": "$bg",
+      "children": [
+        {
+          "id": "D8tvM4",
+          "type": "ref",
+          "ref": "xx7aa",
+          "name": "Sidebar",
+          "height": "fill_container",
+          "descendants": {
+            "f00lsz": {
+              "fill": "$accent-soft"
+            },
+            "f00lsz/Z80pw3": {
+              "fill": "$accent-text"
+            },
+            "f00lsz/Ws1sG": {
+              "fill": "$text-primary"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "HdDiJ",
+          "name": "Main",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 20,
+          "padding": [
+            28,
+            40
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "KFKHo",
+              "name": "Header",
+              "width": "fill_container",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mO4Do",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "MeYBB",
+                      "name": "H1",
+                      "fill": "$text-primary",
+                      "content": "Push delivery",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 24,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.3
+                    },
+                    {
+                      "type": "text",
+                      "id": "QW0nG",
+                      "name": "Meta",
+                      "fill": "$text-tertiary",
+                      "content": "Registrations and routing · deliveries are logged, never counted or kept per account",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "yD4d3",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Check again",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw"
+                    },
+                    "aK3lq": {
+                      "content": "Check again"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "gK6yF",
+              "name": "Stats",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "AwPlh",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · APNs tokens",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "APNs tokens"
+                    },
+                    "iY6vL": {
+                      "content": "1,204"
+                    },
+                    "SGZJY": {
+                      "content": "iPhone and iPad · production environment"
+                    }
+                  }
+                },
+                {
+                  "id": "giaee",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Web Push subscriptions",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Web Push subscriptions"
+                    },
+                    "iY6vL": {
+                      "content": "318"
+                    },
+                    "SGZJY": {
+                      "content": "Browsers, through their push service"
+                    }
+                  }
+                },
+                {
+                  "id": "I1wgb",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · UnifiedPush subscriptions",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "UnifiedPush subscriptions"
+                    },
+                    "iY6vL": {
+                      "content": "212"
+                    },
+                    "SGZJY": {
+                      "content": "Android · endpoints on allowed hosts"
+                    }
+                  }
+                },
+                {
+                  "id": "kiDgD",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Notifications off",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Notifications off"
+                    },
+                    "iY6vL": {
+                      "content": "57"
+                    },
+                    "SGZJY": {
+                      "content": "Devices that turned pushes off in Settings"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SaFDe",
+              "name": "Body",
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "qNns6",
+                  "name": "Column",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "kaVAD",
+                      "name": "Delivery check",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "z7te7W",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "KuSU3",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "SmrdY",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Delivery check",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "D9KwV",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Asks Apple, the browser push services and the UnifiedPush distributors whether this server's setup works. Nobody is notified",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "XV4Ad",
+                              "name": "Run status",
+                              "gap": 6,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "X30sm1",
+                                  "name": "Icon",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "circle-alert",
+                                  "library": "lucide",
+                                  "fill": "$danger"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "bcjRP",
+                                  "name": "Label",
+                                  "fill": "$danger",
+                                  "content": "Couldn't check",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "QsLkb",
+                          "name": "Run failed",
+                          "width": "fill_container",
+                          "fill": "$danger-soft",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "KiuQT",
+                              "name": "Icon",
+                              "width": 18,
+                              "height": 18,
+                              "icon": "circle-alert",
+                              "library": "lucide",
+                              "fill": "$danger"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "T9fZe",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "g7dQv",
+                                  "name": "Title",
+                                  "fill": "$danger",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The checks couldn't run. These are the last results.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ylZVr",
+                                  "name": "Body",
+                                  "fill": "$text-secondary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The console can't reach the API.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "Sd3md",
+                              "type": "ref",
+                              "ref": "aMNl9",
+                              "name": "Try again",
+                              "descendants": {
+                                "DnZ4H": {
+                                  "icon": "refresh-cw"
+                                },
+                                "aK3lq": {
+                                  "content": "Try again"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "u4d4x",
+                          "name": "Check · APNs key",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "Debgl",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "aMU7y",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "aLz2f",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "APNs key",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "CK9y6",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Key 7KX2M9QD4P signs Apple's provider token.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Lvr6E",
+                          "name": "Check · Apple accepts alerts",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "cjx6Z",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "bxgxD",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "tbUG0",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Apple accepts alerts",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "MMYKV",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Production and Sandbox accept the key, team and topic de.corespace.shroud.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "vFC1D",
+                          "name": "Check · Apple accepts calls (VoIP)",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "S8KzE",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Nv3Oa",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "w54Os",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Apple accepts calls (VoIP)",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "X7HBk",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Production and Sandbox accept the key, team and topic de.corespace.shroud.voip.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "m8oe7",
+                          "name": "Check · Web Push key",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "nU10i",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "dXZzd",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "FGQp8",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Web Push key",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "MHog6",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Signs VAPID tokens · public key …Qm3vT8aE",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pwjzc",
+                          "name": "Check · Browser push services answer",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "TGqBN",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ld7HU",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "en2IT",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Browser push services answer",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "WuO1M",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "fcm.googleapis.com (212 subscriptions), web.push.apple.com (71 subscriptions), updates.push.services.mozilla.com (35 subscriptions) answered.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tKqaY",
+                          "name": "Check · UnifiedPush distributors answer",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 14,
+                          "padding": [
+                            9,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "VBsvR",
+                              "type": "ref",
+                              "ref": "RYANd",
+                              "name": "Status",
+                              "fill": "$ok-bg",
+                              "width": 96,
+                              "justifyContent": "center",
+                              "descendants": {
+                                "iTO9u": {
+                                  "fill": "$online"
+                                },
+                                "q1x3u": {
+                                  "content": "Works",
+                                  "fill": "$ok-text"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "q2nlX",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "u7A6Dv",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "UnifiedPush distributors answer",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "FTkPG",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "ntfy.sh (168 subscriptions), up.example.org (44 subscriptions) answered.",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JC7hp",
+                      "name": "Channels",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Qvv6r",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "i2KkNB",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "AAwfZ",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "By channel",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Niouh",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Every push carries only an opaque payload the device opens itself",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "vqhGT",
+                          "name": "Header Row",
+                          "width": "fill_container",
+                          "height": 38,
+                          "fill": "$surface-1",
+                          "padding": [
+                            0,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "NfB0n",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "PsYhD",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "CHANNEL",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "yexLL",
+                              "name": "Cell",
+                              "width": 90,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "E8qmg",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "REGISTERED",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pMoSo",
+                              "name": "Cell",
+                              "width": 240,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "daEXV",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "SENT TO",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "TlcaD",
+                              "name": "Cell",
+                              "width": 210,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "wzNli",
+                                  "name": "Text",
+                                  "fill": "$text-tertiary",
+                                  "content": "REGISTRATION DROPPED WHEN",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "A8DNNV",
+                          "name": "Row · APNs · alerts",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "cVquF",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "wEQRF",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "APNs · alerts",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "o5TBX",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Messages, reactions, contact requests, badge",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "GTCwg",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "nTYz2",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "1,204",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "PHWGQ",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "y4L4i",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "api.push.apple.com · topic de.corespace.shroud",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "JOjux",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "rqC1i",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Apple answers BadDeviceToken, Unregistered, DeviceTokenNotForTopic or ExpiredToken",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "BuZKp",
+                          "name": "Row · APNs · calls (VoIP)",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "nfddy",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "vKsUU",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "APNs · calls (VoIP)",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "VJprK",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Incoming calls through PushKit",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "W1Ps48",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "VGvYp",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "1,180",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "LeApn",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Ds9km",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Same host · topic de.corespace.shroud.voip · a second token",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "n5jPC",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "l4R4w",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Same answers from Apple",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "GsyAq",
+                          "name": "Row · Web Push",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "UbewR",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "H1QuKk",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Web Push",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "uj2no",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Browsers",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "o1TWsm",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "NZ47u",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "318",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "hjJ44",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "HPx33",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The subscription's endpoint at the browser's push service",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fnaYD",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "uMmrM",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The service answers 404 or 410 Gone",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "nCS63",
+                          "name": "Row · UnifiedPush",
+                          "width": "fill_container",
+                          "padding": [
+                            9,
+                            12
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "LJkDQ",
+                              "name": "Cell",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "bZlZn",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "UnifiedPush",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "OAy2H",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Android app",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "h2oifK",
+                              "name": "Cell",
+                              "width": 90,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pDNlP",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "212",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Mu9x9",
+                              "name": "Cell",
+                              "width": 240,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Vf7tI",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The device's distributor · hosts limited to ntfy.sh, up.example.org",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "SeARZ",
+                              "name": "Cell",
+                              "width": 210,
+                              "layout": "vertical",
+                              "gap": 2,
+                              "padding": [
+                                0,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "EHCKp",
+                                  "name": "Name",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The distributor answers 404 or 410 Gone",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "C3t5y",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "o3PyVO",
+                              "name": "Icon",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "info",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "C6Kd6",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "A dropped registration is not an error for the person: the device registers again the next time it opens. Sends, deliveries and failures are written to the log at warn level and nowhere else.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "FgAHj",
+                  "name": "Column",
+                  "width": 340,
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "gXjJq",
+                      "name": "Failures",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "e3mLUI",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "q6AGoL",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "v5xeb",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "When a push fails",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dJIZk",
+                          "name": "Body",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 12,
+                          "padding": [
+                            14,
+                            20,
+                            16,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "VY5w1",
+                              "name": "Item · Invalid token or gone subscription",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "N0ylS",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Invalid token or gone subscription",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "yY1HJ",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "The registration is deleted at once. Nothing is retried.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "DOLUO",
+                              "name": "Item · Apple refuses the server's own setup",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "OufG9",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Apple refuses the server's own setup",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "L99f0y",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "BadEnvironmentKeyInToken, InvalidProviderToken and the like: every APNs push fails the same way until APNS_* is fixed, and the log says so instead of calling Apple unreachable.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "itooe",
+                              "name": "Item · Any other error",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "tkTtJ",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Any other error",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "aelNJ",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Logged with the device id and reason; no retry, no counter. The next message tries again.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "c7sxVw",
+                              "name": "Item · Devices without a registration",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "G1QNh",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Devices without a registration",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "thlZu",
+                                  "name": "Detail",
+                                  "fill": "$text-tertiary",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "Reached over their open WebSocket only. A suspended app with a stale socket still gets its push if it has one.",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "PgdvA",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "M7ggS",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "top": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "GQl3v",
+                              "name": "Icon",
+                              "width": 15,
+                              "height": 15,
+                              "icon": "bell-ring",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "w8FJK",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Test notification: a button in each app's Settings, POST /push/test, at most 6 a minute per device.",
                               "lineHeight": 1.45,
                               "fontFamily": "$font-ui",
                               "fontSize": 12,

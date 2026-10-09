@@ -167,6 +167,13 @@ export interface Push {
   channels: { name: string; registered: number; sent_to: string; dropped_when: string }[];
 }
 
+/** One line of `GET /push/check` (§3.9 #10). */
+export interface PushCheck {
+  item: string;
+  state: "ok" | "failed" | "off";
+  detail: string;
+}
+
 export interface Calls {
   created_total: number;
   ice_servers: { urls: string }[];

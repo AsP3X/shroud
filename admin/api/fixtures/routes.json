@@ -76,6 +76,14 @@
     },
     {
       "method": "GET",
+      "path": "/push/check",
+      "file": "push-check.json",
+      "states": {
+        "failing": "push-check.failing.json"
+      }
+    },
+    {
+      "method": "GET",
       "path": "/calls",
       "file": "calls.json"
     },
@@ -181,6 +189,8 @@
     "rate-limits.json": "rate-limits.schema.json",
     "retention.json": "retention.schema.json",
     "push.json": "push.schema.json",
+    "push-check.json": "push-check.schema.json",
+    "push-check.failing.json": "push-check.schema.json",
     "calls.json": "calls.schema.json",
     "privacy-checks.json": "privacy-checks.schema.json",
     "configuration.json": "configuration.schema.json",

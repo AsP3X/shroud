@@ -158,6 +158,16 @@ impl ApnsClient {
         &self.inner.key_id
     }
 
+    /// Signs a fresh provider token, without the cache: the push check's "the key works" step.
+    pub(crate) fn signing_check(&self) -> Result<(), String> {
+        mint_jwt(
+            &self.inner.team_id,
+            &self.inner.key_id,
+            &self.inner.encoding_key,
+        )
+        .map(|_| ())
+    }
+
     /// Sends one push to one device token.
     pub async fn send(
         &self,

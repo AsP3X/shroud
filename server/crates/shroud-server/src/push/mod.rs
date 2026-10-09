@@ -14,6 +14,7 @@
 //! device_notification_settings, push_tokens, web_push_subscriptions, chat_mutes; DELETES
 //! tokens and subscriptions their relay reports gone.
 
+mod check;
 mod client;
 mod payload;
 pub mod web_push;
@@ -26,6 +27,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+pub use check::PushCheck;
 pub use client::{
     ApnsClient, ApnsConfig, ApnsEnvironment, ApnsPushType, ApnsRequest, ApnsSendOutcome,
     apns_config_from_env,

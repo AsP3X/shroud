@@ -5,7 +5,9 @@
 //! and not published. The public port has none of these routes: on a small server, live
 //! counters would show anyone when people are active.
 //! Agent: Bearer `OPERATOR_TOKEN` on every request, or 403. The three POSTs call the same
-//! functions as the user-facing handlers; `GET /operator/metrics` is the Prometheus text.
+//! functions as the user-facing handlers; `GET /operator/metrics` is the Prometheus text;
+//! `GET /operator/push/check` asks each push relay whether this server's setup works
+//! ([`crate::push::PushService::check`]), notifying no one.
 //! Health and the public API are not mounted.
 
 use std::sync::Arc;
@@ -38,11 +40,16 @@ pub fn router(token: Arc<str>) -> Router<AppState> {
         .route("/operator/users/{id}/sign-out-all", post(sign_out_all))
         .route("/operator/users/{id}/delete", post(delete_account))
         .route("/operator/metrics", get(crate::routes::health::metrics))
+        .route("/operator/push/check", get(push_check))
         .fallback(unknown)
         .layer(middleware::from_fn(move |request: Request, next: Next| {
             let token = Arc::clone(&token);
             async move { require_token(&token, request, next).await }
         }))
+}
+
+async fn push_check(State(state): State<AppState>) -> Json<Vec<crate::push::PushCheck>> {
+    Json(state.push.check().await)
 }
 
 async fn unknown() -> StatusCode {

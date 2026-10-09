@@ -1,0 +1,32 @@
+[
+  {
+    "item": "APNs key",
+    "state": "ok",
+    "detail": "Key 7KX2M9QD4P signs Apple's provider token."
+  },
+  {
+    "item": "Apple accepts alerts",
+    "state": "ok",
+    "detail": "Production and Sandbox accept the key, team and topic de.corespace.shroud."
+  },
+  {
+    "item": "Apple accepts calls (VoIP)",
+    "state": "ok",
+    "detail": "Production and Sandbox accept the key, team and topic de.corespace.shroud.voip."
+  },
+  {
+    "item": "Web Push key",
+    "state": "ok",
+    "detail": "Signs VAPID tokens · public key …Qm3vT8aE"
+  },
+  {
+    "item": "Browser push services answer",
+    "state": "ok",
+    "detail": "fcm.googleapis.com (212 subscriptions), web.push.apple.com (71 subscriptions), updates.push.services.mozilla.com (35 subscriptions) answered."
+  },
+  {
+    "item": "UnifiedPush distributors answer",
+    "state": "ok",
+    "detail": "ntfy.sh (168 subscriptions), up.example.org (44 subscriptions) answered."
+  }
+]

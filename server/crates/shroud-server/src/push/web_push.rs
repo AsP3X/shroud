@@ -394,6 +394,47 @@ impl WebPushClient {
         self.inner.vapid.public_key_b64url()
     }
 
+    /// Signs a VAPID token for a made-up audience: the push check's "the key works" step.
+    pub(crate) fn signing_check(&self) -> Result<(), String> {
+        self.inner
+            .vapid
+            .token(
+                "https://check.invalid",
+                &self.inner.subject,
+                unix_now() + 60,
+            )
+            .map(|_| ())
+    }
+
+    /// Whether the push service behind `endpoint` answers HTTPS at all: a `HEAD` on its origin,
+    /// through the same client and address checks a real send uses. Any status is an answer.
+    ///
+    /// Human: Only the origin is contacted, never the subscription's path, so the service sees
+    /// no token and nothing is delivered. A host the current policy no longer allows is
+    /// refused before anything is sent.
+    pub(crate) async fn probe_host(
+        &self,
+        endpoint: &str,
+        client: SubscriptionClient,
+    ) -> Result<(), String> {
+        let Some((mut url, route)) = self.route(endpoint, client) else {
+            return Err("no longer allowed".into());
+        };
+        url.set_path("/");
+        url.set_query(None);
+        url.set_fragment(None);
+        let http = if route == EndpointRoute::PublicHost {
+            &self.inner.public_http
+        } else {
+            &self.inner.http
+        };
+        http.head(url)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|err| format!("no answer: {}", err.without_url()))
+    }
+
     /// `endpoint` as it would be contacted, when it is on an allowed browser push service.
     pub fn allowed_endpoint(&self, endpoint: &str) -> Option<reqwest::Url> {
         allowed_endpoint(endpoint, &self.inner.allowed_hosts)
