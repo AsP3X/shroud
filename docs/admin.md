@@ -43,6 +43,28 @@ The next `./deploy.sh` starts it again while the `admin` profile is on.
 
 While the profile is off, the API still binds its internal operator port when `OPERATOR_TOKEN` is set. Nothing publishes that port and nothing calls it. Blank the token in `.env` and redeploy if the API should not bind it. That port is also the only place the API's Prometheus counters are served (`GET /operator/metrics` with `Authorization: Bearer <OPERATOR_TOKEN>`): the public port has no `/metrics`, because live counters show when people are active. A scraper of your own needs the token and a place on `shroud-internal`.
 
+## What the console shows
+
+Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Sign-ins and changes are kept in the audit log.
+
+| Page | What it shows |
+| --- | --- |
+| Overview | Whether Postgres, Redis and the media store answer, which push and call services are configured, and counters since the API last started |
+| Privacy checks | What this server keeps that could identify someone, read from the database and the configuration when the page opens. The username-hash row follows `GET /api/v1/auth/username-kdf`: a strong Argon2id answer is "Username hashes are slow to guess"; a missing, failed or cheaper answer is "Username hashes are quick to guess", with the live account count |
+| Users | Accounts by id. The username is not stored. An admin can remove a device, sign every device out, or delete the account. Deleting signs the devices out, removes that account's keys, contacts and stored media, and leaves a placeholder so other people's chats say "Deleted account". A device's label comes from its push registration |
+| Sign-ups | Unused. Registration is open |
+| Operators | Who can sign in. An admin can add an operator, change the role, reset an authenticator, or disable one |
+| Storage | Where media lives, how many objects and bytes, and how many objects are not attached to a message |
+| Retention | The cleanup rules built into the server |
+| Push delivery | How many devices are registered with Apple, the web and UnifiedPush. The tokens themselves stay hidden |
+| Calls | The ICE servers handed to clients, without credentials, and whether the TURN relay is on. Call audio and video stay off this server. The call count is since the API last started |
+| Client versions | The latest and minimum versions for iOS, Android and the web build, and what the API tells each band |
+| Configuration | The environment the console started with. A secret is shown only as set or unset |
+| Rate limits | The fixed windows built into the server |
+| Audit log | Operator sign-ins and actions. Entries cannot be edited or removed here |
+
+Message text, photos, voice, device names, username hashes and password hashes are not granted to the console. Contact, block, conversation and message counts are not shown on an account. The console also cannot tell which username hashes are still the old SHA-256: those rows move the next time that account signs in.
+
 ## What to back up
 
 Back up schema `admin` with the database. That schema holds:

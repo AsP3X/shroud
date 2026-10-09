@@ -16,7 +16,7 @@ with the `wasm32-unknown-unknown` target and `llvm-tools`, clang, and
 Docker image builds it in its first stage, and without it the web client simply shows no previews
 for links you send.
 
-Production is the `web` service in Compose (`./deploy.sh`). nginx serves the SPA and reverse-proxies `/api/v1` (including WebSocket) to `api:8080`, so the browser is same-origin.
+Production is the `web` service in Compose (`./deploy.sh`). nginx serves the SPA and reverse-proxies `/api/v1` (including WebSocket) to `api:8080`, so the browser is same-origin. It also proxies `/admin` and `/api/admin` to the operator console. Those paths answer only while the console is on (`./deploy.sh --admin`).
 
 `npm run build` also writes `.gz` (gzip 9) and `.br` (Brotli 11) copies of the compressible files
 in `dist/assets/` and `dist/pdfjs/` (`precompress.ts`; skipped below 1 KB or when a copy saves

@@ -2,20 +2,23 @@
 
 # Shroud
 
-End-to-end encrypted messenger: **Rust + PostgreSQL** server, a **native iOS** app, a **web client**, and an **Android** app (early: sign-up and log-in).
+End-to-end encrypted messenger: a **Rust + PostgreSQL** server, and native **iOS**, **Android** and **web** clients.
 
 ## Repository layout
 
 | Path | Purpose |
 | --- | --- |
 | `design/iOS-App.pen` | iOS design source (Pencil) |
+| `design/iPad-App.pen` | iPad design source (Pencil) |
 | `design/webclient.pen` | Web client frames (desktop three-pane + mobile) |
+| `design/Android-App.pen` | Android design source (Pencil) |
+| `design/admin.pen` | Operator console frames (Pencil) |
 | `server/` | Rust workspace — Axum API, migrations, integration tests |
 | `web/` | Vite + React web client (same-origin `/api/v1` via nginx) |
 | `ios/` | Native iOS app — SwiftUI, ShroudUI component library |
 | `android/` | Native Android app — Kotlin, Jetpack Compose ([android/README.md](android/README.md)) |
-| `design/Android-App.pen` | Android design source (Pencil) |
-| `docs/` | Architecture, [server plan](docs/server-plan.md), [web client](docs/web-client.md) |
+| `admin/` | Operator console — Rust API and Vite UI, served at the site's `/admin` |
+| `docs/` | [Architecture](docs/architecture.md), [server plan](docs/server-plan.md), [web client](docs/web-client.md), [admin console](docs/admin.md), [calls](docs/calls.md), [anonymity](docs/anonymity-plan.md) |
 
 ## Prerequisites
 
@@ -34,15 +37,39 @@ Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the 
 .\deploy.ps1           # Windows
 ```
 
-The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`). Turn it on without re-running the setup wizard:
+### Operator console
+
+The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`). Its container port stays on the Docker network. The web nginx proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer. Turn it on without re-running the setup wizard:
 
 ```bash
-./deploy.sh --admin              # turn it on and deploy it
-./deploy.sh --admin bootstrap    # one-time operator setup link
-./deploy.sh --admin off          # turn it off; the key stays in .env
+./deploy.sh --admin                              # turn it on and deploy it
+./deploy.sh --admin bootstrap                    # one-time operator setup link
+./deploy.sh --admin bootstrap --recover          # re-enrol the only operator
+./deploy.sh --admin bootstrap --recover --name NAME
+./deploy.sh --admin off                          # turn it off; the key stays in .env
 ```
 
-See [docs/admin.md](docs/admin.md). Windows uses `.\deploy.ps1 -Admin` with the same words (`off`, `bootstrap`).
+Windows uses `.\deploy.ps1 -Admin` with the same words. Backup, a lost `ADMIN_SECRET_KEY`, and what the cookie does are in [docs/admin.md](docs/admin.md).
+
+Sign in with a password and an authenticator app. A recovery code stands in for the app. Two roles: **Admin** can change things, **View only** can read the pages. A change asks for a fresh authenticator code, and that code stays valid for five minutes. Every sign-in and change is kept in the audit log.
+
+| Page | What it shows |
+| --- | --- |
+| Overview | Whether Postgres, Redis and the media store answer, which push and call services are configured, and counters since the API last started |
+| Privacy checks | What this server keeps that could identify someone, read from the database and the configuration when the page opens. The username-hash row follows `GET /api/v1/auth/username-kdf`: a strong Argon2id answer is "Username hashes are slow to guess"; a missing, failed or cheaper answer is "Username hashes are quick to guess", with the live account count |
+| Users | Accounts by id. The username is not stored. An admin can remove a device, sign every device out, or delete the account. Deleting signs the devices out, removes that account's keys, contacts and stored media, and leaves a placeholder so other people's chats say "Deleted account". A device's label comes from its push registration |
+| Sign-ups | Unused. Registration is open |
+| Operators | Who can sign in. An admin can add an operator, change the role, reset an authenticator, or disable one |
+| Storage | Where media lives, how many objects and bytes, and how many objects are not attached to a message |
+| Retention | The cleanup rules built into the server |
+| Push delivery | How many devices are registered with Apple, the web and UnifiedPush. The tokens themselves stay hidden |
+| Calls | The ICE servers handed to clients, without credentials, and whether the TURN relay is on. Call audio and video stay off this server. The call count is since the API last started |
+| Client versions | The latest and minimum versions for iOS, Android and the web build, and what the API tells each band |
+| Configuration | The environment the console started with. A secret is shown only as set or unset |
+| Rate limits | The fixed windows built into the server |
+| Audit log | Operator sign-ins and actions. Entries cannot be edited or removed here |
+
+Message text, photos, voice, device names, username hashes and password hashes are not granted to the console. Contact, block, conversation and message counts are not shown on an account. The console also cannot tell which username hashes are still the old SHA-256: those rows move the next time that account signs in.
 
 | `PROXY_MODE` | How you reach it |
 | --- | --- |
@@ -51,7 +78,11 @@ See [docs/admin.md](docs/admin.md). Windows uses `.\deploy.ps1 -Admin` with the 
 
 The wizard asks for the **public web URL** (and API URL for iOS). The browser always talks same-origin (`/api/v1` proxied by web nginx). `WEB_PUBLIC_URL` is also sent to the API as CORS for split-origin setups.
 
-Media blobs (always ciphertext) live in [Nebular OS](https://github.com/AsP3X/nebular-os), run from its published 0.2.0 image pinned by digest. The API is its only client. It signs every request with an access key Nebular limits to the `shroud-media` bucket, and clients only ever reach `/api/v1/media/{id}/content`. The wizard generates that key and Nebular's secrets. `./deploy.sh` adds any that an older `.env` lacks, and on first start the API moves blobs from the old local media volume into Nebular.
+Media blobs (always ciphertext, up to 2 GiB each) live in [Nebular OS](https://github.com/AsP3X/nebular-os), run from its published 0.2.0 image pinned by digest. The API is its only client. It signs every request with an access key Nebular limits to the `shroud-media` bucket, and clients only ever reach `/api/v1/media/{id}/content`. The wizard generates that key and Nebular's secrets. `./deploy.sh` adds any that an older `.env` lacks, and on first start the API moves blobs from the old local media volume into Nebular.
+
+The wizard and `./deploy.sh` write `USERNAME_KDF_SALT` once: 16 random bytes, 32 hex characters. Clients use it as the public salt of the username lookup hash (Argon2id, 64 MiB, 8 iterations, one lane). Leave the value in place. Replacing it makes every username stop matching. An empty value stops the API from starting.
+
+Voice and video calls are WebRTC between the two devices. The API rings them and relays signaling it cannot read. Where a direct path fails, the wizard can turn on the bundled coturn (`COMPOSE_PROFILES=calls`). Open UDP and TCP 3478 and UDP 49160–49259. Logins are short-lived and minted from `TURN_SECRET`. There is no shared TURN password. See [docs/calls.md](docs/calls.md). A secret without `TURN_URLS` leaves calls on Google's STUN (`stun:stun.l.google.com:19302`) until both are set.
 
 ### Manual Compose
 
@@ -74,13 +105,15 @@ curl http://127.0.0.1:8080/api/v1/health/live
 # {"status":"ok"}
 ```
 
+Those commands start the API, the web client, Postgres, Redis and Nebular. The operator console is the `admin` profile, and the TURN relay is the `calls` profile. `./deploy.sh --admin` and the wizard turn those on.
+
 | Service | Local port | Notes |
 | --- | --- | --- |
-| `web` | `8081` | SPA + reverse-proxy `/api/v1` (incl. WebSocket) |
+| `web` | `8081` | SPA + reverse-proxy `/api/v1` (incl. WebSocket), `/admin` and `/api/admin` |
 | `api` | `8080` | Axum `/api/v1`; iOS talks here; migrations on startup |
 | `nebular` | `127.0.0.1:9000` | Media store (this machine only); clients use API `/media/{id}/content` |
 | `postgres` | `127.0.0.1:5432` | Database (this machine only); user/db from `.env` |
-| `redis` | `127.0.0.1:6379` | Multi-replica WS fan-out (this machine only; no password) |
+| `redis` | `127.0.0.1:6379` | Fan-out, presence and shared rate limits (this machine only). Needs `REDIS_PASSWORD`. Nothing is kept on disk |
 
 Logging: set `RUST_LOG` in `.env` (wizard default `info`). At `info` the API logs routes and
 outcomes but no user, device, chat or call ids; `debug` and `trace` add them, so turn them back
@@ -182,8 +215,13 @@ cd server && cargo fmt --check
 
 # iOS
 xcodebuild test -scheme shroud -destination 'platform=iOS Simulator,name=iPhone 17' -project ios/shroud.xcodeproj
+
+# Admin console. The page tests need ADMIN_TEST_DATABASE_URL and GRANT_TEST_SUPER_URL.
+# Without either one they return immediately, so a green run is not proof they executed.
+cd admin/api && cargo test
+cd admin/api && cargo clippy --all-targets -- -D warnings
 ```
 
 ## Security
 
-Message plaintext and private keys **never** leave the device. The server stores and relays ciphertext only. See `.cursor/rules/security-crypto.mdc`, [`docs/architecture.md`](docs/architecture.md), and [`docs/server-plan.md`](docs/server-plan.md).
+Message plaintext and private keys stay on the device. The server relays ciphertext and keeps what delivery needs: who is connected to whom, when a message was sent, push tokens, and a slow hash of the username rather than the name. See [docs/architecture.md](docs/architecture.md), [docs/anonymity-plan.md](docs/anonymity-plan.md), [docs/server-plan.md](docs/server-plan.md), and `.cursor/rules/security-crypto.mdc`.
