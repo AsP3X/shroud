@@ -124,10 +124,10 @@ export function rememberUsernameKdf(digest: string): void {
 export function usernameKdfParams(raw: unknown): UsernameKdfParams {
   if (!raw || typeof raw !== "object") throw new UsernameError(WEAK);
   const body = raw as Partial<UsernameKdfParams>;
-  let salt = new Uint8Array();
+  let saltBytes = 0;
   if (typeof body.salt === "string") {
     try {
-      salt = b64ToBytes(body.salt);
+      saltBytes = b64ToBytes(body.salt).length;
     } catch {
       throw new UsernameError(WEAK);
     }
@@ -141,8 +141,8 @@ export function usernameKdfParams(raw: unknown): UsernameKdfParams {
     typeof body.iterations !== "number" ||
     body.memory_kib < 65536 ||
     body.iterations < 8 ||
-    salt.length < 16 ||
-    salt.length > 64
+    saltBytes < 16 ||
+    saltBytes > 64
   ) {
     throw new UsernameError(WEAK);
   }
