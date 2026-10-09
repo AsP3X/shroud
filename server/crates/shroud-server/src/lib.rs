@@ -162,20 +162,24 @@ pub async fn run() -> Result<(), AppError> {
     let redis_required = config.redis_url.is_some();
     if let Some(redis_url) = config.redis_url.clone() {
         match redis::Client::open(redis_url.as_str()) {
-            Ok(client) => match redis::aio::ConnectionManager::new(client).await {
-                Ok(manager) => {
-                    realtime.set_redis(manager.clone()).await;
-                    rate_limiter.set_redis(manager).await;
-                    crate::realtime::spawn_redis_subscriber(realtime.clone(), redis_url);
-                    tracing::info!("realtime fan-out + rate limits: Redis enabled");
+            Ok(client) => {
+                match redis::aio::ConnectionManager::new_with_config(client, redis_manager_config())
+                    .await
+                {
+                    Ok(manager) => {
+                        realtime.set_redis(manager.clone()).await;
+                        rate_limiter.set_redis(manager).await;
+                        crate::realtime::spawn_redis_subscriber(realtime.clone(), redis_url);
+                        tracing::info!("realtime fan-out + rate limits: Redis enabled");
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            error = %err,
+                            "REDIS_URL set but connection manager failed; readiness will report redis error"
+                        );
+                    }
                 }
-                Err(err) => {
-                    tracing::error!(
-                        error = %err,
-                        "REDIS_URL set but connection manager failed; readiness will report redis error"
-                    );
-                }
-            },
+            }
             Err(err) => {
                 tracing::error!(
                     error = %err,
@@ -336,6 +340,19 @@ pub async fn run() -> Result<(), AppError> {
 
     tracing::info!("shroud-server shut down");
     Ok(())
+}
+
+/// How the shared Redis connection reconnects once Redis went away.
+///
+/// Human: The defaults retry 1 s and then 60 s apart, with no limit on one attempt: a Redis
+/// back after ten seconds was used again only a minute later, and an attempt against a host
+/// that accepts but never answers waited for good. Each call into Redis has its own bound
+/// besides (`realtime`, `rate_limit`).
+/// Agent: Attempts 1–2 s apart, 2 s each; after the 6 retries the next call starts again.
+fn redis_manager_config() -> redis::aio::ConnectionManagerConfig {
+    redis::aio::ConnectionManagerConfig::new()
+        .set_connection_timeout(Duration::from_secs(2))
+        .set_max_delay(1_000)
 }
 
 fn serve_error(err: std::io::Error) -> AppError {

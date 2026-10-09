@@ -30,6 +30,14 @@ pub const ONLINE_TTL_SECS: i64 = 90;
 const OUTBOUND_QUEUE_CAP: usize = 256;
 /// Max simultaneous WebSocket connections per user on this replica.
 pub const MAX_WS_PER_USER: usize = 5;
+/// Longest a Redis call may take before the hub carries on with this replica's sockets only.
+///
+/// Human: The connection manager never gives up on its own: with Redis gone, a call waited
+/// for good, and the send, presence update or revocation that made it hung with it.
+const REDIS_TIMEOUT: Duration = Duration::from_millis(500);
+/// After a Redis failure the hub works on this replica alone this long before Redis is tried
+/// again, so an outage costs one slow call rather than one per message.
+const REDIS_BACKOFF: Duration = Duration::from_secs(5);
 
 fn online_key(user_id: Uuid) -> String {
     format!("{ONLINE_KEY_PREFIX}{user_id}")
@@ -148,6 +156,8 @@ pub struct RealtimeHub {
     next_connection_id: AtomicU64,
     /// When set, cross-instance fan-out uses Redis pub/sub.
     redis: RwLock<Option<ConnectionManager>>,
+    /// Until when Redis is skipped after it failed or didn't answer (see [`REDIS_BACKOFF`]).
+    redis_down_until: std::sync::Mutex<Option<Instant>>,
     /// Rings kept while their calls ring, by callee — in Redis instead when it is set.
     rings: RwLock<HashMap<Uuid, PendingRing>>,
 }
@@ -198,7 +208,10 @@ impl RealtimeHub {
         self.redis.read().await.is_some()
     }
 
-    /// PING Redis when configured. Errors if missing or the command fails.
+    /// PING Redis when configured. Errors if missing, the command fails or Redis doesn't
+    /// answer within [`REDIS_TIMEOUT`].
+    ///
+    /// Agent: Asks Redis even while the hub backs off from it; a failure starts the backoff.
     pub async fn ping_redis(&self) -> Result<(), String> {
         let mut conn = self
             .redis
@@ -206,11 +219,63 @@ impl RealtimeHub {
             .await
             .clone()
             .ok_or_else(|| "redis not connected".to_string())?;
-        redis::cmd("PING")
-            .query_async::<String>(&mut conn)
+        let ping = redis::cmd("PING");
+        let error = match tokio::time::timeout(REDIS_TIMEOUT, ping.query_async::<String>(&mut conn))
             .await
-            .map_err(|err| err.to_string())?;
-        Ok(())
+        {
+            Ok(Ok(_)) => return Ok(()),
+            Ok(Err(err)) => err.to_string(),
+            Err(_) => format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+        };
+        self.redis_failed();
+        Err(error)
+    }
+
+    /// The Redis connection, unless there is none or it failed within [`REDIS_BACKOFF`].
+    async fn redis(&self) -> Option<ConnectionManager> {
+        let skipping = self
+            .redis_down_until
+            .lock()
+            .ok()
+            .and_then(|until| *until)
+            .is_some_and(|until| Instant::now() < until);
+        if skipping {
+            return None;
+        }
+        self.redis.read().await.clone()
+    }
+
+    fn redis_failed(&self) {
+        if let Ok(mut until) = self.redis_down_until.lock() {
+            *until = Some(Instant::now() + REDIS_BACKOFF);
+        }
+    }
+
+    /// Runs one Redis call, bounded by [`REDIS_TIMEOUT`].
+    ///
+    /// Human: `None` when there is no Redis, the hub is backing off from it, or the call failed
+    /// or didn't answer. Callers then do what a single replica without Redis does: deliver to
+    /// and count the sockets it holds itself.
+    /// Agent: A failure starts [`REDIS_BACKOFF`]. LOGS `op` only: keys and channels hold user
+    /// and device ids.
+    async fn redis_call<T, F, Fut>(&self, op: &'static str, call: F) -> Option<T>
+    where
+        F: FnOnce(ConnectionManager) -> Fut,
+        Fut: Future<Output = redis::RedisResult<T>>,
+    {
+        let conn = self.redis().await?;
+        let error = match tokio::time::timeout(REDIS_TIMEOUT, call(conn)).await {
+            Ok(Ok(value)) => return Some(value),
+            Ok(Err(err)) => err.to_string(),
+            Err(_) => format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+        };
+        tracing::warn!(
+            error,
+            op,
+            "realtime redis failed; carrying on with this replica's sockets"
+        );
+        self.redis_failed();
+        None
     }
 
     /// Registers a device connection; returns the receiver for WS write loop.
@@ -395,10 +460,9 @@ impl RealtimeHub {
         }
         self.close_local_sessions(user_id, session_ids).await;
 
-        let redis = self.redis.read().await.clone();
-        let Some(mut conn) = redis else {
+        if self.redis().await.is_none() {
             return;
-        };
+        }
         let message = RedisRevokedSessions {
             user_id,
             session_ids: session_ids.to_vec(),
@@ -410,12 +474,13 @@ impl RealtimeHub {
                 return;
             }
         };
-        if let Err(err) = conn
-            .publish::<_, _, ()>(REVOKED_SESSIONS_CHANNEL, body)
-            .await
-        {
-            tracing::warn!(error = %err, %user_id, "redis revoked sessions publish failed");
-        }
+        // Another replica keeps a revoked socket only while Redis is down, and it can't be
+        // told any other way.
+        self.redis_call("revoked sessions publish", move |mut conn| async move {
+            conn.publish::<_, _, ()>(REVOKED_SESSIONS_CHANNEL, body)
+                .await
+        })
+        .await;
     }
 
     /// Drops this replica's sockets for `session_ids`.
@@ -458,12 +523,14 @@ impl RealtimeHub {
     /// True if the user has at least one online WebSocket (local or Redis online hash). A
     /// background socket whose app is not in front does not count.
     pub async fn is_user_online(&self, user_id: Uuid) -> bool {
-        if let Some(mut conn) = self.redis.read().await.clone() {
-            match redis_online_count(&mut conn, user_id).await {
-                Ok(n) if n > 0 => return true,
-                Ok(_) => {}
-                Err(err) => tracing::warn!(error = %err, "redis online check failed"),
-            }
+        let online_elsewhere = self
+            .redis_call("online count", move |mut conn| async move {
+                redis_online_count(&mut conn, user_id).await
+            })
+            .await
+            .is_some_and(|n| n > 0);
+        if online_elsewhere {
+            return true;
         }
         let connections = self.connections.read().await;
         connections
@@ -522,17 +589,13 @@ impl RealtimeHub {
                 return connection.counts_online();
             }
         }
-        if let Some(mut conn) = self.redis.read().await.clone() {
-            match conn
-                .hget::<_, _, Option<i64>>(online_key(user_id), device_id.to_string())
+        self.redis_call("device online hget", move |mut conn| async move {
+            conn.hget::<_, _, Option<i64>>(online_key(user_id), device_id.to_string())
                 .await
-            {
-                Ok(Some(ts)) => return ts >= unix_now_secs() - ONLINE_TTL_SECS,
-                Ok(None) => {}
-                Err(err) => tracing::warn!(error = %err, "redis device online check failed"),
-            }
-        }
-        false
+        })
+        .await
+        .flatten()
+        .is_some_and(|ts| ts >= unix_now_secs() - ONLINE_TTL_SECS)
     }
 
     /// Keeps a ringing call's `call.ring` event for `ttl_secs`.
@@ -543,14 +606,16 @@ impl RealtimeHub {
     /// Agent: Redis `shroud:ring:{callee}` SET EX when configured (any replica may see the
     /// device connect), else in memory. The reader checks the call still rings.
     pub async fn remember_ring(&self, callee: Uuid, payload: &str, ttl_secs: u64) {
-        if let Some(mut conn) = self.redis.read().await.clone() {
-            match conn
-                .set_ex::<_, _, ()>(format!("{RING_KEY_PREFIX}{callee}"), payload, ttl_secs)
-                .await
-            {
-                Ok(()) => return,
-                Err(err) => tracing::warn!(error = %err, "redis ring set failed"),
-            }
+        let value = payload.to_string();
+        let kept_in_redis = self
+            .redis_call("ring set", move |mut conn| async move {
+                conn.set_ex::<_, _, ()>(format!("{RING_KEY_PREFIX}{callee}"), value, ttl_secs)
+                    .await
+            })
+            .await
+            .is_some();
+        if kept_in_redis {
+            return;
         }
         let now = Instant::now();
         let mut rings = self.rings.write().await;
@@ -566,15 +631,15 @@ impl RealtimeHub {
 
     /// The `call.ring` kept for `callee`, if one is (its call may have stopped ringing since).
     pub async fn pending_ring(&self, callee: Uuid) -> Option<String> {
-        if let Some(mut conn) = self.redis.read().await.clone() {
-            match conn
-                .get::<_, Option<String>>(format!("{RING_KEY_PREFIX}{callee}"))
-                .await
-            {
-                Ok(Some(payload)) => return Some(payload),
-                Ok(None) => {}
-                Err(err) => tracing::warn!(error = %err, "redis ring get failed"),
-            }
+        let kept_in_redis = self
+            .redis_call("ring get", move |mut conn| async move {
+                conn.get::<_, Option<String>>(format!("{RING_KEY_PREFIX}{callee}"))
+                    .await
+            })
+            .await
+            .flatten();
+        if kept_in_redis.is_some() {
+            return kept_in_redis;
         }
         let rings = self.rings.read().await;
         rings
@@ -600,23 +665,26 @@ impl RealtimeHub {
             }
             connection.focused
         };
-        let Some(mut conn) = self.redis.read().await.clone() else {
-            return;
-        };
         let key = online_key(user_id);
         let now = unix_now_secs();
         // Human: HASH field = device_id, value = unix ts; EXPIRE bounds crash orphans.
-        // Agent: HSET + EXPIRE ONLINE_TTL_SECS; pruned on is_user_online read.
-        if let Err(err) = conn
-            .hset::<_, _, _, ()>(&key, device_id.to_string(), now)
-            .await
-        {
-            tracing::warn!(error = %err, "redis online hset failed");
+        // Agent: HSET + EXPIRE ONLINE_TTL_SECS; pruned on is_user_online read. Without Redis
+        // (or while it is down) the socket stays online on this replica only; the next
+        // refresh_online writes the entry again.
+        let hset_key = key.clone();
+        let written = self
+            .redis_call("online hset", move |mut conn| async move {
+                conn.hset::<_, _, _, ()>(hset_key, device_id.to_string(), now)
+                    .await
+            })
+            .await;
+        if written.is_none() {
             return;
         }
-        if let Err(err) = conn.expire::<_, ()>(&key, ONLINE_TTL_SECS).await {
-            tracing::warn!(error = %err, "redis online expire failed");
-        }
+        self.redis_call("online expire", move |mut conn| async move {
+            conn.expire::<_, ()>(key, ONLINE_TTL_SECS).await
+        })
+        .await;
         if let Some(connection) = self.connections.write().await.by_device.get_mut(&device_id)
             && connection.id == connection_id
         {
@@ -627,45 +695,44 @@ impl RealtimeHub {
     }
 
     async fn write_focus(&self, user_id: Uuid, device_id: Uuid, connection_id: u64, focused: bool) {
-        let Some(mut conn) = self.redis.read().await.clone() else {
-            return;
-        };
         let key = focus_key(user_id);
         let value = format!("{connection_id}:{}", if focused { "1" } else { "0" });
-        if let Err(err) = conn
-            .hset::<_, _, _, ()>(&key, device_id.to_string(), value)
-            .await
-        {
-            tracing::warn!(error = %err, "redis focus hset failed");
+        let hset_key = key.clone();
+        let written = self
+            .redis_call("focus hset", move |mut conn| async move {
+                conn.hset::<_, _, _, ()>(hset_key, device_id.to_string(), value)
+                    .await
+            })
+            .await;
+        if written.is_none() {
             return;
         }
-        if let Err(err) = conn.expire::<_, ()>(&key, ONLINE_TTL_SECS).await {
-            tracing::warn!(error = %err, "redis focus expire failed");
-        }
+        self.redis_call("focus expire", move |mut conn| async move {
+            conn.expire::<_, ()>(key, ONLINE_TTL_SECS).await
+        })
+        .await;
     }
 
     async fn clear_focus(&self, user_id: Uuid, device_id: Uuid, connection_id: u64) {
-        let Some(mut conn) = self.redis.read().await.clone() else {
-            return;
-        };
-        if let Err(err) = redis::Script::new(DELETE_FOCUS_IF_OURS)
-            .key(focus_key(user_id))
-            .arg(device_id.to_string())
-            .arg(format!("{connection_id}:"))
-            .invoke_async::<i64>(&mut conn)
-            .await
-        {
-            tracing::warn!(error = %err, "redis focus hdel failed");
-        }
+        self.redis_call("focus hdel", move |mut conn| async move {
+            redis::Script::new(DELETE_FOCUS_IF_OURS)
+                .key(focus_key(user_id))
+                .arg(device_id.to_string())
+                .arg(format!("{connection_id}:"))
+                .invoke_async::<i64>(&mut conn)
+                .await
+        })
+        .await;
     }
 
     /// `Some` when this replica can read an explicit focus flag for the device.
     async fn redis_focus(&self, user_id: Uuid, device_id: Uuid) -> Option<bool> {
-        let mut conn = self.redis.read().await.clone()?;
-        let value: Option<String> = conn
-            .hget(focus_key(user_id), device_id.to_string())
-            .await
-            .ok()?;
+        let value = self
+            .redis_call("focus hget", move |mut conn| async move {
+                conn.hget::<_, _, Option<String>>(focus_key(user_id), device_id.to_string())
+                    .await
+            })
+            .await?;
         match value.as_deref().and_then(|value| value.rsplit(':').next()) {
             Some("1") => Some(true),
             Some("0") => Some(false),
@@ -678,16 +745,15 @@ impl RealtimeHub {
         let Some(online_ts) = online_ts else {
             return;
         };
-        if let Some(mut conn) = self.redis.read().await.clone()
-            && let Err(err) = redis::Script::new(DELETE_IF_UNCHANGED)
+        self.redis_call("online hdel", move |mut conn| async move {
+            redis::Script::new(DELETE_IF_UNCHANGED)
                 .key(online_key(user_id))
                 .arg(device_id.to_string())
                 .arg(online_ts)
                 .invoke_async::<i64>(&mut conn)
                 .await
-        {
-            tracing::warn!(error = %err, "redis online hdel failed");
-        }
+        })
+        .await;
     }
 
     /// Delivers a JSON text event to local sockets for the given users.
@@ -753,9 +819,9 @@ impl RealtimeHub {
             }
         }
 
-        let Some(mut conn) = self.redis.read().await.clone() else {
+        if self.redis().await.is_none() {
             return;
-        };
+        }
         let event: Value = match serde_json::from_str(payload) {
             Ok(value) => value,
             Err(_) => Value::String(payload.to_string()),
@@ -774,9 +840,10 @@ impl RealtimeHub {
             }
         };
         let channel = format!("{USER_CHANNEL_PREFIX}{user_id}");
-        if let Err(err) = conn.publish::<_, _, ()>(&channel, body).await {
-            tracing::warn!(error = %err, %user_id, "redis publish failed");
-        }
+        self.redis_call("device publish", move |mut conn| async move {
+            conn.publish::<_, _, ()>(channel, body).await
+        })
+        .await;
     }
 
     /// Fan-out entry point used by HTTP handlers.
@@ -813,10 +880,9 @@ impl RealtimeHub {
         self.publish_local_to_users(users.clone(), except_device, payload)
             .await;
 
-        let redis = self.redis.read().await.clone();
-        let Some(mut conn) = redis else {
+        if self.redis().await.is_none() {
             return;
-        };
+        }
 
         let event: Value = match serde_json::from_str(payload) {
             Ok(value) => value,
@@ -838,9 +904,11 @@ impl RealtimeHub {
                 }
             };
             let channel = format!("{USER_CHANNEL_PREFIX}{user_id}");
-            if let Err(err) = conn.publish::<_, _, ()>(&channel, body).await {
-                tracing::warn!(error = %err, %user_id, "redis publish failed");
-            }
+            // After a failure the rest are skipped at once (REDIS_BACKOFF).
+            self.redis_call("users publish", move |mut conn| async move {
+                conn.publish::<_, _, ()>(channel, body).await
+            })
+            .await;
         }
     }
 }
@@ -862,7 +930,7 @@ async fn redis_online_count(
         if ts >= cutoff {
             fresh += 1;
         } else if let Err(err) = conn.hdel::<_, _, ()>(&key, &device_id).await {
-            tracing::warn!(error = %err, %device_id, "redis online prune hdel failed");
+            tracing::warn!(error = %err, "redis online prune hdel failed");
         }
     }
     Ok(fresh)
@@ -1186,6 +1254,112 @@ mod tests {
         hub.unsubscribe(user, phone, old.id).await;
         hub.set_focus(user, phone, new.id, true).await;
         assert!(hub.is_user_online(user).await);
+    }
+
+    /// A Redis that answers the connection's setup and every command up to the first
+    /// `silent_at`, then goes silent, as one does when its host drops off the network.
+    async fn redis_going_silent_at(silent_at: &'static str) -> ConnectionManager {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = vec![0u8; 4096];
+            let mut silent = false;
+            loop {
+                let Ok(read) = socket.read(&mut buffer).await else {
+                    return;
+                };
+                if read == 0 {
+                    return;
+                }
+                let text = String::from_utf8_lossy(&buffer[..read]).to_ascii_uppercase();
+                silent |= text.contains(silent_at);
+                if !silent {
+                    let commands = text.lines().filter(|line| line.starts_with('*')).count();
+                    let _ = socket
+                        .write_all("+OK\r\n".repeat(commands.max(1)).as_bytes())
+                        .await;
+                }
+            }
+        });
+        let client = redis::Client::open(format!("redis://{address}")).expect("client");
+        ConnectionManager::new(client).await.expect("manager")
+    }
+
+    /// A send must reach this replica's sockets within [`REDIS_TIMEOUT`] of Redis going
+    /// silent, and for [`REDIS_BACKOFF`] after it the hub doesn't wait on Redis at all.
+    #[tokio::test]
+    async fn a_silent_redis_falls_back_instead_of_hanging() {
+        let hub = Arc::new(RealtimeHub::new());
+        hub.set_redis(redis_going_silent_at("PUBLISH").await).await;
+        let user = Uuid::new_v4();
+        let (phone, phone_session) = (Uuid::new_v4(), Uuid::new_v4());
+        let (laptop, laptop_session) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut phone_socket = hub
+            .subscribe(user, phone, phone_session)
+            .await
+            .expect("phone");
+        let mut laptop_socket = hub
+            .subscribe(user, laptop, laptop_session)
+            .await
+            .expect("laptop");
+
+        let started = Instant::now();
+        hub.publish_to_users([user], None, "first").await;
+        assert!(started.elapsed() < REDIS_TIMEOUT + Duration::from_millis(500));
+        assert_eq!(phone_socket.events.try_recv().as_deref(), Ok("first"));
+        assert_eq!(laptop_socket.events.try_recv().as_deref(), Ok("first"));
+
+        // Within the backoff, sends, presence, rings and revocations stay on this replica.
+        let started = Instant::now();
+        hub.publish_to_users([user], None, "second").await;
+        hub.publish_to_device(user, phone, "signal").await;
+        assert!(hub.is_user_online(user).await);
+        assert!(hub.is_device_foreground(user, phone).await);
+        hub.remember_ring(user, "ring", 60).await;
+        assert_eq!(hub.pending_ring(user).await.as_deref(), Some("ring"));
+        hub.close_sessions(user, &[laptop_session]).await;
+        hub.unsubscribe(user, phone, phone_socket.id).await;
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(phone_socket.events.try_recv().as_deref(), Ok("second"));
+        assert_eq!(phone_socket.events.try_recv().as_deref(), Ok("signal"));
+        assert_eq!(laptop_socket.events.try_recv().as_deref(), Ok("second"));
+        assert_eq!(
+            laptop_socket.events.try_recv(),
+            Err(TryRecvError::Disconnected)
+        );
+        assert!(!hub.is_user_online(user).await);
+
+        // Readiness still asks Redis, and gives up on it too.
+        let started = Instant::now();
+        assert!(hub.ping_redis().await.is_err());
+        assert!(started.elapsed() < REDIS_TIMEOUT + Duration::from_millis(500));
+    }
+
+    /// The presence write a new socket makes is bounded the same way.
+    #[tokio::test]
+    async fn a_silent_redis_does_not_hold_up_a_new_socket() {
+        let hub = Arc::new(RealtimeHub::new());
+        hub.set_redis(redis_going_silent_at("HSET").await).await;
+        let (user, device) = (Uuid::new_v4(), Uuid::new_v4());
+
+        let started = Instant::now();
+        let mut socket = hub
+            .subscribe(user, device, Uuid::new_v4())
+            .await
+            .expect("socket");
+        assert!(started.elapsed() < REDIS_TIMEOUT + Duration::from_millis(500));
+        let started = Instant::now();
+        assert!(hub.is_user_online(user).await);
+        hub.publish_to_users([user], None, "event").await;
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(socket.events.try_recv().as_deref(), Ok("event"));
     }
 
     #[test]
