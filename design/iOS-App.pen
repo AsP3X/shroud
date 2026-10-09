@@ -84024,7 +84024,7 @@
       "x": 2920,
       "y": 13281,
       "name": "Privacy and Security",
-      "context": "Settings › Privacy and Security (full length). Blocked appears only while someone is blocked (blocking happens on the contact profile).",
+      "context": "Settings › Privacy and Security (full length). Blocked appears only while someone is blocked (blocking happens on the contact profile). Delete Account is always the last card; it pushes Delete Account.",
       "clip": true,
       "width": 390,
       "fill": "$bg-grouped",
@@ -84511,6 +84511,97 @@
                       "fontFamily": "$font",
                       "fontSize": 13,
                       "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "E2fm9l",
+              "name": "Delete Account Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "XiasJ",
+                  "name": "Row Delete Account",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    12,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Svurv",
+                      "name": "Icon Square",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#FF3B30",
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "Iloo9",
+                          "name": "Glyph",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "trash-fill",
+                          "library": "phosphor",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Ofhe3",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 2,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "A8U4R",
+                          "name": "Title",
+                          "fill": "#FF3B30",
+                          "content": "Delete Account",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ShsIo",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Deletes your account and erases it from every device.",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "Sy9m0",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
                     }
                   ]
                 }
@@ -119251,6 +119342,3690 @@
                   "fontWeight": "600"
                 }
               ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "xF2Aq",
+      "x": 7620,
+      "y": 13281,
+      "name": "Delete Account",
+      "context": "Settings › Privacy and Security › Delete Account (pushed). Empty password: the button is disabled. Back and Cancel both pop without deleting.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "XJm41",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "N9FTl7",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Delete Account"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "tRNxb",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "biwUW",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "Delete your account?",
+              "fontFamily": "$font",
+              "fontSize": 26,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "gMnec",
+              "name": "Consequences Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                3,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "f7UtBz",
+                  "name": "Item 1",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "yMzJ7",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "message-square-x",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "CAnI1",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your messages are replaced with “Message deleted” for everyone.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "e78oC",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "mYk1U",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "VEywq",
+                  "name": "Item 2",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "uaPff",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "WhO2y",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "TvTuD",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "t8a6nf",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "G7eqz",
+                  "name": "Item 3",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "m61hNL",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "trash-2",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "F9kwo",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "x6fmN",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "t7mVQ",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SaUNF",
+                  "name": "Item 4",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "gj5g6",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "at-sign",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "w5voc",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your username and share code are released, so someone else can take them.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "YT66r",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "jhbqe",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "yHgFI",
+                  "name": "Item 5",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ZDjOg",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "dSJ2D",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Every device signed in to this account is signed out and erased.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "q6KbXp",
+              "name": "Confirm Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This can't be undone. Enter your password to confirm.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "elmIK",
+              "name": "Password Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "U8HbD",
+                  "name": "Password Row",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "meOV9",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 86,
+                      "content": "Password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FUKRj",
+                      "name": "Placeholder",
+                      "fill": "#C4C4C7",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your account password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "Yy7Tp",
+                      "name": "Eye Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "eye-off",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "DzSCc",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "s8TAt",
+              "name": "Delete Button",
+              "opacity": 0.4,
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#FF3B30",
+              "cornerRadius": 27,
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "jLRVT",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Delete Account",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "B3th9",
+              "name": "Cancel Button",
+              "width": "fill_container",
+              "height": 44,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "VZXo2",
+                  "name": "Cancel Label",
+                  "fill": "$accent",
+                  "content": "Cancel",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "cUIwd",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "fxOtf",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "sCIHg",
+      "x": 8090,
+      "y": 13281,
+      "name": "Delete Account · Filled",
+      "context": "Settings › Privacy and Security › Delete Account. Password entered: the button is enabled.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "cM02K",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "vS4Vr",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Delete Account"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "zZ6Jl",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "Wqlew",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "Delete your account?",
+              "fontFamily": "$font",
+              "fontSize": 26,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "bcQk7",
+              "name": "Consequences Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                3,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n9mP7",
+                  "name": "Item 1",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Wjeli",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "message-square-x",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "s4arMQ",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your messages are replaced with “Message deleted” for everyone.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "p9u1JH",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "kdi6S",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Wr6pD",
+                  "name": "Item 2",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "g7HiG",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "U9sX5J",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xocgV",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "RGW9a",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "m4JVu",
+                  "name": "Item 3",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "z6H7wN",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "trash-2",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "nqq5I",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "VQuv5",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "NjzRU",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xTdYh",
+                  "name": "Item 4",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "vYQaF",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "at-sign",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "rzK1B",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your username and share code are released, so someone else can take them.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "IQGfw",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Wp5Ru",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ILoW0",
+                  "name": "Item 5",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "r3RlQ",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "KOpU1",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Every device signed in to this account is signed out and erased.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "ROk6O",
+              "name": "Confirm Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This can't be undone. Enter your password to confirm.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "luVnD",
+              "name": "Password Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "L3Xzuk",
+                  "name": "Password Row",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "OzgXf",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 86,
+                      "content": "Password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "o92Wa8",
+                      "name": "Placeholder",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "••••••••••",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "rtX4f",
+                      "name": "Eye Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "eye-off",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "kJ4NJ",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "Q3o0Eq",
+              "name": "Delete Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#FF3B30",
+              "cornerRadius": 27,
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "F2vlYY",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Delete Account",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "RNcxa",
+              "name": "Cancel Button",
+              "width": "fill_container",
+              "height": 44,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "PVbNL",
+                  "name": "Cancel Label",
+                  "fill": "$accent",
+                  "content": "Cancel",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pPKmh",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "n5kWf",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "A49wP",
+      "x": 8560,
+      "y": 13281,
+      "name": "Delete Account · Deleting",
+      "context": "Settings › Privacy and Security › Delete Account. While the request runs: button shows Deleting… and is disabled; field, Cancel and Back are disabled; swipe-back is off.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "D8mLiE",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "GAlOm",
+          "type": "ref",
+          "ref": "Koeh8",
+          "opacity": 1,
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "x8GMQr": {
+              "opacity": 0.35
+            },
+            "HlyZD": {
+              "content": "Delete Account"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "RQVMU",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "cugXX",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "Delete your account?",
+              "fontFamily": "$font",
+              "fontSize": 26,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "u3cvet",
+              "name": "Consequences Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                3,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "r7qkDc",
+                  "name": "Item 1",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "r5ffV",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "message-square-x",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "di5Xr",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your messages are replaced with “Message deleted” for everyone.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "e5gKa",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Et4hb",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DxMio",
+                  "name": "Item 2",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "qFl0Z",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "MNG0V",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "kQNFB",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "LnZIE",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ID1cV",
+                  "name": "Item 3",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "qO7Ae",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "trash-2",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "fNYzp",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "aClpA",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "u9GGRS",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rt9hD",
+                  "name": "Item 4",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "j1uqY",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "at-sign",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "I2nBu",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your username and share code are released, so someone else can take them.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "zcraf",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "A51qf",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "cpiV2",
+                  "name": "Item 5",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "XyVgh",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "GsWq3",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Every device signed in to this account is signed out and erased.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "r5YVt",
+              "name": "Confirm Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This can't be undone. Enter your password to confirm.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "CQYHq",
+              "name": "Password Card",
+              "opacity": 0.5,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "E7KaY",
+                  "name": "Password Row",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Z6BqSD",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 86,
+                      "content": "Password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ad7F5",
+                      "name": "Placeholder",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "••••••••••",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "jBhnz",
+                      "name": "Eye Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "eye-off",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KSUMt",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "ftO4U",
+              "name": "Delete Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#FF3B30",
+              "cornerRadius": 27,
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "S497cU",
+                  "name": "Spinner",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "loader-circle",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                },
+                {
+                  "type": "text",
+                  "id": "W3NzDv",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Deleting…",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "oT3sT",
+              "name": "Cancel Button",
+              "opacity": 0.35,
+              "width": "fill_container",
+              "height": 44,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "B5Yot",
+                  "name": "Cancel Label",
+                  "fill": "$accent",
+                  "content": "Cancel",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Q3aEla",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "f9FKT5",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "F77Wuw",
+      "x": 9030,
+      "y": 13281,
+      "name": "Delete Account · Wrong password",
+      "context": "Settings › Privacy and Security › Delete Account. 401 INVALID_CREDENTIALS: stays here, the password stays selected for retyping. Does not count toward the session's 401 streak.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "WNQtC",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "WXnm7",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Delete Account"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "L7vc6C",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "D8ys2p",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "Delete your account?",
+              "fontFamily": "$font",
+              "fontSize": 26,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "e8DyH",
+              "name": "Consequences Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                3,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "UmUKc",
+                  "name": "Item 1",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Rwsr1",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "message-square-x",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "lgyR5",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your messages are replaced with “Message deleted” for everyone.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "dTJYw",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "H4fP2b",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "V52zua",
+                  "name": "Item 2",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "E8hnAl",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "putAM",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "G4Ck4",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Nc4Cx",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "RileX",
+                  "name": "Item 3",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "TCYu6",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "trash-2",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Y9iKpg",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "H0Qmiv",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Pmt6L",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "LYZBL",
+                  "name": "Item 4",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "bBAp7",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "at-sign",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "TOUER",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your username and share code are released, so someone else can take them.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "KwicU",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Nu5Bl",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "PV4xt",
+                  "name": "Item 5",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "O68eRw",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "yklP0",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Every device signed in to this account is signed out and erased.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "DLnvp",
+              "name": "Confirm Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This can't be undone. Enter your password to confirm.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "B5Yq6",
+              "name": "Password Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ZsRuF",
+                  "name": "Password Row",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "JdhCL",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 86,
+                      "content": "Password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JAVfk",
+                      "name": "Selection",
+                      "width": "fill_container",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 3,
+                          "id": "fL5wc",
+                          "layoutPosition": "absolute",
+                          "x": -2,
+                          "y": -1,
+                          "name": "Selection Fill",
+                          "fill": "#5E5CE633",
+                          "width": 94,
+                          "height": 22
+                        },
+                        {
+                          "type": "text",
+                          "id": "C7VHKE",
+                          "name": "Placeholder",
+                          "fill": "$text-primary",
+                          "content": "••••••••••",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "icon",
+                      "id": "DifAP",
+                      "name": "Eye Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "eye-off",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "RIQ3s",
+              "name": "Error",
+              "fill": "#FF3B30",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "That password isn't right.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "lwgiY",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "c2O2ni",
+              "name": "Delete Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#FF3B30",
+              "cornerRadius": 27,
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "RqIYc",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Delete Account",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "mea7U",
+              "name": "Cancel Button",
+              "width": "fill_container",
+              "height": 44,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "uQFiU",
+                  "name": "Cancel Label",
+                  "fill": "$accent",
+                  "content": "Cancel",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "VWY3V",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "PDtnz",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "JsoW8",
+      "x": 9500,
+      "y": 13281,
+      "name": "Delete Account · Too many tries",
+      "context": "Settings › Privacy and Security › Delete Account. 429 (AUTH_SENSITIVE_USER, 5 per hour).",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "RiOa6",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "Z4PMj",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Delete Account"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "JX97F",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "ZlK6i",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "Delete your account?",
+              "fontFamily": "$font",
+              "fontSize": 26,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "Yfdsi",
+              "name": "Consequences Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                3,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "B1SW8",
+                  "name": "Item 1",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "z2w7O",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "message-square-x",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "l98C0c",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your messages are replaced with “Message deleted” for everyone.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "jXdvT",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Z4GoT2",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "jNbUz",
+                  "name": "Item 2",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "cPIJT",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "b54MR",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Sa34N",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "Sw8qB",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gtvoU",
+                  "name": "Item 3",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "x03Ps5",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "trash-2",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ugi9n",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "PdCbB",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "jwWVf",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "a6EF1d",
+                  "name": "Item 4",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "XjDjR",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "at-sign",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "z4bjwQ",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your username and share code are released, so someone else can take them.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fn6gC",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "g5TFMT",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "xWHO1",
+                  "name": "Item 5",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "aj4mh",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "L4nuGX",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Every device signed in to this account is signed out and erased.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "J6eKl",
+              "name": "Confirm Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This can't be undone. Enter your password to confirm.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "i5aPXT",
+              "name": "Password Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "isMan",
+                  "name": "Password Row",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "dUaS8",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 86,
+                      "content": "Password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "B1KCc",
+                      "name": "Placeholder",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "••••••••••",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "M2oZB",
+                      "name": "Eye Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "eye-off",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "XTvD9",
+              "name": "Error",
+              "fill": "#FF3B30",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Too many tries. Try again later.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "H4OpG",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "g0Hqo",
+              "name": "Delete Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#FF3B30",
+              "cornerRadius": 27,
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "qjcQD",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Delete Account",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "dH1Ah",
+              "name": "Cancel Button",
+              "width": "fill_container",
+              "height": 44,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "EmVMZ",
+                  "name": "Cancel Label",
+                  "fill": "$accent",
+                  "content": "Cancel",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "b3luU",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "seRF5",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "eeNoi",
+      "x": 9970,
+      "y": 13281,
+      "name": "Delete Account · Couldn't reach",
+      "context": "Settings › Privacy and Security › Delete Account. Network error, timeout or 5xx: nothing was deleted, the button works again.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "lBol6",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar",
+          "width": "fill_container"
+        },
+        {
+          "id": "JVrl3",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Delete Account"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "zMh5U",
+          "name": "Body",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            12,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "p4nkJ",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "Delete your account?",
+              "fontFamily": "$font",
+              "fontSize": 26,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "cjiyO",
+              "name": "Consequences Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                3,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "NK9ou",
+                  "name": "Item 1",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ta3m7",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "message-square-x",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "qGaWr",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your messages are replaced with “Message deleted” for everyone.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "C0oUTS",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "FKVJf",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "w8UIc",
+                  "name": "Item 2",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "yrYwF",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "g57ij",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "wOxw9",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "TR63h",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ostXt",
+                  "name": "Item 3",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "QLwNX",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "trash-2",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "i0QshH",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rGNbB",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "zucv8",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lgPrR",
+                  "name": "Item 4",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "b3O1s4",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "at-sign",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "i4vBC4",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Your username and share code are released, so someone else can take them.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "d3ez3",
+                  "name": "Row Sep",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    46
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "knLtK",
+                      "name": "Hairline",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "emy6k",
+                  "name": "Item 5",
+                  "width": "fill_container",
+                  "gap": 14,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "DIepv",
+                      "name": "Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "#FF3B30"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FcP0b",
+                      "name": "Text",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Every device signed in to this account is signed out and erased.",
+                      "lineHeight": 1.3,
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "BLlYT",
+              "name": "Confirm Note",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "This can't be undone. Enter your password to confirm.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "S1BqT",
+              "name": "Password Card",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "r5hRuw",
+                  "name": "Password Row",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 10,
+                  "padding": [
+                    0,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "TBJRQ",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": 86,
+                      "content": "Password",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "jE3cV",
+                      "name": "Placeholder",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "••••••••••",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "qh11B",
+                      "name": "Eye Icon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "eye-off",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "JZGcH",
+              "name": "Error",
+              "fill": "#FF3B30",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Couldn't reach the server. Your account wasn't deleted.",
+              "lineHeight": 1.35,
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "B45nQ",
+          "name": "Bottom Section",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 4,
+          "padding": [
+            8,
+            20,
+            0,
+            20
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "OVgZe",
+              "name": "Delete Button",
+              "width": "fill_container",
+              "height": 54,
+              "fill": "#FF3B30",
+              "cornerRadius": 27,
+              "gap": 8,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "bCiXq",
+                  "name": "CTA Label",
+                  "fill": "#FFFFFF",
+                  "content": "Delete Account",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "qdhJ1",
+              "name": "Cancel Button",
+              "width": "fill_container",
+              "height": 44,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "OMPiZ",
+                  "name": "Cancel Label",
+                  "fill": "$accent",
+                  "content": "Cancel",
+                  "fontFamily": "$font",
+                  "fontSize": 17,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "alkzh",
+          "name": "Home Indicator",
+          "width": "fill_container",
+          "height": 23,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "rectangle",
+              "cornerRadius": 3,
+              "id": "csDde",
+              "name": "Indicator",
+              "fill": "$text-primary",
+              "width": 140,
+              "height": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "jRevn",
+      "x": 10440,
+      "y": 13281,
+      "name": "Log Out — Account deleted",
+      "context": "Fourth wipe reason (account deleted): DEVICE_REMOVED with reason \"account_deleted\" on a request, the socket, the removal push or session-status, and the device that deleted the account after its 204. Same takeover and steps as Log Out; the running subtitle leads with 'This account was deleted.' and the footnote is hidden (the account is gone, so 'stay as they are' would be false). Ends on the Welcome screen.",
+      "clip": true,
+      "width": 390,
+      "height": 844,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "BKczt",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "type": "frame",
+          "id": "t8vhD2",
+          "name": "Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 28,
+          "padding": [
+            44,
+            20,
+            0,
+            20
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "B6TPC5",
+              "name": "Emblem",
+              "width": 128,
+              "height": 128,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "LdOtf",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Ring track",
+                  "innerRadius": 0.94,
+                  "fill": "$separator",
+                  "width": 128,
+                  "height": 128
+                },
+                {
+                  "type": "ellipse",
+                  "id": "po95p",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Ring progress",
+                  "innerRadius": 0.94,
+                  "startAngle": 90,
+                  "sweepAngle": -216,
+                  "fill": "$accent",
+                  "width": 128,
+                  "height": 128
+                },
+                {
+                  "type": "frame",
+                  "id": "kgm1n",
+                  "x": 20,
+                  "y": 20,
+                  "name": "Core",
+                  "width": 88,
+                  "height": 88,
+                  "fill": "$accent-soft",
+                  "cornerRadius": 44,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "Vf8Uk",
+                      "name": "Device",
+                      "width": 38,
+                      "height": 38,
+                      "icon": "smartphone",
+                      "library": "lucide",
+                      "fill": "$accent"
+                    }
+                  ]
+                },
+                {
+                  "type": "ellipse",
+                  "id": "bZEAN",
+                  "x": 112,
+                  "y": 18,
+                  "name": "Particle",
+                  "fill": "#5E5CE6CC",
+                  "width": 8,
+                  "height": 8
+                },
+                {
+                  "type": "ellipse",
+                  "id": "UASWE",
+                  "x": 120,
+                  "y": 46,
+                  "name": "Particle",
+                  "fill": "#5E5CE688",
+                  "width": 5,
+                  "height": 5
+                },
+                {
+                  "type": "ellipse",
+                  "id": "qVs01",
+                  "x": 10,
+                  "y": 30,
+                  "name": "Particle",
+                  "fill": "#5E5CE699",
+                  "width": 6,
+                  "height": 6
+                },
+                {
+                  "type": "ellipse",
+                  "id": "B4KPGi",
+                  "x": 2,
+                  "y": 78,
+                  "name": "Particle",
+                  "fill": "#5E5CE666",
+                  "width": 5,
+                  "height": 5
+                },
+                {
+                  "type": "ellipse",
+                  "id": "Q6SLYf",
+                  "x": 104,
+                  "y": 102,
+                  "name": "Particle",
+                  "fill": "#5E5CE677",
+                  "width": 6,
+                  "height": 6
+                },
+                {
+                  "type": "ellipse",
+                  "id": "L7XlLS",
+                  "x": 88,
+                  "y": 4,
+                  "name": "Particle",
+                  "fill": "#5E5CE655",
+                  "width": 4,
+                  "height": 4
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "N2bBw",
+              "name": "Heading",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "o75RU",
+                  "name": "Title",
+                  "fill": "$text-primary",
+                  "content": "Clearing this iPhone",
+                  "fontFamily": "$font",
+                  "fontSize": 26,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "qE7AY",
+                  "name": "Subtitle",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "This account was deleted. Removing everything Shroud stored for @niklas_v.",
+                  "lineHeight": 1.4,
+                  "textAlign": "center",
+                  "fontFamily": "$font",
+                  "fontSize": 15,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "aj8Ch",
+              "name": "Steps",
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": [
+                0,
+                16
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Z62FZ",
+                  "name": "Signing out",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "lbGnR",
+                      "name": "Status done",
+                      "width": 24,
+                      "height": 24,
+                      "fill": "$accent",
+                      "cornerRadius": 12,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "fdBwt",
+                          "name": "Check",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "dK2DI",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Signing out",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "RIGZm",
+                      "name": "Detail",
+                      "fill": "$text-secondary",
+                      "content": "Session ended",
+                      "fontFamily": "$font",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "nZnpr",
+                  "name": "Separator",
+                  "fill": "$separator",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "COIla",
+                  "name": "Messages",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "PROOw",
+                      "name": "Status done",
+                      "width": 24,
+                      "height": 24,
+                      "fill": "$accent",
+                      "cornerRadius": 12,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "PUJUh",
+                          "name": "Check",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "MZ2Nr",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Messages",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "E1zrr",
+                      "name": "Detail",
+                      "fill": "$text-secondary",
+                      "content": "214 removed",
+                      "fontFamily": "$font",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "ro1Hl",
+                  "name": "Separator",
+                  "fill": "$separator",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "TCk6p",
+                  "name": "Photos, videos & voice",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "U64iv",
+                      "name": "Status done",
+                      "width": 24,
+                      "height": 24,
+                      "fill": "$accent",
+                      "cornerRadius": 12,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "hZ3Ft",
+                          "name": "Check",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "check",
+                          "library": "lucide",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "GUPMX",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Photos, videos & voice",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "oQLK6",
+                      "name": "Detail",
+                      "fill": "$text-secondary",
+                      "content": "37 · 18.2 MB",
+                      "fontFamily": "$font",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "Gp9sc",
+                  "name": "Separator",
+                  "fill": "$separator",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "KSK74",
+                  "name": "Encryption keys",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fANvW",
+                      "name": "Status active",
+                      "width": 24,
+                      "height": 24,
+                      "cornerRadius": 12,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "I102g",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Spinner track",
+                          "innerRadius": 0.8,
+                          "fill": "$separator",
+                          "width": 24,
+                          "height": 24
+                        },
+                        {
+                          "type": "ellipse",
+                          "id": "IGBt0",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Spinner arc",
+                          "innerRadius": 0.8,
+                          "startAngle": 90,
+                          "sweepAngle": -110,
+                          "fill": "$accent",
+                          "width": 24,
+                          "height": 24
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "S5GJcX",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Encryption keys",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "k04pP",
+                  "name": "Separator",
+                  "fill": "$separator",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "OCJ2t",
+                  "name": "Settings & caches",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "co5Un",
+                      "name": "Status pending",
+                      "width": 24,
+                      "height": 24,
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1.5,
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "G0YV6",
+                      "name": "Label",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Settings & caches",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "cmzg4",
+                  "name": "Separator",
+                  "fill": "$separator",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "wwXrj",
+                  "name": "Checking nothing is left",
+                  "width": "fill_container",
+                  "height": 50,
+                  "gap": 12,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Ndr7h",
+                      "name": "Status pending",
+                      "width": 24,
+                      "height": 24,
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1.5,
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "p8nA95",
+                      "name": "Label",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Checking nothing is left",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "D6isIN",
+          "x": 0,
+          "y": 788,
+          "name": "Footnote",
+          "enabled": false,
+          "width": "fill_container(390)",
+          "layout": "vertical",
+          "gap": 6,
+          "padding": [
+            0,
+            40,
+            40,
+            40
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "tupg3",
+              "name": "Shield",
+              "width": 16,
+              "height": 16,
+              "icon": "shield-check",
+              "library": "lucide",
+              "fill": "$text-secondary"
+            },
+            {
+              "type": "text",
+              "id": "JCISY",
+              "x": 40,
+              "y": 22,
+              "name": "Note",
+              "enabled": false,
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container(310)",
+              "content": "Your account and chats on other devices stay as they are.",
+              "lineHeight": 1.4,
+              "textAlign": "center",
+              "fontFamily": "$font",
+              "fontSize": 13,
+              "fontWeight": "normal"
             }
           ]
         }

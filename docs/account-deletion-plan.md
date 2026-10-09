@@ -1,6 +1,9 @@
 # Delete Account in the apps — implementation plan (Grok = code, Claude = design)
 
-**Status:** proposed 2026-10-09. Nothing here is built yet.
+**Status:** proposed 2026-10-09. Design C1–C4 drawn 2026-10-09; the frames are exported to
+`docs/account-deletion/` (`ios-`, `ipad-`, `web-`, `android-` + `privacy-and-security`,
+`delete-account`, `delete-account-{filled,deleting,wrong-password,too-many-tries,couldnt-reach}`,
+`wipe-account-deleted`; Android also `privacy-and-security-dark`). No code is written yet.
 **Scope:** let a person delete their own account from iOS, the web client and Android. The server
 already does the deletion (`DELETE /auth/account`, `routes/auth.rs`, documented in
 `docs/server-plan.md` § `DELETE /auth/account`). No app offers it yet; Android has only the request
@@ -104,7 +107,8 @@ failed) stay as they are.
 
 | # | Date | Change | Asked by |
 | - | ---- | ------ | -------- |
-| — | — | none yet | — |
+| 1 | 2026-10-09 | Wipe screen for reason **account deleted**: the footnote under the steps (iOS "Your account and chats on other devices stay as they are.", and its web and Android equivalents) is hidden, because it would be false. No new copy. | Claude (C1) |
+| 2 | 2026-10-09 | Layout, all platforms: C2 is the row's subtitle inside the Delete Account card (as "Lock chats now" carries its subtitle), not a footer below it. The card is the last one on the screen, after "Encrypted on this device". The row has a red trash icon tile, the title in red and a chevron. Errors C7–C9 sit as red 13 pt text directly under the password card. | Claude (C1) |
 
 ---
 
