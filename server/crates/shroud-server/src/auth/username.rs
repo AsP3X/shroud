@@ -4,38 +4,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
+use crate::reserved_names::RESERVED_EXACT;
 
 /// Minimum username length (inclusive).
 pub const USERNAME_MIN_LEN: usize = 3;
 /// Maximum username length (inclusive).
 pub const USERNAME_MAX_LEN: usize = 32;
-
-/// Usernames that must never be registered (case-folded match).
-const RESERVED_EXACT: &[&str] = &[
-    "admin",
-    "administrator",
-    "support",
-    "help",
-    "shroud",
-    "system",
-    "root",
-    "security",
-    "null",
-    "undefined",
-    "api",
-    "www",
-    "mail",
-    "email",
-    "mod",
-    "moderator",
-    "staff",
-    "official",
-    "everyone",
-    "all",
-    "me",
-    "self",
-    "owner",
-];
 
 /// Case-folded prefixes that are blocked.
 const RESERVED_PREFIXES: &[&str] = &["shroud_", "system_", "admin_", "support_"];
@@ -74,7 +48,11 @@ pub fn normalize_username(raw: &str) -> Result<String, AppError> {
     Ok(folded)
 }
 
-/// SHA-256 of a normalized username, standard Base64. This is the only form that is sent or stored.
+/// SHA-256 of a normalized username, standard Base64.
+///
+/// Login used to send this. New clients send the argon2id digest from [`crate::username_kdf`]
+/// and pass this as `legacy_username_hash` until that account's row has moved. A contact
+/// fingerprint (`username + "." + public key`) still uses this function.
 pub fn username_hash_b64(normalized: impl AsRef<str>) -> String {
     let digest = Sha256::digest(normalized.as_ref().as_bytes());
     BASE64.encode(digest)
@@ -86,7 +64,7 @@ pub fn parse_username_hash(raw: &str) -> Result<[u8; 32], AppError> {
         .decode(raw.trim().as_bytes())
         .ok()
         .filter(|bytes| bytes.len() == 32)
-        .ok_or_else(|| AppError::validation("username_hash must be a Base64 SHA-256 digest."))?;
+        .ok_or_else(|| AppError::validation("username_hash must be a 32-byte Base64 digest."))?;
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&bytes);
     Ok(hash)

@@ -127,6 +127,14 @@ if (Test-Path -LiteralPath ".env") {
     if ($line) { $existingTurn = $line.Substring("TURN_SECRET=".Length).Trim() }
 }
 $TURN_SECRET = if ($existingTurn -and $existingTurn -ne "GENERATE_ME") { $existingTurn } else { New-Secret }
+# Reused like TURN_SECRET. 16 bytes: the server rejects a 32-byte secret. A new salt makes
+# every username stop matching. Clients download this value, so it is not a secret.
+$existingSalt = $null
+if (Test-Path -LiteralPath ".env") {
+    $line = Get-Content -LiteralPath ".env" | Where-Object { $_ -match "^USERNAME_KDF_SALT=" } | Select-Object -Last 1
+    if ($line) { $existingSalt = $line.Substring("USERNAME_KDF_SALT=".Length).Trim() }
+}
+$USERNAME_KDF_SALT = if ($existingSalt -and $existingSalt -ne "GENERATE_ME") { $existingSalt } else { New-Secret -Bytes 16 }
 
 Write-Host ""
 Write-Host "  Calls between networks that block direct connections (many mobile carriers) need the"
@@ -215,6 +223,7 @@ $envLines = @(
     "NEBULAR_SECRET_ACCESS_KEY=$NEBULAR_SECRET_ACCESS_KEY"
     "NOS_METRICS_TOKEN=$NOS_METRICS_TOKEN"
     "REDIS_PASSWORD=$REDIS_PASSWORD"
+    "USERNAME_KDF_SALT=$USERNAME_KDF_SALT"
     "COMPOSE_PROFILES=$COMPOSE_PROFILES"
     "TURN_URLS=$TURN_URLS"
     "TURN_SECRET=$TURN_SECRET"

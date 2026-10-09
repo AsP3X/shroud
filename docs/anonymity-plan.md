@@ -24,8 +24,10 @@ to their chat partners), then phase 2, then 3. Phase 4 lists what can only be re
 
 ## Phase 0 — Usernames off the server
 
-Built on `dev`: clients send `SHA-256(case-folded name)` as standard Base64 (`username_hash`);
-migration `server/migrations/postgres/029_private_usernames.sql` hashes the stored name and drops
+Built on `dev`: clients send an argon2id digest of the case-folded name as standard Base64
+(`username_hash`), salted with that server's public salt (`GET /api/v1/auth/username-kdf`).
+Rows that still hold unsalted SHA-256 move on the next successful login. Migration
+`server/migrations/postgres/029_private_usernames.sql` hashed the stored name and dropped
 `users.username`; mutual contacts learn a name only from `contact_sealed_names`
 (`PUT /contacts/{id}/sealed-name`); register, login, `/auth/me`, contacts, chats, blocks, calls
 and push do not carry a username; `GET /users/by-username` is gone; register and login logs name
@@ -42,16 +44,26 @@ files still show that switch until a design pass.
     `cargo test -p shroud-server` passed (one ignored ntfy test). `cargo clippy -p shroud-server
     --all-targets -- -D warnings` passed. Web `tsc` and `username.selftest` passed. Android unit
     tests for contacts, chats, calls, DTOs and the name cache passed. The iOS app built.
-- [ ] **0.2 Make the username hash expensive to guess.** Today it is unsalted SHA-256 over
-  `[a-z0-9_]{3,32}`, so a dictionary reverses most names in seconds from the DB or from the
+- [x] **0.2 Make the username hash expensive to guess.** It was unsalted SHA-256 over
+  `[a-z0-9_]{3,32}`, so a dictionary reversed most names in seconds from the DB or from the
   Redis keys `rl:auth_user:{hash}`.
-  - Change: a slow, salted hash on the client (for example argon2id with a per-server salt from
-    `GET /config`); migrate existing hashes at each user's next login. A server-side pepper alone
-    doesn't help against someone who controls the server.
-  - Where: `auth/username.rs`, `web/src/crypto/username.ts`, `ios/shroud/Services/Auth/UsernameHash.swift`,
-    `android/.../core/auth/UsernameHash.kt`.
+  - Change: argon2id on the client (version 0x13, 64 MiB, 8 iterations, parallelism 1, 32-byte
+    output), salted with a per-server public salt (`USERNAME_KDF_SALT`, 16 bytes) from
+    `GET /api/v1/auth/username-kdf`. Clients refuse a cheaper parameter set. A 404 is an old
+    server and still uses SHA-256. An existing row moves on the next successful login, inside
+    that login's transaction, so a device-limit refusal rolls the move back. A server-side
+    pepper alone doesn't help against someone who controls the server. Do not rotate the salt:
+    every username would stop matching. The local fingerprint `username + "." + public key`
+    stays SHA-256.
+  - Where: `username_kdf.rs`, `auth/username.rs`, `web/src/crypto/username.ts`,
+    `ios/shroud/Services/Auth/UsernameHash.swift`, `android/.../core/auth/UsernameHash.kt`.
   - Done when: one guess costs ≥ 100 ms on a server CPU; all three clients log in to the same
     account; old accounts migrate on login.
+  - Verified 2026-10-09. Release `alice_matches_the_pinned_vector_and_costs_at_least_100ms`
+    passed (the assert is ≥ 100 ms). Web, Android, and iOS tests pin the same digest of `alice`
+    under the published test salt. `login_migrates_a_sha256_username_and_a_device_limit_rolls_it_back`
+    passed on a throwaway Postgres. A live sign-in from the three apps was not run. After a row
+    moves, an old app that only sends SHA-256 can no longer sign in with that name.
 - [ ] **0.3 Scrub the plaintext usernames left behind.** Logs from before 029 contain
   `username = …` on every register and login; backups, Redis RDB snapshots and dead Postgres
   rows still hold names.

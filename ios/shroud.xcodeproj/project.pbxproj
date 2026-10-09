@@ -10,6 +10,7 @@
 		739D7554305DCFD500302FD6 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 73WK0002305C000000000002 /* WhisperKit */; };
 		73A0B0020000000000000002 /* ShroudNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 73A0B0010000000000000001 /* ShroudNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		73A0C0020000000000000002 /* ShroudScreenShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 73A0C0010000000000000001 /* ShroudScreenShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		73A20003305C000000000003 /* Argon2 in Frameworks */ = {isa = PBXBuildFile; productRef = 73A20002305C000000000002 /* Argon2 */; };
 		73WR0003305C000000000003 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 73WR0002305C000000000002 /* WebRTC */; };
 /* End PBXBuildFile section */
 
@@ -139,6 +140,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				739D7554305DCFD500302FD6 /* WhisperKit in Frameworks */,
+				73A20003305C000000000003 /* Argon2 in Frameworks */,
 				73WR0003305C000000000003 /* WebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -224,6 +226,7 @@
 			name = shroud;
 			packageProductDependencies = (
 				73WK0002305C000000000002 /* WhisperKit */,
+				73A20002305C000000000002 /* Argon2 */,
 				73WR0002305C000000000002 /* WebRTC */,
 			);
 			productName = shroud;
@@ -362,6 +365,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				73A20001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/Argon2" */,
 				73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -951,6 +955,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		73A20001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/Argon2" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/Argon2;
+		};
 		73WR0001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/WebRTC" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Vendor/WebRTC;
@@ -969,6 +977,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		73A20002305C000000000002 /* Argon2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 73A20001305C000000000001 /* XCLocalSwiftPackageReference "Vendor/Argon2" */;
+			productName = Argon2;
+		};
 		73WK0002305C000000000002 /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 73WK0001305C000000000001 /* XCRemoteSwiftPackageReference "WhisperKit" */;

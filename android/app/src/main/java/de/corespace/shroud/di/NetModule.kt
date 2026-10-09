@@ -1,7 +1,9 @@
 package de.corespace.shroud.di
 
+import android.content.Context
 import de.corespace.shroud.AppContainer
 import de.corespace.shroud.AppModule
+import de.corespace.shroud.core.auth.UsernameMigration
 import de.corespace.shroud.core.net.ApiClient
 import de.corespace.shroud.core.net.ConnectivityMonitor
 import de.corespace.shroud.core.net.ShroudApi
@@ -47,6 +49,9 @@ class NetModule(container: AppContainer) : AppModule(container) {
     val connectivity: ConnectivityMonitor by lazy { ConnectivityMonitor(container.appContext) }
 
     override fun onProcessStart() {
+        UsernameMigration.install(
+            container.appContext.getSharedPreferences("shroud.username-kdf", Context.MODE_PRIVATE),
+        )
         connectivity.start()
     }
 }

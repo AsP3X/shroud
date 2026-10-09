@@ -1,6 +1,14 @@
 package de.corespace.shroud.core.net
 
+import de.corespace.shroud.core.auth.USERNAME_KDF_WEAK
+import de.corespace.shroud.core.auth.UsernameHash
+import de.corespace.shroud.core.auth.UsernameKdfParams
+import de.corespace.shroud.core.auth.UsernameMigration
 import de.corespace.shroud.core.model.Ids
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -27,6 +35,9 @@ import java.util.UUID
  */
 class ShroudApi(internal val client: ApiClient) {
     private val json: Json get() = client.json
+    private val kdfGate = Mutex()
+    private var kdfParams: UsernameKdfParams? = null
+    private var kdfIsLegacy = false
 
     /**
      * Partial updates (`NotificationSettingsPatch`, `UpdatePrivacySettingsBody`): unset fields are
@@ -54,14 +65,17 @@ class ShroudApi(internal val client: ApiClient) {
 
     /** `POST /auth/register` (`AuthService.swift:22-35`). No token: a failure never touches a stored session. */
     suspend fun register(username: String, password: String): AuthSessionResponse {
-        val name = de.corespace.shroud.core.auth.UsernameHash.normalize(username)
-        return client.post(
+        val name = UsernameHash.normalize(username)
+        val (hash, _) = usernameHashes(name, includeLegacy = false)
+        val session = client.post(
             "auth/register",
             null,
-            RegisterRequest(de.corespace.shroud.core.auth.UsernameHash.digest(name), password),
+            RegisterRequest(hash, password),
             RegisterRequest.serializer(),
             AuthSessionResponse.serializer(),
         )
+        UsernameMigration.remember(hash)
+        return session
     }
 
     /**
@@ -71,14 +85,63 @@ class ShroudApi(internal val client: ApiClient) {
      * to the `409 DEVICE_LIMIT` answer's [ApiError.deviceLimit]; null otherwise.
      */
     suspend fun login(username: String, password: String, deviceId: UUID?, replaceDeviceId: UUID? = null): AuthSessionResponse {
-        val name = de.corespace.shroud.core.auth.UsernameHash.normalize(username)
-        return client.post(
+        val name = UsernameHash.normalize(username)
+        val (hash, legacy) = usernameHashes(name, includeLegacy = true)
+        val session = client.post(
             "auth/login",
             null,
-            LoginRequest(de.corespace.shroud.core.auth.UsernameHash.digest(name), password, deviceId, replaceDeviceId),
+            LoginRequest(hash, password, deviceId, replaceDeviceId, legacy),
             LoginRequest.serializer(),
             AuthSessionResponse.serializer(),
         )
+        UsernameMigration.remember(hash)
+        return session
+    }
+
+    /**
+     * The digest login sends, and the SHA-256 while this install has not yet signed that
+     * account in. A 404 is an old server: the SHA-256 stays the only digest.
+     */
+    private suspend fun usernameHashes(name: String, includeLegacy: Boolean): Pair<String, String?> {
+        val params = usernameKdf() ?: return UsernameHash.digest(name) to null
+        val slow = withContext(Dispatchers.Default) { UsernameHash.argon2id(name, params) }
+        val legacy = if (includeLegacy && !UsernameMigration.isRemembered(slow)) UsernameHash.digest(name) else null
+        return slow to legacy
+    }
+
+    private suspend fun usernameKdf(): UsernameKdfParams? {
+        kdfGate.withLock {
+            if (kdfIsLegacy) return null
+            kdfParams?.let { return it }
+        }
+        val raw = client.raw("GET", "auth/username-kdf", null)
+        when (raw.status) {
+            404 -> {
+                kdfGate.withLock { kdfIsLegacy = true }
+                return null
+            }
+            200 -> {
+                val params = usernameKdfParams(json.decodeFromString(UsernameKdfDto.serializer(), raw.body))
+                kdfGate.withLock { kdfParams = params }
+                return params
+            }
+            else -> throw client.errorFor(raw.status, raw.body)
+        }
+    }
+
+    private fun usernameKdfParams(dto: UsernameKdfDto): UsernameKdfParams {
+        val salt = try {
+            Base64.getDecoder().decode(dto.salt)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException(USERNAME_KDF_WEAK)
+        }
+        if (
+            dto.algorithm != "argon2id" || dto.version != 19 || dto.parallelism != 1 || dto.outputBytes != 32 ||
+            dto.memoryKiB < 65536 || dto.iterations < 8 || salt.size !in 16..64
+        ) {
+            throw IllegalArgumentException(USERNAME_KDF_WEAK)
+        }
+        return UsernameKdfParams(salt, dto.memoryKiB, dto.iterations, dto.parallelism, dto.outputBytes)
     }
 
     /** `GET /auth/me` (`AuthService.swift:72-74`). */

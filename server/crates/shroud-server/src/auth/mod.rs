@@ -6,6 +6,7 @@ pub mod share_code;
 pub mod token;
 pub mod username;
 
+pub use crate::username_kdf::UsernameKdf;
 pub use password::{hash_password, validate_password_policy, verify_password};
 pub use share_code::{generate_share_code, is_valid_share_code_format, normalize_share_code};
 pub use token::{hash_token, issue_session_token};

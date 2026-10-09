@@ -158,6 +158,17 @@ shroud_ensure_turn_secret() {
   echo "Added the TURN relay secret to .env: TURN_SECRET"
 }
 
+# Public salt for username lookup hashes. Generated once: a new value makes every username
+# stop matching. 16 bytes, not the 32-byte secret helper. Clients download it; it is not a secret.
+shroud_ensure_username_kdf_salt() {
+  local file="${SHROUD_REPO_ROOT}/.env" value
+  [[ -f "$file" ]] || return 0
+  value="$(shroud_env_value USERNAME_KDF_SALT)"
+  [[ -n "$value" && "$value" != "GENERATE_ME" ]] && return 0
+  shroud_set_env_value USERNAME_KDF_SALT "$(shroud_random_hex 16)"
+  echo "Added the username lookup salt to .env: USERNAME_KDF_SALT"
+}
+
 # True when COMPOSE_PROFILES in .env lists this compose profile. Spaces around commas still count.
 shroud_profile_enabled() {
   [[ ",$(shroud_profiles_raw)," == *",$1,"* ]]
@@ -607,6 +618,7 @@ warn_web_build() {
 shroud_up() {
   shroud_ensure_nebular_secrets
   shroud_ensure_turn_secret
+  shroud_ensure_username_kdf_salt
   shroud_ensure_admin_secrets
   shroud_assert_env
   shroud_ensure_proxy_network

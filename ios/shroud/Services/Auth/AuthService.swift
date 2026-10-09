@@ -23,12 +23,14 @@ nonisolated struct AuthService: Sendable {
     /// No device name goes with it: `DeviceNameSync` seals the name once the phrase is in.
     func register(username: String, password: String) async throws -> SessionStore.Session {
         let name = try UsernameHash.normalize(username)
-        let body = RegisterRequest(usernameHash: UsernameHash.digest(name), password: password)
+        let fields = try await UsernameHash.authFields(for: name, includeLegacy: false)
+        let body = RegisterRequest(usernameHash: fields.usernameHash, password: password)
         let response: AuthSessionResponse = try await client.post(
             "auth/register",
             body: body,
             as: AuthSessionResponse.self
         )
+        UsernameHash.rememberMigrated(fields.usernameHash)
         return try persist(response, username: name)
     }
 
@@ -44,14 +46,16 @@ nonisolated struct AuthService: Sendable {
         replacingDeviceID: UUID? = nil
     ) async throws -> SessionStore.Session {
         let normalizedUsername = try UsernameHash.normalize(username)
+        let fields = try await UsernameHash.authFields(for: normalizedUsername, includeLegacy: true)
         let existing = sessionStore.load()
         let reusedDeviceID = existing?.deviceID
             ?? sessionStore.loadDeviceID(matchingUsername: normalizedUsername)
         let body = LoginRequest(
-            usernameHash: UsernameHash.digest(normalizedUsername),
+            usernameHash: fields.usernameHash,
             password: password,
             deviceId: reusedDeviceID,
-            replaceDeviceId: replacingDeviceID
+            replaceDeviceId: replacingDeviceID,
+            legacyUsernameHash: fields.legacyUsernameHash
         )
         let (status, data) = try await client.response(
             "POST",
@@ -59,6 +63,7 @@ nonisolated struct AuthService: Sendable {
             jsonBody: try JSONEncoder.api.encode(body)
         )
         let response = try Self.loginAnswer(status: status, data: data)
+        UsernameHash.rememberMigrated(fields.usernameHash)
         return try persist(response, username: normalizedUsername)
     }
 

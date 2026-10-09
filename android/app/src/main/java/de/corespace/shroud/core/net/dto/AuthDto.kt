@@ -34,6 +34,20 @@ data class LoginRequest(
      * phrase checked out and the user agreed (server `routes/auth.rs`). Ignored while a slot is free.
      */
     @SerialName("replace_device_id") val replaceDeviceId: UUID? = null,
+    /** SHA-256 of the same name, until this phone has seen the account move. Null is sent as null. */
+    @SerialName("legacy_username_hash") val legacyUsernameHash: String? = null,
+)
+
+/** `GET /auth/username-kdf`. Clients refuse anything below the cost floor. */
+@Serializable
+data class UsernameKdfDto(
+    val algorithm: String,
+    val version: Int,
+    val salt: String,
+    @SerialName("memory_kib") val memoryKiB: Int,
+    val iterations: Int,
+    val parallelism: Int,
+    @SerialName("output_bytes") val outputBytes: Int,
 )
 
 /**

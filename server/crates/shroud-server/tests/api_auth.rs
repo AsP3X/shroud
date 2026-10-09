@@ -223,6 +223,193 @@ async fn register_rejects_reserved_and_common_password() {
 }
 
 #[tokio::test]
+async fn username_kdf_is_public() {
+    let Some(app) = test_app().await else {
+        eprintln!("skipping username_kdf_is_public: DATABASE_URL unavailable");
+        return;
+    };
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/username-kdf")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["algorithm"], "argon2id");
+    assert_eq!(body["version"], 19);
+    assert_eq!(body["salt"], "ABEiM0RVZneImaq7zN3u/w==");
+    assert_eq!(body["memory_kib"], 65536);
+    assert_eq!(body["iterations"], 8);
+    assert_eq!(body["parallelism"], 1);
+    assert_eq!(body["output_bytes"], 32);
+}
+
+#[tokio::test]
+async fn register_rejects_the_slow_hash_of_a_reserved_name() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping register_rejects_the_slow_hash_of_a_reserved_name: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let admin = BASE64.encode(shroud_server::auth::UsernameKdf::test_reserved_admin());
+    let reserved = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "username_hash": admin,
+                        "password": "correct-horse-battery"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(reserved.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(reserved).await;
+    assert_eq!(body["error"]["code"], "USERNAME_RESERVED");
+}
+
+#[tokio::test]
+async fn login_migrates_a_sha256_username_and_a_device_limit_rolls_it_back() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!(
+            "skipping login_migrates_a_sha256_username_and_a_device_limit_rolls_it_back: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let legacy = shroud_server::auth::username_hash_b64(&username);
+    let slow = tokio::task::spawn_blocking({
+        let username = username.clone();
+        move || {
+            shroud_server::auth::UsernameKdf::for_tests()
+                .hash_b64(&username)
+                .expect("hash")
+        }
+    })
+    .await
+    .expect("join");
+    let slow_bytes = BASE64.decode(&slow).expect("digest");
+
+    let auth_request = |body: serde_json::Value| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    };
+    async fn stored_hash(pool: &sqlx::PgPool, user_id: Uuid) -> Vec<u8> {
+        let hash: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT username_hash FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(pool)
+                .await
+                .expect("row");
+        hash.expect("username hash")
+    }
+
+    let register = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "username_hash": legacy, "password": password }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(register.status(), StatusCode::CREATED);
+    let registered = json_body(register).await;
+    let user_id = Uuid::parse_str(registered["user"]["id"].as_str().expect("user id")).unwrap();
+
+    for _ in 1..shroud_server::auth::MAX_DEVICES_PER_USER {
+        let login = app
+            .clone()
+            .oneshot(auth_request(
+                json!({ "username_hash": legacy, "password": password }),
+            ))
+            .await
+            .expect("response");
+        assert_eq!(login.status(), StatusCode::OK);
+    }
+
+    let refused = app
+        .clone()
+        .oneshot(auth_request(json!({
+            "username_hash": slow,
+            "legacy_username_hash": legacy,
+            "password": password
+        })))
+        .await
+        .expect("response");
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    let refused_body = json_body(refused).await;
+    assert_eq!(refused_body["error"]["code"], "DEVICE_LIMIT");
+    assert_eq!(
+        stored_hash(&state.pool, user_id).await,
+        BASE64.decode(&legacy).unwrap(),
+        "a refused login leaves the old digest in place"
+    );
+    let oldest = refused_body["oldest_device"]["id"]
+        .as_str()
+        .expect("oldest device")
+        .to_string();
+
+    let migrated = app
+        .clone()
+        .oneshot(auth_request(json!({
+            "username_hash": slow,
+            "legacy_username_hash": legacy,
+            "password": password,
+            "replace_device_id": oldest
+        })))
+        .await
+        .expect("response");
+    assert_eq!(migrated.status(), StatusCode::OK);
+    let migrated_body = json_body(migrated).await;
+    assert_eq!(stored_hash(&state.pool, user_id).await, slow_bytes);
+    // The account is still full: the slow digest alone signs in only by reusing this device.
+    let device_id = migrated_body["device"]["id"].as_str().expect("device");
+
+    let again = app
+        .clone()
+        .oneshot(auth_request(json!({
+            "username_hash": slow,
+            "password": password,
+            "device_id": device_id
+        })))
+        .await
+        .expect("response");
+    assert_eq!(again.status(), StatusCode::OK);
+
+    let stale = app
+        .oneshot(auth_request(
+            json!({ "username_hash": legacy, "password": password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn purge_revoked_sessions_deletes_old_rows() {
     let Some(app) = test_app().await else {
         eprintln!("skipping purge_revoked_sessions_deletes_old_rows: DATABASE_URL unavailable");

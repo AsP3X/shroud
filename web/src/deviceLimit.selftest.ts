@@ -7,6 +7,7 @@
  */
 import { ApiError } from "./api/client";
 import { bytesToB64 } from "./crypto/bytes";
+import { USERNAME_ARGON2_ALICE, usernameHashB64 } from "./crypto/username";
 import { deviceDisplayName, sealDeviceName } from "./crypto/deviceName";
 import { historyKeyFromMnemonic, identityKeyFromMnemonic } from "./crypto/identity";
 import {
@@ -155,7 +156,22 @@ const answers: Answer[] = [];
 const sent: Record<string, unknown>[] = [];
 
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  check(String(input) === "/api/v1/auth/login", `only the login is asked (${String(input)})`);
+  const url = String(input);
+  if (url === "/api/v1/auth/username-kdf") {
+    return new Response(
+      JSON.stringify({
+        algorithm: "argon2id",
+        version: 19,
+        salt: "ABEiM0RVZneImaq7zN3u/w==",
+        memory_kib: 65536,
+        iterations: 8,
+        parallelism: 1,
+        output_bytes: 32,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  check(url === "/api/v1/auth/login", `only the login is asked (${url})`);
   sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
   const answer = answers.shift();
   if (!answer) throw new TypeError("no answer queued");
@@ -171,6 +187,8 @@ const attempt: LoginAttempt = { username: "alice", password: "hunter22", deviceI
 answers.push({ status: 409, body: limitBody(DEVICES) });
 const first = await attemptLogin(attempt);
 check(first.kind === "full" && first.devices.length === 4 && first.identityKey === KEY, "a full account is read");
+check(sent[0].username_hash === USERNAME_ARGON2_ALICE, "login sends the slow hash");
+check(sent[0].legacy_username_hash === usernameHashB64("alice"), "the first login still sends the old hash");
 check(sent[0].device_id === ANCHOR, "the first login sends this browser's device anchor");
 check(!("replace_device_id" in sent[0]), "the first login names no device to log out");
 let state: DeviceLimitState = nextDeviceLimitState(null, { type: "login", attempt, outcome: first });

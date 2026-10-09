@@ -19,6 +19,7 @@ use crate::auth::{
 use crate::error::{AppError, LimitDevice};
 use crate::rate_limit::budgets;
 use crate::state::AppState;
+use crate::username_kdf::UsernameKdfParams;
 
 /// Register / login success body (token shown once).
 #[derive(Debug, Serialize)]
@@ -53,7 +54,7 @@ pub struct MeResponse {
 /// are sealed, see `routes::devices::put_device_name`).
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
-    /// Standard Base64 of SHA-256 over the case-folded username. The name is not sent.
+    /// Standard Base64 of the 32-byte username digest. The name is not sent.
     pub username_hash: String,
     pub password: String,
 }
@@ -61,8 +62,12 @@ pub struct RegisterRequest {
 /// A plaintext `device_name` from older builds is ignored, as for [`RegisterRequest`].
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
-    /// Standard Base64 of SHA-256 over the case-folded username. The name is not sent.
+    /// Standard Base64 of the 32-byte username digest. The name is not sent.
     pub username_hash: String,
+    /// SHA-256 of the same name, sent until this device has seen the account move to
+    /// [`username_hash`]. Absent, or JSON null, when the account is already migrated.
+    #[serde(default)]
+    pub legacy_username_hash: Option<String>,
     pub password: String,
     pub device_id: Option<Uuid>,
     /// The device to sign out when every slot is signed in: one of the `devices` of the
@@ -84,6 +89,13 @@ struct UserAuthRow {
     share_code: String,
 }
 
+/// `GET /auth/username-kdf` — the public salt and cost of the username lookup hash.
+///
+/// No session: a client needs this before it can log in. The salt is not a secret.
+pub async fn username_kdf(State(state): State<AppState>) -> Json<UsernameKdfParams> {
+    Json(state.username_kdf.public_params())
+}
+
 /// `POST /auth/register` — create user, first device, session.
 pub async fn register(
     State(state): State<AppState>,
@@ -97,6 +109,12 @@ pub async fn register(
         .await?;
 
     let username_hash = decode_username_hash(&body.username_hash)?;
+    // Argon2id of a reserved name under this server's salt. The list is warmed at boot;
+    // a cold call still runs off the runtime so a worker is not blocked for a few seconds.
+    let kdf = state.username_kdf.clone();
+    tokio::task::spawn_blocking(move || kdf.reject_reserved(&username_hash))
+        .await
+        .map_err(|err| AppError::Internal(format!("reserved username check failed: {err}")))??;
     state
         .rate_limiter
         .check_budget("auth_user", &body.username_hash, budgets::AUTH_USERNAME)
@@ -210,30 +228,35 @@ pub async fn login(
 
     let username_hash =
         parse_username_hash(&body.username_hash).map_err(|_| AppError::invalid_credentials())?;
+    // A missing or unreadable legacy digest is not a second guess. The budget key is the
+    // digest the client claims now, never the old SHA-256.
+    let legacy_hash = body
+        .legacy_username_hash
+        .as_deref()
+        .and_then(|raw| parse_username_hash(raw).ok())
+        .filter(|hash| hash != &username_hash);
     // Count failed and successful attempts so password guessing burns the budget.
     state
         .rate_limiter
         .check_budget("auth_user", &body.username_hash, budgets::AUTH_USERNAME)
         .await?;
 
-    let user = sqlx::query_as::<_, UserAuthRow>(
-        r#"
-        SELECT id, password_hash, share_code FROM users WHERE username_hash = $1
-        "#,
-    )
-    .bind(username_hash.as_slice())
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("login user lookup failed: {err}")))?;
-
-    let user = match user {
-        Some(row) => row,
-        None => {
-            // Human: Avoid free user-enumeration via early return path only; still run a verify-shaped delay.
-            let dummy = hash_password("invalid-login-padding-xx").unwrap_or_default();
-            let _ = verify_password(&body.password, &dummy);
-            return Err(AppError::invalid_credentials());
-        }
+    let primary = user_by_username_hash(&state.pool, username_hash.as_slice()).await?;
+    let (user, migrate_from) = match primary {
+        Some(row) => (row, None),
+        None => match legacy_hash {
+            Some(legacy) => match user_by_username_hash(&state.pool, legacy.as_slice()).await? {
+                Some(row) => (row, Some(legacy)),
+                None => {
+                    delay_unknown_user(&body.password);
+                    return Err(AppError::invalid_credentials());
+                }
+            },
+            None => {
+                delay_unknown_user(&body.password);
+                return Err(AppError::invalid_credentials());
+            }
+        },
     };
 
     if !verify_password(&body.password, &user.password_hash)? {
@@ -245,6 +268,37 @@ pub async fn login(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    // Move a SHA-256 row onto the slow digest only after the password checks out, and inside
+    // this transaction, so a device-limit refusal rolls the move back.
+    let mut migrated = false;
+    if let Some(legacy) = migrate_from {
+        let updated = sqlx::query(
+            r#"
+            UPDATE users SET username_hash = $1 WHERE id = $2 AND username_hash = $3
+            "#,
+        )
+        .bind(username_hash.as_slice())
+        .bind(user.id)
+        .bind(legacy.as_slice())
+        .execute(&mut *tx)
+        .await;
+        match updated {
+            Ok(done) => migrated = done.rows_affected() > 0,
+            Err(sqlx::Error::Database(db_err))
+                if db_err.constraint() == Some("users_username_hash_uidx") =>
+            {
+                return Err(AppError::Internal(
+                    "username hash migration collided with an existing account".into(),
+                ));
+            }
+            Err(err) => {
+                return Err(AppError::Internal(format!(
+                    "username hash migration failed: {err}"
+                )));
+            }
+        }
+    }
 
     let LoginDevice {
         id: device_id,
@@ -307,6 +361,7 @@ pub async fn login(
         user_id = %user.id,
         device_id = %device_id,
         replaced_device_id = ?replaced_device,
+        migrated,
         "auth.login ok"
     );
 
@@ -321,6 +376,27 @@ pub async fn login(
             sealed_name: sealed_name.map(|bytes| BASE64.encode(bytes)),
         },
     }))
+}
+
+async fn user_by_username_hash(
+    pool: &sqlx::PgPool,
+    hash: &[u8],
+) -> Result<Option<UserAuthRow>, AppError> {
+    sqlx::query_as::<_, UserAuthRow>(
+        r#"
+        SELECT id, password_hash, share_code FROM users WHERE username_hash = $1
+        "#,
+    )
+    .bind(hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("login user lookup failed: {err}")))
+}
+
+/// Same password work as a real miss, so a wrong name is not obviously faster.
+fn delay_unknown_user(password: &str) {
+    let dummy = hash_password("invalid-login-padding-xx").unwrap_or_default();
+    let _ = verify_password(password, &dummy);
 }
 
 /// `POST /auth/logout` — revoke the current session and forget how this device is pushed to.

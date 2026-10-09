@@ -244,6 +244,22 @@ function Add-TurnSecret {
     Write-Line "Added the TURN relay secret to .env: TURN_SECRET" "Green"
 }
 
+# Public salt for username lookup hashes. 16 bytes, written once. A new value makes every
+# username stop matching. Clients download it, so it is not a secret.
+function Add-UsernameKdfSalt {
+    $path = Join-Path $repoRoot ".env"
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    $current = Get-EnvValue "USERNAME_KDF_SALT"
+    if ($current -and $current -ne "GENERATE_ME") { return }
+    $lines = Read-EnvLines
+    $value = New-HexSecret -Bytes 16
+    $index = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^USERNAME_KDF_SALT=") { $index = $i } }
+    if ($index -ge 0) { $lines[$index] = "USERNAME_KDF_SALT=$value" } else { $lines.Add("USERNAME_KDF_SALT=$value") }
+    Write-EnvLines $lines
+    Write-Line "Added the username lookup salt to .env: USERNAME_KDF_SALT" "Green"
+}
+
 function Get-ProxyMode {
     $mode = $env:PROXY_MODE
     if (-not $mode) { $mode = Get-EnvValue "PROXY_MODE" }
@@ -825,6 +841,7 @@ try {
 
     Add-NebularSecrets
     Add-TurnSecret
+    Add-UsernameKdfSalt
     Add-AdminSecrets
     $envFile = Join-Path $repoRoot ".env"
     if (Select-String -LiteralPath $envFile -Pattern '=(GENERATE_ME)\s*$' -Quiet) {

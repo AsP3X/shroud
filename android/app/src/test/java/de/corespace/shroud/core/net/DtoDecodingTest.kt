@@ -78,8 +78,12 @@ class DtoDecodingTest {
     fun loginSendsAnExplicitNullDeviceIdAndLowerCaseIds() {
         // The container Json writes null on purpose (iOS LoginRequest encodes `device_id: null`).
         val fresh = encodeObject(json, LoginRequest.serializer(), LoginRequest("alice", "pw", null))
-        assertEquals(setOf("username_hash", "password", "device_id", "replace_device_id"), fresh.keys)
+        assertEquals(
+            setOf("username_hash", "password", "device_id", "replace_device_id", "legacy_username_hash"),
+            fresh.keys,
+        )
         assertEquals(JsonNull, fresh["device_id"])
+        assertEquals(JsonNull, fresh["legacy_username_hash"])
         // Only the device-limit retry names a device to log out.
         assertEquals(JsonNull, fresh["replace_device_id"])
         val again = encodeObject(json, LoginRequest.serializer(), LoginRequest("alice", "pw", uuid("ABCDEF01-2345-4678-9ABC-DEF012345678")))
@@ -738,7 +742,7 @@ class DtoDecodingTest {
 
         val allDtoSerializers: List<KSerializer<*>> = listOf(
             // Auth
-            RegisterRequest.serializer(), LoginRequest.serializer(), UserDto.serializer(), DeviceDto.serializer(),
+            RegisterRequest.serializer(), LoginRequest.serializer(), UsernameKdfDto.serializer(), UserDto.serializer(), DeviceDto.serializer(),
             AuthSessionResponse.serializer(), MeResponse.serializer(), LimitDeviceDto.serializer(), DeviceLimitDto.serializer(), PasswordChangeRequest.serializer(),
             DeleteAccountRequest.serializer(), HealthResponse.serializer(),
             // Devices

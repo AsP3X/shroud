@@ -35,12 +35,13 @@ use crate::state::AppState;
 pub static CLIENT_HEADER: HeaderName = HeaderName::from_static("x-shroud-client");
 /// The same value as a query parameter, for WebSocket upgrades: a browser can't add headers there.
 pub const CLIENT_QUERY: &str = "client";
-/// Routes any build may call: health checks, and the version check that tells an app to update.
-const OPEN_PATHS: [&str; 4] = [
+/// Routes any build may call: health checks, the version check, and the public username salt.
+const OPEN_PATHS: [&str; 5] = [
     "/api/v1/health",
     "/api/v1/health/live",
     "/api/v1/health/ready",
     "/api/v1/client-version",
+    "/api/v1/auth/username-kdf",
 ];
 
 /// Release components a version may have (`1`, `1.2`, `1.2.3`, `1.2.3.4`).
@@ -250,7 +251,8 @@ impl ClientVersions {
 }
 
 /// Refuses requests from apps below the operator's minimum with `426 UPDATE_REQUIRED`
-/// ([`ClientVersions::admits`]); health checks and `GET /client-version` stay open to every build.
+/// ([`ClientVersions::admits`]); health checks, `GET /client-version`, and
+/// `GET /auth/username-kdf` stay open to every build.
 pub async fn require_supported_client(
     State(state): State<AppState>,
     request: Request,

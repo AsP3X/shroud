@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Requests
 
-/// `POST /auth/register` body. The name is a SHA-256 digest. No device name: it is sealed later.
+/// `POST /auth/register` body. The name is a 32-byte digest. No device name: it is sealed later.
 nonisolated struct RegisterRequest: Encodable, Equatable, Sendable {
     let usernameHash: String
     let password: String
@@ -13,7 +13,7 @@ nonisolated struct RegisterRequest: Encodable, Equatable, Sendable {
     }
 }
 
-/// `POST /auth/login` body. The name is a SHA-256 digest.
+/// `POST /auth/login` body. The name is a 32-byte digest.
 nonisolated struct LoginRequest: Encodable, Equatable, Sendable {
     let usernameHash: String
     let password: String
@@ -21,12 +21,15 @@ nonisolated struct LoginRequest: Encodable, Equatable, Sendable {
     /// The `oldest_device` of a `DEVICE_LIMIT` answer, sent once the user agreed to log it out.
     /// The server ignores it while a slot is free. Omitted from the JSON when nil.
     var replaceDeviceId: UUID? = nil
+    /// SHA-256 of the same name, until this phone has seen the account move. Omitted when nil.
+    var legacyUsernameHash: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case usernameHash = "username_hash"
         case password
         case deviceId = "device_id"
         case replaceDeviceId = "replace_device_id"
+        case legacyUsernameHash = "legacy_username_hash"
     }
 }
 

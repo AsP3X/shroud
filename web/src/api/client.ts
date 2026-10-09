@@ -1,5 +1,5 @@
 import { apiBase, CLIENT_HEADER, clientName } from "../config";
-import { normalizeUsername, usernameHashB64 } from "../crypto/username";
+import { normalizeUsername, rememberUsernameKdf, usernameAuthFields } from "../crypto/username";
 import type { Invite } from "../invite";
 
 const UUID_RE =
@@ -380,10 +380,12 @@ export const api = {
   /** No device name here: it is sealed once the phrase is known (`deviceNaming.ts`). The username is hashed on this device. */
   register: async (username: string, password: string) => {
     const name = normalizeUsername(username);
+    const fields = await usernameAuthFields(name, false);
     const session = await request<Session>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ username_hash: usernameHashB64(name), password }),
+      body: JSON.stringify({ username_hash: fields.username_hash, password }),
     });
+    rememberUsernameKdf(fields.username_hash);
     return withLocalUsername(session, name);
   },
   /**
@@ -393,15 +395,18 @@ export const api = {
    */
   login: async (username: string, password: string, deviceId?: string | null, replaceDeviceId?: string | null) => {
     const name = normalizeUsername(username);
+    const fields = await usernameAuthFields(name, true);
     const session = await request<Session>("/auth/login", {
       method: "POST",
       body: JSON.stringify({
-        username_hash: usernameHashB64(name),
+        username_hash: fields.username_hash,
         password,
+        ...(fields.legacy_username_hash ? { legacy_username_hash: fields.legacy_username_hash } : {}),
         ...(deviceId && UUID_RE.test(deviceId) ? { device_id: deviceId } : {}),
         ...(replaceDeviceId ? { replace_device_id: replaceDeviceId } : {}),
       }),
     });
+    rememberUsernameKdf(fields.username_hash);
     return withLocalUsername(session, name);
   },
   me: (token: string) => request<{ user: Session["user"]; device: Session["device"] }>("/auth/me", { token }),

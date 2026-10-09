@@ -41,6 +41,7 @@ pub fn router() -> Router<AppState> {
             .route("/health/ready", get(health::ready))
             .route("/config", get(app_config::get_config))
             .route("/client-version", get(client_version::get_client_version))
+            .route("/auth/username-kdf", get(auth::username_kdf))
             .route("/auth/register", post(auth::register))
             .route("/auth/login", post(auth::login))
             .route("/auth/logout", post(auth::logout))

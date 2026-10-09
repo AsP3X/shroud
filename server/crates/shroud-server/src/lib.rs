@@ -16,9 +16,11 @@ pub mod push;
 pub mod rate_limit;
 pub mod realtime;
 pub mod request_tracking;
+pub mod reserved_names;
 pub mod routes;
 pub mod state;
 pub mod turn;
+pub mod username_kdf;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -264,7 +266,13 @@ pub async fn run() -> Result<(), AppError> {
         )),
         reactions_max_per_user: config.reactions_max_per_user,
         client_versions: Arc::new(config.client_versions.clone()),
+        username_kdf: config.username_kdf.clone(),
     };
+
+    // The reserved-name list is a few seconds of argon2id. Fill it off the runtime so the
+    // first registration does not wait, and so a worker is never blocked on it.
+    let warming = state.username_kdf.clone();
+    tokio::task::spawn_blocking(move || warming.warm());
 
     // Human: End calls nobody answered, and calls whose devices went quiet, so a crashed app
     // never leaves anyone busy; both sides hear `call.ended`.

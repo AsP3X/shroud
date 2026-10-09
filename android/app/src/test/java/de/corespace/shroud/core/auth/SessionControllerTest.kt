@@ -7,6 +7,8 @@ import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ShroudApi
 import de.corespace.shroud.core.storage.SealedFile
 import de.corespace.shroud.testing.XorSealer
+import de.corespace.shroud.testing.serveUsernameKdf
+import de.corespace.shroud.testing.takeApiRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -74,7 +76,9 @@ class SessionControllerTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        UsernameMigration.reset()
         server = MockWebServer()
+        server.serveUsernameKdf()
         server.start()
     }
 
@@ -221,9 +225,10 @@ class SessionControllerTest {
         server.enqueue(MockResponse(code = 201, body = session()))
         val c = controller()
         val s = c.register("  Noah ", "pw")
-        val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        val body = json.parseToJsonElement(server.takeApiRequest().body!!.utf8()).jsonObject
         // Only the hash of the case-folded name leaves the phone.
-        assertEquals("\"${UsernameHash.digest("noah")}\"", body["username_hash"].toString())
+        assertEquals("\"${UsernameHash.argon2id("noah", UsernameKdfParams.TEST)}\"", body["username_hash"].toString())
+        assertEquals(null, body["legacy_username_hash"])
         assertEquals(null, body["username"])
         // Stored lower-case (the wire form), read back as UUIDs.
         assertEquals(USER_ID.lowercase(), s.userId)
@@ -257,7 +262,7 @@ class SessionControllerTest {
         st.save(Session("old", USER_ID.lowercase(), "noah", null, ANCHOR))
         st.clear()
         controller(st).login("NOAH", "pw")
-        val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        val body = json.parseToJsonElement(server.takeApiRequest().body!!.utf8()).jsonObject
         assertEquals("\"$ANCHOR\"", body["device_id"].toString())
     }
 
@@ -278,8 +283,8 @@ class SessionControllerTest {
         val limit = runCatching { c.login("noah", "pw") }.exceptionOrNull() as ApiError
         assertNull(c.session.value)
         c.login("noah", "pw", limit.deviceLimit!!.oldestDevice!!.id)
-        val first = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
-        val retry = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        val first = json.parseToJsonElement(server.takeApiRequest().body!!.utf8()).jsonObject
+        val retry = json.parseToJsonElement(server.takeApiRequest().body!!.utf8()).jsonObject
         assertEquals("\"$ANCHOR\"", first["device_id"].toString())
         assertEquals(first["device_id"], retry["device_id"])
         assertEquals("\"$oldest\"", retry["replace_device_id"].toString())
@@ -293,7 +298,7 @@ class SessionControllerTest {
         st.save(Session("old", USER_ID.lowercase(), "noah", null, "d-anchor"))
         st.clear()
         controller(st).login("noah", "pw")
-        val body = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        val body = json.parseToJsonElement(server.takeApiRequest().body!!.utf8()).jsonObject
         assertEquals("null", body["device_id"].toString())
     }
 
@@ -394,7 +399,7 @@ class SessionControllerTest {
         server.enqueue(MockResponse(code = 204))
         val c = controller()
         c.register("noah", "pw")
-        server.takeRequest()
+        server.takeApiRequest()
         c.logout()
         assertNull(c.session.value)
         assertNull(store().session)

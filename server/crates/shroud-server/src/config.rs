@@ -10,6 +10,7 @@ use crate::error::AppError;
 use crate::media_store::NebularConfig;
 use crate::push::UnifiedPushPolicy;
 use crate::turn::TurnConfig;
+use crate::username_kdf::UsernameKdf;
 
 /// Default Postgres pool size when `DATABASE_POOL_MAX` is unset.
 pub const DEFAULT_DATABASE_POOL_MAX: u32 = 10;
@@ -93,6 +94,8 @@ pub struct Config {
     pub unifiedpush: UnifiedPushPolicy,
     /// Released app versions (`IOS_*`, `ANDROID_*`, `WEB_BUILD`).
     pub client_versions: ClientVersions,
+    /// Public salt for the username lookup hash (`USERNAME_KDF_SALT`).
+    pub username_kdf: UsernameKdf,
     /// Internal operator listener. `None` when `OPERATOR_TOKEN` is unset or blank:
     /// the process does not bind `OPERATOR_PORT`.
     pub operator: Option<OperatorListener>,
@@ -205,6 +208,18 @@ impl Config {
             port,
         )?;
 
+        // Human: Public, and different on every server. Missing or the published test salt
+        // refuses startup: a shared salt is a shared rainbow table. Do not rotate it.
+        let username_kdf_salt = std::env::var("USERNAME_KDF_SALT").unwrap_or_default();
+        if username_kdf_salt.trim().is_empty() {
+            return Err(AppError::Internal(
+                "USERNAME_KDF_SALT is not set. Generate one with `openssl rand -hex 16` and keep \
+                 it. Rotating it makes every username stop matching."
+                    .into(),
+            ));
+        }
+        let username_kdf = UsernameKdf::from_hex(&username_kdf_salt)?;
+
         Ok(Self {
             database_url,
             database_pool_max,
@@ -221,6 +236,7 @@ impl Config {
             unifiedpush,
             client_versions,
             operator,
+            username_kdf,
         })
     }
 

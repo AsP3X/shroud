@@ -155,6 +155,9 @@ services:
       RUN_MIGRATIONS: "true"
       TRUST_FORWARDED_HEADERS: "true"
       REDIS_URL: redis://:${REDIS_PASSWORD:-shroud}@redis:6379
+      # Public salt for username lookup hashes. Clients fetch it. Empty refuses to boot.
+      # Generate once (32 hex characters) and do not rotate it.
+      USERNAME_KDF_SALT: ${USERNAME_KDF_SALT:-}
       NEBULAR_URL: http://nebular:9000
       NEBULAR_MEDIA_BUCKET: shroud-media
       NEBULAR_ACCESS_KEY_ID: ${NEBULAR_ACCESS_KEY_ID:-}

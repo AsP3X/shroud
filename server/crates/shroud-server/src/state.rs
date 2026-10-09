@@ -15,6 +15,7 @@ use crate::rate_limit::{self, RateLimiter};
 use crate::realtime::RealtimeHub;
 use crate::routes::link_relay::LinkRelay;
 use crate::turn::TurnConfig;
+use crate::username_kdf::UsernameKdf;
 
 /// State injected into every API handler.
 #[derive(Clone)]
@@ -45,6 +46,8 @@ pub struct AppState {
     pub reactions_max_per_user: u32,
     /// Released app versions; clients read them from `GET /client-version`.
     pub client_versions: Arc<ClientVersions>,
+    /// Username lookup hash. Clients read the salt from `GET /auth/username-kdf`.
+    pub username_kdf: UsernameKdf,
 }
 
 impl AppState {
@@ -75,6 +78,7 @@ impl AppState {
             turn: None,
             reactions_max_per_user: 5,
             client_versions: Arc::new(ClientVersions::default()),
+            username_kdf: UsernameKdf::for_tests(),
             rate_limiter,
             redis_required: false,
             trust_forwarded_headers: true,

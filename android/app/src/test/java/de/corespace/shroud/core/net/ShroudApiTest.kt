@@ -5,6 +5,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import de.corespace.shroud.core.auth.UsernameHash
+import de.corespace.shroud.core.auth.UsernameKdfParams
+import de.corespace.shroud.core.auth.UsernameMigration
+import de.corespace.shroud.testing.serveUsernameKdf
+import de.corespace.shroud.testing.takeApiRequest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
@@ -42,7 +47,9 @@ class ShroudApiTest {
 
     @Before
     fun setUp() {
+        UsernameMigration.reset()
         server = MockWebServer()
+        server.serveUsernameKdf()
         server.start()
         api = ShroudApi(ApiClient(baseUrl = { server.url("/api/v1").toString() }, json = json))
     }
@@ -71,7 +78,7 @@ class ShroudApiTest {
     private suspend fun <T> exchange(response: MockResponse, block: suspend () -> T): Pair<T, RecordedRequest> {
         server.enqueue(response)
         val result = block()
-        return result to server.takeRequest()
+        return result to server.takeApiRequest()
     }
 
     private fun ok(body: String, code: Int = 200) = MockResponse(code = code, body = body)
@@ -108,7 +115,7 @@ class ShroudApiTest {
         request.assertToken(null)
         assertEquals(setOf("username_hash", "password"), jsonOf(request).jsonObject.keys)
         assertEquals(
-            de.corespace.shroud.core.auth.UsernameHash.digest("noah"),
+            UsernameHash.argon2id("noah", UsernameKdfParams.TEST),
             jsonOf(request).jsonObject["username_hash"]!!.jsonPrimitive.content,
         )
         assertEquals("tok", response.token)
@@ -124,11 +131,14 @@ class ShroudApiTest {
         server.enqueue(MockResponse(code = 200, body = session))
         api.login("noah", "pw", anchor)
         api.login("noah", "pw", null)
-        val first = server.takeRequest()
+        val first = server.takeApiRequest()
         first.assertRoute("POST", "auth/login")
         first.assertToken(null)
-        val second = json.parseToJsonElement(server.takeRequest().body!!.utf8()).jsonObject
+        val second = json.parseToJsonElement(server.takeApiRequest().body!!.utf8()).jsonObject
         assertEquals("2e6f9b0c-1d3a-4e5b-8c7d-9f0a1b2c3d4e", jsonOf(first).jsonObject["device_id"]!!.jsonPrimitive.content)
+        assertEquals(UsernameHash.digest("noah"), jsonOf(first).jsonObject["legacy_username_hash"]!!.jsonPrimitive.content)
+        assertEquals(UsernameHash.argon2id("noah", UsernameKdfParams.TEST), jsonOf(first).jsonObject["username_hash"]!!.jsonPrimitive.content)
+        assertEquals("null", second["legacy_username_hash"].toString())
         assertTrue(second.containsKey("device_id"))
         assertEquals("null", second["device_id"].toString())
     }
@@ -146,12 +156,15 @@ class ShroudApiTest {
         val limit = runCatching { api.login("noah", "pw", anchor) }.exceptionOrNull() as ApiError.Server
         assertEquals(oldest, limit.deviceLimit?.oldestDevice?.id)
         api.login("noah", "pw", anchor, replaceDeviceId = oldest)
-        val first = jsonOf(server.takeRequest()).jsonObject
-        val retry = jsonOf(server.takeRequest()).jsonObject
+        val first = jsonOf(server.takeApiRequest()).jsonObject
+        val retry = jsonOf(server.takeApiRequest()).jsonObject
         // A plain login names no device; the retry keeps the anchor and adds the one the user saw.
+        // A 409 does not count as a finished login, so both still send the old digest.
         assertEquals("null", first["replace_device_id"].toString())
         assertEquals(first["device_id"], retry["device_id"])
         assertEquals(first["username_hash"], retry["username_hash"])
+        assertEquals(UsernameHash.digest("noah"), first["legacy_username_hash"]!!.jsonPrimitive.content)
+        assertEquals(first["legacy_username_hash"], retry["legacy_username_hash"])
         assertEquals(oldest.toString(), retry["replace_device_id"]!!.jsonPrimitive.content)
     }
 
