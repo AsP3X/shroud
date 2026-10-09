@@ -273,10 +273,20 @@ impl RealtimeHub {
     /// handed the same connection (the rate limiter) can move with it.
     ///
     /// Human: Clones of a connection manager share its connection, so a silent connection
-    /// stalls every holder alike; the hub notices first, through its constant traffic and the
-    /// readiness PING the healthcheck sends every 10 s.
+    /// stalls every holder alike. The hub notices through its own traffic and the readiness
+    /// PING the healthcheck sends every 10 s, and the others tell it
+    /// ([`Self::report_silent_redis`]).
     pub fn redis_replacements(&self) -> watch::Receiver<Option<ConnectionManager>> {
         self.redis.replaced.subscribe()
+    }
+
+    /// Someone sharing the hub's Redis connection (the rate limiter) got no answer on it: the
+    /// hub opens a fresh one, as after a silent call of its own.
+    ///
+    /// Agent: Doesn't back the hub off. If Redis was only slow, its fan-out carries on, and the
+    /// replacement costs one new connection.
+    pub fn report_silent_redis(&self) {
+        self.redis.replace();
     }
 
     /// True when a Redis connection manager is attached.
@@ -1657,6 +1667,42 @@ mod tests {
             // it goes.
             let check = limiter.check("test", "relay", 100, Duration::from_secs(60));
             let _ = tokio::time::timeout(Duration::from_millis(200), check).await;
+        }
+    }
+
+    /// A rate-limit check that gets no answer has the hub replace the connection, so the
+    /// limiter is back on Redis without the hub calling Redis at all, well before its backoff
+    /// runs out.
+    #[tokio::test]
+    async fn a_silent_rate_limit_check_replaces_the_connection() {
+        let redis = FakeRedis::start("INCRBY", 1).await;
+        let manager = redis.manager().await;
+        let hub = Arc::new(RealtimeHub::new());
+        hub.set_redis(manager.clone()).await;
+        hub.set_redis_client(redis.client());
+        let limiter = crate::rate_limit::RateLimiter::new();
+        limiter.set_redis(manager).await;
+        crate::relay_redis_replacements(hub.redis_replacements(), limiter.clone());
+        let reporter = hub.clone();
+        limiter.on_silent_redis(move || reporter.report_silent_redis());
+
+        let started = Instant::now();
+        limiter
+            .check("test", "silent", 100, Duration::from_secs(60))
+            .await
+            .expect("counted in-process");
+        assert!(started.elapsed() < REDIS_TIMEOUT + Duration::from_millis(500));
+        let started = Instant::now();
+        while redis.answered_later("INCRBY") == 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "the silent check replaced nothing"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            limiter
+                .check("test", "silent", 100, Duration::from_secs(60))
+                .await
+                .expect("counted");
         }
     }
 

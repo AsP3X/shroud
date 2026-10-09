@@ -96,7 +96,22 @@ struct RateLimiterInner {
     enabled: bool,
     redis: RwLock<Option<ConnectionManager>>,
     memory: RwLock<MemoryState>,
+    /// Until when Redis is skipped after it failed or didn't answer (see [`REDIS_BACKOFF`]).
+    redis_down_until: std::sync::Mutex<Option<Instant>>,
+    /// Told when Redis didn't answer (see [`RateLimiter::on_silent_redis`]).
+    on_silent_redis: std::sync::Mutex<Option<SilentRedisReport>>,
 }
+
+type SilentRedisReport = Arc<dyn Fn() + Send + Sync>;
+
+/// Longest a Redis call may take before the in-process window counts instead.
+///
+/// Human: The connection manager never gives up on its own: with Redis gone, a call waited
+/// for good and every rate-limited route hung. The console's rate-limit check found it.
+const REDIS_TIMEOUT: Duration = Duration::from_millis(500);
+/// After a Redis failure, counting stays in-process this long before Redis is tried again, so
+/// an outage costs one slow request rather than a slow request each.
+const REDIS_BACKOFF: Duration = Duration::from_secs(5);
 
 impl RateLimiter {
     /// Enabled limiter: Redis when attached, else in-process windows.
@@ -106,6 +121,8 @@ impl RateLimiter {
                 enabled: true,
                 redis: RwLock::new(None),
                 memory: RwLock::new(MemoryState::new()),
+                redis_down_until: std::sync::Mutex::new(None),
+                on_silent_redis: std::sync::Mutex::new(None),
             }),
         }
     }
@@ -117,13 +134,34 @@ impl RateLimiter {
                 enabled: false,
                 redis: RwLock::new(None),
                 memory: RwLock::new(MemoryState::new()),
+                redis_down_until: std::sync::Mutex::new(None),
+                on_silent_redis: std::sync::Mutex::new(None),
             }),
         }
     }
 
     /// Attach a Redis connection manager for multi-replica counting.
+    ///
+    /// Agent: Ends [`REDIS_BACKOFF`]: a manager handed in while counting is in-process is a
+    /// fresh connection (the realtime hub's replacement for a silent one), so it is tried at
+    /// once.
     pub async fn set_redis(&self, manager: ConnectionManager) {
         *self.inner.redis.write().await = Some(manager);
+        if let Ok(mut until) = self.inner.redis_down_until.lock() {
+            *until = None;
+        }
+    }
+
+    /// Called when a check gets no answer from Redis, so the connection can be replaced.
+    ///
+    /// Human: The limiter's connection is the realtime hub's (`lib.rs`), and the hub opens a
+    /// fresh one when it goes silent. Without this the hub noticed only through its own calls,
+    /// and a limiter that was the only one using Redis stayed in-process meanwhile.
+    /// Agent: Not called on an error: the connection manager reconnects on I/O errors itself.
+    pub fn on_silent_redis(&self, report: impl Fn() + Send + Sync + 'static) {
+        if let Ok(mut slot) = self.inner.on_silent_redis.lock() {
+            *slot = Some(Arc::new(report));
+        }
     }
 
     /// Increments the counter for `scope`+`id` and errors if over `limit` in `window`.
@@ -141,28 +179,76 @@ impl RateLimiter {
         let key = format!("rl:{scope}:{id}");
         let window_secs = window.as_secs().max(1);
 
-        if let Some(mut conn) = self.inner.redis.read().await.clone() {
-            match redis_check(&mut conn, &key, limit, window_secs).await {
-                Ok(allowed) => {
+        if let Some(mut conn) = self.redis().await {
+            let answer = tokio::time::timeout(
+                REDIS_TIMEOUT,
+                redis_check(&mut conn, &key, limit, window_secs),
+            )
+            .await;
+            match answer {
+                Ok(Ok(allowed)) => {
                     if allowed {
                         return Ok(());
                     }
                     return Err(AppError::rate_limited_after(window_secs));
                 }
-                Err(err) => {
+                failed => {
                     // Human: Degrade to in-process windows — do not fail open under Redis outage.
-                    // Agent: FALLBACK memory_check on Redis error; still enforces per-process budgets.
+                    // Agent: FALLBACK memory_check on Redis error or timeout; still enforces
+                    // per-process budgets, and skips Redis for REDIS_BACKOFF.
                     // The key holds an IP, a user id or a username hash: log the scope only.
+                    let silent = failed.is_err();
+                    let error = match failed {
+                        Ok(Err(err)) => err.to_string(),
+                        _ => format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+                    };
                     tracing::warn!(
-                        error = %err,
+                        error,
                         scope,
                         "rate limit redis failed; falling back to in-process window"
                     );
+                    self.redis_failed();
+                    if silent {
+                        self.report_silent_redis();
+                    }
                 }
             }
         }
 
         memory_check(&self.inner.memory, &key, limit, window).await
+    }
+
+    /// The Redis connection, unless there is none or it failed within [`REDIS_BACKOFF`].
+    async fn redis(&self) -> Option<ConnectionManager> {
+        let skipping = self
+            .inner
+            .redis_down_until
+            .lock()
+            .ok()
+            .and_then(|until| *until)
+            .is_some_and(|until| Instant::now() < until);
+        if skipping {
+            return None;
+        }
+        self.inner.redis.read().await.clone()
+    }
+
+    fn redis_failed(&self) {
+        if let Ok(mut until) = self.inner.redis_down_until.lock() {
+            *until = Some(Instant::now() + REDIS_BACKOFF);
+        }
+    }
+
+    fn report_silent_redis(&self) {
+        let report = self
+            .inner
+            .on_silent_redis
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        if let Some(report) = report {
+            report();
+        }
     }
 
     /// Convenience: check with a `(limit, window)` budget tuple.
@@ -327,6 +413,60 @@ mod tests {
             }
             other => panic!("expected RateLimited, got {other:?}"),
         }
+    }
+
+    /// A Redis that answers the connection's setup and then goes silent, as one does when its
+    /// host drops off the network: the limiter must fall back to its own window within
+    /// [`REDIS_TIMEOUT`], then skip Redis for [`REDIS_BACKOFF`].
+    #[tokio::test]
+    async fn a_silent_redis_falls_back_instead_of_hanging() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = vec![0u8; 4096];
+            let mut silent = false;
+            loop {
+                let Ok(read) = socket.read(&mut buffer).await else {
+                    return;
+                };
+                if read == 0 {
+                    return;
+                }
+                let text = String::from_utf8_lossy(&buffer[..read]).to_ascii_uppercase();
+                silent |= text.contains("INCR");
+                if !silent {
+                    let commands = text.lines().filter(|line| line.starts_with('*')).count();
+                    let _ = socket
+                        .write_all("+OK\r\n".repeat(commands.max(1)).as_bytes())
+                        .await;
+                }
+            }
+        });
+        let client = redis::Client::open(format!("redis://{address}")).expect("client");
+        let manager = ConnectionManager::new(client).await.expect("manager");
+        let rl = RateLimiter::new();
+        rl.set_redis(manager).await;
+
+        let started = Instant::now();
+        rl.check("test", "silent", 1, Duration::from_secs(60))
+            .await
+            .expect("first hit passes in-process");
+        assert!(started.elapsed() < REDIS_TIMEOUT + Duration::from_millis(500));
+        // Within the backoff Redis isn't waited on, and the in-process window still enforces.
+        let started = Instant::now();
+        assert!(
+            rl.check("test", "silent", 1, Duration::from_secs(60))
+                .await
+                .is_err()
+        );
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     #[tokio::test]

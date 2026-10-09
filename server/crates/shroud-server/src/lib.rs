@@ -174,6 +174,8 @@ pub async fn run() -> Result<(), AppError> {
                             realtime.redis_replacements(),
                             rate_limiter.clone(),
                         );
+                        let hub = realtime.clone();
+                        rate_limiter.on_silent_redis(move || hub.report_silent_redis());
                         crate::realtime::spawn_redis_subscriber(realtime.clone(), redis_url);
                         tracing::info!("realtime fan-out + rate limits: Redis enabled");
                     }
@@ -351,9 +353,10 @@ pub async fn run() -> Result<(), AppError> {
 ///
 /// Human: The defaults retry 1 s and then 60 s apart, with no limit on one attempt: a Redis
 /// back after ten seconds was used again only a minute later, and an attempt against a host
-/// that accepts but never answers waited for good. The realtime hub bounds each of its calls
-/// into Redis besides. A connection that goes silent without an error is never reconnected
-/// by the manager; the hub opens a fresh one itself (see [`relay_redis_replacements`]).
+/// that accepts but never answers waited for good. The realtime hub and the rate limiter bound
+/// each of their calls into Redis besides. A connection that goes silent without an error is
+/// never reconnected by the manager; the hub opens a fresh one itself, also when the limiter
+/// reports one (see [`relay_redis_replacements`]).
 /// Agent: Attempts 1–2 s apart, 2 s each; after the 6 retries the next call starts again.
 fn redis_manager_config() -> redis::aio::ConnectionManagerConfig {
     redis::aio::ConnectionManagerConfig::new()
