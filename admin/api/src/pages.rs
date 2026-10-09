@@ -1,9 +1,10 @@
 //! Read-only pages (§3.4, §3.9 #4).
 //!
-//! `GET /push/check` (§3.9 #10) and `GET /calls/check` (§3.9 #11) are the API's
-//! `GET /operator/push/check` and `GET /operator/calls/check` passed through after a shape
-//! check: the API asks Apple, the push services and distributors, and every STUN and TURN
-//! server callers are handed whether this server's setup works, notifying no one.
+//! `GET /push/check` (§3.9 #10), `GET /calls/check` (#11) and `GET /retention/check` (#12) are
+//! the API's `GET /operator/…/check` passed through after a shape check: the API asks Apple,
+//! the push services and distributors, and every STUN and TURN server callers are handed
+//! whether this server's setup works, notifying no one, and counts rows its retention jobs
+//! should already have removed.
 //!
 //! Rate limits and retention are the tables in [`crate::published`]. Storage counts and push
 //! counts use the granted columns. `GET /calls` `created_total` is the process counter
@@ -48,6 +49,7 @@ pub fn routes() -> Router<AppState> {
         .route("/push", get(push))
         .route("/push/check", get(push_check))
         .route("/calls/check", get(calls_check))
+        .route("/retention/check", get(retention_check))
         .route("/calls", get(calls))
         .route("/privacy-checks", get(privacy_checks))
         .route("/configuration", get(configuration))
@@ -400,6 +402,16 @@ async fn calls_check(
         return Ok(response);
     }
     operator_check("/operator/calls/check").await
+}
+
+async fn retention_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(response) = require(&state, &headers).await? {
+        return Ok(response);
+    }
+    operator_check("/operator/retention/check").await
 }
 
 /// An operator-port check, passed on when it has the contract's shape.

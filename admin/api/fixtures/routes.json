@@ -71,6 +71,14 @@
     },
     {
       "method": "GET",
+      "path": "/retention/check",
+      "file": "retention-check.json",
+      "states": {
+        "failing": "retention-check.failing.json"
+      }
+    },
+    {
+      "method": "GET",
       "path": "/push",
       "file": "push.json"
     },
@@ -196,6 +204,8 @@
     "client-versions.nothing-set.json": "client-versions.schema.json",
     "rate-limits.json": "rate-limits.schema.json",
     "retention.json": "retention.schema.json",
+    "retention-check.json": "retention-check.schema.json",
+    "retention-check.failing.json": "retention-check.schema.json",
     "push.json": "push.schema.json",
     "push-check.json": "push-check.schema.json",
     "push-check.failing.json": "push-check.schema.json",

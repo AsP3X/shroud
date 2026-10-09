@@ -219,6 +219,16 @@ async fn read_only_pages_match_the_schema() {
     );
     assert_private(&push.text);
 
+    let retention_check = send(&app, "/api/admin/retention/check", Some(SESSION)).await;
+    assert_eq!(
+        retention_check.status,
+        StatusCode::OK,
+        "{}",
+        retention_check.text
+    );
+    assert_schema("retention-check.schema.json", &retention_check.body);
+    assert_eq!(retention_check.body, fixture("retention-check.json"));
+
     let call_check = send(&app, "/api/admin/calls/check", Some(SESSION)).await;
     assert_eq!(call_check.status, StatusCode::OK, "{}", call_check.text);
     assert_schema("calls-check.schema.json", &call_check.body);
@@ -436,6 +446,7 @@ fn fixture(name: &str) -> Value {
         "retention.json" => include_str!("../fixtures/retention.json"),
         "push-check.json" => include_str!("../fixtures/push-check.json"),
         "calls-check.json" => include_str!("../fixtures/calls-check.json"),
+        "retention-check.json" => include_str!("../fixtures/retention-check.json"),
         "client-versions.json" => include_str!("../fixtures/client-versions.json"),
         "client-versions.nothing-set.json" => {
             include_str!("../fixtures/client-versions.nothing-set.json")
@@ -456,6 +467,9 @@ fn assert_schema(name: &str, body: &Value) {
         "push.schema.json" => include_str!("../fixtures/schema/push.schema.json"),
         "push-check.schema.json" => include_str!("../fixtures/schema/push-check.schema.json"),
         "calls-check.schema.json" => include_str!("../fixtures/schema/calls-check.schema.json"),
+        "retention-check.schema.json" => {
+            include_str!("../fixtures/schema/retention-check.schema.json")
+        }
         "calls.schema.json" => include_str!("../fixtures/schema/calls.schema.json"),
         "privacy-checks.schema.json" => {
             include_str!("../fixtures/schema/privacy-checks.schema.json")
@@ -727,6 +741,14 @@ async fn spawn_api(mode: Arc<AtomicU8>, web_build: Arc<Mutex<Option<String>>>) -
                          shroud_media_migrated_total 9\n\
                          shroud_calls_created_total 5\n"
                             .to_owned(),
+                    )
+                } else if path.starts_with("/operator/retention/check")
+                    && request.contains("Authorization: Bearer operator-test-token\r\n")
+                {
+                    (
+                        200,
+                        "application/json",
+                        include_str!("../fixtures/retention-check.json").to_owned(),
                     )
                 } else if path.starts_with("/operator/calls/check")
                     && request.contains("Authorization: Bearer operator-test-token\r\n")

@@ -34,7 +34,7 @@ pub const RINGING_TIMEOUT_SECS: i64 = 60;
 /// A call ends when one of its devices has not been heard from for this long. Devices report
 /// in every 10 s (heartbeat or signal), so this is several missed reports.
 pub const PARTICIPANT_TIMEOUT_SECS: i64 = 45;
-const CALL_GC_INTERVAL_SECS: u64 = 10;
+pub(crate) const CALL_GC_INTERVAL_SECS: u64 = 10;
 /// Media is negotiated only after the answer, over sealed signals (docs/calls.md).
 pub const CALL_PROTOCOL: i16 = 2;
 const SIGNAL_TYPES: [&str; 5] = [

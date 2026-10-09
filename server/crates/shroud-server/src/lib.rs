@@ -17,6 +17,7 @@ pub mod push;
 pub mod rate_limit;
 pub mod realtime;
 pub mod request_tracking;
+pub mod retention_check;
 pub mod reserved_names;
 pub mod routes;
 pub mod state;

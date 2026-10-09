@@ -1,0 +1,22 @@
+[
+  {
+    "item": "Revoked sessions",
+    "state": "ok",
+    "detail": "None past 30 days and an hour · 214 revoked sessions still within them."
+  },
+  {
+    "item": "Unlinked media",
+    "state": "ok",
+    "detail": "None past 60 minutes and a sweep · 3 uploads waiting for a message."
+  },
+  {
+    "item": "Unanswered calls",
+    "state": "ok",
+    "detail": "None ringing past 60 s and a sweep · 1 call ringing now."
+  },
+  {
+    "item": "Silent call participants",
+    "state": "ok",
+    "detail": "No side silent past 45 s and a sweep · 4 calls in progress."
+  }
+]

@@ -180,6 +180,113 @@ async fn call_check_without_servers_is_one_off_line() {
     assert_eq!(refused.status(), StatusCode::FORBIDDEN);
 }
 
+/// Rows a retention job should already have removed fail its line: a session revoked 31 days
+/// ago, an upload no message took for two hours, and a call left ringing for five minutes
+/// (which also has a silent caller).
+#[tokio::test]
+async fn retention_check_counts_what_the_jobs_left_behind() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping retention_check_counts_what_the_jobs_left_behind: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let state = AppState::for_integration_tests(pool.clone());
+    let servers = spawn(state.clone()).await;
+    let client = reqwest::Client::new();
+    let caller = register(&client, servers.public, &fresh_name()).await;
+    let callee = register(&client, servers.public, &fresh_name()).await;
+    let caller_user = Uuid::parse_str(&caller.user_id).expect("user");
+    let caller_device = Uuid::parse_str(&caller.device_id).expect("device");
+    let callee_user = Uuid::parse_str(&callee.user_id).expect("user");
+
+    let session: Uuid = sqlx::query_scalar(
+        "INSERT INTO sessions (device_id, token_hash, revoked_at)
+         VALUES ($1, $2, now() - interval '31 days') RETURNING id",
+    )
+    .bind(caller_device)
+    .bind(Uuid::new_v4().as_bytes().to_vec())
+    .fetch_one(&pool)
+    .await
+    .expect("old session");
+    let media: Uuid = sqlx::query_scalar(
+        "INSERT INTO media_objects (uploader_user_id, uploader_device_id, bucket, object_key, created_at)
+         VALUES ($1, $2, 'retention-check', $3, now() - interval '2 hours') RETURNING id",
+    )
+    .bind(caller_user)
+    .bind(caller_device)
+    .bind(Uuid::new_v4().to_string())
+    .fetch_one(&pool)
+    .await
+    .expect("old upload");
+    let call: Uuid = sqlx::query_scalar(
+        "INSERT INTO calls (caller_user_id, caller_device_id, callee_user_id, modality, status, created_at)
+         VALUES ($1, $2, $3, 'voice', 'ringing', now() - interval '5 minutes') RETURNING id",
+    )
+    .bind(caller_user)
+    .bind(caller_device)
+    .bind(callee_user)
+    .fetch_one(&pool)
+    .await
+    .expect("old call");
+
+    let response = client
+        .get(format!(
+            "http://{}/operator/retention/check",
+            servers.operator
+        ))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .send()
+        .await
+        .expect("retention check");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let lines: Vec<Value> = response.json().await.expect("json");
+    let items: Vec<&str> = lines
+        .iter()
+        .map(|line| line["item"].as_str().expect("item"))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            "Revoked sessions",
+            "Unlinked media",
+            "Unanswered calls",
+            "Silent call participants"
+        ]
+    );
+    for line in &lines {
+        assert_eq!(line["state"], "failed", "{line}");
+    }
+    assert!(
+        lines[0]["detail"]
+            .as_str()
+            .expect("detail")
+            .contains("past 30 days and an hour: the hourly purge"),
+        "{}",
+        lines[0]
+    );
+
+    sqlx::query("DELETE FROM calls WHERE id = $1")
+        .bind(call)
+        .execute(&pool)
+        .await
+        .expect("cleanup call");
+    sqlx::query("DELETE FROM media_objects WHERE id = $1")
+        .bind(media)
+        .execute(&pool)
+        .await
+        .expect("cleanup media");
+    sqlx::query("DELETE FROM sessions WHERE id = $1")
+        .bind(session)
+        .execute(&pool)
+        .await
+        .expect("cleanup session");
+    let _ = servers.shutdown.send(true);
+    for task in servers.tasks {
+        let _ = task.await;
+    }
+}
+
 async fn test_pool() -> Option<sqlx::PgPool> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()

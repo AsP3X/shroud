@@ -14,7 +14,7 @@ use crate::state::AppState;
 /// device's are kept: see [`purge_revoked_sessions`]).
 pub const REVOKED_SESSION_RETENTION_DAYS: i64 = 30;
 /// How often the background purge task runs.
-const SESSION_PURGE_INTERVAL_SECS: u64 = 60 * 60;
+pub(crate) const SESSION_PURGE_INTERVAL_SECS: u64 = 60 * 60;
 /// Skip `last_used_at` / `last_seen_at` writes when already touched within this window.
 const SESSION_TOUCH_THROTTLE_SECS: i64 = 5 * 60;
 

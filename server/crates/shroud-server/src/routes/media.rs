@@ -36,7 +36,7 @@ const PRESIGN_TTL_MINUTES: i64 = 15;
 /// Unlinked media older than this is eligible for orphan GC.
 pub const ORPHAN_TTL_MINUTES: i64 = 60;
 /// How often the background GC task runs.
-const ORPHAN_GC_INTERVAL_SECS: u64 = 15 * 60;
+pub(crate) const ORPHAN_GC_INTERVAL_SECS: u64 = 15 * 60;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateUploadRequest {
