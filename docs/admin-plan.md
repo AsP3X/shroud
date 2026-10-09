@@ -40,7 +40,8 @@ admin/
   has no published host port. The web client proxies `WEB_PUBLIC_URL` + `/admin` and `/api/admin`
   to it (for example `https://shroud-app.com/admin`). `web/` does not link to the console.
 - **Reads:** Postgres as role `shroud_admin` (column grants, R3) and the API's existing
-  `GET /api/v1/health/ready`, `/metrics`, `/client-version` over `shroud-internal`.
+  `GET /api/v1/health/ready` and `/client-version` over `shroud-internal`, and the counters from
+  the operator listener's `GET /operator/metrics`.
 - **Writes:** only through a new internal operator listener on the API server (`OPERATOR_PORT`,
   `OPERATOR_TOKEN`), because closing WebSockets, the `DEVICE_REMOVED` wake push, Redis fan-out and
   media unlinking live there. The console never writes the API's tables.
@@ -168,7 +169,8 @@ Second axum router on `OPERATOR_PORT` (default 8090), started only when `OPERATO
 bound inside the container, never published by compose. Every request needs
 `Authorization: Bearer <OPERATOR_TOKEN>` (constant-time compare) or gets `403`. Routes above in
 §3.5; each reuses the inner function of the existing user-facing handler so the side effects are
-identical. `/health*`, `/metrics` and every public route are **not** on this port, and
+identical. `GET /operator/metrics` serves the Prometheus counters, which the public port no
+longer has (anonymity plan 3.1). `/health*` and every public route are **not** on this port, and
 `/operator/*` is `404` on the public port.
 
 ### 3.8 Fixtures (C8)
@@ -273,7 +275,7 @@ dev server serves the same files. Both agents treat a mismatch as a contract bug
     the password, authenticator secret, setup token or recovery codes. The same test returns
     immediately when `ADMIN_TEST_DATABASE_URL` is unset, so a green run without it is not this
     proof. `cargo clippy --all-targets -- -D warnings` passed.
-- [x] **G1.2 Overview (C2).** Postgres counts (R8), `/health/ready`, `/metrics` parsed by name,
+- [x] **G1.2 Overview (C2).** Postgres counts (R8), `/health/ready`, `/operator/metrics` parsed by name,
   `configured` from the console's environment, `attention` rules.
   - Done when: stopping Postgres yields `502 UPSTREAM upstream=postgres`, and
     `/health/ready` not ok yields `ready.status = not_ready`.

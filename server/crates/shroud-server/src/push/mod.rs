@@ -30,7 +30,9 @@ pub use client::{
     ApnsClient, ApnsConfig, ApnsEnvironment, ApnsPushType, ApnsRequest, ApnsSendOutcome,
     apns_config_from_env,
 };
-pub use payload::{Notification, NotificationKind};
+pub use payload::{
+    Notification, NotificationKind, apns_collapse_id, apns_thread_id, extension_aad,
+};
 pub use web_push::{
     SubscriptionClient, UnifiedPushPolicy, VapidKey, WebPushClient, WebPushOptions,
     WebSubscription, push_topic,
@@ -116,6 +118,8 @@ pub struct SentPush {
     pub channel: PushChannel,
     /// `apns-push-type` for APNs (a PushKit ring is `Voip`); `None` for Web Push.
     pub apns_push_type: Option<ApnsPushType>,
+    /// `apns-collapse-id` for APNs, when the push has one.
+    pub apns_collapse_id: Option<String>,
     /// `TTL`, `Urgency` and `Topic` of a Web Push; `None` for APNs.
     pub web_options: Option<WebPushOptions>,
     /// APNs JSON, or the Web Push JSON before encryption.
@@ -939,8 +943,9 @@ impl PushService {
                 sound.as_deref(),
                 target.payload_key.as_deref(),
             );
-            // "Missed call" takes the place of the call's "Incoming call".
-            let collapse_id = notification.call_id.map(|id| id.to_string());
+            // "Missed call" takes the place of the call's "Incoming call". Keyed per iPhone, so
+            // Apple can't match the caller's and callee's pushes by it.
+            let collapse_id = notification.apns_collapse(target.payload_key.as_deref());
             let delivery = self
                 .send_apns(
                     target.device_id,
@@ -990,6 +995,7 @@ impl PushService {
                     device_id,
                     channel,
                     apns_push_type: Some(request.push_type),
+                    apns_collapse_id: request.collapse_id.map(str::to_owned),
                     web_options: None,
                     payload: request.payload.clone(),
                 });
@@ -1002,7 +1008,7 @@ impl PushService {
             "alert"
         };
         let Some(client) = &self.inner.apns else {
-            tracing::info!(
+            tracing::debug!(
                 %device_id,
                 channel = ?channel,
                 "apns push not sent (set APNS_KEY_PATH or APNS_KEY_PEM + KEY_ID/TEAM_ID/TOPIC)"
@@ -1011,7 +1017,7 @@ impl PushService {
         };
         match client.send(token, environment, request).await {
             ApnsSendOutcome::Accepted { apns_id } => {
-                tracing::info!(%device_id, channel = ?channel, ?apns_id, "apns push accepted");
+                tracing::debug!(%device_id, channel = ?channel, ?apns_id, "apns push accepted");
                 Delivery::Sent
             }
             ApnsSendOutcome::InvalidToken { reason, status } => {
@@ -1062,6 +1068,7 @@ impl PushService {
                     device_id,
                     channel,
                     apns_push_type: None,
+                    apns_collapse_id: None,
                     web_options: Some(options.clone()),
                     payload: payload.clone(),
                 });
@@ -1069,7 +1076,7 @@ impl PushService {
             return Delivery::Sent;
         }
         let Some(client) = self.inner.web.get() else {
-            tracing::info!(%device_id, ?channel, "web push not sent (no VAPID key loaded)");
+            tracing::debug!(%device_id, ?channel, "web push not sent (no VAPID key loaded)");
             return Delivery::NotConfigured;
         };
         match client
@@ -1077,11 +1084,11 @@ impl PushService {
             .await
         {
             WebPushOutcome::Accepted => {
-                tracing::info!(%device_id, ?channel, "web push accepted");
+                tracing::debug!(%device_id, ?channel, "web push accepted");
                 Delivery::Sent
             }
             WebPushOutcome::Gone { status } => {
-                tracing::info!(%device_id, ?channel, status, "web push subscription gone — removing");
+                tracing::debug!(%device_id, ?channel, status, "web push subscription gone — removing");
                 let deleted = sqlx::query(
                     r#"DELETE FROM web_push_subscriptions WHERE device_id = $1 AND endpoint = $2"#,
                 )

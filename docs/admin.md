@@ -41,7 +41,7 @@ docker compose --profile admin start admin
 
 The next `./deploy.sh` starts it again while the `admin` profile is on.
 
-While the profile is off, the API still binds its internal operator port when `OPERATOR_TOKEN` is set. Nothing publishes that port and nothing calls it. Blank the token in `.env` and redeploy if the API should not bind it.
+While the profile is off, the API still binds its internal operator port when `OPERATOR_TOKEN` is set. Nothing publishes that port and nothing calls it. Blank the token in `.env` and redeploy if the API should not bind it. That port is also the only place the API's Prometheus counters are served (`GET /operator/metrics` with `Authorization: Bearer <OPERATOR_TOKEN>`): the public port has no `/metrics`, because live counters show when people are active. A scraper of your own needs the token and a place on `shroud-internal`.
 
 ## What to back up
 

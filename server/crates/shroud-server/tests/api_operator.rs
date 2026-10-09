@@ -92,6 +92,36 @@ async fn public_port_answers_404_for_operator_paths() {
 }
 
 #[tokio::test]
+async fn metrics_are_on_the_operator_port_only() {
+    let public = shroud_server::app(AppState::for_integration_tests(lazy_pool()), &[]);
+    let response = call(&public, "GET", "/api/v1/metrics", None).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let app = operator_app();
+    for authorization in [None, Some("Bearer wrong-token".to_string())] {
+        let response = call(&app, "GET", "/operator/metrics", authorization.as_deref()).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(body_bytes(response).await.is_empty());
+    }
+    let response = call(
+        &app,
+        "GET",
+        "/operator/metrics",
+        Some(&format!("Bearer {TOKEN}")),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/plain")
+    );
+    let text = String::from_utf8(body_bytes(response).await).expect("utf-8");
+    assert!(text.contains("shroud_http_requests_total"), "{text}");
+}
+
+#[tokio::test]
 async fn operator_port_rejects_a_bad_token_and_hides_public_routes() {
     let app = operator_app();
     let device = Uuid::new_v4();

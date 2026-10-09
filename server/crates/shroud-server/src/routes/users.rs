@@ -85,7 +85,7 @@ pub async fn rotate_share_code(
         .await;
         match updated {
             Ok(Some(share_code)) => {
-                tracing::info!(user_id = %auth.user_id, "users.share_code rotated");
+                tracing::debug!(user_id = %auth.user_id, "users.share_code rotated");
                 return Ok(Json(ShareCodeResponse { share_code }));
             }
             Ok(None) => return Err(AppError::not_found("User not found.")),

@@ -447,7 +447,7 @@ impl RealtimeHub {
                 .collect()
         };
         for (device_id, online_ts, connection_id) in closed {
-            tracing::info!(%user_id, %device_id, "realtime.session_closed");
+            tracing::debug!(%user_id, %device_id, "realtime.session_closed");
             self.mark_offline(user_id, device_id, online_ts).await;
             if let Some(connection_id) = connection_id {
                 self.clear_focus(user_id, device_id, connection_id).await;

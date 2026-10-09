@@ -19,6 +19,15 @@ x-shroud-logging: &shroud-logging
   RUST_LOG: ${RUST_LOG:-info}
   RUST_LOG_FORMAT: ${RUST_LOG_FORMAT:-text}
 
+# Container logs are kept for a short while only: at most 3 files of 10 MB per service, the
+# oldest dropped first. At RUST_LOG=info the API writes no user, device, chat or call ids;
+# debug and trace do, so turn them back down after looking into something.
+x-log-rotation: &log-rotation
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -38,6 +47,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging: *log-rotation
     restart: unless-stopped
 
   # Rate-limit windows, presence and live events only: nothing is written to disk, and it
@@ -62,6 +72,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging: *log-rotation
     restart: unless-stopped
 
   nebular:
@@ -122,6 +133,7 @@ services:
       timeout: 5s
       retries: 18
       start_period: 120s
+    logging: *log-rotation
     restart: unless-stopped
 
   api:
@@ -214,6 +226,7 @@ services:
       timeout: 5s
       retries: 6
       start_period: 15s
+    logging: *log-rotation
     restart: unless-stopped
 
   web:
@@ -239,6 +252,7 @@ services:
       timeout: 5s
       retries: 6
       start_period: 10s
+    logging: *log-rotation
     restart: unless-stopped
 
   # Operator console. Off unless COMPOSE_PROFILES includes admin (./deploy.sh --admin).
@@ -317,6 +331,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    logging: *log-rotation
     restart: unless-stopped
 
   # TURN relay for calls whose networks refuse a direct path. Host networking: it hands out
@@ -370,6 +385,7 @@ services:
       - --denied-peer-ip=2002::-2002:ffff:ffff:ffff:ffff:ffff:ffff:ffff
       - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
       - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+    logging: *log-rotation
     restart: unless-stopped
 
 networks:

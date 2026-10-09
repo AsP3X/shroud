@@ -123,7 +123,7 @@ pub async fn create_upload(
     // Client-relative path — iOS resolves against the configured API base URL.
     let upload_url = format!("media/{media_id}/content");
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         media_object_id = %media_id,
         size_bytes = body.size_bytes,
@@ -199,7 +199,7 @@ pub async fn put_content(
         .media_puts_total
         .fetch_add(1, Ordering::Relaxed);
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         media_object_id = %media_id,
         bytes = len,
@@ -232,7 +232,7 @@ pub async fn get_content(
         .metrics
         .media_gets_total
         .fetch_add(1, Ordering::Relaxed);
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         media_object_id = %media_id,
         bytes = blob.size,
@@ -272,7 +272,7 @@ pub async fn create_download(
     let expires_at = Utc::now() + Duration::minutes(PRESIGN_TTL_MINUTES);
     let download_url = format!("media/{media_id}/content");
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         media_object_id = %media.id,
         "media.download_presign ok"

@@ -90,7 +90,7 @@ export function Retention() {
                 <CardHead title="Not kept by the server" />
                 <CardBody>
                   {[
-                    ["Logs", "shroud-server writes to stdout at RUST_LOG level. How long Docker keeps them is set on the host; the compose file sets no limit."],
+                    ["Logs", "shroud-server writes to stdout at RUST_LOG level; at info it names no user, device, chat or call. Compose keeps at most 3 files of 10 MB per container, the oldest dropped first."],
                     ["Redis", "Presence, rate-limit counters and fan-out only; started with saving and append-only off, so nothing reaches disk."],
                     ["Backups", "Postgres dumps and Nebular copies are the deployment's own; the server has no view of them."],
                   ].map(([title, detail]) => (

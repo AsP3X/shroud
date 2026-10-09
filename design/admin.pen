@@ -1471,7 +1471,7 @@
                                   "id": "Ye57o",
                                   "name": "Sub",
                                   "fill": "$text-tertiary",
-                                  "content": "From /metrics",
+                                  "content": "From /operator/metrics",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -17211,7 +17211,7 @@
                                   "id": "q9ZO7j",
                                   "name": "Sub",
                                   "fill": "$text-tertiary",
-                                  "content": "From /metrics",
+                                  "content": "From /operator/metrics",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -32989,7 +32989,7 @@
                                   "id": "vibLK",
                                   "name": "Sub",
                                   "fill": "$text-tertiary",
-                                  "content": "From /metrics",
+                                  "content": "From /operator/metrics",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -35284,7 +35284,7 @@
                       "content": "Sealed or not stored"
                     },
                     "iY6vL": {
-                      "content": "11"
+                      "content": "13"
                     },
                     "SGZJY": {
                       "content": "of 20 checks"
@@ -35320,7 +35320,7 @@
                       "content": "Stored in the clear"
                     },
                     "iY6vL": {
-                      "content": "8"
+                      "content": "6"
                     },
                     "SGZJY": {
                       "content": "Needs a server change to remove"
@@ -35564,11 +35564,11 @@
                               "fill": "$danger-soft",
                               "descendants": {
                                 "iTO9u": {
-                                  "fill": "$danger"
+                                  "fill": "$online"
                                 },
                                 "q1x3u": {
-                                  "content": "Stored",
-                                  "fill": "$danger"
+                                  "content": "Not stored",
+                                  "fill": "$ok-text"
                                 }
                               }
                             },
@@ -35585,7 +35585,7 @@
                                   "id": "IAG6T",
                                   "name": "Title",
                                   "fill": "$text-primary",
-                                  "content": "The API log names who messages whom",
+                                  "content": "The API log doesn't name who messages whom",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 13,
                                   "fontWeight": "500"
@@ -35595,7 +35595,7 @@
                                   "id": "B92ZM",
                                   "name": "Detail",
                                   "fill": "$text-tertiary",
-                                  "content": "RUST_LOG=info records sender, recipient and chat on every message.",
+                                  "content": "At info it writes no user, device, chat or call ids, and routes without their values.",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -35824,11 +35824,11 @@
                               "fill": "$danger-soft",
                               "descendants": {
                                 "iTO9u": {
-                                  "fill": "$danger"
+                                  "fill": "$online"
                                 },
                                 "q1x3u": {
-                                  "content": "Stored",
-                                  "fill": "$danger"
+                                  "content": "Not stored",
+                                  "fill": "$ok-text"
                                 }
                               }
                             },
@@ -35845,7 +35845,7 @@
                                   "id": "nJnLZ",
                                   "name": "Title",
                                   "fill": "$text-primary",
-                                  "content": "Apple sees chat IDs in pushes",
+                                  "content": "Apple doesn't see chat IDs in pushes",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 13,
                                   "fontWeight": "500"
@@ -35855,7 +35855,7 @@
                                   "id": "gfv03",
                                   "name": "Detail",
                                   "fill": "$text-tertiary",
-                                  "content": "Conversation, sender and message IDs are sent in plain text.",
+                                  "content": "IDs are sealed for each iPhone, and threads differ from phone to phone.",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -36009,11 +36009,11 @@
                               "fill": "$danger-soft",
                               "descendants": {
                                 "iTO9u": {
-                                  "fill": "$danger"
+                                  "fill": "$online"
                                 },
                                 "q1x3u": {
-                                  "content": "Stored",
-                                  "fill": "$danger"
+                                  "content": "Not stored",
+                                  "fill": "$ok-text"
                                 }
                               }
                             },
@@ -36030,7 +36030,7 @@
                                   "id": "e4P05",
                                   "name": "Title",
                                   "fill": "$text-primary",
-                                  "content": "/metrics is public",
+                                  "content": "Activity counters aren't public",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 13,
                                   "fontWeight": "500"
@@ -36040,7 +36040,7 @@
                                   "id": "n5qspL",
                                   "name": "Detail",
                                   "fill": "$text-tertiary",
-                                  "content": "Live counters show when people are active.",
+                                  "content": "Only this console reads them, on the API's internal operator port.",
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -38346,7 +38346,7 @@
                                   "fill": "$text-tertiary",
                                   "textGrowth": "fixed-width",
                                   "width": "fill_container",
-                                  "content": "shroud-server writes to stdout at RUST_LOG level. How long Docker keeps them is set on the host; the compose file sets no limit.",
+                                  "content": "shroud-server writes to stdout at RUST_LOG level; at info it names no user, device, chat or call. Compose keeps at most 3 files of 10 MB per container, the oldest dropped first.",
                                   "lineHeight": 1.45,
                                   "fontFamily": "$font-ui",
                                   "fontSize": 12,
@@ -45360,29 +45360,6 @@
                                     },
                                     {
                                       "type": "frame",
-                                      "id": "gjeKo",
-                                      "name": "Chip · /metrics",
-                                      "fill": "$surface-3",
-                                      "cornerRadius": 6,
-                                      "padding": [
-                                        3,
-                                        8
-                                      ],
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "QOoL1",
-                                          "name": "Label",
-                                          "fill": "$text-secondary",
-                                          "content": "/metrics",
-                                          "fontFamily": "$font-mono",
-                                          "fontSize": 11,
-                                          "fontWeight": "normal"
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "type": "frame",
                                       "id": "jldwD",
                                       "name": "Chip · /client-version",
                                       "fill": "$surface-3",
@@ -47243,29 +47220,6 @@
                                           "name": "Label",
                                           "fill": "$text-secondary",
                                           "content": "/health/ready",
-                                          "fontFamily": "$font-mono",
-                                          "fontSize": 11,
-                                          "fontWeight": "normal"
-                                        }
-                                      ]
-                                    },
-                                    {
-                                      "type": "frame",
-                                      "id": "pQUCp",
-                                      "name": "Chip · /metrics",
-                                      "fill": "$surface-3",
-                                      "cornerRadius": 6,
-                                      "padding": [
-                                        3,
-                                        8
-                                      ],
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "X5Bw5",
-                                          "name": "Label",
-                                          "fill": "$text-secondary",
-                                          "content": "/metrics",
                                           "fontFamily": "$font-mono",
                                           "fontSize": 11,
                                           "fontWeight": "normal"

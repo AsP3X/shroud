@@ -5,6 +5,9 @@
 //!   media store is reported but not required: without it only media fails (with 503), so the
 //!   replica keeps serving chats.
 //! - `GET /health` — same as readiness (backward compatible).
+//!
+//! The Prometheus counters ([`metrics`]) are on the operator listener only
+//! (`GET /operator/metrics`), never on the public port.
 
 use axum::{
     Json,
@@ -93,7 +96,7 @@ pub async fn health(state: axum::extract::State<AppState>) -> Response {
     ready(state).await
 }
 
-/// `GET /metrics` — Prometheus text exposition (process-local counters).
+/// `GET /operator/metrics` — Prometheus text exposition (process-local counters).
 pub async fn metrics(state: axum::extract::State<AppState>) -> impl IntoResponse {
     (
         StatusCode::OK,

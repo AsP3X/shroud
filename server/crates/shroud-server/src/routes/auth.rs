@@ -174,7 +174,7 @@ pub async fn register(
         .await
         .map_err(|err| AppError::Internal(format!("commit register failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %user_id,
         device_id = %device_id,
         "auth.register ok"
@@ -303,7 +303,7 @@ pub async fn login(
             .await
             .map_err(|err| AppError::Internal(format!("load device name failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %user.id,
         device_id = %device_id,
         replaced_device_id = ?replaced_device,
@@ -360,7 +360,7 @@ pub async fn logout(
         .close_sessions(auth.user_id, &[auth.session_id])
         .await;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         device_id = %auth.device_id,
         session_id = %auth.session_id,
@@ -782,7 +782,7 @@ pub(crate) async fn delete_user_account(
         }
     }
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %user_id,
         chats = chats.len(),
         chats_cleared_for_peer = chats.iter().filter(|chat| chat.cleared_for_peer).count(),

@@ -411,7 +411,7 @@ pub async fn send_message(
             .await;
     }
 
-    tracing::info!(
+    tracing::debug!(
         message_id = %message_id,
         conversation_id = %conversation_id,
         sender_user_id = %auth.user_id,
@@ -711,7 +711,7 @@ pub async fn mark_read_bulk(
         .await;
     }
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         peer = %body.peer_user_id,
         marked,
@@ -1360,7 +1360,7 @@ async fn hard_delete_notes_message(
         .map_err(|err| AppError::Internal(format!("commit notes delete failed: {err}")))?;
 
     let purged = crate::routes::media::purge_media_ids(state, &media_ids).await?;
-    tracing::info!(
+    tracing::debug!(
         message_id = %message_id,
         media_purged = purged,
         "messages.notes_hard_delete ok"
@@ -1489,7 +1489,7 @@ async fn delete_for_everyone(
     // for the orphan GC.
     if !media_ids.is_empty() {
         match crate::routes::media::purge_media_ids(state, &media_ids).await {
-            Ok(purged) => tracing::info!(
+            Ok(purged) => tracing::debug!(
                 message_id = %message_id,
                 media_purged = purged,
                 "messages.delete_everyone media purged"

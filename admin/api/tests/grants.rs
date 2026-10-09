@@ -40,6 +40,12 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
         .execute(&owner)
         .await
         .expect("column grants");
+    // Deploy applies this file on every release. CREATE OR REPLACE VIEW and GRANT SELECT
+    // both have to run cleanly a second time.
+    sqlx::raw_sql(grants)
+        .execute(&owner)
+        .await
+        .expect("column grants re-apply");
 
     // The plan names this `body`. The column the server stores is `ciphertext`.
     expect_denied(&admin, "SELECT ciphertext FROM messages").await;
@@ -49,6 +55,11 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
     expect_denied(&admin, "SELECT bucket FROM media_objects").await;
     expect_denied(&admin, "SELECT apns_token FROM push_tokens").await;
     expect_denied(&admin, "SELECT endpoint FROM web_push_subscriptions").await;
+    expect_denied(&admin, "SELECT payload_key FROM push_tokens").await;
+    sqlx::query("SELECT device_id FROM admin_unsealed_push_devices")
+        .fetch_all(&admin)
+        .await
+        .expect("the unsealed-push view, without payload_key itself");
 
     sqlx::query("SELECT id FROM users")
         .fetch_all(&admin)

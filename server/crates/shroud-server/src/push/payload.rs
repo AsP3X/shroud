@@ -1,13 +1,17 @@
 //! What a notification says: its kind, ids, and (when the device wants it) who it is from.
 //!
-//! Human: Nothing here is message content — the server has none. The sender's name travels
-//! only where the relay cannot read it: sealed to the iPhone's notification extension for
-//! APNs, inside the RFC 8291 ciphertext for Web Push.
-//! Agent: `shroud` object = the app's part of an APNs payload; `seal_for_extension` must stay
-//! in step with `ios/ShroudShared/NotificationPayload.swift`.
+//! Human: Nothing here is message content — the server has none. The ids (chat, sender,
+//! message, call) and the sender's name travel only where the relay cannot read them: sealed to
+//! the iPhone's notification extension for APNs, inside the RFC 8291 ciphertext for Web Push.
+//! Apple sees the kind of push and, per iPhone, a thread and collapse id that no other iPhone
+//! shares, so it cannot tell that two people's pushes are about the same chat or call.
+//! Agent: `shroud` object = the app's part of an APNs payload; `seal_for_extension`,
+//! `extension_aad`, `apns_thread_id` and `apns_collapse_id` must stay in step with
+//! `ios/ShroudShared/NotificationPayload.swift` (shared test vectors on both sides).
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+use ring::hmac;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -94,6 +98,30 @@ impl Notification {
         }
     }
 
+    /// `thread-id` of an APNs alert for one iPhone: a chat's id becomes [`apns_thread_id`]
+    /// under that iPhone's key, so the same chat has a different thread on every phone.
+    /// Without a key (an older build) it is the chat's id, as before.
+    pub fn apns_thread(&self, payload_key: Option<&[u8]>) -> String {
+        match (self.kind, self.conversation_id, payload_key) {
+            (
+                NotificationKind::Message | NotificationKind::Reaction,
+                Some(conversation_id),
+                Some(key),
+            ) => apns_thread_id(key, conversation_id),
+            _ => self.thread(),
+        }
+    }
+
+    /// `apns-collapse-id` for one iPhone: a call's "Missed call" replaces its "Incoming call".
+    /// Under the iPhone's key, like the thread; the call's id without one.
+    pub fn apns_collapse(&self, payload_key: Option<&[u8]>) -> Option<String> {
+        let call_id = self.call_id?;
+        Some(match payload_key {
+            Some(key) => apns_collapse_id(key, call_id),
+            None => call_id.to_string(),
+        })
+    }
+
     /// Groups notifications in the browser (`tag`): a chat's messages share one that its
     /// reactions do not, so a reaction never replaces or adds to a message count.
     pub fn web_tag(&self) -> String {
@@ -101,13 +129,6 @@ impl Notification {
             NotificationKind::Reaction => format!("{}:reaction", self.thread()),
             _ => self.thread(),
         }
-    }
-
-    /// Who the notification is about, as it appears in the payload (`p`), or empty.
-    fn peer(&self) -> String {
-        self.peer_user_id
-            .map(|peer| peer.to_string())
-            .unwrap_or_default()
     }
 }
 
@@ -120,14 +141,15 @@ pub fn apns_sound(setting: &str) -> Option<String> {
     }
 }
 
-/// An APNs alert. `payload_key` (the device's, 32 bytes) seals the sender's name for the
-/// notification extension; without it the name is left out rather than sent readable.
+/// An APNs alert. `payload_key` (the device's, 32 bytes) seals the ids and the sender's name
+/// for the notification extension; without it (an older build) the ids are sent as they are and
+/// the name is left out.
 pub fn apns_alert(
     notification: &Notification,
     sound: Option<&str>,
     payload_key: Option<&[u8]>,
 ) -> Value {
-    let thread = notification.thread();
+    let thread = notification.apns_thread(payload_key);
     let mut aps = json!({
         "alert": { "body": notification.kind.fallback_body() },
         "thread-id": thread,
@@ -149,43 +171,49 @@ pub fn apns_voip(notification: &Notification, payload_key: Option<&[u8]>) -> Val
     json!({ "aps": {}, "shroud": shroud_object(notification, payload_key) })
 }
 
-/// The app's part of an APNs payload: kind, ids, and the sender's name sealed for the device.
+/// The app's part of an APNs payload.
+///
+/// With the device's key: `{"v": 2, "k": kind, "e": sealed}`, where `e` opens to the ids
+/// (`c`, `p`, `m`, `call`) and the sender's name (`n`), each only when there is one. Should
+/// sealing ever fail, the push goes out with its kind alone rather than readable ids. Without
+/// a key (an older build): `{"v": 1, "k", "c", "p", "m", "call"}` in the clear, no name.
 fn shroud_object(notification: &Notification, payload_key: Option<&[u8]>) -> Value {
-    let mut app = json!({ "v": 1, "k": notification.kind.as_str() });
-    if let Some(conversation_id) = notification.conversation_id {
-        app["c"] = json!(conversation_id);
+    let kind = notification.kind.as_str();
+    let ids = app_ids(notification);
+    let Some(key) = payload_key else {
+        let mut app = json!({ "v": 1, "k": kind });
+        if let (Value::Object(app), Value::Object(ids)) = (&mut app, ids) {
+            app.extend(ids);
+        }
+        return app;
+    };
+    let mut sealed = ids;
+    if let Some(name) = &notification.sender_name {
+        sealed["n"] = json!(name);
     }
-    if let Some(peer_user_id) = notification.peer_user_id {
-        app["p"] = json!(peer_user_id);
-    }
-    if let Some(message_id) = notification.message_id {
-        app["m"] = json!(message_id);
-    }
-    if let Some(call_id) = notification.call_id {
-        app["call"] = json!(call_id);
-    }
-    if let (Some(name), Some(key)) = (&notification.sender_name, payload_key)
-        && let Some(sealed) = seal_name(
-            key,
-            notification.kind.as_str(),
-            &notification.thread(),
-            &notification.peer(),
-            name,
-        )
-    {
-        app["e"] = json!(sealed);
+    let mut app = json!({ "v": 2, "k": kind });
+    if let Ok(e) = seal_for_extension(key, &extension_aad(kind), sealed.to_string().as_bytes()) {
+        app["e"] = json!(e);
     }
     app
 }
 
-/// `{"n": name}` sealed for the device, bound to the kind, thread and person it belongs to.
-fn seal_name(key: &[u8], kind: &str, thread: &str, peer: &str, name: &str) -> Option<String> {
-    seal_for_extension(
-        key,
-        &extension_aad(kind, thread, peer),
-        json!({ "n": name }).to_string().as_bytes(),
-    )
-    .ok()
+/// The ids a push is about, under their payload names.
+fn app_ids(notification: &Notification) -> Value {
+    let mut ids = json!({});
+    if let Some(conversation_id) = notification.conversation_id {
+        ids["c"] = json!(conversation_id);
+    }
+    if let Some(peer_user_id) = notification.peer_user_id {
+        ids["p"] = json!(peer_user_id);
+    }
+    if let Some(message_id) = notification.message_id {
+        ids["m"] = json!(message_id);
+    }
+    if let Some(call_id) = notification.call_id {
+        ids["call"] = json!(call_id);
+    }
+    ids
 }
 
 /// A silent badge update (the user read chats on another device).
@@ -252,11 +280,33 @@ pub fn web(notification: &Notification, silent: bool) -> Value {
     payload
 }
 
-/// Binds a sealed name to its notification: a relay cannot move it onto another chat's push,
-/// or onto another person's (all contact requests share the thread `contacts`, all calls
-/// `calls`). `peer` is `p` exactly as sent (a lowercase UUID), or empty.
-pub fn extension_aad(kind: &str, thread: &str, peer: &str) -> Vec<u8> {
-    format!("shroud-push-v1|{kind}|{thread}|{peer}").into_bytes()
+/// Binds a seal to the kind it came with, which Apple sees (`k`, `category`): a relay cannot
+/// pass a message's ids off as a call's. The ids and name are all inside the one seal, so none
+/// can be swapped for another push's.
+pub fn extension_aad(kind: &str) -> Vec<u8> {
+    format!("shroud-push-v2|{kind}").into_bytes()
+}
+
+/// A chat's `thread-id` on one iPhone: HMAC-SHA256 under its payload key, the first 16 bytes
+/// in lowercase hex. The phone works out the same value to find a chat's notifications.
+pub fn apns_thread_id(key: &[u8], conversation_id: Uuid) -> String {
+    keyed_id(key, "shroud-push-thread-v1", conversation_id)
+}
+
+/// A call's `apns-collapse-id` on one iPhone, made like [`apns_thread_id`].
+pub fn apns_collapse_id(key: &[u8], call_id: Uuid) -> String {
+    keyed_id(key, "shroud-push-collapse-v1", call_id)
+}
+
+fn keyed_id(key: &[u8], label: &str, id: Uuid) -> String {
+    let tag = hmac::sign(
+        &hmac::Key::new(hmac::HMAC_SHA256, key),
+        format!("{label}|{id}").as_bytes(),
+    );
+    tag.as_ref()[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// AES-256-GCM under the device's payload key: base64(nonce ‖ ciphertext ‖ tag).
@@ -306,8 +356,17 @@ mod tests {
         .to_vec()
     }
 
+    /// The app object a keyed push carries, opened as the notification extension opens it.
+    fn opened(key: &[u8], payload: &Value) -> Value {
+        let app = &payload["shroud"];
+        assert_eq!(app["v"], 2);
+        let kind = app["k"].as_str().expect("kind");
+        let sealed = app["e"].as_str().expect("sealed ids");
+        serde_json::from_slice(&open(key, &extension_aad(kind), sealed)).expect("json")
+    }
+
     #[test]
-    fn alert_carries_ids_and_a_sealed_name_only() {
+    fn a_keyed_alert_shows_apple_no_id() {
         let key = [7u8; 32];
         let payload = apns_alert(
             &message(Some("alice"), Some(4)),
@@ -318,28 +377,56 @@ mod tests {
         assert_eq!(payload["aps"]["badge"], 4);
         assert_eq!(payload["aps"]["sound"], "default");
         assert_eq!(payload["aps"]["mutable-content"], 1);
-        assert_eq!(payload["aps"]["thread-id"], Uuid::nil().to_string());
-        assert_eq!(payload["shroud"]["k"], "message");
-        // The relay never sees the name.
-        assert!(!payload.to_string().contains("alice"));
-        let sealed = payload["shroud"]["e"].as_str().expect("sealed name");
-        let opened = open(
-            &key,
-            &extension_aad(
-                "message",
-                &Uuid::nil().to_string(),
-                &Uuid::from_u128(2).to_string(),
-            ),
-            sealed,
-        );
+        assert_eq!(payload["aps"]["category"], "message");
         assert_eq!(
-            serde_json::from_slice::<Value>(&opened).unwrap()["n"],
-            "alice"
+            payload["aps"]["thread-id"],
+            apns_thread_id(&key, Uuid::nil())
+        );
+        assert_eq!(payload["shroud"]["k"], "message");
+        // Apple sees the kind and nothing else of ours.
+        let app = payload["shroud"].as_object().unwrap();
+        assert_eq!(
+            app.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["e", "k", "v"]
+        );
+        let text = payload.to_string();
+        for id in [Uuid::nil(), Uuid::from_u128(2), Uuid::from_u128(3)] {
+            assert!(!text.contains(&id.to_string()), "{id} in {text}");
+        }
+        assert!(!text.contains("alice"));
+        assert_eq!(
+            opened(&key, &payload),
+            json!({
+                "c": Uuid::nil(),
+                "p": Uuid::from_u128(2),
+                "m": Uuid::from_u128(3),
+                "n": "alice",
+            })
         );
     }
 
     #[test]
-    fn a_call_is_an_alert_with_the_callers_name_sealed() {
+    fn the_same_chat_has_another_thread_on_every_iphone() {
+        let chat = message(None, None);
+        let one = apns_alert(&chat, None, Some(&[1u8; 32]));
+        let two = apns_alert(&chat, None, Some(&[2u8; 32]));
+        assert_ne!(one["aps"]["thread-id"], two["aps"]["thread-id"]);
+        assert_eq!(
+            one["aps"]["thread-id"],
+            apns_alert(&chat, None, Some(&[1u8; 32]))["aps"]["thread-id"],
+            "stable on one iPhone, so its notifications group"
+        );
+        let mut reaction = chat.clone();
+        reaction.kind = NotificationKind::Reaction;
+        assert_eq!(
+            apns_alert(&reaction, None, Some(&[1u8; 32]))["aps"]["thread-id"],
+            one["aps"]["thread-id"],
+            "a chat's reactions group with its messages"
+        );
+    }
+
+    #[test]
+    fn a_keyed_call_hides_the_call_and_the_caller() {
         let key = [3u8; 32];
         let call = Notification {
             kind: NotificationKind::VideoCall,
@@ -347,22 +434,31 @@ mod tests {
             peer_user_id: Some(Uuid::from_u128(12)),
             message_id: None,
             call_id: Some(Uuid::from_u128(11)),
-            sender_name: Some("carol".into()),
+            sender_name: None,
             badge: None,
         };
         let payload = apns_alert(&call, Some("default"), Some(&key));
         assert_eq!(payload["aps"]["alert"]["body"], "Incoming video call");
         assert_eq!(payload["aps"]["thread-id"], "calls");
-        assert_eq!(payload["shroud"]["call"], Uuid::from_u128(11).to_string());
-        assert!(!payload.to_string().contains("carol"));
-        let opened = open(
-            &key,
-            &extension_aad("video_call", "calls", &Uuid::from_u128(12).to_string()),
-            payload["shroud"]["e"].as_str().unwrap(),
+        assert!(payload["shroud"].get("call").is_none());
+        assert!(
+            !payload
+                .to_string()
+                .contains(&Uuid::from_u128(11).to_string())
         );
         assert_eq!(
-            serde_json::from_slice::<Value>(&opened).unwrap()["n"],
-            "carol"
+            opened(&key, &payload),
+            json!({ "p": Uuid::from_u128(12), "call": Uuid::from_u128(11) })
+        );
+        let collapse = call.apns_collapse(Some(&key)).unwrap();
+        assert_eq!(collapse, apns_collapse_id(&key, Uuid::from_u128(11)));
+        assert_ne!(collapse, call.apns_collapse(Some(&[4u8; 32])).unwrap());
+        let mut missed = call.clone();
+        missed.kind = NotificationKind::MissedCall;
+        assert_eq!(
+            missed.apns_collapse(Some(&key)).unwrap(),
+            collapse,
+            "\"Missed call\" still takes the place of \"Incoming call\""
         );
     }
 
@@ -381,49 +477,155 @@ mod tests {
         let payload = apns_voip(&call, Some(&key));
         assert_eq!(payload["aps"], json!({}));
         assert_eq!(payload["shroud"]["k"], "call");
-        assert_eq!(payload["shroud"]["call"], Uuid::from_u128(21).to_string());
-        assert_eq!(payload["shroud"]["p"], Uuid::from_u128(22).to_string());
         assert!(!payload.to_string().contains("dave"));
-        let opened = open(
-            &key,
-            &extension_aad("call", "calls", &Uuid::from_u128(22).to_string()),
-            payload["shroud"]["e"].as_str().unwrap(),
+        assert!(
+            !payload
+                .to_string()
+                .contains(&Uuid::from_u128(21).to_string())
         );
         assert_eq!(
-            serde_json::from_slice::<Value>(&opened).unwrap()["n"],
-            "dave"
+            opened(&key, &payload),
+            json!({ "p": Uuid::from_u128(22), "call": Uuid::from_u128(21), "n": "dave" })
         );
     }
 
-    /// The same bytes `ios/shroudTests` opens: both sides agree on nonce ‖ ciphertext ‖ tag
-    /// and on the associated data.
+    /// The same bytes and ids `ios/shroudTests` checks: both sides agree on nonce ‖ ciphertext
+    /// ‖ tag, on the associated data, and on the keyed thread and collapse ids.
     #[test]
-    fn opens_the_shared_test_vector() {
+    fn matches_the_shared_test_vectors() {
+        let key = [42u8; 32];
         let opened = open(
-            &[42u8; 32],
-            &extension_aad(
-                "message",
-                "6f9619ff-8b86-4d01-b42d-00c04fc964ff",
-                "5f0c3a52-7b1e-4c6d-9a8b-2e4f6d8c0a1b",
-            ),
-            "AAECAwQFBgcICQoLNw86aqYBQlL3UGPJr5ruy3y0NJPwNYGMO+xknak=",
+            &key,
+            &extension_aad("message"),
+            "AAECAwQFBgcICQoLNw83aqYBFVinBTfStNqou0/SpKKtf4lhBa3wMFNUwZ8m4GDt4J+mUCP0sEGhc2LF+GaWQNTrj2GddhUmvcgr7R5PrsSI5FckdDdV7tEv3Uln3FZzMr6L0A9qe7AcXq4YYIRyNsxd/8TO+UXY6DZmfMav6cjaKD+V50Y8Bg8kTczJ3oAypImUmpyPTau9ebND3youNvLvD9YlsvTVQHY=",
         );
-        assert_eq!(opened, br#"{"n":"alice"}"#);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&opened).unwrap(),
+            json!({
+                "c": "6f9619ff-8b86-4d01-b42d-00c04fc964ff",
+                "m": "0d9e8f7a-6b5c-4d3e-8f2a-1b0c9d8e7f6a",
+                "n": "alice",
+                "p": "5f0c3a52-7b1e-4c6d-9a8b-2e4f6d8c0a1b",
+            })
+        );
+        assert_eq!(
+            apns_thread_id(
+                &key,
+                Uuid::parse_str("6f9619ff-8b86-4d01-b42d-00c04fc964ff").unwrap()
+            ),
+            "3c9ba47195443675c89152bc77587c65"
+        );
+        assert_eq!(
+            apns_collapse_id(
+                &key,
+                Uuid::parse_str("3c7d1e9a-2b4f-4a6c-8d0e-1f2a3b4c5d6e").unwrap()
+            ),
+            "7ea6d1da93077abd7d59d5004985ff0b"
+        );
     }
 
     #[test]
-    fn a_name_without_a_key_is_left_out() {
+    fn without_a_key_the_ids_go_as_before_and_the_name_is_left_out() {
         let payload = apns_alert(&message(Some("alice"), None), None, None);
+        assert_eq!(payload["shroud"]["v"], 1);
+        assert_eq!(payload["shroud"]["c"], Uuid::nil().to_string());
+        assert_eq!(payload["shroud"]["p"], Uuid::from_u128(2).to_string());
+        assert_eq!(payload["shroud"]["m"], Uuid::from_u128(3).to_string());
+        assert_eq!(payload["aps"]["thread-id"], Uuid::nil().to_string());
         assert!(payload["shroud"].get("e").is_none());
         assert!(payload["aps"].get("sound").is_none());
         assert!(payload["aps"].get("badge").is_none());
         assert!(!payload.to_string().contains("alice"));
+        let call = Notification {
+            call_id: Some(Uuid::from_u128(9)),
+            ..message(None, None)
+        };
+        assert_eq!(
+            call.apns_collapse(None).as_deref(),
+            Some(Uuid::from_u128(9).to_string().as_str())
+        );
+    }
+
+    /// Contact requests, calls, the test push and the badge carry no id Apple can read either.
+    /// The badge has no app object. The others seal whatever ids they have.
+    #[test]
+    fn keyed_pushes_of_every_kind_keep_ids_out_of_the_relayed_payload() {
+        let key = [8u8; 32];
+        let ids = [
+            Uuid::from_u128(0x1111),
+            Uuid::from_u128(0x2222),
+            Uuid::from_u128(0x3333),
+            Uuid::from_u128(0x4444),
+        ];
+        let kinds = [
+            NotificationKind::ContactRequest,
+            NotificationKind::Call,
+            NotificationKind::VideoCall,
+            NotificationKind::MissedCall,
+            NotificationKind::CallEnded,
+            NotificationKind::Test,
+            NotificationKind::Reaction,
+        ];
+        for kind in kinds {
+            let notification = Notification {
+                kind,
+                conversation_id: Some(ids[0]),
+                peer_user_id: Some(ids[1]),
+                message_id: Some(ids[2]),
+                call_id: Some(ids[3]),
+                sender_name: Some("alice".into()),
+                badge: Some(2),
+            };
+            for payload in [
+                apns_alert(&notification, Some("default"), Some(&key)),
+                apns_voip(&notification, Some(&key)),
+            ] {
+                let text = payload.to_string();
+                for id in ids {
+                    assert!(
+                        !text.contains(&id.to_string()),
+                        "{kind:?} leaked {id} in {text}"
+                    );
+                }
+                assert!(
+                    !text.contains("alice"),
+                    "{kind:?} leaked the name in {text}"
+                );
+                let app = payload["shroud"].as_object().unwrap();
+                assert!(app.get("c").is_none(), "{kind:?}");
+                assert!(app.get("p").is_none(), "{kind:?}");
+                assert!(app.get("m").is_none(), "{kind:?}");
+                assert!(app.get("call").is_none(), "{kind:?}");
+                let opened = opened(&key, &payload);
+                assert_eq!(opened["c"], ids[0].to_string());
+                assert_eq!(opened["p"], ids[1].to_string());
+                assert_eq!(opened["call"], ids[3].to_string());
+            }
+            if let Some(collapse) = notification.apns_collapse(Some(&key)) {
+                assert_eq!(collapse, apns_collapse_id(&key, ids[3]));
+                assert!(!collapse.contains('-'), "{collapse}");
+            }
+            let thread = notification.apns_thread(Some(&key));
+            assert!(
+                !thread.contains(&ids[0].to_string()),
+                "{kind:?} thread {thread}"
+            );
+        }
+        let badge = apns_badge(4);
+        assert!(badge.get("shroud").is_none());
+        let text = badge.to_string();
+        for id in ids {
+            assert!(
+                !text.contains(&id.to_string()),
+                "badge leaked {id} in {text}"
+            );
+        }
     }
 
     #[test]
-    fn a_sealed_name_does_not_open_on_another_push() {
+    fn a_seal_does_not_open_as_another_kind() {
         let key = [9u8; 32];
-        let payload = apns_alert(&message(Some("bob"), None), None, Some(&key));
+        let payload = apns_alert(&message(None, None), None, Some(&key));
         let sealed = payload["shroud"]["e"].as_str().unwrap();
         let opens_with = |aad: Vec<u8>| {
             let bytes = BASE64.decode(sealed).unwrap();
@@ -437,16 +639,9 @@ mod tests {
             )
             .is_ok()
         };
-        let chat = Uuid::nil().to_string();
-        let peer = Uuid::from_u128(2).to_string();
-        assert!(opens_with(extension_aad("message", &chat, &peer)));
-        assert!(!opens_with(extension_aad("message", "another-chat", &peer)));
-        assert!(!opens_with(extension_aad("reaction", &chat, &peer)));
-        assert!(!opens_with(extension_aad(
-            "message",
-            &chat,
-            &Uuid::from_u128(99).to_string()
-        )));
+        assert!(opens_with(extension_aad("message")));
+        assert!(!opens_with(extension_aad("call")));
+        assert!(!opens_with(b"shroud-push-v1|message".to_vec()));
     }
 
     #[test]

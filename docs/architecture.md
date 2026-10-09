@@ -30,7 +30,7 @@ High-level structure for the E2E encrypted messenger.
                                                                     presence)
 ```
 
-**coturn** (Compose profile) supplies TURN when P2P fails. Call media does not flow through the Rust API. App media ciphertext lives in **Nebular OS** when `NEBULAR_URL` is set (Compose sets it), so every API replica sees the same blobs; otherwise in files under `MEDIA_DATA_DIR`. Clients always use `/media/{id}/content`, where the API checks access and streams the bytes: clients never reach Nebular, and Nebular never sees a client address or token. The API talks to Nebular with a SigV4 access key. Nebular gives that key the `editor` role on the `shroud-media` bucket only, verifies each request's body hash before storing it, and refuses requests more than 15 minutes old. Deleted media is removed at once (`NOS_SOFT_DELETE_TTL_SECS=0`); the orphan GC retries a delete the store missed. New object keys are `media/{xx}/{media id}` and never name the uploader. Blobs earlier releases kept on the local volume are moved into Nebular on start (see `media_store`). Prometheus text metrics: `GET /api/v1/metrics`.
+**coturn** (Compose profile) supplies TURN when P2P fails. Call media does not flow through the Rust API. App media ciphertext lives in **Nebular OS** when `NEBULAR_URL` is set (Compose sets it), so every API replica sees the same blobs; otherwise in files under `MEDIA_DATA_DIR`. Clients always use `/media/{id}/content`, where the API checks access and streams the bytes: clients never reach Nebular, and Nebular never sees a client address or token. The API talks to Nebular with a SigV4 access key. Nebular gives that key the `editor` role on the `shroud-media` bucket only, verifies each request's body hash before storing it, and refuses requests more than 15 minutes old. Deleted media is removed at once (`NOS_SOFT_DELETE_TTL_SECS=0`); the orphan GC retries a delete the store missed. New object keys are `media/{xx}/{media id}` and never name the uploader. Blobs earlier releases kept on the local volume are moved into Nebular on start (see `media_store`). Prometheus text metrics: `GET /operator/metrics` on the internal operator listener (bearer `OPERATOR_TOKEN`), never on the public port.
 
 ## Repository map
 
@@ -224,15 +224,21 @@ content to send.
   (`chat_mutes`, per account, for a while or until unmuted) pushes nothing — only a silent badge
   to an iPhone that counts muted chats; contact requests and calls ignore mutes. Saved
   Messages, annotations and taking an emoji back never push.
-- **What a push says.** APNs: a fixed line per kind ("New message") as the body, the conversation
-  as `thread-id`, `mutable-content`, and a `shroud` object with the kind and ids. The sender's
-  name is `e`, AES-256-GCM sealed under a 32-byte key the iPhone generated and registered with its
-  token (AAD `shroud-push-v1|kind|thread|peer`), so Apple sees ids and no names and cannot
-  move a name onto another push. The notification
-  service extension opens it with the key from the app group's Keychain
-  (`AfterFirstUnlockThisDeviceOnly`) and makes it the title; without the key (before the first
-  unlock) the push shows no name, never a readable one. The key keeps names from Apple, not from
-  the server, which chose them. Web Push is RFC 8291 (`aes128gcm`) with VAPID (RFC 8292); the push
+- **What a push says.** APNs: a fixed line per kind ("New message") as the body,
+  `mutable-content`, and a `shroud` object with the kind and `e`: the ids (chat, sender, message,
+  call) and the sender's name, AES-256-GCM sealed under a 32-byte key the iPhone generated and
+  registered with its token (AAD `shroud-push-v2|kind`). A chat's `thread-id` and a call's
+  collapse id are HMACs under the same key, different on every iPhone, so Apple sees the kind of
+  push and nothing it could match between two people. The notification
+  service extension opens `e` with the key from the app group's Keychain
+  (`AfterFirstUnlockThisDeviceOnly`), makes the name the title and files the notification under
+  the chat; without the key (before the first unlock) the push shows no name and stays sealed
+  for the app. A sealed VoIP push in that window has no call id the app can read, so CallKit
+  is told the call failed. The call id stays inside the seal: in the clear, Apple could link
+  the two phones. The session and the call secret use the same Keychain class, so the phone
+  could not finish the call before that first unlock anyway. An older build that registered
+  no key still gets the ids in the clear. The key
+  keeps ids and names from Apple, not from the server, which chose them. Web Push is RFC 8291 (`aes128gcm`) with VAPID (RFC 8292); the push
   service cannot read the payload, so the name travels inside it and the service worker
   (`web/public/sw.js`) writes the text.
 - **Calls** ring iPhones through PushKit (`call` / `video_call`), even when the app is not in

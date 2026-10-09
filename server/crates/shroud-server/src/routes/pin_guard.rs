@@ -117,7 +117,7 @@ pub async fn create_guard(
     .await
     .map_err(|err| AppError::Internal(format!("create pin guard failed: {err}")))?;
 
-    tracing::info!(user_id = %auth.user_id, device_id = %auth.device_id, "pin_guard.create ok");
+    tracing::debug!(user_id = %auth.user_id, device_id = %auth.device_id, "pin_guard.create ok");
 
     Ok((
         StatusCode::CREATED,
@@ -204,7 +204,8 @@ pub async fn unlock(
         .await
         .map_err(|err| AppError::Internal(format!("commit pin guard failed: {err}")))?;
 
-    tracing::warn!(guard_id = %body.guard_id, failed, "pin_guard.unlock wrong key");
+    // The guard id is a capability for this vault. A wrong PIN is enough to see; the id is not.
+    tracing::warn!(failed, "pin_guard.unlock wrong key");
     if failed >= MAX_FAILED_ATTEMPTS {
         return Err(AppError::pin_guard_gone());
     }
@@ -238,7 +239,7 @@ pub async fn abandon(
         .execute(&state.pool)
         .await
         .map_err(|err| AppError::Internal(format!("abandon pin guard failed: {err}")))?;
-    tracing::info!("pin_guard.abandon");
+    tracing::debug!("pin_guard.abandon");
     Ok(StatusCode::NO_CONTENT)
 }
 

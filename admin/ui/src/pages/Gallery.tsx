@@ -111,7 +111,7 @@ export function Gallery() {
         <Row label="Key-value rows">
           <div style={{ width: 380 }}>
             <Card>
-              <CardHead title="Since the last restart" sub="From /metrics" />
+              <CardHead title="Since the last restart" sub="From /operator/metrics" />
               <KeyValueRows
                 rows={[
                   { key: "HTTP requests", value: <span className="mono text-primary">4,812,330</span> },

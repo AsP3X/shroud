@@ -139,7 +139,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     };
 
-    tracing::info!(%user_id, %device_id, ?mode, "ws.connected");
+    tracing::debug!(%user_id, %device_id, ?mode, "ws.connected");
 
     let ok = json!({
         "type": "auth.ok",
@@ -259,7 +259,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
             }
             _ = &mut idle => {
-                tracing::info!(%user_id, %device_id, "ws.idle_timeout");
+                tracing::debug!(%user_id, %device_id, "ws.idle_timeout");
                 break;
             }
             inbound = stream.next() => {
@@ -286,7 +286,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     if let Some(over) = ended {
-        tracing::info!(%user_id, %device_id, ?over, "ws.session_revoked");
+        tracing::debug!(%user_id, %device_id, ?over, "ws.session_revoked");
         // Clients take auth.error as final: they stop reconnecting with the dead token, and
         // the web client signs out. DEVICE_REMOVED also makes the iPhone wipe itself now.
         let error = if over == SessionState::Removed {
@@ -318,7 +318,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         announce_online_change(&state, user_id, device_id, OnlineChange::WentOffline).await;
     }
 
-    tracing::info!(%user_id, %device_id, "ws.disconnected");
+    tracing::debug!(%user_id, %device_id, "ws.disconnected");
 }
 
 /// Presence after a socket started or stopped making its user online.

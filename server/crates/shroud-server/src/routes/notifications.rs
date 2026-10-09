@@ -108,7 +108,7 @@ pub async fn put_settings(
     .await
     .map_err(|err| AppError::Internal(format!("save notification settings failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         device_id = %auth.device_id,
         enabled = settings.enabled,
@@ -202,7 +202,7 @@ pub async fn put_mute(
 
     let mute = MuteState { until };
     announce_mute(&state, &auth, peer_user_id, Some(&mute)).await;
-    tracing::info!(user_id = %auth.user_id, forever = until.is_none(), "notifications.mute set");
+    tracing::debug!(user_id = %auth.user_id, forever = until.is_none(), "notifications.mute set");
     Ok(Json(MuteResponse { peer_user_id, mute }))
 }
 

@@ -1,10 +1,12 @@
 //! Internal operator listener.
 //!
 //! Human: The admin console asks this port to remove a device, sign an account out, or
-//! delete an account. It is bound inside the container and not published. The public port
-//! has none of these routes.
+//! delete an account, and reads the server's counters here. It is bound inside the container
+//! and not published. The public port has none of these routes: on a small server, live
+//! counters would show anyone when people are active.
 //! Agent: Bearer `OPERATOR_TOKEN` on every request, or 403. The three POSTs call the same
-//! functions as the user-facing handlers. Health, metrics and the public API are not mounted.
+//! functions as the user-facing handlers; `GET /operator/metrics` is the Prometheus text.
+//! Health and the public API are not mounted.
 
 use std::sync::Arc;
 
@@ -12,7 +14,7 @@ use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
@@ -35,6 +37,7 @@ pub fn router(token: Arc<str>) -> Router<AppState> {
         .route("/operator/devices/{id}/remove", post(remove_device))
         .route("/operator/users/{id}/sign-out-all", post(sign_out_all))
         .route("/operator/users/{id}/delete", post(delete_account))
+        .route("/operator/metrics", get(crate::routes::health::metrics))
         .fallback(unknown)
         .layer(middleware::from_fn(move |request: Request, next: Next| {
             let token = Arc::clone(&token);

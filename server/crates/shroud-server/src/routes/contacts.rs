@@ -239,7 +239,7 @@ pub async fn create_request(
         .await
         .map_err(|err| AppError::Internal(format!("commit contact request failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         request_id = %request_id,
         from_user_id = %auth.user_id,
         to_user_id = %body.user_id,
@@ -426,7 +426,7 @@ pub async fn accept_request(
         .await
         .map_err(|err| AppError::Internal(format!("commit accept failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         request_id = %row.id,
         from_user_id = %row.from_user_id,
         to_user_id = %row.to_user_id,

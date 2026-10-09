@@ -14,6 +14,7 @@ use sqlx::Row;
 
 use crate::auth::{self, Admission};
 use crate::error::ApiError;
+use crate::operator_api;
 use crate::probe;
 use crate::state::{AppState, Counts};
 
@@ -123,11 +124,10 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Result<R
     let base = api_base().ok_or_else(ApiError::upstream_api)?;
     let counts = load_counts(&state).await?;
     let ready_url = format!("{base}/api/v1/health/ready");
-    let metrics_url = format!("{base}/api/v1/metrics");
     let version_url = format!("{base}/api/v1/client-version?platform=ios&version=0.0.0");
     let (ready_res, metrics_res, version_res) = tokio::join!(
         probe::get(&ready_url),
-        probe::get(&metrics_url),
+        operator_api::get("/operator/metrics"),
         probe::get(&version_url),
     );
     let ready_fetched = ready_res.map_err(|_| ApiError::upstream_api())?;

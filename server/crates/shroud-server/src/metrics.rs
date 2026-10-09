@@ -1,7 +1,8 @@
 //! Lightweight Prometheus-compatible metrics (text exposition).
 //!
 //! Human: Latency, pool health, and request volume without a heavy telemetry stack.
-//! Agent: Process-local atomics; scrape `GET /metrics` (unauthenticated by design for v1).
+//! Agent: Process-local atomics; scrape `GET /operator/metrics` on the operator listener (bearer
+//! `OPERATOR_TOKEN`). Not on the public port.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

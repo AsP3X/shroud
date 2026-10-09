@@ -329,7 +329,7 @@ pub async fn create_call(
         .calls_created_total
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    tracing::info!(
+    tracing::debug!(
         call_id = %call_id,
         caller = %auth.user_id,
         callee = %body.peer_user_id,
@@ -465,7 +465,7 @@ pub async fn accept_call(
         })
         .await;
 
-    tracing::info!(call_id = %call_id, callee = %auth.user_id, "calls.accept ok");
+    tracing::debug!(call_id = %call_id, callee = %auth.user_id, "calls.accept ok");
     Ok(Json(response))
 }
 
@@ -718,7 +718,7 @@ async fn end_call_as(
 
     announce_end(state, &updated, Some(device_id)).await;
 
-    tracing::info!(
+    tracing::debug!(
         call_id = %call_id,
         user_id = %user_id,
         status = new_status,
@@ -1042,7 +1042,7 @@ pub async fn end_stale_calls(
         .await
         .map_err(|err| AppError::Internal(format!("end stale calls failed: {err}")))?;
         for call in &rows {
-            tracing::info!(call_id = %call.id, status, reason, "calls.stale ended");
+            tracing::debug!(call_id = %call.id, status, reason, "calls.stale ended");
             announce_end(state, call, None).await;
         }
         ended += rows.len();

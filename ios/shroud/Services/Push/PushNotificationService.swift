@@ -7,8 +7,9 @@ import UserNotifications
 
 /// APNs registration, the notification-centre delegate, and PushKit.
 ///
-/// Human: The server only gets opaque tokens, plus a random key it seals sender names with so
-/// Apple cannot read them (`NotificationPayload`). Pushes never carry message content.
+/// Human: The server only gets opaque tokens, plus a random key it seals each push's ids (and a
+/// sender's name) with so Apple cannot read them (`NotificationPayload`). Pushes never carry
+/// message content.
 /// Agent: `PUT /push/token` with kind `alert` (+ payload key) and `voip`; sandbox vs production
 /// from the embedded provisioning profile. Taps and foreground pushes go to NotificationsController.
 @MainActor
@@ -129,8 +130,8 @@ final class PushNotificationService: NSObject {
 
     private func uploadToken(hex: String, kind: TokenKind) async {
         guard let token = sessionController?.bearerToken else { return }
-        // The key the server seals sender names with; without one (Keychain unavailable) the
-        // server leaves names out rather than send them readable.
+        // The key the server seals each push's ids and names with; without one (Keychain
+        // unavailable) the server sends the ids readable and leaves names out.
         let payloadKey: String? = kind == .alert
             ? NotificationPayload.makeKey().map { key in key.withUnsafeBytes { Data($0) }.base64EncodedString() }
             : nil
@@ -275,7 +276,11 @@ extension PushNotificationService: PKPushRegistryDelegate {
         let contents = NotificationPayload.parse(dict)
         let isCall = contents?.kind == .call || contents?.kind == .videoCall || contents?.kind == .callEnded
         guard isCall, let contents, let callID = contents.callID else {
-            // PushKit still requires a CallKit report, even when the payload is not a call.
+            // PushKit still requires a CallKit report, even when this is not a call or the call
+            // id did not open. Before the first unlock the payload key is unreadable, so a
+            // sealed ring is reported as a failed call: the id stays inside the seal (Apple
+            // must not see it), and the session is in the same Keychain class, so the call
+            // could not be answered yet anyway.
             let unused = UUID()
             CallKitManager.shared.reportIncoming(unused, callerName: "Shroud", video: false)
             CallKitManager.shared.reportEnded(unused, reason: .failed)
@@ -300,19 +305,7 @@ extension PushNotificationService: PKPushRegistryDelegate {
             return
         }
         let modality: CallModality = contents.kind == .videoCall ? .video : .voice
-        var fromName = "Incoming call"
-        if let sealed = contents.sealedName,
-           let key = NotificationPayload.storedKey(),
-           let name = NotificationPayload.openName(
-               sealed,
-               key: key,
-               kind: contents.kind,
-               thread: "calls",
-               peer: contents.rawPeer ?? ""
-           )
-        {
-            fromName = name
-        }
+        let fromName = contents.senderName ?? "Incoming call"
 
         // A hang-up that already arrived must not leave a new ring on screen. PushKit still
         // requires a report, so the call is reported and ended together.

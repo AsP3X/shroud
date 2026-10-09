@@ -93,6 +93,8 @@ async fn overview_matches_the_schema_and_a_failing_probe_is_not_ready() {
     let mode = Arc::new(AtomicU8::new(0));
     let base = spawn_api(Arc::clone(&mode)).await;
     set_env("API_INTERNAL_URL", Some(&base));
+    set_env("OPERATOR_PORT", Some(base.rsplit(':').next().unwrap()));
+    set_env("OPERATOR_TOKEN", Some("operator-test-token"));
     configure_env(true);
 
     let app = shroud_admin::router_with(None, AppState::connected(admin.clone(), [9u8; 32]));
@@ -368,7 +370,9 @@ async fn spawn_api(mode: Arc<AtomicU8>) -> String {
                                 .to_owned(),
                         )
                     }
-                } else if path.starts_with("/api/v1/metrics") {
+                } else if path.starts_with("/operator/metrics")
+                    && request.contains("Authorization: Bearer operator-test-token\r\n")
+                {
                     let legacy = if failing { 0 } else { 4 };
                     (
                         200,

@@ -224,16 +224,22 @@ final class NotificationsController {
         UNUserNotificationCenter.current().setBadgeCount(value) { _ in }
     }
 
-    /// Closes a chat's notifications once it has been read (here or on another device).
+    /// Closes a chat's notifications once it has been read (here or on another device). The
+    /// extension files them under the chat's id; one it could not open keeps the server's
+    /// keyed thread (`NotificationPayload.threadID`).
     func clearDelivered(conversationID: UUID) {
-        clearDelivered(thread: conversationID.uuidString.lowercased())
+        var threads: Set<String> = [conversationID.uuidString.lowercased()]
+        if let key = NotificationPayload.storedKey() {
+            threads.insert(NotificationPayload.threadID(for: conversationID, key: key))
+        }
+        clearDelivered(threads: threads)
     }
 
-    func clearDelivered(thread: String) {
+    private func clearDelivered(threads: Set<String>) {
         Task {
             let center = UNUserNotificationCenter.current()
             let ids = await center.deliveredNotifications()
-                .filter { $0.request.content.threadIdentifier.lowercased() == thread }
+                .filter { threads.contains($0.request.content.threadIdentifier.lowercased()) }
                 .map(\.request.identifier)
             guard !ids.isEmpty else { return }
             center.removeDeliveredNotifications(withIdentifiers: ids)

@@ -171,7 +171,7 @@ export function ClientVersions() {
                         STAYS OPEN TO EVERY BUILD
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-                        {["/health", "/health/live", "/health/ready", "/metrics", "/client-version"].map((path) => (
+                        {["/health", "/health/live", "/health/ready", "/client-version"].map((path) => (
                           <Chip mono key={path}>
                             {path}
                           </Chip>

@@ -25,7 +25,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{HeaderName, HeaderValue, Method, header};
-use axum::{Router, extract::Request, middleware};
+use axum::{
+    Router,
+    extract::{MatchedPath, Request},
+    middleware,
+};
 use sqlx::postgres::PgPoolOptions;
 use tower_http::LatencyUnit;
 use tower_http::classify::ServerErrorsFailureClass;
@@ -41,7 +45,7 @@ use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
 use crate::state::AppState;
 
-/// Counts HTTP requests / 5xx for Prometheus `/metrics`.
+/// Counts HTTP requests / 5xx for Prometheus (`/operator/metrics`).
 async fn metrics_http_middleware(
     axum::extract::State(state): axum::extract::State<AppState>,
     request: Request,
@@ -57,6 +61,9 @@ async fn metrics_http_middleware(
 }
 
 /// Structured span per HTTP request — correlates with `x-request-id` (Ownly-style).
+///
+/// Human: Names the route as written (`/api/v1/users/{user_id}`), never the path the client
+/// sent or its query: those hold user ids, share codes and media ids.
 fn make_request_span(request: &Request) -> Span {
     let request_id = request
         .headers()
@@ -67,9 +74,17 @@ fn make_request_span(request: &Request) -> Span {
         "http.request",
         request_id = %request_id,
         method = %request.method(),
-        uri = %request.uri(),
+        route = %route_of(request),
         version = ?request.version(),
     )
+}
+
+/// The route template a request matched, or `(no route)`.
+fn route_of(request: &Request) -> &str {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or("(no route)", MatchedPath::as_str)
 }
 
 /// Application entrypoint: configure tracing, connect to Postgres, serve HTTP.
@@ -478,4 +493,52 @@ async fn load_web_push(
     let hosts = crate::push::web_push::allowed_hosts_from_env();
     tracing::info!(public_key = %key.public_key_b64url(), %subject, "web push: VAPID key ready");
     crate::push::WebPushClient::new(key, subject, hosts, unifiedpush.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::body::Body;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// The request log names the route as written, never the ids or query the client sent.
+    /// `/ws` is the WebSocket upgrade: a GET under the same nest, so it has a matched path too.
+    #[tokio::test]
+    async fn the_request_log_names_the_route_not_the_path() {
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let record = Arc::clone(&seen);
+        let app = Router::new()
+            .nest(
+                "/api/v1",
+                Router::new()
+                    .route("/users/{user_id}", get(|| async { "ok" }))
+                    .route("/ws", get(|| async { "ok" })),
+            )
+            .layer(middleware::from_fn(
+                move |request: Request, next: middleware::Next| {
+                    record.lock().unwrap().push(route_of(&request).to_owned());
+                    next.run(request)
+                },
+            ));
+        for uri in [
+            "/api/v1/users/5f0c3a52-7b1e-4c6d-9a8b-2e4f6d8c0a1b?code=ABCD-EFGH",
+            "/api/v1/ws",
+            "/api/v1/nothing/here",
+        ] {
+            let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            app.clone().oneshot(request).await.unwrap();
+        }
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                "/api/v1/users/{user_id}".to_owned(),
+                "/api/v1/ws".to_owned(),
+                "(no route)".to_owned()
+            ]
+        );
+    }
 }

@@ -82,7 +82,9 @@ curl http://127.0.0.1:8080/api/v1/health/live
 | `postgres` | `127.0.0.1:5432` | Database (this machine only); user/db from `.env` |
 | `redis` | `127.0.0.1:6379` | Multi-replica WS fan-out (this machine only; no password) |
 
-Logging: set `RUST_LOG` in `.env` (wizard default `info`).
+Logging: set `RUST_LOG` in `.env` (wizard default `info`). At `info` the API logs routes and
+outcomes but no user, device, chat or call ids; `debug` and `trace` add them, so turn them back
+down after looking into something. Compose keeps at most 3 × 10 MB of logs per container.
 
 Stop:
 

@@ -286,7 +286,7 @@ pub async fn put_reaction(
             .await;
     }
 
-    tracing::info!(
+    tracing::debug!(
         message_id = %message_id,
         user_id = %auth.user_id,
         seq = entry.seq,
@@ -354,7 +354,7 @@ pub async fn delete_reaction(
     let entry = ReactionEntry::from(row);
     publish(&state, &auth, &target, &entry, false, visible.peer).await;
 
-    tracing::info!(
+    tracing::debug!(
         message_id = %message_id,
         user_id = %auth.user_id,
         seq = entry.seq,

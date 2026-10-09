@@ -206,7 +206,7 @@ pub async fn put_bundle(
         .await
         .map_err(|err| AppError::Internal(format!("commit key bundle failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         device_id = %auth.device_id,
         otpk_added = otpk.len(),
@@ -241,7 +241,7 @@ pub async fn post_otpk(
         .await
         .map_err(|err| AppError::Internal(format!("commit otpk failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         device_id = %auth.device_id,
         otpk_added = otpk.len(),
@@ -321,7 +321,7 @@ pub async fn get_identity(
 
     // Human: Audit key material fetches for abuse detection (metadata only — no key bytes).
     // Agent: LOGS requester/target/device ids at info; never logs public_key bytes.
-    tracing::info!(
+    tracing::debug!(
         requester_user_id = %auth.user_id,
         target_user_id = %user_id,
         device_id = %row.device_id,
@@ -471,7 +471,7 @@ pub async fn get_bundle(
         .await
         .map_err(|err| AppError::Internal(format!("commit get bundle failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         requester_user_id = %auth.user_id,
         target_user_id = %user_id,
         device_id = %device.device_id,
@@ -541,7 +541,7 @@ pub async fn get_bundles(
         .await
         .map_err(|err| AppError::Internal(format!("commit get bundles failed: {err}")))?;
 
-    tracing::info!(
+    tracing::debug!(
         requester_user_id = %auth.user_id,
         target_user_id = %user_id,
         device_count = bundles.len(),

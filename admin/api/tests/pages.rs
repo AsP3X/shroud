@@ -28,8 +28,9 @@ const DEVICE: &str = "b1110000-0000-4000-8000-0000000000d1";
 const OTHER: &str = "b1110000-0000-4000-8000-0000000000ff";
 const SEALED: &[u8] = b"SEALED-DEVICE-NAME-DO-NOT-LEAK!!";
 const TOKEN: &str = "apns-token-do-not-leak";
-const LEAKS: [&str; 7] = [
+const LEAKS: [&str; 8] = [
     "SEALED-DEVICE-NAME-DO-NOT-LEAK!!",
+    "operator-test-token",
     "apns-token-do-not-leak",
     "redis-do-not-leak",
     "turn-secret-do-not-leak",
@@ -80,6 +81,10 @@ async fn read_only_pages_match_the_schema() {
         .connect(&super_url)
         .await
         .expect("owner connection");
+    sqlx::raw_sql(include_str!("../grants.sql"))
+        .execute(&owner)
+        .await
+        .expect("column grants");
     let operator = Uuid::parse_str(OPERATOR).unwrap();
     let user = Uuid::parse_str(USER).unwrap();
     clear(&admin, &owner, operator, user).await;
@@ -95,6 +100,8 @@ async fn read_only_pages_match_the_schema() {
 
     let _env = EnvGuard::set(&[
         ("API_INTERNAL_URL", Some(base.as_str())),
+        ("OPERATOR_PORT", Some(base.rsplit(':').next().unwrap())),
+        ("OPERATOR_TOKEN", Some("operator-test-token")),
         ("HOST", Some("0.0.0.0")),
         ("PORT", Some("8082")),
         ("WEB_PUBLIC_URL", Some("https://chat.example.org")),
@@ -267,6 +274,31 @@ async fn read_only_pages_match_the_schema() {
         find(&privacy.body, "No Google STUN fallback")["state"],
         "not_stored"
     );
+    // RUST_LOG=info, and the stand-in API has no public /metrics.
+    assert_eq!(
+        find(&privacy.body, "The API log doesn't name who messages whom")["state"],
+        "not_stored"
+    );
+    assert_eq!(
+        find(&privacy.body, "Activity counters aren't public")["state"],
+        "not_stored"
+    );
+    // The seeded iPhone registered no payload key, so its pushes still carry readable ids.
+    let unsealed: i64 =
+        sqlx::query_scalar("SELECT count(device_id) FROM admin_unsealed_push_devices")
+            .fetch_one(&admin)
+            .await
+            .unwrap();
+    assert!(unsealed >= 1);
+    let pushes = find(&privacy.body, "Apple doesn't see chat IDs in pushes");
+    assert_eq!(pushes["state"], "stored");
+    assert_eq!(
+        pushes["detail"],
+        format!(
+            "{} iPhones on older builds still get chat, sender and message IDs in plain text.",
+            grouped(unsealed)
+        )
+    );
     assert_private(&privacy.text);
 
     let config = send(&app, "/api/admin/configuration", Some(SESSION)).await;
@@ -336,7 +368,11 @@ async fn read_only_pages_match_the_schema() {
     assert_eq!(nothing.status, StatusCode::OK, "{}", nothing.text);
     assert_eq!(nothing.body, fixture("client-versions.nothing-set.json"));
 
-    unsafe { std::env::set_var("API_INTERNAL_URL", "http://127.0.0.1:1") };
+    // The API is down: its public port and its operator port (the counters) both refuse.
+    unsafe {
+        std::env::set_var("API_INTERNAL_URL", "http://127.0.0.1:1");
+        std::env::set_var("OPERATOR_PORT", "1");
+    }
     let closed = send(&app, "/api/admin/calls", Some(SESSION)).await;
     assert_eq!(closed.status, StatusCode::BAD_GATEWAY);
     assert_eq!(closed.body, fixture("error.upstream-api.json"));
@@ -631,7 +667,9 @@ async fn spawn_api(mode: Arc<AtomicU8>, web_build: Arc<Mutex<Option<String>>>) -
                 }
                 let request = String::from_utf8_lossy(&buf[..filled]);
                 let path = request.split_whitespace().nth(1).unwrap_or("");
-                let (status, content_type, body) = if path.starts_with("/api/v1/metrics") {
+                let (status, content_type, body) = if path.starts_with("/operator/metrics")
+                    && request.contains("Authorization: Bearer operator-test-token\r\n")
+                {
                     (
                         200,
                         "text/plain",

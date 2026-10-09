@@ -36,11 +36,10 @@ pub static CLIENT_HEADER: HeaderName = HeaderName::from_static("x-shroud-client"
 /// The same value as a query parameter, for WebSocket upgrades: a browser can't add headers there.
 pub const CLIENT_QUERY: &str = "client";
 /// Routes any build may call: health checks, and the version check that tells an app to update.
-const OPEN_PATHS: [&str; 5] = [
+const OPEN_PATHS: [&str; 4] = [
     "/api/v1/health",
     "/api/v1/health/live",
     "/api/v1/health/ready",
-    "/api/v1/metrics",
     "/api/v1/client-version",
 ];
 

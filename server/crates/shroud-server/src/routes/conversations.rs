@@ -591,7 +591,7 @@ pub async fn delete_conversation(
             .await;
     }
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         peer_user_id = %peer_user_id,
         conversation_id = ?conversation_id,

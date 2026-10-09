@@ -5,6 +5,9 @@
 //! `Authorization: Bearer OPERATOR_TOKEN`. A 204, or a 200 whose JSON is `{"detail":"..."}`,
 //! is success. 404 and 409 mean the change was already made. Any other answer, or no answer
 //! within 10 seconds, failed. The token is never written to a log or a response.
+//!
+//! The API's Prometheus counters are read here too (`GET /operator/metrics`): the public port
+//! no longer serves them.
 
 use crate::probe::{self, ProbeError};
 
@@ -34,6 +37,15 @@ pub(crate) async fn post(path: &str) -> Answer {
         Ok(fetched) if fetched.status == 404 || fetched.status == 409 => Answer::Already,
         _ => Answer::Failed,
     }
+}
+
+/// `GET` on the operator listener: the answer as it came, or an error when the listener is
+/// not configured (no `OPERATOR_TOKEN`) or does not answer.
+pub(crate) async fn get(path: &str) -> Result<probe::Fetched, ProbeError> {
+    let url = endpoint(path)?;
+    let token = bearer().ok_or(ProbeError)?;
+    let header = format!("Bearer {token}");
+    probe::get_with(&url, &[("Authorization", header.as_str())]).await
 }
 
 fn endpoint(path: &str) -> Result<String, ProbeError> {

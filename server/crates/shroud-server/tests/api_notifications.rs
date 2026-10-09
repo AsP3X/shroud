@@ -182,8 +182,11 @@ async fn send(app: &axum::Router, from: &Account, to: &str, content_type: &str) 
     body["id"].as_str().unwrap().to_string()
 }
 
+/// The payload key every `register_apns` iPhone shares with the server.
+const PAYLOAD_KEY: [u8; 32] = [42u8; 32];
+
 async fn register_apns(app: &axum::Router, who: &Account, token: &str) -> [u8; 32] {
-    let key = [42u8; 32];
+    let key = PAYLOAD_KEY;
     let (status, body) = call(
         app,
         "PUT",
@@ -248,7 +251,17 @@ async fn next_event(events: &mut tokio::sync::mpsc::Receiver<String>, kind: &str
     .unwrap_or_else(|_| panic!("no {kind} event"))
 }
 
+/// The pushes a device got, as its app reads them: a keyed APNs push has its sealed ids and
+/// name (`e`) opened into the `shroud` object, the way the notification extension opens them.
+/// [`raw_pushes_to`] has them as Apple sees them.
 fn pushes_to(state: &AppState, device: Uuid) -> Vec<(PushChannel, Value)> {
+    raw_pushes_to(state, device)
+        .into_iter()
+        .map(|(channel, payload)| (channel, opened(payload)))
+        .collect()
+}
+
+fn raw_pushes_to(state: &AppState, device: Uuid) -> Vec<(PushChannel, Value)> {
     state
         .push
         .recorded()
@@ -256,6 +269,40 @@ fn pushes_to(state: &AppState, device: Uuid) -> Vec<(PushChannel, Value)> {
         .filter(|p| p.device_id == device)
         .map(|p| (p.channel, p.payload))
         .collect()
+}
+
+/// A keyed APNs payload with `e` opened under [`PAYLOAD_KEY`] and merged into `shroud`.
+fn opened(mut payload: Value) -> Value {
+    let Some(sealed) = payload["shroud"]["e"].as_str().map(str::to_owned) else {
+        return payload;
+    };
+    let kind = payload["shroud"]["k"].as_str().expect("kind").to_owned();
+    let bytes = BASE64.decode(sealed).expect("base64 seal");
+    let (nonce, body) = bytes.split_at(ring::aead::NONCE_LEN);
+    let key = ring::aead::LessSafeKey::new(
+        ring::aead::UnboundKey::new(&ring::aead::AES_256_GCM, &PAYLOAD_KEY).unwrap(),
+    );
+    let mut body = body.to_vec();
+    let plain = key
+        .open_in_place(
+            ring::aead::Nonce::try_assume_unique_for_key(nonce).unwrap(),
+            ring::aead::Aad::from(shroud_server::push::extension_aad(&kind)),
+            &mut body,
+        )
+        .expect("the seal opens under the device's key");
+    let ids: Value = serde_json::from_slice(plain).expect("sealed json");
+    let app = payload["shroud"].as_object_mut().unwrap();
+    app.remove("e");
+    app.extend(ids.as_object().unwrap().clone());
+    payload
+}
+
+/// No id of `ids` appears anywhere in what Apple relays.
+fn assert_no_ids(payload: &Value, ids: &[&str]) {
+    let text = payload.to_string();
+    for id in ids {
+        assert!(!text.contains(id), "{id} is readable in {text}");
+    }
 }
 
 #[tokio::test]
@@ -580,10 +627,21 @@ async fn a_message_pushes_to_the_recipients_closed_devices() {
     assert_eq!(payload["shroud"]["k"], "message");
     assert_eq!(payload["shroud"]["m"], message);
     assert_eq!(payload["shroud"]["p"], a.user_id);
-    assert_eq!(payload["aps"]["thread-id"], payload["shroud"]["c"]);
+    let conversation: Uuid = payload["shroud"]["c"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        payload["aps"]["thread-id"],
+        shroud_server::push::apns_thread_id(&PAYLOAD_KEY, conversation)
+    );
     // The server has no name to seal. The phone fills one from a contact's seal.
-    assert!(payload["shroud"].get("e").is_none());
+    assert!(payload["shroud"].get("n").is_none());
     assert!(!payload.to_string().contains(&a.username));
+    // What Apple relays names nobody: no chat, sender, recipient or message id.
+    let (_, relayed) = &raw_pushes_to(&state, b.device_id)[0];
+    assert_eq!(relayed["shroud"]["v"], 2);
+    assert_no_ids(
+        relayed,
+        &[&conversation.to_string(), &a.user_id, &b.user_id, &message],
+    );
 
     let browser = pushes_to(&state, b_web.device_id);
     assert_eq!(browser.len(), 1, "{browser:?}");
@@ -681,7 +739,7 @@ async fn no_push_when_open_muted_disabled_or_not_a_message() {
     .await;
     send(&app, &a, &b.user_id, "text").await;
     let last = pushes_to(&state, b.device_id).pop().unwrap().1;
-    assert!(last["shroud"].get("e").is_none());
+    assert!(last["shroud"].get("n").is_none());
     assert!(last["aps"].get("sound").is_none());
     assert!(last["aps"].get("badge").is_none());
     call(
@@ -1128,7 +1186,29 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     assert_eq!(payload["aps"]["alert"]["body"], "Incoming video call");
     assert_eq!(payload["aps"]["thread-id"], "calls");
     assert_eq!(payload["shroud"]["call"], body["id"]);
-    assert!(payload["shroud"].get("e").is_none());
+    assert!(payload["shroud"].get("n").is_none());
+    // Apple sees neither the call nor the caller, and a collapse id only this iPhone has.
+    let call_id: Uuid = body["id"].as_str().unwrap().parse().unwrap();
+    assert_no_ids(
+        &raw_pushes_to(&state, b.device_id)[0].1,
+        &[body["id"].as_str().unwrap(), &a.user_id],
+    );
+    let collapse = |device: Uuid| -> Vec<Option<String>> {
+        state
+            .push
+            .recorded()
+            .into_iter()
+            .filter(|p| p.device_id == device)
+            .map(|p| p.apns_collapse_id)
+            .collect()
+    };
+    assert_eq!(
+        collapse(b.device_id),
+        [Some(shroud_server::push::apns_collapse_id(
+            &PAYLOAD_KEY,
+            call_id
+        ))]
+    );
 
     // The browser: a Web Push.
     let browser = pushes_to(&state, b_web.device_id);
@@ -1147,13 +1227,17 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
         .collect();
     assert_eq!(rings.len(), 1, "{rings:?}");
     assert_eq!(rings[0].apns_push_type, Some(ApnsPushType::Voip));
-    let voip = &rings[0].payload;
+    assert_no_ids(
+        &rings[0].payload,
+        &[body["id"].as_str().unwrap(), &a.user_id],
+    );
+    let voip = opened(rings[0].payload.clone());
     assert!(voip["aps"]["alert"].is_null());
     assert_eq!(voip["shroud"]["k"], "video_call");
     assert_eq!(voip["shroud"]["call"], body["id"]);
     assert_eq!(voip["shroud"]["p"], a.user_id);
     assert!(!voip.to_string().contains(&a.username));
-    assert!(voip["shroud"].get("e").is_none());
+    assert!(voip["shroud"].get("n").is_none());
     let _ = key;
 
     // Tapping a notification opens the app, which connects: it gets the ring then.
@@ -1186,6 +1270,11 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     assert_eq!(old_phone.len(), 2, "{old_phone:?}");
     assert_eq!(old_phone[1].1["aps"]["alert"]["body"], "Missed call");
     assert_eq!(old_phone[1].1["shroud"]["k"], "missed_call");
+    let missed = collapse(b.device_id);
+    assert_eq!(
+        missed[1], missed[0],
+        "\"Missed call\" replaces \"Incoming call\""
+    );
     let browser = pushes_to(&state, b_web.device_id);
     assert_eq!(browser.len(), 2, "{browser:?}");
     assert_eq!(browser[1].1["kind"], "missed_call");

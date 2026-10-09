@@ -91,7 +91,7 @@ files still show that switch until a design pass.
 
 ## Phase 1 — Cut the direct links to a person
 
-- [ ] **1.1 Turn down the app logs.** At the default `info` level the API logs who talks to
+- [x] **1.1 Turn down the app logs.** At the default `info` level the API logs who talks to
   whom and when.
   - What's logged today:
     - `messages.send ok` with sender, device, peer, conversation and ciphertext size
@@ -107,6 +107,15 @@ files still show that switch until a design pass.
     `json-file` `max-size`/`max-file`, or the host's journald).
   - Done when: an `info` log of a session that registers, adds a contact, sends a message, calls
     and uploads media contains no user, device, conversation, media or call id, and no share code.
+  - Verified 2026-10-09: every per-event `info!` in routes, realtime and push is `debug!`; the
+    request span logs the matched route (`/api/v1/users/{user_id}`), never the path or query
+    (unit test `the_request_log_names_the_route_not_the_path`). The real binary at
+    `RUST_LOG=info` ran a session with two sockets, two registrations, a share-code rotation and
+    lookup, a mutual contact request, a message, a media upload and download, and a call: none of
+    the 11 ids, 3 share codes or 2 tokens the client saw is in the log. Compose keeps at most
+    3 × 10 MB per container (`x-log-rotation`). Failure warnings (a rejected APNs token, a Redis
+    error) still name the one device or user involved. The console's privacy check reads
+    `RUST_LOG` and turns red at debug or trace.
 - [ ] **1.2 Stop the proxies logging IPs and user-agents.** *(web nginx done; NPM is a manual step)* The web nginx (`web/nginx.conf.template`)
   uses the image's default `access_log`, and NPM keeps per-host logs. Matched by time against
   the API logs, they give user ↔ IP.
@@ -126,7 +135,7 @@ files still show that switch until a design pass.
   - Verified 2026-10-03: logins are `<expiry>:<32 random hex>` (unit test plus
     `ice_servers_require_auth_and_mint_turn_logins` on a throwaway Postgres); coturn 4.6 with
     `--no-stdout-log --log-file=/dev/null --simple-log` ran, printed nothing and wrote no file.
-- [ ] **1.4 Seal the ids in APNs pushes.** Each push carries `c` (conversation), `p` (peer user)
+- [x] **1.4 Seal the ids in APNs pushes.** Each push carries `c` (conversation), `p` (peer user)
   and `m` (message), plus the call id as `apns-collapse-id` and `thread-id`, in plaintext
   (`push/payload.rs`, `push/mod.rs`). Both people in a chat get the same conversation id, so
   Apple can link their device tokens.
@@ -136,6 +145,25 @@ files still show that switch until a design pass.
     the seal.
   - Done when: a captured APNs payload contains no UUID that also appears in another user's
     pushes; notifications still group by chat and open the right chat.
+  - Verified 2026-10-09 (server and unit level; not yet on a device through real APNs): a keyed
+    push is `{"v": 2, "k", "e"}`, the ids and name sealed with AAD `shroud-push-v2|<kind>`;
+    `thread-id` and `apns-collapse-id` are per-iPhone HMACs, so "Missed call" still replaces
+    "Incoming call". `a_message_pushes_to_the_recipients_closed_devices` and
+    `a_call_rings_by_pushkit_and_notifies_closed_devices` check that the relayed payload holds
+    no chat, user, message or call id. Shared vectors pass on both sides
+    (`matches_the_shared_test_vectors`, `NotificationPayloadTests`). The notification extension
+    opens the seal, files the notification under the chat id and puts the ids back in
+    `userInfo`; `clearDelivered` also matches the keyed thread. Devices without a payload key
+    (older builds) still get v1 in the clear; the console's privacy check counts them.
+    Before the first unlock after a reboot the payload key is unreadable
+    (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, the same class as the session and the
+    call secret). A sealed VoIP push then has no call id, and the app reports it to CallKit as
+    a failed call. Leaving the call id in the clear would let Apple link the two phones again,
+    which is what this item closes, and the phone could not complete the call without the
+    session or the call secret. A v1 push still in flight keeps its ids; its sealed name, under
+    the old associated data, does not open.
+    Still to check on an iPhone: grouping, tap-to-open and a PushKit ring through real APNs
+    (`simctl push` skips the extension).
 - [x] **1.5 Password-protect Redis and stop it persisting.** Redis has no password and keeps RDB
   snapshots. Subscribing to `shroud:user:*` shows every live event; keys hold who is online and
   in the foreground (`realtime/mod.rs`) and IP-keyed rate limits (`rate_limit.rs`).
@@ -202,9 +230,14 @@ files still show that switch until a design pass.
 
 ## Phase 3 — Infrastructure
 
-- [ ] **3.1 Require auth for `/metrics` and `/health/ready`** (`routes/mod.rs`, `routes/health.rs`).
+- [x] **3.1 Require auth for `/metrics` and `/health/ready`** (`routes/mod.rs`, `routes/health.rs`).
   On a small server the live counters show when people are active.
   - Done when: both return 401 without a token; the deploy's own health check still works.
+  - Done 2026-10-09, differently: `/metrics` left the public port (404) and is
+    `GET /operator/metrics` on the internal operator listener (403 without `OPERATOR_TOKEN`);
+    the console reads it there. `/health/ready` stays open: it says only ok/error for
+    Postgres, Redis and media, the compose health check calls it, and `/health` (the same body)
+    is what the apps call without a token, so locking it alone would hide nothing.
 - [ ] **3.2 Move push secrets out of plaintext columns.** `server_keys.secret` (VAPID private
   key) together with `web_push_subscriptions.p256dh`/`auth` lets a DB reader send fake pushes
   to every browser and Android device.

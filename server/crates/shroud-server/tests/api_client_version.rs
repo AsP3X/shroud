@@ -204,16 +204,18 @@ async fn the_version_check_stays_open_to_unnamed_builds() {
 }
 
 #[tokio::test]
-async fn health_and_metrics_stay_open_to_unnamed_builds() {
+async fn health_stays_open_to_unnamed_builds() {
     // `/health` and `/health/ready` ask Postgres, which these tests don't have; they share the
-    // open list with these two.
-    for uri in ["/api/v1/health/live", "/api/v1/metrics"] {
-        let response = app()
-            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "{uri}");
-    }
+    // open list with this one.
+    let response = app()
+        .oneshot(
+            Request::get("/api/v1/health/live")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

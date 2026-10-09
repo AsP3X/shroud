@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::auth::{self, Admission};
 use crate::error::ApiError;
+use crate::operator_api;
 use crate::overview;
 use crate::probe;
 use crate::published;
@@ -206,8 +207,7 @@ async fn storage(State(state): State<AppState>, headers: HeaderMap) -> Result<Re
         return Ok(response);
     }
     let pool = pool(&state)?;
-    let base = api_base().ok_or_else(ApiError::upstream_api)?;
-    let (counts, metrics) = tokio::join!(storage_counts(&pool), metrics_text(&base));
+    let (counts, metrics) = tokio::join!(storage_counts(&pool), metrics_text());
     let (objects, bytes, unlinked) = counts?;
     let metrics = metrics?;
     Ok(Json(StorageBody {
@@ -371,8 +371,7 @@ async fn calls(State(state): State<AppState>, headers: HeaderMap) -> Result<Resp
     if let Some(response) = require(&state, &headers).await? {
         return Ok(response);
     }
-    let base = api_base().ok_or_else(ApiError::upstream_api)?;
-    let metrics = metrics_text(&base).await?;
+    let metrics = metrics_text().await?;
     let (urls, turn) = ice_from_env();
     Ok(Json(CallsBody {
         created_total: sample(&metrics, "shroud_calls_created_total")?,
@@ -403,6 +402,18 @@ async fn privacy_checks(
     let media_sealed =
         column_unreadable(&pool, "SELECT object_key FROM media_objects LIMIT 1").await?;
     let accounts = grouped(counts.accounts);
+    let unsealed_pushes: i64 =
+        sqlx::query_scalar("SELECT count(device_id) FROM admin_unsealed_push_devices")
+            .fetch_one(&pool)
+            .await
+            .map_err(db_err)?;
+    let base = api_base().ok_or_else(ApiError::upstream_api)?;
+    let metrics_public = probe::get(&format!("{base}/api/v1/metrics"))
+        .await
+        .map_err(|_| ApiError::upstream_api())?
+        .status
+        == 200;
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
     let (urls, _) = ice_from_env();
     let google = urls
         .iter()
@@ -427,11 +438,22 @@ async fn privacy_checks(
             "stored",
             format!("Plain SHA-256. {accounts} accounts still need the slow hash."),
         ),
-        check(
-            "The API log names who messages whom",
-            "stored",
-            "RUST_LOG=info records sender, recipient and chat on every message.",
-        ),
+        if logs_name_people(&rust_log) {
+            check(
+                "The API log doesn't name who messages whom",
+                "stored",
+                format!(
+                    "RUST_LOG={} writes user, device and chat ids. Set it back to info.",
+                    rust_log.trim()
+                ),
+            )
+        } else {
+            check(
+                "The API log doesn't name who messages whom",
+                "not_stored",
+                "At info it writes no user, device, chat or call ids, and routes without their values.",
+            )
+        },
         check(
             "The web proxy keeps no access log",
             "not_stored",
@@ -447,11 +469,22 @@ async fn privacy_checks(
             "not_stored",
             "Random logins, and coturn writes no log.",
         ),
-        check(
-            "Apple sees chat IDs in pushes",
-            "stored",
-            "Conversation, sender and message IDs are sent in plain text.",
-        ),
+        if unsealed_pushes == 0 {
+            check(
+                "Apple doesn't see chat IDs in pushes",
+                "not_stored",
+                "IDs are sealed for each iPhone, and threads differ from phone to phone.",
+            )
+        } else {
+            check(
+                "Apple doesn't see chat IDs in pushes",
+                "stored",
+                format!(
+                    "{} iPhones on older builds still get chat, sender and message IDs in plain text.",
+                    grouped(unsealed_pushes)
+                ),
+            )
+        },
         if redis_password {
             check(
                 "Redis needs a password, keeps nothing on disk",
@@ -470,11 +503,19 @@ async fn privacy_checks(
             "stored",
             "A message's size shows roughly how long it is.",
         ),
-        check(
-            "/metrics is public",
-            "stored",
-            "Live counters show when people are active.",
-        ),
+        if metrics_public {
+            check(
+                "Activity counters aren't public",
+                "stored",
+                "The API serves /metrics on its public port: live counters show when people are active.",
+            )
+        } else {
+            check(
+                "Activity counters aren't public",
+                "not_stored",
+                "Only this console reads them, on the API's internal operator port.",
+            )
+        },
         if google {
             check(
                 "No Google STUN fallback",
@@ -634,8 +675,11 @@ async fn storage_counts(pool: &PgPool) -> Result<(i64, i64, i64), ApiError> {
     ))
 }
 
-async fn metrics_text(base: &str) -> Result<String, ApiError> {
-    let fetched = probe::get(&format!("{base}/api/v1/metrics"))
+/// The counters, from the operator listener. No `OPERATOR_TOKEN` fails the page
+/// (`upstream_api`) instead of showing zeros: zeros would look like a quiet server, and the
+/// listener is not bound without the token. The console's writes already need the same token.
+async fn metrics_text() -> Result<String, ApiError> {
+    let fetched = operator_api::get("/operator/metrics")
         .await
         .map_err(|_| ApiError::upstream_api())?;
     if fetched.status != 200 {
@@ -1035,6 +1079,265 @@ fn secret(name: &'static str, flag_name: &'static str) -> VariableBody {
     }
 }
 
+/// True when `RUST_LOG` lets the API's per-event lines through: at debug and trace they name
+/// users, devices, chats and calls. Other crates at debug (`tower_http`, `sqlx`) don't.
+///
+/// Read the way the API's `EnvFilter` reads it. A bare target (`shroud_server`) is trace. A
+/// later directive for the same target replaces an earlier one, and `shroud_server=info` covers
+/// the whole crate, so it quiets a global `debug`. A span or field filter
+/// (`shroud_server[span]=debug`) can still let a line through. A directive the filter cannot
+/// parse makes the server fall back to its info default, so that string does not name people.
+/// Spaces around a directive and around `=` are ignored.
+fn logs_name_people(rust_log: &str) -> bool {
+    let Some(directives) = parse_rust_log(rust_log) else {
+        return false;
+    };
+    // The same target (and, for a span filter, the same span) keeps the later level.
+    let mut kept: Vec<LogDirective> = Vec::new();
+    for directive in directives {
+        if let Some(existing) = kept
+            .iter_mut()
+            .find(|item| item.dynamic == directive.dynamic && item.key == directive.key)
+        {
+            *existing = directive;
+        } else {
+            kept.push(directive);
+        }
+    }
+    if kept
+        .iter()
+        .any(|directive| directive.dynamic && directive.level.verbose() && directive.applies())
+    {
+        return true;
+    }
+    // The longest target that is a prefix of the crate names every module in it, unless a
+    // longer child says otherwise.
+    let base_verbose = kept
+        .iter()
+        .filter(|directive| !directive.dynamic && "shroud_server".starts_with(&directive.target))
+        .max_by_key(|directive| directive.target.len())
+        .is_some_and(|directive| directive.level.verbose());
+    let child_verbose = kept.iter().any(|directive| {
+        !directive.dynamic
+            && directive.level.verbose()
+            && directive.target.starts_with("shroud_server::")
+    });
+    base_verbose || child_verbose
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    fn verbose(self) -> bool {
+        matches!(self, Self::Debug | Self::Trace)
+    }
+}
+
+struct LogDirective {
+    /// Empty when the directive names every target.
+    target: String,
+    /// What a later copy replaces: the target, or the whole `target[span]` for a span filter.
+    key: String,
+    level: LogLevel,
+    /// A span or field filter. It can enable a line while the target's own level stays quiet.
+    dynamic: bool,
+}
+
+impl LogDirective {
+    /// Whether this directive can apply to a `shroud_server` event. Matching is a prefix, as
+    /// in the filter: `shroud` covers the crate, `shroud_server_extra` does not.
+    fn applies(&self) -> bool {
+        self.target.is_empty()
+            || self.target == "shroud_server"
+            || self.target.starts_with("shroud_server::")
+            || "shroud_server".starts_with(&self.target)
+    }
+}
+
+/// `None` when the string is not a filter the server would install.
+fn parse_rust_log(rust_log: &str) -> Option<Vec<LogDirective>> {
+    let mut directives = Vec::new();
+    for piece in rust_log.split(',') {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        directives.push(parse_log_directive(piece)?);
+    }
+    Some(directives)
+}
+
+fn parse_log_directive(raw: &str) -> Option<LogDirective> {
+    let (head, level) = match split_log_level(raw) {
+        LogSplit::Invalid => return None,
+        LogSplit::Bare(text) => {
+            let text = text.trim();
+            if !text.contains('[')
+                && let Some(level) = parse_log_level_token(text)
+            {
+                return Some(LogDirective {
+                    target: String::new(),
+                    key: String::new(),
+                    level,
+                    dynamic: false,
+                });
+            }
+            (text, LogLevel::Trace)
+        }
+        LogSplit::Level(head, level) => (head.trim(), parse_log_level(level)?),
+    };
+    if head.is_empty() {
+        return None;
+    }
+    let (target, dynamic) = match head.find('[') {
+        None => {
+            if !is_log_target(head) {
+                return None;
+            }
+            (head, false)
+        }
+        Some(at) => {
+            let target = head[..at].trim();
+            if !target.is_empty() && !is_log_target(target) {
+                return None;
+            }
+            if !log_brackets_balance(&head[at..]) {
+                return None;
+            }
+            (target, true)
+        }
+    };
+    Some(LogDirective {
+        target: target.to_owned(),
+        key: if dynamic {
+            head.to_owned()
+        } else {
+            target.to_owned()
+        },
+        level,
+        dynamic,
+    })
+}
+
+enum LogSplit<'a> {
+    Bare(&'a str),
+    Level(&'a str, &'a str),
+    Invalid,
+}
+
+/// The `=` that sets the level. One inside `{field=value}` is not it. Two of them is a
+/// directive the server rejects.
+fn split_log_level(raw: &str) -> LogSplit<'_> {
+    let mut depth = 0i32;
+    let mut eq_at = None;
+    for (index, ch) in raw.char_indices() {
+        match ch {
+            '[' | '{' => depth += 1,
+            ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return LogSplit::Invalid;
+                }
+            }
+            '=' if depth == 0 => {
+                if eq_at.is_some() {
+                    return LogSplit::Invalid;
+                }
+                eq_at = Some(index);
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return LogSplit::Invalid;
+    }
+    match eq_at {
+        Some(index) => LogSplit::Level(&raw[..index], &raw[index + 1..]),
+        None => LogSplit::Bare(raw),
+    }
+}
+
+/// An empty level is trace (`shroud_server=`). Anything else the filter does not know is rejected.
+fn parse_log_level(raw: &str) -> Option<LogLevel> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Some(LogLevel::Trace);
+    }
+    parse_log_level_token(raw)
+}
+
+fn parse_log_level_token(raw: &str) -> Option<LogLevel> {
+    if let Ok(number) = raw.parse::<u8>() {
+        return match number {
+            0 => Some(LogLevel::Off),
+            1 => Some(LogLevel::Error),
+            2 => Some(LogLevel::Warn),
+            3 => Some(LogLevel::Info),
+            4 => Some(LogLevel::Debug),
+            5 => Some(LogLevel::Trace),
+            _ => None,
+        };
+    }
+    if raw.eq_ignore_ascii_case("off") {
+        Some(LogLevel::Off)
+    } else if raw.eq_ignore_ascii_case("error") {
+        Some(LogLevel::Error)
+    } else if raw.eq_ignore_ascii_case("warn") {
+        Some(LogLevel::Warn)
+    } else if raw.eq_ignore_ascii_case("info") {
+        Some(LogLevel::Info)
+    } else if raw.eq_ignore_ascii_case("debug") {
+        Some(LogLevel::Debug)
+    } else if raw.eq_ignore_ascii_case("trace") {
+        Some(LogLevel::Trace)
+    } else {
+        None
+    }
+}
+
+fn is_log_target(target: &str) -> bool {
+    !target.is_empty()
+        && target
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':' || ch == '-')
+}
+
+fn log_brackets_balance(spec: &str) -> bool {
+    if !spec.starts_with('[') || !spec.ends_with(']') {
+        return false;
+    }
+    let mut square = 0i32;
+    let mut brace = 0i32;
+    for ch in spec.chars() {
+        match ch {
+            '[' => square += 1,
+            ']' => {
+                square -= 1;
+                if square < 0 {
+                    return false;
+                }
+            }
+            '{' => brace += 1,
+            '}' => {
+                brace -= 1;
+                if brace < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    square == 0 && brace == 0
+}
+
 fn check(item: &'static str, state: &'static str, detail: impl Into<String>) -> CheckBody {
     CheckBody {
         item,
@@ -1168,6 +1471,51 @@ fn db_err(err: sqlx::Error) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_verbose_api_log_names_people() {
+        for quiet in [
+            "",
+            "info",
+            "warn",
+            "info,sqlx=warn",
+            "shroud_server=info,tower_http=debug,sqlx=debug",
+            "shroud_server_extra=debug",
+            "SHROUD_SERVER=debug",
+            "debug,shroud_server=info",
+            "shroud_server=debug,shroud_server=info",
+            "shroud=info,debug",
+            "shroud_server=3",
+            "shroud_server=nope",
+            "debug,shroud_server=nope",
+            // A comma inside the field filter splits the directive, so the server rejects the
+            // whole string and falls back to info.
+            "[{a=1,b=2}]=debug",
+            "shroud_server[span]=debug,shroud_server[span]=info",
+        ] {
+            assert!(!logs_name_people(quiet), "{quiet}");
+        }
+        for verbose in [
+            "debug",
+            "TRACE",
+            "info,shroud_server=debug",
+            "shroud_server::routes=trace",
+            " shroud_server = debug ",
+            "shroud_server",
+            "shroud_server=",
+            "shroud_server=4",
+            "shroud=debug",
+            "info,debug",
+            "shroud_server[span]=debug",
+            "shroud_server::routes[http.request]=trace",
+            "shroud_server[{field=value}]=debug",
+            "[{field=value}]=debug",
+            "debug,shroud_server=info,shroud_server::push=debug",
+            "debug,shroud_server::routes=info",
+        ] {
+            assert!(logs_name_people(verbose), "{verbose}");
+        }
+    }
 
     #[test]
     fn bands_match_the_version_fixtures() {

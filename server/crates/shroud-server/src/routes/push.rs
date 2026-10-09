@@ -121,7 +121,7 @@ pub async fn put_token(
         .await
         .map_err(|err| AppError::Internal(format!("commit push token failed: {err}")))?;
 
-    tracing::info!(device_id = %auth.device_id, %kind, %environment, "push.token registered");
+    tracing::debug!(device_id = %auth.device_id, %kind, %environment, "push.token registered");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -224,7 +224,7 @@ pub async fn put_web_subscription(
                 AppError::validation("endpoint must be an https URL of a browser push service.")
             }
             SubscriptionClient::Android => {
-                tracing::info!(device_id = %auth.device_id, "push.web android endpoint refused");
+                tracing::debug!(device_id = %auth.device_id, "push.web android endpoint refused");
                 AppError::validation(REFUSED_DISTRIBUTOR)
             }
         })?;
@@ -268,7 +268,7 @@ pub async fn put_web_subscription(
         .map_err(|err| AppError::Internal(format!("commit web push subscription failed: {err}")))?;
 
     // Never the endpoint: its path is the subscription's secret push token.
-    tracing::info!(device_id = %auth.device_id, client = client.as_str(), "push.web subscribed");
+    tracing::debug!(device_id = %auth.device_id, client = client.as_str(), "push.web subscribed");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -300,7 +300,7 @@ pub async fn test_push(
         )
         .await?;
     let outcome = state.push.send_test(auth.user_id, auth.device_id).await;
-    tracing::info!(
+    tracing::debug!(
         device_id = %auth.device_id,
         channel = ?outcome.channel,
         status = outcome.status,

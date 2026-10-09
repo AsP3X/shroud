@@ -37,7 +37,7 @@ pub struct AppState {
     pub redis_required: bool,
     /// Honor `X-Forwarded-For` / `X-Real-IP` only when behind a trusted proxy.
     pub trust_forwarded_headers: bool,
-    /// Process metrics for `/metrics`.
+    /// Process metrics for `/operator/metrics`.
     pub metrics: Arc<Metrics>,
     /// Link-preview relay: target policy and each account's open pipes.
     pub link_relay: Arc<LinkRelay>,

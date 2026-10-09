@@ -205,7 +205,7 @@ Calls phase adds **coturn** (TURN). Media bytes do not transit the Rust API.
 - Idempotent message inserts via `client_message_id`.
 - Liveness vs readiness — **done** (`GET /health/live`, `/health/ready`; `/health` = ready; Redis required when `REDIS_URL` set).
 - Graceful SIGTERM / Ctrl-C drain — **done** (`axum::serve` + `with_graceful_shutdown` on the public listener and, when `OPERATOR_TOKEN` is set, the operator listener).
-- Operator listener — **done** when `OPERATOR_TOKEN` is set: a second bind on `OPERATOR_PORT` (default 8090), same `HOST`, not published by Compose. An empty token does not bind it. `/operator/*` is 404 on the public port; `/health*`, `/metrics` and the public API are not on the operator port.
+- Operator listener — **done** when `OPERATOR_TOKEN` is set: a second bind on `OPERATOR_PORT` (default 8090), same `HOST`, not published by Compose. An empty token does not bind it. `/operator/*` is 404 on the public port; `/health*` and the public API are not on the operator port. `GET /operator/metrics` is the Prometheus text, which the public port no longer serves.
 - `DATABASE_POOL_MAX` / `RUN_MIGRATIONS` — **done** (env-backed; Compose sets both).
 
 ---
@@ -452,8 +452,10 @@ History `GET /messages` excludes rows hidden for the caller; for-everyone rows r
 | `kind` | `TEXT` NOT NULL | `alert` \| `voip` (022; the old `voip:` token prefix became this) |
 | `apns_token` | `TEXT` NOT NULL | Hex device token |
 | `environment` | `TEXT` NOT NULL | `sandbox` \| `production` |
-| `payload_key` | `BYTEA` NULL | 32 bytes (022): AES-256-GCM key the iPhone's notification extension opens sender names with. Keeps names from Apple; not an end-to-end key |
+| `payload_key` | `BYTEA` NULL | 32 bytes (022): AES-256-GCM key the iPhone's notification extension opens the push's ids and the sender's name with. Keeps them from Apple; not an end-to-end key |
 | `updated_at` | `TIMESTAMPTZ` NOT NULL | |
+
+The admin console's view `admin_unsealed_push_devices` (`admin/api/grants.sql`) selects devices that have no alert row with a `payload_key`. A migration that drops or renames that column has to drop the view first.
 
 ### Milestone 11 — Notifications schema (migration 022)
 
@@ -1390,8 +1392,9 @@ Errors: `CALL_BUSY` (409) when peer or self already in ringing/active call; `FOR
 - `environment`: `sandbox` | `production` (selects APNs host at send time).
 - `kind`: `alert` (default) | `voip` (PushKit). One token per device and kind; a token another
   device held moves to this one. A `voip:` token prefix (older builds) still means `kind: voip`.
-- `payload_key` (alerts, optional): the key the notification extension opens sender names with.
-  Without one the server leaves names out rather than send them readable.
+- `payload_key` (alerts, optional): the key the notification extension opens each push's ids
+  and sender name with. Without one (an older build) the server sends the ids readable and leaves
+  names out.
 - `token`: hex, as APNs hands it out (stored lowercase).
 
 #### `DELETE /push/token?kind=alert|voip` → `204`
@@ -1408,18 +1411,27 @@ For each device that should hear about an event ([Milestone 11](#milestone-11--n
    - Body (the badge only when the device shows one, the sound per its setting):
      ```json
      {
-       "aps": { "alert": { "body": "New message" }, "thread-id": "<conversation id>",
+       "aps": { "alert": { "body": "New message" }, "thread-id": "<keyed thread>",
                 "mutable-content": 1, "category": "message", "sound": "default", "badge": 3 },
-       "shroud": { "v": 1, "k": "message", "c": "<conversation>", "p": "<peer>", "m": "<message>",
-                   "e": "<sealed name>" }
+       "shroud": { "v": 2, "k": "message", "e": "<sealed ids>" }
      }
      ```
-   - `k`: `message`, `reaction`, `contact_request`, `call`, `video_call`, `test`; `thread-id` is
-     the conversation, or `contacts` / `calls` / `test`. `call` holds a ringing call's id.
-   - `e` = base64(nonce ‖ AES-256-GCM(`payload_key`, `{"n":"alice"}`) ‖ tag), AAD
-     `shroud-push-v1|<k>|<thread-id>|<p>`, so Apple never sees the name and cannot move it onto
-     another push — another chat's, or another requester's or caller's (they share a thread).
-     The notification service extension opens it and makes it the title.
+   - `k`: `message`, `reaction`, `contact_request`, `call`, `video_call`, `missed_call`,
+     `call_ended`, `test`. Apple reads nothing else of ours.
+   - `e` = base64(nonce ‖ AES-256-GCM(`payload_key`, JSON) ‖ tag), AAD `shroud-push-v2|<k>`.
+     The JSON holds what applies of `c` (conversation), `p` (peer user), `m` (message), `call`
+     (a call's id) and `n` (the sender's name; the server has none today). All in one seal, so
+     none can be moved onto another push, and the AAD stops it passing as another kind. The
+     notification service extension opens it, makes the name the title, files a chat's
+     notification under the conversation id and puts the opened ids back in `userInfo`.
+   - `thread-id`: for a message or reaction, the first 16 bytes of HMAC-SHA256(`payload_key`,
+     `shroud-push-thread-v1|<conversation id>`) in lowercase hex, so the same chat has a
+     different thread on every iPhone and Apple can't link the two people in it; `contacts` /
+     `calls` / `test` otherwise. `apns-collapse-id` (a call's alerts, so "Missed call" replaces
+     "Incoming call") is the same HMAC over `shroud-push-collapse-v1|<call id>`.
+   - A device without a `payload_key` gets `{"v": 1, "k", "c", "p", "m", "call"}` in the clear,
+     the conversation as `thread-id` and the call id as collapse id, and no name. The console's
+     privacy checks count these devices.
 2. Else a Web Push subscription → POST to its endpoint: RFC 8291 `aes128gcm` body, VAPID
    (RFC 8292) `Authorization: vapid t=…, k=…`, `TTL` 24 h (a test push 60 s), `Urgency`
    (reactions `normal`, else `high`), `Topic` = a per-subscription key of the thread
@@ -1790,7 +1802,7 @@ on every request in `X-Shroud-Client: <platform>/<version>` (`ios/1.1`, `android
 as the `client` query parameter on `/ws` and `/link-relay`; the header wins when both are there.
 
 With no `<PLATFORM>_MIN_VERSION` set, nothing is checked. Once either is set, every route except
-`/health*`, `/metrics` and `/client-version` answers `426 UPDATE_REQUIRED` to:
+`/health*` and `/client-version` answers `426 UPDATE_REQUIRED` to:
 
 - an iOS or Android app below its platform's minimum, or whose version has no number to compare;
 - a request without the header, or with an unknown platform, on either platform whichever minimum
@@ -1879,7 +1891,7 @@ clients go by the `UPDATE_REQUIRED` code.
 5. **iOS polish** — **done** for media, voice, call UI/WebRTC/CallKit, presence, unread, multi-device self-box decrypt. Remaining: group chats, SFU, server-assist transcription.
 6. **Double Ratchet** — **done** on client (envelope v3 default; identity X3DH-lite bootstrap; dual-initiator session reset; v1/v2 still openable).
 7. **Envelope ciphertext encoding** — server stores opaque bytes; client uses JSON sealed / DR envelope inside Base64 ciphertext field.
-8. **Observability** — **done** (lightweight Prometheus text at `GET /api/v1/metrics`: request counts, media puts/gets, store errors, legacy-volume reads and moves, calls). Full OpenTelemetry tracing still optional later.
+8. **Observability** — **done** (lightweight Prometheus text at `GET /operator/metrics` on the operator listener, bearer `OPERATOR_TOKEN`; not on the public port: request counts, media puts/gets, store errors, legacy-volume reads and moves, calls). Full OpenTelemetry tracing still optional later.
 
 ---
 

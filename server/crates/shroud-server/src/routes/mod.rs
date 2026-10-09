@@ -39,7 +39,6 @@ pub fn router() -> Router<AppState> {
             .route("/health", get(health::health))
             .route("/health/live", get(health::live))
             .route("/health/ready", get(health::ready))
-            .route("/metrics", get(health::metrics))
             .route("/config", get(app_config::get_config))
             .route("/client-version", get(client_version::get_client_version))
             .route("/auth/register", post(auth::register))

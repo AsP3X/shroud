@@ -135,7 +135,7 @@ pub async fn put_settings(
     .map_err(|err| AppError::Internal(format!("update privacy settings failed: {err}")))?
     .ok_or_else(|| AppError::not_found("User not found."))?;
 
-    tracing::info!(
+    tracing::debug!(
         user_id = %auth.user_id,
         allow_peer_chat_delete = settings.allow_peer_chat_delete,
         send_read_receipts = settings.send_read_receipts,

@@ -151,7 +151,7 @@ export function Overview() {
         </div>
         <div className="column" style={{ flex: "0 0 380px", width: 380 }}>
           <Card>
-            <CardHead title="Since the last restart" sub="From /metrics" />
+            <CardHead title="Since the last restart" sub="From /operator/metrics" />
             <KeyValueRows rows={traffic.map((row) => ({ key: row.key, value: <span className="mono text-primary">{row.value}</span> }))} />
           </Card>
           <Card fill>

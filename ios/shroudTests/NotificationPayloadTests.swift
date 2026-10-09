@@ -5,84 +5,158 @@ import XCTest
 @testable import shroud
 
 /// The push payload the server builds (`server/.../push/payload.rs`) and how the notification
-/// extension words it. The sealed-name vector is the one the server's own tests open.
+/// extension opens it. The sealed vector and keyed thread are the ones the server's tests check.
 @MainActor
 final class NotificationPayloadTests: XCTestCase {
     private let key = SymmetricKey(data: Data(repeating: 42, count: 32))
-    private let thread = "6f9619ff-8b86-4d01-b42d-00c04fc964ff"
-    private let peer = "5f0c3a52-7b1e-4c6d-9a8b-2e4f6d8c0a1b"
-    private let vector = "AAECAwQFBgcICQoLNw86aqYBQlL3UGPJr5ruy3y0NJPwNYGMO+xknak="
+    private let conversation = UUID(uuidString: "6f9619ff-8b86-4d01-b42d-00c04fc964ff")!
+    private let peer = UUID(uuidString: "5f0c3a52-7b1e-4c6d-9a8b-2e4f6d8c0a1b")!
+    private let message = UUID(uuidString: "0d9e8f7a-6b5c-4d3e-8f2a-1b0c9d8e7f6a")!
+    /// `{"c","m","n":"alice","p"}` sealed for kind `message` under `key`.
+    private let vector = "AAECAwQFBgcICQoLNw83aqYBFVinBTfStNqou0/SpKKtf4lhBa3wMFNUwZ8m4GDt4J+mUCP0sEGhc2LF+GaWQNTrj2GddhUmvcgr7R5PrsSI5FckdDdV7tEv3Uln3FZzMr6L0A9qe7AcXq4YYIRyNsxd/8TO+UXY6DZmfMav6cjaKD+V50Y8Bg8kTczJ3oAypImUmpyPTau9ebND3youNvLvD9YlsvTVQHY="
 
-    func testOpensTheServersSealedName() {
-        XCTAssertEqual(
-            NotificationPayload.openName(vector, key: key, kind: .message, thread: thread, peer: peer),
-            "alice"
+    private func sealedPush(kind: String = "message") -> [AnyHashable: Any] {
+        [
+            "aps": ["alert": ["body": "New message"], "thread-id": "3c9ba47195443675c89152bc77587c65"],
+            "shroud": ["v": 2, "k": kind, "e": vector],
+        ]
+    }
+
+    func testOpensTheServersSeal() throws {
+        let contents = try XCTUnwrap(NotificationPayload.parse(sealedPush(), key: { self.key }))
+        XCTAssertEqual(contents.kind, .message)
+        XCTAssertEqual(contents.conversationID, conversation)
+        XCTAssertEqual(contents.peerUserID, peer)
+        XCTAssertEqual(contents.messageID, message)
+        XCTAssertNil(contents.callID)
+        XCTAssertEqual(contents.senderName, "alice")
+    }
+
+    func testASealIsBoundToItsKindAndKey() throws {
+        let asReaction = try XCTUnwrap(NotificationPayload.parse(sealedPush(kind: "reaction"), key: { self.key }))
+        XCTAssertEqual(asReaction, NotificationPayload.Contents(kind: .reaction), "a seal never opens as another kind")
+        let otherKey = try XCTUnwrap(
+            NotificationPayload.parse(sealedPush(), key: { SymmetricKey(size: .bits256) })
+        )
+        XCTAssertEqual(otherKey, NotificationPayload.Contents(kind: .message))
+        let noKey = try XCTUnwrap(NotificationPayload.parse(sealedPush(), key: { nil }))
+        XCTAssertEqual(noKey, NotificationPayload.Contents(kind: .message), "without a key only the kind is known")
+        XCTAssertNil(NotificationPayload.open("not base64!", key: key, kind: .message))
+    }
+
+    func testTheKeyedThreadMatchesTheServer() {
+        XCTAssertEqual(NotificationPayload.threadID(for: conversation, key: key), "3c9ba47195443675c89152bc77587c65")
+        XCTAssertNotEqual(
+            NotificationPayload.threadID(for: conversation, key: SymmetricKey(size: .bits256)),
+            "3c9ba47195443675c89152bc77587c65"
         )
     }
 
-    func testASealedNameIsBoundToItsKindThreadAndPeer() {
-        XCTAssertNil(NotificationPayload.openName(vector, key: key, kind: .reaction, thread: thread, peer: peer))
-        XCTAssertNil(
-            NotificationPayload.openName(vector, key: key, kind: .message, thread: "another-chat", peer: peer)
-        )
-        XCTAssertNil(
-            NotificationPayload.openName(vector, key: key, kind: .message, thread: thread, peer: UUID().uuidString)
-        )
-        XCTAssertNil(
-            NotificationPayload.openName(
-                vector,
-                key: SymmetricKey(size: .bits256),
-                kind: .message,
-                thread: thread,
-                peer: peer
-            )
-        )
-        XCTAssertNil(
-            NotificationPayload.openName("not base64!", key: key, kind: .message, thread: thread, peer: peer)
-        )
-    }
-
-    func testParsesTheAppPart() throws {
-        let conversation = UUID()
-        let peer = UUID()
-        let message = UUID()
+    func testParsesAnOpenAppPart() throws {
+        let call = UUID()
         let contents = try XCTUnwrap(NotificationPayload.parse([
-            "aps": ["alert": ["body": "New message"]],
+            "aps": ["alert": ["body": "Incoming call"]],
+            "shroud": [
+                "v": 1,
+                "k": "call",
+                "p": peer.uuidString.lowercased(),
+                "call": call.uuidString.lowercased(),
+            ],
+        ], key: { XCTFail("an open push needs no key"); return nil }))
+        XCTAssertEqual(contents.kind, .call)
+        XCTAssertEqual(contents.peerUserID, peer)
+        XCTAssertEqual(contents.callID, call)
+        XCTAssertNil(contents.senderName)
+        XCTAssertNil(NotificationPayload.parse(["aps": [:]]), "not one of ours")
+        XCTAssertNil(NotificationPayload.parse(["shroud": ["k": "future_kind"]]), "an unknown kind")
+        XCTAssertEqual(NotificationPayload.parse(["shroud": ["k": "video_call"]])?.kind, .videoCall)
+    }
+
+    func testDressOpensThePushForTheApp() throws {
+        let content = UNMutableNotificationContent()
+        content.body = "New message"
+        content.threadIdentifier = "3c9ba47195443675c89152bc77587c65"
+        content.userInfo = sealedPush()
+        NotificationPayload.dress(content, key: key)
+        XCTAssertEqual(content.title, "alice")
+        XCTAssertEqual(content.body, "New message")
+        XCTAssertEqual(content.threadIdentifier, conversation.uuidString.lowercased(), "grouped under the chat")
+        let app = try XCTUnwrap(content.userInfo["shroud"] as? [String: Any])
+        XCTAssertNil(app["e"], "the seal is replaced by what it held")
+        XCTAssertNil(app["n"], "the name lives in the title only")
+        let reopened = try XCTUnwrap(NotificationPayload.parse(content.userInfo, key: { nil }))
+        XCTAssertEqual(reopened.conversationID, conversation)
+        XCTAssertEqual(reopened.peerUserID, peer)
+        XCTAssertEqual(reopened.messageID, message)
+
+        // No key on this iPhone (before the first unlock): worded, but still sealed for the app.
+        let locked = UNMutableNotificationContent()
+        locked.threadIdentifier = "3c9ba47195443675c89152bc77587c65"
+        locked.userInfo = sealedPush(kind: "reaction")
+        NotificationPayload.dress(locked, key: nil)
+        XCTAssertEqual(locked.title, "")
+        XCTAssertEqual(locked.body, "Reacted to your message")
+        XCTAssertEqual(locked.threadIdentifier, "3c9ba47195443675c89152bc77587c65")
+        XCTAssertEqual((locked.userInfo["shroud"] as? [String: Any])?["e"] as? String, vector)
+    }
+
+    /// A push already in flight from the previous server: v1 ids in the clear, and `e` sealing
+    /// only the name under the old associated data. The name is lost. The ids stay, and dressing
+    /// the notification does not wipe them. `e` here is not the shared vector: that one would
+    /// open under the v2 associated data and hide a parser that treated every `e` as v2.
+    func testAnOldNameSealDoesNotDropTheIds() throws {
+        let garbage = "bm90IGEgc2VhbA=="
+        let info: [AnyHashable: Any] = [
             "shroud": [
                 "v": 1,
                 "k": "message",
                 "c": conversation.uuidString.lowercased(),
                 "p": peer.uuidString.lowercased(),
                 "m": message.uuidString.lowercased(),
-                "e": vector,
-            ],
-        ]))
+                "e": garbage,
+            ] as [String: Any],
+        ]
+        let contents = try XCTUnwrap(NotificationPayload.parse(info, key: {
+            XCTFail("an old push is not a v2 seal")
+            return self.key
+        }))
         XCTAssertEqual(contents.kind, .message)
         XCTAssertEqual(contents.conversationID, conversation)
         XCTAssertEqual(contents.peerUserID, peer)
         XCTAssertEqual(contents.messageID, message)
-        XCTAssertEqual(contents.sealedName, vector)
-        XCTAssertNil(NotificationPayload.parse(["aps": [:]]), "not one of ours")
-        XCTAssertNil(NotificationPayload.parse(["shroud": ["k": "future_kind"]]), "an unknown kind")
-        XCTAssertEqual(NotificationPayload.parse(["shroud": ["k": "video_call"]])?.kind, .videoCall)
-    }
+        XCTAssertNil(contents.senderName)
 
-    func testDressNamesTheSenderAndNeverShowsText() {
         let content = UNMutableNotificationContent()
-        content.body = "New message"
-        content.threadIdentifier = thread
-        content.userInfo = ["shroud": ["k": "message", "p": peer, "e": vector]]
-        NotificationPayload.dress(content, key: key)
-        XCTAssertEqual(content.title, "alice")
-        XCTAssertEqual(content.body, "New message")
+        content.userInfo = info
+        content.threadIdentifier = conversation.uuidString.lowercased()
+        NotificationPayload.dress(content, key: nil)
+        let dressed = try XCTUnwrap(NotificationPayload.parse(content.userInfo, key: { nil }))
+        XCTAssertEqual(dressed.conversationID, conversation)
+        XCTAssertEqual(dressed.peerUserID, peer)
+        XCTAssertEqual(dressed.messageID, message)
+        XCTAssertNil(dressed.senderName)
+        XCTAssertNil((content.userInfo["shroud"] as? [String: Any])?["e"] as? String)
 
-        // No key on this iPhone (before the first unlock): the push stays as sent.
-        let locked = UNMutableNotificationContent()
-        locked.threadIdentifier = thread
-        locked.userInfo = ["shroud": ["k": "reaction", "p": peer, "e": vector]]
-        NotificationPayload.dress(locked, key: nil)
-        XCTAssertEqual(locked.title, "")
-        XCTAssertEqual(locked.body, "Reacted to your message")
+        // APNs boxes the version as a number. 2 still opens; 1 still keeps the ids.
+        var app = try XCTUnwrap(info["shroud"] as? [String: Any])
+        app["v"] = NSNumber(value: 2)
+        app["e"] = vector
+        var numbered = info
+        numbered["shroud"] = app
+        let opened = try XCTUnwrap(NotificationPayload.parse(numbered, key: { self.key }))
+        XCTAssertEqual(opened.conversationID, conversation)
+        XCTAssertEqual(opened.senderName, "alice")
+
+        app["v"] = NSNumber(value: 1)
+        app["e"] = garbage
+        numbered["shroud"] = app
+        let kept = try XCTUnwrap(NotificationPayload.parse(numbered, key: {
+            XCTFail("v = 1 is not sealed")
+            return nil
+        }))
+        XCTAssertEqual(kept.conversationID, conversation)
+        XCTAssertEqual(kept.peerUserID, peer)
+        XCTAssertEqual(kept.messageID, message)
     }
 
     func testBodiesForEveryKind() {

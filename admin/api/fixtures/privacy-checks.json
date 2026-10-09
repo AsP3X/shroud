@@ -10,9 +10,9 @@
     "detail": "Plain SHA-256. 1,284 accounts still need the slow hash."
   },
   {
-    "item": "The API log names who messages whom",
-    "state": "stored",
-    "detail": "RUST_LOG=info records sender, recipient and chat on every message."
+    "item": "The API log doesn't name who messages whom",
+    "state": "not_stored",
+    "detail": "At info it writes no user, device, chat or call ids, and routes without their values."
   },
   {
     "item": "The web proxy keeps no access log",
@@ -30,9 +30,9 @@
     "detail": "Random logins, and coturn writes no log."
   },
   {
-    "item": "Apple sees chat IDs in pushes",
-    "state": "stored",
-    "detail": "Conversation, sender and message IDs are sent in plain text."
+    "item": "Apple doesn't see chat IDs in pushes",
+    "state": "not_stored",
+    "detail": "IDs are sealed for each iPhone, and threads differ from phone to phone."
   },
   {
     "item": "Redis needs a password, keeps nothing on disk",
@@ -45,9 +45,9 @@
     "detail": "A message's size shows roughly how long it is."
   },
   {
-    "item": "/metrics is public",
-    "state": "stored",
-    "detail": "Live counters show when people are active."
+    "item": "Activity counters aren't public",
+    "state": "not_stored",
+    "detail": "Only this console reads them, on the API's internal operator port."
   },
   {
     "item": "No Google STUN fallback",
