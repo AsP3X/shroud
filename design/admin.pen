@@ -33467,6 +33467,7 @@
       "x": 6240,
       "y": 5397,
       "name": "Phone · Overview",
+      "context": "The Services card head carries a Refresh button on phones (the header's buttons are hidden); it plays the same check run as frame \"Overview · Checking\".",
       "theme": {
         "mode": "dark"
       },
@@ -33786,9 +33787,13 @@
                   },
                   "strokeAlignment": "inner",
                   "padding": [
-                    12,
+                    6,
+                    10,
+                    6,
                     16
                   ],
+                  "justifyContent": "space_between",
+                  "alignItems": "center",
                   "children": [
                     {
                       "type": "text",
@@ -33799,6 +33804,28 @@
                       "fontFamily": "$font-ui",
                       "fontSize": 15,
                       "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Dupwo",
+                      "name": "Refresh",
+                      "width": 30,
+                      "height": 30,
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "PTYsd",
+                          "name": "Icon",
+                          "width": 16,
+                          "height": 16,
+                          "icon": "refresh-cw",
+                          "library": "lucide",
+                          "fill": "$text-secondary"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -63552,6 +63579,2244 @@
                                   "fontFamily": "$font-ui",
                                   "fontSize": 13,
                                   "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "laNnK",
+      "x": 4680,
+      "y": 8457,
+      "name": "Overview · Checking",
+      "context": "Refresh, mid-run. The page asks /overview again and plays the Services card back like Privacy checks' Check again: while the server works a scan band sweeps the rows, the bar under the card head runs indeterminate and the Ready pill gives way to \"Checking 8 services\"; then one row lands every 80 ms, its pill popping in over a wash of its tone, the next row marked Checking with an accent wash and edge, rows still to come with an empty pill and dimmed icon and text. The tiles and the right-hand cards dim and change once the run has finished. Reduced motion shows the result at once.",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$bg",
+      "children": [
+        {
+          "id": "LZnW3",
+          "type": "ref",
+          "ref": "xx7aa",
+          "name": "Sidebar",
+          "height": "fill_container",
+          "descendants": {
+            "uOPZE": {
+              "fill": "$accent-soft"
+            },
+            "uOPZE/Z80pw3": {
+              "fill": "$accent-text"
+            },
+            "uOPZE/Ws1sG": {
+              "fill": "$text-primary"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "WOIXI",
+          "name": "Main",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 24,
+          "padding": [
+            28,
+            40
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "qcuIZ",
+              "name": "Header",
+              "width": "fill_container",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mYDpj",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Q6nJC",
+                      "name": "H1",
+                      "fill": "$text-primary",
+                      "content": "Overview",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 24,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.3
+                    },
+                    {
+                      "type": "text",
+                      "id": "F0YK80",
+                      "name": "Meta",
+                      "fill": "$text-tertiary",
+                      "content": "shroud-server 0.1.0 · up 12 d 4 h · checked 14:02:31",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "nE5pq",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Refresh",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw",
+                      "fill": "$text-secondary"
+                    },
+                    "aK3lq": {
+                      "content": "Refreshing…",
+                      "fill": "$text-secondary"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "LSYNK",
+              "name": "Stats",
+              "opacity": 0.45,
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "S3Ick",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Accounts",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Accounts"
+                    },
+                    "iY6vL": {
+                      "content": "1,284"
+                    },
+                    "SGZJY": {
+                      "content": "+12 in the last 7 days · 9 deleted"
+                    }
+                  }
+                },
+                {
+                  "id": "Qi36S",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Active devices",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Active devices"
+                    },
+                    "iY6vL": {
+                      "content": "2,071"
+                    },
+                    "SGZJY": {
+                      "content": "Not revoked · seen in 30 days"
+                    }
+                  }
+                },
+                {
+                  "id": "mPHFa",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Live connections",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Live connections"
+                    },
+                    "iY6vL": {
+                      "content": "347"
+                    },
+                    "SGZJY": {
+                      "content": "WebSocket, right now"
+                    }
+                  }
+                },
+                {
+                  "id": "tFHyP",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Messages relayed",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Messages relayed"
+                    },
+                    "iY6vL": {
+                      "content": "182,406"
+                    },
+                    "SGZJY": {
+                      "content": "Since the last restart"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NoWRj",
+              "name": "Body",
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Pm2T6",
+                  "name": "Services",
+                  "clip": true,
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$surface-2",
+                  "cornerRadius": "$radius",
+                  "stroke": "$separator",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "y3p48f",
+                      "name": "Card Head",
+                      "width": "fill_container",
+                      "stroke": "$separator",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "strokeAlignment": "inner",
+                      "gap": 12,
+                      "padding": [
+                        16,
+                        20
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "UTUXL",
+                          "name": "Text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "GB6Eg",
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "content": "Services",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "dwVlp",
+                              "name": "Sub",
+                              "fill": "$text-tertiary",
+                              "content": "Probed by /health/ready every 30 s: PostgreSQL, Redis, media store. The rest shows configuration",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "gtrOY",
+                          "type": "ref",
+                          "ref": "RYANd",
+                          "name": "Summary",
+                          "fill": "$ok-bg",
+                          "enabled": false,
+                          "descendants": {
+                            "iTO9u": {
+                              "fill": "$online"
+                            },
+                            "q1x3u": {
+                              "content": "Ready",
+                              "fill": "$ok-text"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ZdG8k",
+                          "name": "Run status",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "POcup",
+                              "name": "Spinner",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "loader-circle",
+                              "library": "lucide",
+                              "fill": "$text-secondary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "E8aDPG",
+                              "name": "Count",
+                              "fill": "$text-secondary",
+                              "content": "4 of 8",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ygpku",
+                      "name": "Run progress",
+                      "width": "fill_container",
+                      "height": 2,
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "n06Pvd",
+                          "name": "Done",
+                          "fill": "$accent",
+                          "width": 358,
+                          "height": 2
+                        }
+                      ]
+                    },
+                    {
+                      "id": "A8Gsc",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · PostgreSQL",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "database"
+                        },
+                        "X0PzBO": {
+                          "content": "PostgreSQL"
+                        },
+                        "vMfvD": {
+                          "content": "30 migrations applied"
+                        },
+                        "LrwTX": {
+                          "fill": "$ok-bg"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$online"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Healthy",
+                          "fill": "$ok-text"
+                        }
+                      }
+                    },
+                    {
+                      "id": "j14f4b",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Redis",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "layers"
+                        },
+                        "X0PzBO": {
+                          "content": "Redis"
+                        },
+                        "vMfvD": {
+                          "content": "Password set · nothing kept on disk"
+                        },
+                        "LrwTX": {
+                          "fill": "$ok-bg"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$online"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Healthy",
+                          "fill": "$ok-text"
+                        }
+                      }
+                    },
+                    {
+                      "id": "IomMh",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Media store",
+                      "width": "fill_container",
+                      "fill": "#34c75912",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "hard-drive"
+                        },
+                        "X0PzBO": {
+                          "content": "Media store"
+                        },
+                        "vMfvD": {
+                          "content": "Nebular · bucket shroud-media · 412 GB"
+                        },
+                        "LrwTX": {
+                          "fill": "$ok-bg"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$online"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Healthy",
+                          "fill": "$ok-text"
+                        }
+                      }
+                    },
+                    {
+                      "id": "ZhKKM",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Apple Push (APNs)",
+                      "width": "fill_container",
+                      "fill": "#8a8a9924",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "smartphone"
+                        },
+                        "X0PzBO": {
+                          "content": "Apple Push (APNs)"
+                        },
+                        "vMfvD": {
+                          "content": "Production · topic de.corespace.shroud · key set"
+                        },
+                        "LrwTX": {
+                          "fill": "$surface-3"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$text-tertiary"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Configured",
+                          "fill": "$text-secondary"
+                        }
+                      }
+                    },
+                    {
+                      "id": "Z73rTb",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Web Push",
+                      "width": "fill_container",
+                      "fill": "#6464f21f",
+                      "layout": "horizontal",
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "inner",
+                        "color": "$accent",
+                        "offset": {
+                          "x": 2,
+                          "y": 0
+                        }
+                      },
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "globe"
+                        },
+                        "X0PzBO": {
+                          "content": "Web Push"
+                        },
+                        "vMfvD": {
+                          "content": "VAPID key set · 318 subscriptions"
+                        },
+                        "LrwTX": {
+                          "type": "frame",
+                          "id": "B88et",
+                          "name": "Status · Checking",
+                          "height": 24,
+                          "fill": "$accent-soft",
+                          "cornerRadius": 12,
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "AzZIp",
+                              "name": "Spinner",
+                              "width": 11,
+                              "height": 11,
+                              "icon": "loader-circle",
+                              "library": "lucide",
+                              "fill": "$accent-text"
+                            },
+                            {
+                              "type": "text",
+                              "id": "z9xfk4",
+                              "name": "Label",
+                              "fill": "$accent-text",
+                              "content": "Checking",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "id": "LMkZS",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · UnifiedPush",
+                      "width": "fill_container",
+                      "descendants": {
+                        "qRM6s": {
+                          "opacity": 0.5
+                        },
+                        "Tbn64": {
+                          "icon": "radio"
+                        },
+                        "Xcy7K": {
+                          "opacity": 0.5
+                        },
+                        "X0PzBO": {
+                          "content": "UnifiedPush"
+                        },
+                        "vMfvD": {
+                          "content": "Endpoints allowed on ntfy.sh, up.example.org"
+                        },
+                        "LrwTX": {
+                          "type": "frame",
+                          "id": "ZeKpr",
+                          "name": "Status · Waiting",
+                          "width": 92,
+                          "height": 24,
+                          "fill": "#8a8a9924",
+                          "cornerRadius": 12
+                        }
+                      }
+                    },
+                    {
+                      "id": "oeHja",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · TURN relay",
+                      "width": "fill_container",
+                      "descendants": {
+                        "qRM6s": {
+                          "opacity": 0.5
+                        },
+                        "Tbn64": {
+                          "icon": "phone"
+                        },
+                        "Xcy7K": {
+                          "opacity": 0.5
+                        },
+                        "X0PzBO": {
+                          "content": "TURN relay"
+                        },
+                        "vMfvD": {
+                          "content": "turn:turn.example.org:3478 · short-lived logins · no relay log"
+                        },
+                        "LrwTX": {
+                          "type": "frame",
+                          "id": "YHAmC",
+                          "name": "Status · Waiting",
+                          "width": 92,
+                          "height": 24,
+                          "fill": "#8a8a9924",
+                          "cornerRadius": 12
+                        }
+                      }
+                    },
+                    {
+                      "id": "SWaQy",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Link preview relay",
+                      "width": "fill_container",
+                      "descendants": {
+                        "qRM6s": {
+                          "opacity": 0.5
+                        },
+                        "Tbn64": {
+                          "icon": "link"
+                        },
+                        "Xcy7K": {
+                          "opacity": 0.5
+                        },
+                        "X0PzBO": {
+                          "content": "Link preview relay"
+                        },
+                        "vMfvD": {
+                          "content": "Browser TLS tunnel · 42 open · at most 6 per account"
+                        },
+                        "LrwTX": {
+                          "type": "frame",
+                          "id": "oisgY",
+                          "name": "Status · Waiting",
+                          "width": 92,
+                          "height": 24,
+                          "fill": "#8a8a9924",
+                          "cornerRadius": 12
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SNlw8",
+                  "name": "Right",
+                  "opacity": 0.45,
+                  "width": 380,
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "mEZVf",
+                      "name": "Traffic",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "nsmXi",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "E0EYJ",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "P4tuiZ",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Since the last restart",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mAPTJ",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "From /operator/metrics",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "UprgH",
+                          "name": "Rows",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            8,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "J7DrKG",
+                              "name": "Row · HTTP requests",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "N2JJHx",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "HTTP requests",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "y95m6",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "4,812,330",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "X7PF6",
+                              "name": "Row · HTTP errors",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "F1q0C",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "HTTP errors",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "zqrg4",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "1,206 · 0.03 %",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "SaYAi",
+                              "name": "Row · Media uploads",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Eq0Zl",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Media uploads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ptEjH",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "9,214",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "zHAFx",
+                              "name": "Row · Media downloads",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Xa9DZ",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Media downloads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "jSbny",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "31,877",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "JZ67g",
+                              "name": "Row · Media store errors",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "I8Sy9",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Media store errors",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "TEO8L",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "0",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "q5jZc7",
+                              "name": "Row · Calls started",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "rezCP",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Calls started",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Ws62J",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "612",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "GvYJt",
+                              "name": "Row · Legacy media reads",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "e5121m",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Legacy media reads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "MonRC",
+                                  "name": "Value",
+                                  "fill": "$warn-text",
+                                  "content": "3",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "AvXxr",
+                              "name": "Row · Media moved to Nebular",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ZwvEH",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Legacy media reads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "e6zKA",
+                                  "name": "Value",
+                                  "fill": "$warn-text",
+                                  "content": "3",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IofA1",
+                      "name": "Attention",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "nY9yV",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "otR3w",
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "content": "Needs attention",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "O4yiZR",
+                          "name": "Items",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            6,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aNPMz",
+                              "name": "Item",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                12,
+                                0
+                              ],
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "VNuoa",
+                                  "name": "Icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "triangle-alert",
+                                  "library": "lucide",
+                                  "fill": "$warn"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "Z3zcA",
+                                  "name": "Text",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "A652k2",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "No minimum client version set",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "UMVNT",
+                                      "name": "Body",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Builds from before the sender tag still accept messages the server could forge. Once the new builds are out, set IOS_MIN_VERSION and ANDROID_MIN_VERSION (see Client versions).",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ymH2G",
+                              "name": "Item",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                12,
+                                0
+                              ],
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "DQxaX",
+                                  "name": "Icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "archive",
+                                  "library": "lucide",
+                                  "fill": "$text-secondary"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "jTE9Q",
+                                  "name": "Text",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "iGWVv",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "3 media objects on the legacy store",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "fQcoq",
+                                      "name": "Body",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Reads still fall back to local disk. They move to Nebular the next time they're fetched.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "KCGBY",
+      "x": 6240,
+      "y": 8457,
+      "name": "Overview · Checked",
+      "context": "Refresh has finished and PostgreSQL went down since the last run. The Services card head says when the run ended and how many services moved, next to the Ready / Not ready pill; each moved row carries a Changed chip naming its old state until the next run. Before the first Refresh the card head shows only the pill (the header meta already says when the server checked). A failed run keeps the last answer under the same \"The checks couldn't run\" banner as Privacy checks.",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$bg",
+      "children": [
+        {
+          "id": "k5Owv",
+          "type": "ref",
+          "ref": "xx7aa",
+          "name": "Sidebar",
+          "height": "fill_container",
+          "descendants": {
+            "uOPZE": {
+              "fill": "$accent-soft"
+            },
+            "uOPZE/Z80pw3": {
+              "fill": "$accent-text"
+            },
+            "uOPZE/Ws1sG": {
+              "fill": "$text-primary"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "scphG",
+          "name": "Main",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 18,
+          "padding": [
+            28,
+            40
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "TdmuN",
+              "name": "Header",
+              "width": "fill_container",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "BezmM",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "q0ogZ5",
+                      "name": "H1",
+                      "fill": "$text-primary",
+                      "content": "Overview",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 24,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.3
+                    },
+                    {
+                      "type": "text",
+                      "id": "yZy6R",
+                      "name": "Meta",
+                      "fill": "$text-tertiary",
+                      "content": "shroud-server 0.1.0 · up 12 d 4 h · checked 14:03:02",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "hyeNq",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Refresh",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw"
+                    },
+                    "aK3lq": {
+                      "content": "Refresh"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "uHBLU",
+              "name": "Outage banner",
+              "width": "fill_container",
+              "fill": "$danger-soft",
+              "cornerRadius": "$radius-sm",
+              "gap": 12,
+              "padding": [
+                12,
+                16
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "JXDzb",
+                  "name": "Icon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "octagon-alert",
+                  "library": "lucide",
+                  "fill": "$danger"
+                },
+                {
+                  "type": "frame",
+                  "id": "sTcl2",
+                  "name": "Text",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hIOxY",
+                      "name": "Title",
+                      "fill": "$danger",
+                      "content": "PostgreSQL is unreachable",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 14,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "XfBEP",
+                      "name": "Body",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Sign-ins, messages and uploads are failing for everyone. Last successful probe at 14:01:31. Account numbers below are from that probe.",
+                      "lineHeight": 1.45,
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "s7ZHTs",
+              "name": "Stats",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "R30sz",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Accounts",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Accounts"
+                    },
+                    "iY6vL": {
+                      "content": "1,284",
+                      "fill": "$text-tertiary"
+                    },
+                    "SGZJY": {
+                      "content": "As of 14:01:31"
+                    }
+                  }
+                },
+                {
+                  "id": "k1vfBy",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Active devices",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Active devices"
+                    },
+                    "iY6vL": {
+                      "content": "2,071",
+                      "fill": "$text-tertiary"
+                    },
+                    "SGZJY": {
+                      "content": "As of 14:01:31"
+                    }
+                  }
+                },
+                {
+                  "id": "M2m0g4",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Live connections",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Live connections"
+                    },
+                    "iY6vL": {
+                      "content": "347"
+                    },
+                    "SGZJY": {
+                      "content": "WebSocket, right now"
+                    }
+                  }
+                },
+                {
+                  "id": "K9m6N",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Messages relayed",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Messages relayed"
+                    },
+                    "iY6vL": {
+                      "content": "182,406"
+                    },
+                    "SGZJY": {
+                      "content": "Since the last restart"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "rmxyb",
+              "name": "Body",
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "opelt",
+                  "name": "Services",
+                  "clip": true,
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$surface-2",
+                  "cornerRadius": "$radius",
+                  "stroke": "$separator",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Viv0g",
+                      "name": "Card Head",
+                      "width": "fill_container",
+                      "stroke": "$separator",
+                      "strokeWidth": {
+                        "bottom": 1
+                      },
+                      "strokeAlignment": "inner",
+                      "gap": 12,
+                      "padding": [
+                        16,
+                        20
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "omOvK",
+                          "name": "Text",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "gap": 2,
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "PvwTQ",
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "content": "Services",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "text",
+                              "id": "O1nOR",
+                              "name": "Sub",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Probed by /health/ready every 30 s: PostgreSQL, Redis, media store. The rest shows configuration",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "xqz03",
+                          "name": "Run status",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "BbGxm",
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "circle-check",
+                              "library": "lucide",
+                              "fill": "$accent-text"
+                            },
+                            {
+                              "type": "text",
+                              "id": "R8sxa",
+                              "name": "Label",
+                              "fill": "$accent-text",
+                              "content": "Checked 14:03 · 1 changed",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "500"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "o2oBvF",
+                          "type": "ref",
+                          "ref": "RYANd",
+                          "name": "Summary",
+                          "fill": "$danger-soft",
+                          "descendants": {
+                            "iTO9u": {
+                              "fill": "$danger"
+                            },
+                            "q1x3u": {
+                              "content": "Not ready",
+                              "fill": "$danger"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "HY8gW",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · PostgreSQL",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "database"
+                        },
+                        "X0PzBO": {
+                          "type": "frame",
+                          "id": "GPIOk",
+                          "name": "Name row",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "l8B8ug",
+                              "name": "Name",
+                              "fill": "$text-primary",
+                              "content": "PostgreSQL",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 14,
+                              "fontWeight": "500"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "dEumL",
+                              "name": "Chip · Changed",
+                              "fill": "$accent-soft",
+                              "cornerRadius": 6,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "gbaVm",
+                                  "name": "Label",
+                                  "fill": "$accent-text",
+                                  "content": "Changed · was Healthy",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        "vMfvD": {
+                          "content": "Connection refused · db:5432 · retrying every 5 s"
+                        },
+                        "LrwTX": {
+                          "fill": "$danger-soft"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$danger"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Down",
+                          "fill": "$danger"
+                        }
+                      }
+                    },
+                    {
+                      "id": "k1Mafa",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Redis",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "layers"
+                        },
+                        "X0PzBO": {
+                          "content": "Redis"
+                        },
+                        "vMfvD": {
+                          "content": "Password set · nothing kept on disk"
+                        },
+                        "LrwTX": {
+                          "fill": "$ok-bg"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$online"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Healthy",
+                          "fill": "$ok-text"
+                        }
+                      }
+                    },
+                    {
+                      "id": "afJvQ",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Media store",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "hard-drive"
+                        },
+                        "X0PzBO": {
+                          "content": "Media store"
+                        },
+                        "vMfvD": {
+                          "content": "Nebular answers · uploads need the database"
+                        },
+                        "LrwTX": {
+                          "fill": "$ok-bg"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$online"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Healthy",
+                          "fill": "$ok-text"
+                        }
+                      }
+                    },
+                    {
+                      "id": "gZdCz",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Apple Push (APNs)",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "smartphone"
+                        },
+                        "X0PzBO": {
+                          "content": "Apple Push (APNs)"
+                        },
+                        "vMfvD": {
+                          "content": "Production · topic de.corespace.shroud · key set"
+                        },
+                        "LrwTX": {
+                          "fill": "$surface-3"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$text-tertiary"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Configured",
+                          "fill": "$text-secondary"
+                        }
+                      }
+                    },
+                    {
+                      "id": "UTerA",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Web Push",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "globe"
+                        },
+                        "X0PzBO": {
+                          "content": "Web Push"
+                        },
+                        "vMfvD": {
+                          "content": "VAPID key set · 318 subscriptions"
+                        },
+                        "LrwTX": {
+                          "fill": "$surface-3"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$text-tertiary"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Configured",
+                          "fill": "$text-secondary"
+                        }
+                      }
+                    },
+                    {
+                      "id": "VEBAl",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · UnifiedPush",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "radio"
+                        },
+                        "X0PzBO": {
+                          "content": "UnifiedPush"
+                        },
+                        "vMfvD": {
+                          "content": "Endpoints allowed on ntfy.sh, up.example.org"
+                        },
+                        "LrwTX": {
+                          "fill": "$surface-3"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$text-tertiary"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Configured",
+                          "fill": "$text-secondary"
+                        }
+                      }
+                    },
+                    {
+                      "id": "vwt7J",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · TURN relay",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "phone"
+                        },
+                        "X0PzBO": {
+                          "content": "TURN relay"
+                        },
+                        "vMfvD": {
+                          "content": "turn:turn.example.org:3478 · short-lived logins · no relay log"
+                        },
+                        "LrwTX": {
+                          "fill": "$surface-3"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$text-tertiary"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Configured",
+                          "fill": "$text-secondary"
+                        }
+                      }
+                    },
+                    {
+                      "id": "hq1Hf",
+                      "type": "ref",
+                      "ref": "TZhtX",
+                      "name": "Service · Link preview relay",
+                      "width": "fill_container",
+                      "descendants": {
+                        "Tbn64": {
+                          "icon": "link"
+                        },
+                        "X0PzBO": {
+                          "content": "Link preview relay"
+                        },
+                        "vMfvD": {
+                          "content": "Browser TLS tunnel · 42 open · at most 6 per account"
+                        },
+                        "LrwTX": {
+                          "fill": "$surface-3"
+                        },
+                        "LrwTX/iTO9u": {
+                          "fill": "$text-tertiary"
+                        },
+                        "LrwTX/q1x3u": {
+                          "content": "Configured",
+                          "fill": "$text-secondary"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "NoZR9",
+                  "name": "Right",
+                  "width": 380,
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "oImwn",
+                      "name": "Traffic",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "X1PJt",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ZRhA7",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "BYJPH",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Since the last restart",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "X8rAmr",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "From /operator/metrics",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "XMbZY",
+                          "name": "Rows",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            8,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "dAzxA",
+                              "name": "Row · HTTP requests",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "YQCTY",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "HTTP requests",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "MwBHI",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "4,812,330",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "wl9pJ",
+                              "name": "Row · HTTP errors",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Pm3Hn",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "HTTP errors",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "LVfBM",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "1,206 · 0.03 %",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "OqMya",
+                              "name": "Row · Media uploads",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ukqm1",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Media uploads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "D0YPib",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "9,214",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "MR6pD",
+                              "name": "Row · Media downloads",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "aPrC0",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Media downloads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ZLPMj",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "31,877",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Re1fe",
+                              "name": "Row · Media store errors",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "nHC5X",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Media store errors",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "JjsF8",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "0",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "k3P4F6",
+                              "name": "Row · Calls started",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ADc8D",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Calls started",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "exfMB",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "612",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Z74eG",
+                              "name": "Row · Legacy media reads",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "KsCCW",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Legacy media reads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "cbC1o",
+                                  "name": "Value",
+                                  "fill": "$warn-text",
+                                  "content": "3",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "IIfQv",
+                              "name": "Row · Media moved to Nebular",
+                              "width": "fill_container",
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "oU6wG",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Legacy media reads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "N55Zg",
+                                  "name": "Value",
+                                  "fill": "$warn-text",
+                                  "content": "3",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 13,
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "GJuvL",
+                      "name": "Attention",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "rIUS2",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tEGDr",
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "content": "Needs attention",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 15,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "baalM",
+                          "name": "Items",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            6,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "rjx5q",
+                              "name": "Item",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                12,
+                                0
+                              ],
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "txxIX",
+                                  "name": "Icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "database-zap",
+                                  "library": "lucide",
+                                  "fill": "$danger"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "csEjY",
+                                  "name": "Text",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "uMGb3",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Database connections refused",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "UBdF8",
+                                      "name": "Body",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Check the db container and DATABASE_URL. The server reconnects by itself once Postgres accepts connections.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
                                 }
                               ]
                             }

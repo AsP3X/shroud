@@ -1,0 +1,415 @@
+/* A check run (components/CheckRun.tsx): Privacy checks' Check again and the Overview's Services
+   on Refresh; frames "Privacy checks · Checking", "· Checked", "· Couldn't check" and
+   "Overview · Checking" in design/admin.pen. The server answers every check at once: a scan
+   sweeps the list while it works, then the answers land one row at a time, each pill popping in
+   over a short wash of its tone. Only transform and opacity move; base.css cuts it all to nothing
+   under reduced motion. */
+
+:root {
+  --run-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.run-list {
+  position: relative;
+  overflow: hidden;
+}
+
+.run-row {
+  position: relative;
+}
+
+.run-row > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* The row wash: tone on landing, accent while checking. */
+.run-row::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--wash, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.run-row--ok {
+  --wash: color-mix(in srgb, var(--online) 14%, transparent);
+}
+
+.run-row--warn {
+  --wash: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+
+.run-row--danger {
+  --wash: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.run-row--neutral {
+  --wash: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
+}
+
+.run-row--active {
+  --wash: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.run-row--active::before {
+  opacity: 1;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.run-row--landed::before {
+  animation: run-wash 1100ms ease-out both;
+}
+
+.run-text {
+  transition: opacity 240ms ease;
+}
+
+.run-row--queued .run-text {
+  opacity: 0.5;
+}
+
+.run-slot {
+  display: flex;
+  flex: none;
+}
+
+.pill--queued {
+  width: 92px;
+  background: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
+  color: transparent;
+}
+
+.pill--queued::before {
+  background: transparent;
+}
+
+.run-list--sweeping .pill--queued {
+  animation: run-breathe 1300ms ease-in-out infinite;
+}
+
+.pill--checking {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.pill--checking::before {
+  display: none;
+}
+
+.run-row--landed .pill {
+  animation: run-pop 440ms var(--run-ease) both;
+}
+
+.run-row--landed .chip {
+  animation: run-pop 440ms var(--run-ease) 180ms both;
+}
+
+.run-spinner {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: run-spin 700ms linear infinite;
+}
+
+/* The scan: a full-height layer whose bottom edge carries a soft band and a hairline, moved from
+   above the list to below it. */
+.run-list--sweeping::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(100% - 160px),
+    color-mix(in srgb, var(--accent) 7%, transparent) calc(100% - 60px),
+    color-mix(in srgb, var(--accent) 20%, transparent) calc(100% - 1px),
+    var(--accent) calc(100% - 1px)
+  );
+  pointer-events: none;
+  animation: run-sweep 1400ms cubic-bezier(0.45, 0, 0.4, 1) infinite;
+}
+
+/* The bar under the card head: indeterminate while the server works, then one step per answer;
+   it turns green when the last answer lands and fades out. */
+.run-progress {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  height: 2px;
+  margin-top: -2px;
+  overflow: hidden;
+}
+
+.run-progress > span {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left;
+  transition:
+    transform 180ms var(--run-ease),
+    opacity 220ms ease;
+}
+
+.run-progress--idle > span {
+  background: var(--online);
+  opacity: 0;
+  transition:
+    transform 180ms var(--run-ease),
+    opacity 600ms ease 500ms;
+}
+
+.run-progress--failed > span {
+  opacity: 0;
+}
+
+.run-progress--sweeping > span {
+  width: 32%;
+  transform: none;
+  animation: run-indeterminate 1100ms cubic-bezier(0.45, 0, 0.4, 1) infinite;
+}
+
+.run-status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  animation: run-status-in 260ms var(--run-ease) both;
+}
+
+.run-status svg {
+  width: 14px;
+  height: 14px;
+}
+
+.run-status--busy {
+  color: var(--text-secondary);
+}
+
+.run-status--ok {
+  color: var(--ok-text);
+}
+
+.run-status--accent {
+  color: var(--accent-text);
+}
+
+.run-status--danger {
+  color: var(--danger);
+}
+
+.run-status__count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* On phones the header's buttons are hidden; the card head carries the re-run button instead. */
+.run-again {
+  display: none;
+}
+
+.run-again:disabled svg {
+  animation: run-spin 900ms linear infinite;
+}
+
+.button--running:disabled {
+  opacity: 1;
+  color: var(--text-secondary);
+  cursor: progress;
+}
+
+.button--running svg {
+  animation: run-spin 900ms linear infinite;
+}
+
+.tick {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  animation: tick-rise 300ms var(--run-ease) both;
+}
+
+.tick--waiting {
+  color: var(--text-tertiary);
+}
+
+.stat-tile {
+  transition:
+    border-color 300ms ease,
+    opacity 300ms ease;
+}
+
+.stats--running .stat-tile {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--separator));
+}
+
+/* Cards that only change once the run has finished. */
+.run-stale .card,
+.run-stale.stat-tile,
+.run-stale .stat-tile {
+  opacity: 0.45;
+}
+
+.column .card {
+  transition: opacity 300ms ease;
+}
+
+.run-failed {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--separator);
+  background: var(--danger-soft);
+  animation: run-status-in 300ms var(--run-ease) both;
+}
+
+.run-failed > svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--danger);
+}
+
+.run-failed__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.run-failed__title {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.run-failed__body {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 600px) {
+  .run-again {
+    display: grid;
+  }
+  /* The re-run button sits beside the title; the run's status (and a result pill) wrap under it. */
+  .card__head:has(.run-again) {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .card__head:has(.run-again) > .card__head-text {
+    flex: 1 1 calc(100% - 42px);
+  }
+  .card__head:has(.run-again) > .run-again {
+    order: 1;
+  }
+  .card__head:has(.run-again) > .pill {
+    order: 2;
+  }
+  .card__head:has(.run-again) > .run-status {
+    order: 3;
+  }
+  .run-failed {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-row--landed .chip {
+    animation-delay: 0s !important;
+  }
+  .run-progress--idle > span {
+    transition-delay: 0s !important;
+  }
+}
+
+@keyframes run-wash {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes run-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes run-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes run-sweep {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes run-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes run-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes run-status-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes tick-rise {
+  from {
+    opacity: 0;
+    transform: translateY(35%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

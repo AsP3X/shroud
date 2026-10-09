@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { Database, Globe, HardDrive, Layers, Link2, Phone, RefreshCw, Smartphone, TriangleAlert, Radio } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePageData } from "../api/usePageData";
+import { ChangedChip, RunFailed, RunHead, RunPill, RunProgress, Tick, runListClass, runRowClass, useCheckRun } from "../components/CheckRun";
 import type { Overview as OverviewData } from "../api/types";
 import { LoadError, Loading } from "../components/LoadState";
 import { Banner, Button, Card, CardHead, KeyValueRows, PageHeader, StatTile, StatusPill, type Tone } from "../components/ui";
@@ -67,9 +68,11 @@ const ATTENTION: Record<OverviewData["attention"][number]["kind"], { title: (n?:
   },
 };
 
+const keyed = (data: OverviewData) => services(data).map((row) => ({ key: row.name, state: row.label }));
+
 /** Frames "Overview", "Overview · Database down" and "Overview · Light". */
 export function Overview() {
-  const { data, error, loading, reload } = usePageData<OverviewData>("/overview");
+  const { data, error, reload } = usePageData<OverviewData>("/overview");
 
   if (error) {
     return (
@@ -88,8 +91,16 @@ export function Overview() {
     );
   }
 
-  const { server, stats, ready, metrics, attention } = data;
-  const rows = services(data);
+  return <OverviewBody initial={data} />;
+}
+
+/** Refresh asks the server again and plays the Services card back row by row (frame
+ *  "Overview · Checking"); the other cards change once the run has finished. */
+function OverviewBody({ initial }: { initial: OverviewData }) {
+  const run = useCheckRun("/overview", initial, keyed);
+  const { server, stats, metrics, attention } = run.settled;
+  const ready = run.data.ready;
+  const rows = services(run.data);
   const traffic = [
     { key: "HTTP requests", value: count(metrics.http_requests_total) },
     { key: "HTTP errors", value: `${count(metrics.http_errors_total)} · ${percent(metrics.http_errors_total, metrics.http_requests_total)}` },
@@ -107,8 +118,8 @@ export function Overview() {
         title="Overview"
         meta={`shroud-server ${server.version} · up ${uptime(server.started_at, new Date(server.checked_at).getTime())} · checked ${clock(server.checked_at)}`}
       >
-        <Button icon={RefreshCw} onClick={reload} disabled={loading}>
-          Refresh
+        <Button icon={RefreshCw} onClick={run.start} disabled={run.running} className={run.running ? "button--running" : undefined}>
+          {run.running ? "Refreshing…" : "Refresh"}
         </Button>
       </PageHeader>
 
@@ -120,36 +131,47 @@ export function Overview() {
         </div>
       ) : null}
 
-      <div className="stats">
-        <StatTile label="Accounts" value={count(stats.accounts)} sub={`+${count(stats.accounts_7d)} in the last 7 days · ${count(stats.accounts_deleted)} deleted`} />
-        <StatTile label="Active devices" value={count(stats.devices_active_30d)} sub="Not revoked · seen in 30 days" />
-        <StatTile label="Live connections" value={count(stats.ws_connections)} sub="WebSocket, right now" />
-        <StatTile label="Messages relayed" value={count(stats.messages_sent_total)} sub="Since the last restart" />
+      <div className={run.running ? "stats run-stale" : "stats"}>
+        <StatTile label="Accounts" value={<Tick value={count(stats.accounts)} />} sub={`+${count(stats.accounts_7d)} in the last 7 days · ${count(stats.accounts_deleted)} deleted`} />
+        <StatTile label="Active devices" value={<Tick value={count(stats.devices_active_30d)} />} sub="Not revoked · seen in 30 days" />
+        <StatTile label="Live connections" value={<Tick value={count(stats.ws_connections)} />} sub="WebSocket, right now" />
+        <StatTile label="Messages relayed" value={<Tick value={count(stats.messages_sent_total)} />} sub="Since the last restart" />
       </div>
 
       <div className="columns">
         <div className="column">
           <Card fill>
             <CardHead title="Services" sub="Probed by /health/ready every 30 s: PostgreSQL, Redis, media store. The rest shows configuration">
-              <StatusPill tone={ready.status === "ok" ? "ok" : "danger"}>{ready.status === "ok" ? "Ready" : "Not ready"}</StatusPill>
+              <RunHead run={run} busy={`Checking ${count(run.total)} services`} label="Refresh" quiet />
+              {run.running ? null : <StatusPill tone={ready.status === "ok" ? "ok" : "danger"}>{ready.status === "ok" ? "Ready" : "Not ready"}</StatusPill>}
             </CardHead>
-            <div className="services">
-              {rows.map(({ icon: Icon, name, detail, tone, label }) => (
-                <div className="service" key={name}>
-                  <span className="service__icon">
-                    <Icon aria-hidden="true" />
-                  </span>
-                  <span className="service__text">
-                    <span className="service__name">{name}</span>
-                    <span className="service__detail">{detail}</span>
-                  </span>
-                  <StatusPill tone={tone}>{label}</StatusPill>
-                </div>
-              ))}
+            <RunProgress run={run} />
+            <RunFailed run={run} />
+            <div className={runListClass(run, "services")} key={run.runs}>
+              {rows.map(({ icon: Icon, name, detail, tone, label }, index) => {
+                const step = run.stepOf(index);
+                return (
+                  <div className={`service ${runRowClass(run, step, tone)}`} key={name}>
+                    <span className="service__icon run-text">
+                      <Icon aria-hidden="true" />
+                    </span>
+                    <span className="service__text run-text">
+                      <span className="service__name">
+                        {name}
+                        {step === "done" ? <ChangedChip was={run.wasOf(name, label)} /> : null}
+                      </span>
+                      <span className="service__detail">{detail}</span>
+                    </span>
+                    <RunPill step={step} tone={tone}>
+                      {label}
+                    </RunPill>
+                  </div>
+                );
+              })}
             </div>
           </Card>
         </div>
-        <div className="column" style={{ flex: "0 0 380px", width: 380 }}>
+        <div className={run.running ? "column run-stale" : "column"} style={{ flex: "0 0 380px", width: 380 }}>
           <Card>
             <CardHead title="Since the last restart" sub="From /operator/metrics" />
             <KeyValueRows rows={traffic.map((row) => ({ key: row.key, value: <span className="mono text-primary">{row.value}</span> }))} />
