@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use redis::AsyncCommands;
@@ -155,11 +155,64 @@ pub struct RealtimeHub {
     connections: RwLock<Connections>,
     next_connection_id: AtomicU64,
     /// When set, cross-instance fan-out uses Redis pub/sub.
-    redis: RwLock<Option<ConnectionManager>>,
-    /// Until when Redis is skipped after it failed or didn't answer (see [`REDIS_BACKOFF`]).
-    redis_down_until: std::sync::Mutex<Option<Instant>>,
+    redis: Arc<RedisSlot>,
     /// Rings kept while their calls ring, by callee — in Redis instead when it is set.
     rings: RwLock<HashMap<Uuid, PendingRing>>,
+}
+
+/// The hub's Redis connection, shared with the task that replaces it when it goes silent.
+#[derive(Default)]
+struct RedisSlot {
+    manager: RwLock<Option<ConnectionManager>>,
+    /// Opens the replacement (see [`RealtimeHub::set_redis_client`]).
+    client: std::sync::Mutex<Option<redis::Client>>,
+    /// Until when Redis is skipped after it failed or didn't answer (see [`REDIS_BACKOFF`]).
+    down_until: std::sync::Mutex<Option<Instant>>,
+    /// A replacement is being opened.
+    replacing: AtomicBool,
+}
+
+impl RedisSlot {
+    fn back_off(&self) {
+        if let Ok(mut until) = self.down_until.lock() {
+            *until = Some(Instant::now() + REDIS_BACKOFF);
+        }
+    }
+
+    /// Opens a fresh connection manager in the background and swaps it in, unless one is
+    /// already being opened or there is no client to open it with.
+    ///
+    /// Human: A connection whose peer vanished without a reset (a host off the network, a
+    /// dropped NAT entry) never errors: the manager only reconnects on an I/O error, and TCP
+    /// keepalive, at the OS defaults redis-rs leaves it on, takes hours to notice. Until then
+    /// every call timed out and other replicas heard nothing from this one.
+    /// Agent: Ends the backoff once the new manager is in, so the next call uses it at once.
+    /// The attempt is bounded by the manager config's retries and connection timeout.
+    fn replace(self: &Arc<Self>) {
+        let Some(client) = self.client.lock().ok().and_then(|client| client.clone()) else {
+            return;
+        };
+        if self.replacing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let slot = self.clone();
+        tokio::spawn(async move {
+            match ConnectionManager::new_with_config(client, crate::redis_manager_config()).await {
+                Ok(manager) => {
+                    *slot.manager.write().await = Some(manager);
+                    if let Ok(mut until) = slot.down_until.lock() {
+                        *until = None;
+                    }
+                    tracing::info!("realtime redis connection replaced after it went silent");
+                }
+                Err(err) => tracing::warn!(
+                    error = %err,
+                    "realtime redis replacement failed; trying again on the next silent call"
+                ),
+            }
+            slot.replacing.store(false, Ordering::Release);
+        });
+    }
 }
 
 /// A `call.ring` event kept for the callee's devices that connect while it rings.
@@ -200,41 +253,57 @@ impl RealtimeHub {
 
     /// Attaches a Redis connection manager for multi-replica publish.
     pub async fn set_redis(&self, manager: ConnectionManager) {
-        *self.redis.write().await = Some(manager);
+        *self.redis.manager.write().await = Some(manager);
+    }
+
+    /// The client the Redis connection manager was opened with, so the hub can open a fresh
+    /// one when its connection stops answering.
+    pub fn set_redis_client(&self, client: redis::Client) {
+        if let Ok(mut slot) = self.redis.client.lock() {
+            *slot = Some(client);
+        }
     }
 
     /// True when a Redis connection manager is attached.
     pub async fn has_redis(&self) -> bool {
-        self.redis.read().await.is_some()
+        self.redis.manager.read().await.is_some()
     }
 
     /// PING Redis when configured. Errors if missing, the command fails or Redis doesn't
     /// answer within [`REDIS_TIMEOUT`].
     ///
-    /// Agent: Asks Redis even while the hub backs off from it; a failure starts the backoff.
+    /// Agent: Asks Redis even while the hub backs off from it; a failure starts the backoff,
+    /// and no answer replaces the connection.
     pub async fn ping_redis(&self) -> Result<(), String> {
         let mut conn = self
             .redis
+            .manager
             .read()
             .await
             .clone()
             .ok_or_else(|| "redis not connected".to_string())?;
         let ping = redis::cmd("PING");
-        let error = match tokio::time::timeout(REDIS_TIMEOUT, ping.query_async::<String>(&mut conn))
-            .await
-        {
+        let answer = tokio::time::timeout(REDIS_TIMEOUT, ping.query_async::<String>(&mut conn));
+        let (error, silent) = match answer.await {
             Ok(Ok(_)) => return Ok(()),
-            Ok(Err(err)) => err.to_string(),
-            Err(_) => format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+            Ok(Err(err)) => (err.to_string(), false),
+            Err(_) => (
+                format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+                true,
+            ),
         };
-        self.redis_failed();
+        self.redis.back_off();
+        if silent {
+            self.redis.replace();
+        }
         Err(error)
     }
 
     /// The Redis connection, unless there is none or it failed within [`REDIS_BACKOFF`].
     async fn redis(&self) -> Option<ConnectionManager> {
         let skipping = self
-            .redis_down_until
+            .redis
+            .down_until
             .lock()
             .ok()
             .and_then(|until| *until)
@@ -242,13 +311,7 @@ impl RealtimeHub {
         if skipping {
             return None;
         }
-        self.redis.read().await.clone()
-    }
-
-    fn redis_failed(&self) {
-        if let Ok(mut until) = self.redis_down_until.lock() {
-            *until = Some(Instant::now() + REDIS_BACKOFF);
-        }
+        self.redis.manager.read().await.clone()
     }
 
     /// Runs one Redis call, bounded by [`REDIS_TIMEOUT`].
@@ -256,25 +319,33 @@ impl RealtimeHub {
     /// Human: `None` when there is no Redis, the hub is backing off from it, or the call failed
     /// or didn't answer. Callers then do what a single replica without Redis does: deliver to
     /// and count the sockets it holds itself.
-    /// Agent: A failure starts [`REDIS_BACKOFF`]. LOGS `op` only: keys and channels hold user
-    /// and device ids.
+    /// Agent: A failure starts [`REDIS_BACKOFF`]; no answer also replaces the connection
+    /// ([`RedisSlot::replace`]). An error doesn't: the manager reconnects on I/O errors itself.
+    /// LOGS `op` only: keys and channels hold user and device ids.
     async fn redis_call<T, F, Fut>(&self, op: &'static str, call: F) -> Option<T>
     where
         F: FnOnce(ConnectionManager) -> Fut,
         Fut: Future<Output = redis::RedisResult<T>>,
     {
         let conn = self.redis().await?;
-        let error = match tokio::time::timeout(REDIS_TIMEOUT, call(conn)).await {
+        let (error, silent) = match tokio::time::timeout(REDIS_TIMEOUT, call(conn)).await {
             Ok(Ok(value)) => return Some(value),
-            Ok(Err(err)) => err.to_string(),
-            Err(_) => format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+            Ok(Err(err)) => (err.to_string(), false),
+            Err(_) => (
+                format!("no answer in {} ms", REDIS_TIMEOUT.as_millis()),
+                true,
+            ),
         };
         tracing::warn!(
             error,
             op,
             "realtime redis failed; carrying on with this replica's sockets"
         );
-        self.redis_failed();
+        // Backed off first: a replacement that lands ends the backoff.
+        self.redis.back_off();
+        if silent {
+            self.redis.replace();
+        }
         None
     }
 
@@ -936,6 +1007,11 @@ async fn redis_online_count(
     Ok(fresh)
 }
 
+/// How often the subscriber checks that its connection still answers.
+const SUBSCRIBER_PROBE_EVERY: Duration = Duration::from_secs(10);
+/// How long the subscriber waits for Redis to answer: connecting, subscribing, a probe.
+const SUBSCRIBER_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Spawns a background task that pattern-subscribes and fans out to the local hub.
 ///
 /// Agent: CALLS redis PSUBSCRIBE shroud:user:*, delivered via publish_local_to_users, and
@@ -943,7 +1019,8 @@ async fn redis_online_count(
 pub fn spawn_redis_subscriber(hub: Arc<RealtimeHub>, redis_url: String) {
     tokio::spawn(async move {
         loop {
-            if let Err(err) = run_subscriber(hub.clone(), &redis_url).await {
+            if let Err(err) = run_subscriber(hub.clone(), &redis_url, SUBSCRIBER_PROBE_EVERY).await
+            {
                 tracing::error!(error = %err, "redis subscriber stopped; reconnecting in 2s");
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
@@ -951,67 +1028,63 @@ pub fn spawn_redis_subscriber(hub: Arc<RealtimeHub>, redis_url: String) {
     });
 }
 
-async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), redis::RedisError> {
+/// `call`, or an I/O error once it hasn't finished within [`SUBSCRIBER_TIMEOUT`].
+async fn subscriber_step<T>(
+    what: &'static str,
+    call: impl Future<Output = redis::RedisResult<T>>,
+) -> redis::RedisResult<T> {
+    tokio::time::timeout(SUBSCRIBER_TIMEOUT, call)
+        .await
+        .unwrap_or_else(|_| {
+            Err(redis::RedisError::from((
+                redis::ErrorKind::IoError,
+                "redis subscriber got no answer",
+                what.to_string(),
+            )))
+        })
+}
+
+/// Listens until the connection ends or stops answering.
+///
+/// Human: A connection whose peer vanished without a reset never ends on its own, and a
+/// replica on one heard nothing from the others while looking healthy. Every `probe_every`
+/// it subscribes again to a channel it already has, which changes nothing but must be
+/// answered.
+/// Agent: RETURNS Err when connecting, subscribing or a probe takes over SUBSCRIBER_TIMEOUT;
+/// spawn_redis_subscriber then reconnects.
+async fn run_subscriber(
+    hub: Arc<RealtimeHub>,
+    redis_url: &str,
+    probe_every: Duration,
+) -> Result<(), redis::RedisError> {
+    use futures_util::StreamExt;
+
     let client = redis::Client::open(redis_url)?;
-    let mut pubsub = client.get_async_pubsub().await?;
-    pubsub.psubscribe(format!("{USER_CHANNEL_PREFIX}*")).await?;
-    pubsub.subscribe(REVOKED_SESSIONS_CHANNEL).await?;
+    let pubsub = subscriber_step("connect", client.get_async_pubsub()).await?;
+    let (mut sink, mut stream) = pubsub.split();
+    subscriber_step(
+        "psubscribe",
+        sink.psubscribe(format!("{USER_CHANNEL_PREFIX}*")),
+    )
+    .await?;
+    subscriber_step("subscribe", sink.subscribe(REVOKED_SESSIONS_CHANNEL)).await?;
     tracing::info!(
         "redis realtime subscriber listening on shroud:user:* and {REVOKED_SESSIONS_CHANNEL}"
     );
 
-    let mut stream = pubsub.on_message();
-    use futures_util::StreamExt;
-    while let Some(msg) = stream.next().await {
-        let payload: String = match msg.get_payload() {
-            Ok(p) => p,
-            Err(err) => {
-                tracing::warn!(error = %err, "redis message payload decode failed");
-                continue;
+    let mut probe =
+        tokio::time::interval_at(tokio::time::Instant::now() + probe_every, probe_every);
+    probe.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            msg = stream.next() => {
+                let Some(msg) = msg else {
+                    break;
+                };
+                deliver_redis_message(&hub, msg).await;
             }
-        };
-        if msg.get_channel_name() == REVOKED_SESSIONS_CHANNEL {
-            match serde_json::from_str::<RedisRevokedSessions>(&payload) {
-                Ok(revoked) => {
-                    hub.close_local_sessions(revoked.user_id, &revoked.session_ids)
-                        .await;
-                }
-                Err(err) => tracing::warn!(error = %err, "redis revoked sessions invalid"),
-            }
-            continue;
-        }
-        let envelope: RedisFanout = match serde_json::from_str(&payload) {
-            Ok(e) => e,
-            Err(err) => {
-                tracing::warn!(error = %err, "redis fanout envelope invalid");
-                continue;
-            }
-        };
-        let event_text = match serde_json::to_string(&envelope.event) {
-            Ok(s) => s,
-            Err(err) => {
-                tracing::warn!(error = %err, "redis event reserialize failed");
-                continue;
-            }
-        };
-        match envelope.only_device_id {
-            Some(device_id) => {
-                let connections = hub.connections.read().await;
-                if connections
-                    .devices_by_user
-                    .get(&envelope.user_id)
-                    .is_some_and(|devices| devices.contains(&device_id))
-                {
-                    RealtimeHub::publish_local_to_device(&connections, device_id, &event_text);
-                }
-            }
-            None => {
-                hub.publish_local_to_users(
-                    [envelope.user_id],
-                    envelope.except_device_id,
-                    &event_text,
-                )
-                .await;
+            _ = probe.tick() => {
+                subscriber_step("probe", sink.subscribe(REVOKED_SESSIONS_CHANNEL)).await?;
             }
         }
     }
@@ -1020,6 +1093,57 @@ async fn run_subscriber(hub: Arc<RealtimeHub>, redis_url: &str) -> Result<(), re
         redis::ErrorKind::IoError,
         "redis pubsub stream ended",
     )))
+}
+
+/// Hands one pub/sub message from another replica to this replica's sockets.
+async fn deliver_redis_message(hub: &RealtimeHub, msg: redis::Msg) {
+    let payload: String = match msg.get_payload() {
+        Ok(p) => p,
+        Err(err) => {
+            tracing::warn!(error = %err, "redis message payload decode failed");
+            return;
+        }
+    };
+    if msg.get_channel_name() == REVOKED_SESSIONS_CHANNEL {
+        match serde_json::from_str::<RedisRevokedSessions>(&payload) {
+            Ok(revoked) => {
+                hub.close_local_sessions(revoked.user_id, &revoked.session_ids)
+                    .await;
+            }
+            Err(err) => tracing::warn!(error = %err, "redis revoked sessions invalid"),
+        }
+        return;
+    }
+    let envelope: RedisFanout = match serde_json::from_str(&payload) {
+        Ok(e) => e,
+        Err(err) => {
+            tracing::warn!(error = %err, "redis fanout envelope invalid");
+            return;
+        }
+    };
+    let event_text = match serde_json::to_string(&envelope.event) {
+        Ok(s) => s,
+        Err(err) => {
+            tracing::warn!(error = %err, "redis event reserialize failed");
+            return;
+        }
+    };
+    match envelope.only_device_id {
+        Some(device_id) => {
+            let connections = hub.connections.read().await;
+            if connections
+                .devices_by_user
+                .get(&envelope.user_id)
+                .is_some_and(|devices| devices.contains(&device_id))
+            {
+                RealtimeHub::publish_local_to_device(&connections, device_id, &event_text);
+            }
+        }
+        None => {
+            hub.publish_local_to_users([envelope.user_id], envelope.except_device_id, &event_text)
+                .await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1256,40 +1380,139 @@ mod tests {
         assert!(hub.is_user_online(user).await);
     }
 
-    /// A Redis that answers the connection's setup and every command up to the first
-    /// `silent_at`, then goes silent, as one does when its host drops off the network.
-    async fn redis_going_silent_at(silent_at: &'static str) -> ConnectionManager {
+    /// A stand-in Redis. Its first connection answers the connection's setup and every
+    /// command up to the `nth` named `silent_at`, then goes silent, as one does when its host
+    /// drops off the network without a reset. Later connections answer everything.
+    struct FakeRedis {
+        url: String,
+        /// `silent_at` commands that later connections answered.
+        answered_later: Arc<AtomicU64>,
+    }
+
+    impl FakeRedis {
+        async fn start(silent_at: &'static str, nth: u64) -> Self {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind");
+            let url = format!("redis://{}", listener.local_addr().expect("address"));
+            let answered_later = Arc::new(AtomicU64::new(0));
+            let counter = answered_later.clone();
+            tokio::spawn(async move {
+                let mut first = true;
+                while let Ok((socket, _)) = listener.accept().await {
+                    let silent_from = first.then_some(nth);
+                    first = false;
+                    tokio::spawn(serve_fake_redis(
+                        socket,
+                        silent_at,
+                        silent_from,
+                        counter.clone(),
+                    ));
+                }
+            });
+            Self {
+                url,
+                answered_later,
+            }
+        }
+
+        fn client(&self) -> redis::Client {
+            redis::Client::open(self.url.as_str()).expect("client")
+        }
+
+        async fn manager(&self) -> ConnectionManager {
+            ConnectionManager::new(self.client())
+                .await
+                .expect("manager")
+        }
+
+        fn answered_later(&self) -> u64 {
+            self.answered_later.load(Ordering::SeqCst)
+        }
+    }
+
+    async fn serve_fake_redis(
+        mut socket: tokio::net::TcpStream,
+        silent_at: &'static str,
+        silent_from: Option<u64>,
+        answered_later: Arc<AtomicU64>,
+    ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let address = listener.local_addr().expect("address");
-        tokio::spawn(async move {
-            let Ok((mut socket, _)) = listener.accept().await else {
-                return;
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let mut seen = 0;
+        let mut silent = false;
+        loop {
+            let read = match socket.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(read) => read,
             };
-            let mut buffer = vec![0u8; 4096];
-            let mut silent = false;
-            loop {
-                let Ok(read) = socket.read(&mut buffer).await else {
-                    return;
-                };
-                if read == 0 {
-                    return;
+            buffer.extend_from_slice(&chunk[..read]);
+            let mut out = String::new();
+            while let Some((args, used)) = parse_resp_command(&buffer) {
+                buffer.drain(..used);
+                if args[0].eq_ignore_ascii_case(silent_at) {
+                    seen += 1;
+                    match silent_from {
+                        Some(nth) => silent |= seen >= nth,
+                        None => {
+                            answered_later.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
                 }
-                let text = String::from_utf8_lossy(&buffer[..read]).to_ascii_uppercase();
-                silent |= text.contains(silent_at);
                 if !silent {
-                    let commands = text.lines().filter(|line| line.starts_with('*')).count();
-                    let _ = socket
-                        .write_all("+OK\r\n".repeat(commands.max(1)).as_bytes())
-                        .await;
+                    out.push_str(&resp_reply(&args));
                 }
             }
-        });
-        let client = redis::Client::open(format!("redis://{address}")).expect("client");
-        ConnectionManager::new(client).await.expect("manager")
+            if !out.is_empty() && socket.write_all(out.as_bytes()).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// One command from the front of `buffer` and the bytes it took, once all of it is there.
+    fn parse_resp_command(buffer: &[u8]) -> Option<(Vec<String>, usize)> {
+        fn line(buffer: &[u8], at: usize) -> Option<(&str, usize)> {
+            let end = at
+                + buffer
+                    .get(at..)?
+                    .windows(2)
+                    .position(|pair| pair == b"\r\n")?;
+            Some((std::str::from_utf8(&buffer[at..end]).ok()?, end + 2))
+        }
+        let (header, mut at) = line(buffer, 0)?;
+        let count: usize = header.strip_prefix('*')?.parse().ok()?;
+        let mut args = Vec::with_capacity(count);
+        for _ in 0..count {
+            let (length, start) = line(buffer, at)?;
+            let length: usize = length.strip_prefix('$')?.parse().ok()?;
+            let data = buffer.get(start..start + length + 2)?;
+            args.push(String::from_utf8_lossy(&data[..length]).into_owned());
+            at = start + length + 2;
+        }
+        Some((args, at))
+    }
+
+    /// What Redis answers `args` with (RESP2), as far as the hub needs.
+    fn resp_reply(args: &[String]) -> String {
+        let bulk = |text: &str| format!("${}\r\n{text}\r\n", text.len());
+        let name = args[0].to_ascii_uppercase();
+        match name.as_str() {
+            "SUBSCRIBE" | "PSUBSCRIBE" => args[1..]
+                .iter()
+                .enumerate()
+                .map(|(index, channel)| {
+                    let kind = bulk(&name.to_ascii_lowercase());
+                    format!("*3\r\n{kind}{}:{}\r\n", bulk(channel), index + 1)
+                })
+                .collect(),
+            "PING" => "+PONG\r\n".into(),
+            "GET" | "HGET" => "$-1\r\n".into(),
+            "HGETALL" => "*0\r\n".into(),
+            "PUBLISH" | "HSET" | "HDEL" | "EXPIRE" | "EVALSHA" | "EVAL" => ":0\r\n".into(),
+            _ => "+OK\r\n".into(),
+        }
     }
 
     /// A send must reach this replica's sockets within [`REDIS_TIMEOUT`] of Redis going
@@ -1297,7 +1520,8 @@ mod tests {
     #[tokio::test]
     async fn a_silent_redis_falls_back_instead_of_hanging() {
         let hub = Arc::new(RealtimeHub::new());
-        hub.set_redis(redis_going_silent_at("PUBLISH").await).await;
+        hub.set_redis(FakeRedis::start("PUBLISH", 1).await.manager().await)
+            .await;
         let user = Uuid::new_v4();
         let (phone, phone_session) = (Uuid::new_v4(), Uuid::new_v4());
         let (laptop, laptop_session) = (Uuid::new_v4(), Uuid::new_v4());
@@ -1346,7 +1570,8 @@ mod tests {
     #[tokio::test]
     async fn a_silent_redis_does_not_hold_up_a_new_socket() {
         let hub = Arc::new(RealtimeHub::new());
-        hub.set_redis(redis_going_silent_at("HSET").await).await;
+        hub.set_redis(FakeRedis::start("HSET", 1).await.manager().await)
+            .await;
         let (user, device) = (Uuid::new_v4(), Uuid::new_v4());
 
         let started = Instant::now();
@@ -1360,6 +1585,59 @@ mod tests {
         hub.publish_to_users([user], None, "event").await;
         assert!(started.elapsed() < Duration::from_millis(100));
         assert_eq!(socket.events.try_recv().as_deref(), Ok("event"));
+    }
+
+    /// A connection that went silent is replaced rather than waited out: the hub is back on
+    /// Redis well before [`REDIS_BACKOFF`] runs out.
+    #[tokio::test]
+    async fn a_silent_redis_connection_is_replaced() {
+        let redis = FakeRedis::start("PUBLISH", 1).await;
+        let hub = Arc::new(RealtimeHub::new());
+        hub.set_redis(redis.manager().await).await;
+        hub.set_redis_client(redis.client());
+        let user = Uuid::new_v4();
+
+        hub.publish_to_users([user], None, "unanswered").await;
+        let started = Instant::now();
+        while redis.answered_later() == 0 {
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "still not back on Redis"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            hub.publish_to_users([user], None, "again").await;
+        }
+        assert!(hub.ping_redis().await.is_ok());
+    }
+
+    /// The subscriber gives up a connection that stops answering its probe, so the loop
+    /// connects again instead of listening to nothing for good.
+    #[tokio::test]
+    async fn a_silent_subscriber_connection_is_given_up() {
+        // Answers the SUBSCRIBE that starts the subscriber, not the first probe.
+        let redis = FakeRedis::start("SUBSCRIBE", 2).await;
+        let hub = Arc::new(RealtimeHub::new());
+        let probe_every = Duration::from_millis(200);
+
+        let started = Instant::now();
+        let ended = run_subscriber(hub, &redis.url, probe_every).await;
+        assert!(ended.is_err());
+        assert!(started.elapsed() >= probe_every + SUBSCRIBER_TIMEOUT);
+        assert!(started.elapsed() < probe_every + SUBSCRIBER_TIMEOUT + Duration::from_millis(500));
+    }
+
+    /// An answering connection passes its probes and keeps listening.
+    #[tokio::test]
+    async fn an_answering_subscriber_connection_is_kept() {
+        let redis = FakeRedis::start("SUBSCRIBE", u64::MAX).await;
+        let hub = Arc::new(RealtimeHub::new());
+
+        let running = tokio::time::timeout(
+            Duration::from_secs(1),
+            run_subscriber(hub, &redis.url, Duration::from_millis(100)),
+        )
+        .await;
+        assert!(running.is_err(), "subscriber ended: {running:?}");
     }
 
     #[test]

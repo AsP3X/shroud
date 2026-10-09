@@ -163,6 +163,7 @@ pub async fn run() -> Result<(), AppError> {
     if let Some(redis_url) = config.redis_url.clone() {
         match redis::Client::open(redis_url.as_str()) {
             Ok(client) => {
+                realtime.set_redis_client(client.clone());
                 match redis::aio::ConnectionManager::new_with_config(client, redis_manager_config())
                     .await
                 {
@@ -347,7 +348,8 @@ pub async fn run() -> Result<(), AppError> {
 /// Human: The defaults retry 1 s and then 60 s apart, with no limit on one attempt: a Redis
 /// back after ten seconds was used again only a minute later, and an attempt against a host
 /// that accepts but never answers waited for good. Each call into Redis has its own bound
-/// besides (`realtime`, `rate_limit`).
+/// besides (`realtime`, `rate_limit`). A connection that goes silent without an error is
+/// never reconnected by the manager; the realtime hub opens a fresh one itself.
 /// Agent: Attempts 1–2 s apart, 2 s each; after the 6 retries the next call starts again.
 fn redis_manager_config() -> redis::aio::ConnectionManagerConfig {
     redis::aio::ConnectionManagerConfig::new()
