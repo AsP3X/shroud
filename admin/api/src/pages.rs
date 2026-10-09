@@ -401,7 +401,6 @@ async fn privacy_checks(
     let names_sealed = column_unreadable(&pool, "SELECT sealed_name FROM devices LIMIT 1").await?;
     let media_sealed =
         column_unreadable(&pool, "SELECT object_key FROM media_objects LIMIT 1").await?;
-    let accounts = grouped(counts.accounts);
     let unsealed_pushes: i64 =
         sqlx::query_scalar("SELECT count(device_id) FROM admin_unsealed_push_devices")
             .fetch_one(&pool)
@@ -413,6 +412,12 @@ async fn privacy_checks(
         .map_err(|_| ApiError::upstream_api())?
         .status
         == 200;
+    // A failed or old answer is the fast hash. The salt endpoint is public and does no guessing.
+    let username_kdf = probe::get(&format!("{base}/api/v1/auth/username-kdf"))
+        .await
+        .ok()
+        .filter(|fetched| fetched.status == 200)
+        .map(|fetched| fetched.body);
     let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
     let (urls, _) = ice_from_env();
     let google = urls
@@ -433,11 +438,7 @@ async fn privacy_checks(
                 "Accounts are kept by a hash of the name only.",
             )
         },
-        check(
-            "Username hashes are quick to guess",
-            "stored",
-            format!("Plain SHA-256. {accounts} accounts still need the slow hash."),
-        ),
+        username_hash_check(username_kdf.as_deref(), counts.accounts),
         if logs_name_people(&rust_log) {
             check(
                 "The API log doesn't name who messages whom",
@@ -1346,6 +1347,66 @@ fn check(item: &'static str, state: &'static str, detail: impl Into<String>) -> 
     }
 }
 
+/// What `GET /api/v1/auth/username-kdf` said. The same floor the clients enforce: a cheaper
+/// answer is still the fast hash, and a missing answer is an old server.
+enum UsernameHashes {
+    Slow { memory_kib: u64, iterations: u64 },
+    Quick,
+}
+
+fn classify_username_kdf(body: &str) -> UsernameHashes {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return UsernameHashes::Quick;
+    };
+    let memory = value["memory_kib"].as_u64();
+    let iterations = value["iterations"].as_u64();
+    let salt_ok = value["salt"].as_str().is_some_and(|salt| {
+        data_encoding::BASE64
+            .decode(salt.as_bytes())
+            .is_ok_and(|bytes| (16..=64).contains(&bytes.len()))
+    });
+    match (memory, iterations) {
+        (Some(memory_kib), Some(iterations))
+            if value["algorithm"].as_str() == Some("argon2id")
+                && value["version"].as_u64() == Some(19)
+                && value["parallelism"].as_u64() == Some(1)
+                && value["output_bytes"].as_u64() == Some(32)
+                && memory_kib >= 65_536
+                && iterations >= 8
+                && salt_ok =>
+        {
+            UsernameHashes::Slow {
+                memory_kib,
+                iterations,
+            }
+        }
+        _ => UsernameHashes::Quick,
+    }
+}
+
+fn username_hash_check(body: Option<&str>, accounts: i64) -> CheckBody {
+    match body.map(classify_username_kdf) {
+        Some(UsernameHashes::Slow {
+            memory_kib,
+            iterations,
+        }) => check(
+            "Username hashes are slow to guess",
+            "hashed",
+            format!(
+                "Argon2id, {memory_kib} KiB and {iterations} iterations. A guess takes at least 100 ms."
+            ),
+        ),
+        _ => check(
+            "Username hashes are quick to guess",
+            "stored",
+            format!(
+                "Plain SHA-256. {} accounts still need the slow hash.",
+                grouped(accounts)
+            ),
+        ),
+    }
+}
+
 fn sealed_or_open(item: &'static str, sealed: bool, column: &str) -> CheckBody {
     if sealed {
         check(item, "sealed", "Never reaches this server.")
@@ -1514,6 +1575,65 @@ mod tests {
             "debug,shroud_server::routes=info",
         ] {
             assert!(logs_name_people(verbose), "{verbose}");
+        }
+    }
+
+    #[test]
+    fn username_hash_check_follows_the_published_kdf() {
+        let strong = r#"{"algorithm":"argon2id","version":19,"salt":"ABEiM0RVZneImaq7zN3u/w==","memory_kib":65536,"iterations":8,"parallelism":1,"output_bytes":32}"#;
+        let slow = username_hash_check(Some(strong), 1284);
+        assert_eq!(slow.item, "Username hashes are slow to guess");
+        assert_eq!(slow.state, "hashed");
+        assert_eq!(
+            slow.detail,
+            "Argon2id, 65536 KiB and 8 iterations. A guess takes at least 100 ms."
+        );
+        let raised = strong
+            .replace("65536", "131072")
+            .replace("\"iterations\":8", "\"iterations\":12");
+        let slower = username_hash_check(Some(&raised), 1);
+        assert_eq!(slower.state, "hashed");
+        assert_eq!(
+            slower.detail,
+            "Argon2id, 131072 KiB and 12 iterations. A guess takes at least 100 ms."
+        );
+
+        let quick = |body: Option<&str>| username_hash_check(body, 1284);
+        for body in [
+            None,
+            Some("not json"),
+            Some(
+                r#"{"algorithm":"argon2id","version":19,"memory_kib":65536,"iterations":8,"parallelism":1,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2id","version":19,"salt":"AAAAAAAAAAA=","memory_kib":65536,"iterations":8,"parallelism":1,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2id","version":19,"salt":"ABEiM0RVZneImaq7zN3u/w==","memory_kib":19456,"iterations":2,"parallelism":1,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2id","version":19,"salt":"ABEiM0RVZneImaq7zN3u/w==","memory_kib":65536,"iterations":2,"parallelism":1,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2i","version":19,"salt":"ABEiM0RVZneImaq7zN3u/w==","memory_kib":65536,"iterations":8,"parallelism":1,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2id","version":16,"salt":"ABEiM0RVZneImaq7zN3u/w==","memory_kib":65536,"iterations":8,"parallelism":1,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2id","version":19,"salt":"ABEiM0RVZneImaq7zN3u/w==","memory_kib":65536,"iterations":8,"parallelism":4,"output_bytes":32}"#,
+            ),
+            Some(
+                r#"{"algorithm":"argon2id","version":19,"salt":"ABEiM0RVZneImaq7zN3u_w==","memory_kib":65536,"iterations":8,"parallelism":1,"output_bytes":32}"#,
+            ),
+        ] {
+            let row = quick(body);
+            assert_eq!(row.item, "Username hashes are quick to guess", "{body:?}");
+            assert_eq!(row.state, "stored", "{body:?}");
+            assert_eq!(
+                row.detail, "Plain SHA-256. 1,284 accounts still need the slow hash.",
+                "{body:?}"
+            );
         }
     }
 

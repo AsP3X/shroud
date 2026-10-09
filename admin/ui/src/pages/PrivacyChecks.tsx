@@ -12,7 +12,7 @@ const STATE: Record<PrivacyCheck["state"], { label: string; tone: Tone; sort: nu
   stored: { label: "Stored", tone: "danger", sort: 3 },
 };
 
-/** Frame "Privacy checks": each row is a column check or a constant on the backend (§3.4). */
+/** Frame "Privacy checks". Pills follow each API row (§3.4). */
 export function PrivacyChecks() {
   const page = usePageData<PrivacyCheck[]>("/privacy-checks");
   return (

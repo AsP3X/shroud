@@ -301,6 +301,39 @@ async fn read_only_pages_match_the_schema() {
     );
     assert_private(&privacy.text);
 
+    // The stand-in publishes a strong username KDF, so the same page drops the fast-hash warning.
+    mode.store(2, Ordering::Relaxed);
+    let slow = send(&app, "/api/admin/privacy-checks", Some(SESSION)).await;
+    assert_eq!(slow.status, StatusCode::OK, "{}", slow.text);
+    assert_schema("privacy-checks.schema.json", &slow.body);
+    let slow_hash = find(&slow.body, "Username hashes are slow to guess");
+    assert_eq!(slow_hash["state"], "hashed");
+    assert_eq!(
+        slow_hash["detail"],
+        "Argon2id, 65536 KiB and 8 iterations. A guess takes at least 100 ms."
+    );
+    assert!(
+        slow.body
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["item"] != "Username hashes are quick to guess")
+    );
+    // A cheap published set turns the warning back on. The account count is still the users table.
+    mode.store(3, Ordering::Relaxed);
+    let cheap = send(&app, "/api/admin/privacy-checks", Some(SESSION)).await;
+    assert_eq!(cheap.status, StatusCode::OK, "{}", cheap.text);
+    let cheap_hash = find(&cheap.body, "Username hashes are quick to guess");
+    assert_eq!(cheap_hash["state"], "stored");
+    assert_eq!(
+        cheap_hash["detail"],
+        format!(
+            "Plain SHA-256. {} accounts still need the slow hash.",
+            grouped(accounts)
+        )
+    );
+    mode.store(0, Ordering::Relaxed);
+
     let config = send(&app, "/api/admin/configuration", Some(SESSION)).await;
     assert_eq!(config.status, StatusCode::OK, "{}", config.text);
     assert_schema("configuration.schema.json", &config.body);
@@ -684,6 +717,22 @@ async fn spawn_api(mode: Arc<AtomicU8>, web_build: Arc<Mutex<Option<String>>>) -
                         "application/json",
                         version_body(&request, path, &mode, &web_build),
                     )
+                } else if path.starts_with("/api/v1/auth/username-kdf") {
+                    match mode.load(Ordering::Relaxed) {
+                        2 => (
+                            200,
+                            "application/json",
+                            "{\"algorithm\":\"argon2id\",\"version\":19,\"salt\":\"ABEiM0RVZneImaq7zN3u/w==\",\"memory_kib\":65536,\"iterations\":8,\"parallelism\":1,\"output_bytes\":32}"
+                                .to_owned(),
+                        ),
+                        3 => (
+                            200,
+                            "application/json",
+                            "{\"algorithm\":\"argon2id\",\"version\":19,\"salt\":\"ABEiM0RVZneImaq7zN3u/w==\",\"memory_kib\":19456,\"iterations\":2,\"parallelism\":1,\"output_bytes\":32}"
+                                .to_owned(),
+                        ),
+                        _ => (404, "text/plain", "no".to_owned()),
+                    }
                 } else {
                     (404, "text/plain", "no".to_owned())
                 };
