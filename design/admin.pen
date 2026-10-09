@@ -56649,6 +56649,56 @@
                               "fill": "$text-tertiary"
                             }
                           ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "I3QTTq",
+                          "name": "Strength",
+                          "width": "fill_container",
+                          "height": 17,
+                          "gap": 10,
+                          "padding": [
+                            1,
+                            0,
+                            0,
+                            0
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "jy9XO",
+                              "name": "Track",
+                              "clip": true,
+                              "width": "fill_container",
+                              "height": 4,
+                              "fill": "$separator",
+                              "cornerRadius": 2,
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "id": "RyQXb",
+                                  "name": "Fill · Strong",
+                                  "fill": "$online",
+                                  "width": "fill_container",
+                                  "height": 4
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "m4mbv",
+                              "name": "Level",
+                              "fill": "$text-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": 46,
+                              "content": "Strong",
+                              "textAlign": "right",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "600"
+                            }
+                          ]
                         }
                       ]
                     },

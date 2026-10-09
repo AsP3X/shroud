@@ -514,6 +514,56 @@
   color: var(--danger);
 }
 
+/* Password strength: sits 8 px under its field (the body's 16 px gap pulled in), and keeps its
+   row while empty so the first keystroke moves nothing. The fill grows by scaleX (--score, set
+   in Setup.tsx) to stay on the compositor like the rest of this file. */
+
+.strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 16px;
+  margin-top: -8px;
+}
+
+.strength__track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--separator);
+  overflow: hidden;
+}
+
+.strength__fill {
+  height: 100%;
+  background: var(--danger);
+  transform: scaleX(var(--score, 0));
+  transform-origin: left;
+  transition:
+    transform 300ms var(--auth-ease),
+    background-color 300ms ease;
+}
+
+.strength__fill[data-level="fair"] {
+  background: var(--warn);
+}
+
+.strength__fill[data-level="good"] {
+  background: var(--accent);
+}
+
+.strength__fill[data-level="strong"] {
+  background: var(--online);
+}
+
+.strength > span {
+  min-width: 46px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
 /* Code: the active cell is marked with colour and an inset ring rather than a thicker border, so
    nothing in the row moves; a typed digit pops in. */
 

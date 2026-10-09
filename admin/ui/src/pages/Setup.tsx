@@ -6,6 +6,7 @@ import type { Setup as SetupData, SetupEnrolled } from "../api/types";
 import { AuthLayout, AuthStep, CopyButton, Field, Spinner, useSteps } from "../components/AuthLayout";
 import { CodeInput } from "../components/CodeInput";
 import { Button } from "../components/ui";
+import { passwordStrength } from "../password";
 
 const MIN_PASSWORD = 12;
 const LINK_NOTE = "This link works once and expires 15 minutes after it was made";
@@ -167,6 +168,7 @@ export function Setup() {
               </button>
             </span>
           </Field>
+          <StrengthMeter password={password} />
           <Field label="Repeat password">
             <span className="input">
               <input
@@ -271,6 +273,21 @@ export function Setup() {
         </AuthStep>
       )}
     </AuthLayout>
+  );
+}
+
+/** The bar under the password: empty until something is typed, then Weak, Fair, Good or Strong
+ *  as the chat clients' sign-up rates it. Always laid out, so typing doesn't push the form down;
+ *  only the word is read out, and only when it changes. */
+function StrengthMeter({ password }: { password: string }) {
+  const { level, score } = passwordStrength(password);
+  return (
+    <div className="strength">
+      <div className="strength__track" aria-hidden="true">
+        <div className="strength__fill" data-level={level.toLowerCase() || "none"} style={{ "--score": score } as React.CSSProperties} />
+      </div>
+      <span aria-live="polite">{level ? <><span className="visually-hidden">Password strength: </span>{level}</> : null}</span>
+    </div>
   );
 }
 
