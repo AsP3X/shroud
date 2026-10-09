@@ -16,9 +16,21 @@ export function PageHeader({ title, meta, children }: { title: string; meta?: Re
   );
 }
 
-export function StatTile({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+export function StatTile({
+  label,
+  value,
+  sub,
+  className,
+  style,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
   return (
-    <div className="stat-tile" role="group" aria-label={label}>
+    <div className={className ? `stat-tile ${className}` : "stat-tile"} style={style} role="group" aria-label={label}>
       <div className="stat-tile__label" aria-hidden="true">
         {label}
       </div>

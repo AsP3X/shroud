@@ -1,6 +1,7 @@
-/* A check run (components/CheckRun.tsx): Privacy checks' Check again and the Overview's Services
-   on Refresh; frames "Privacy checks · Checking", "· Checked", "· Couldn't check" and
-   "Overview · Checking" in design/admin.pen. The server answers every check at once: a scan
+/* A check run (components/CheckRun.tsx): Privacy checks' Check again, the Overview's Services
+   and Storage's tiles on Refresh; frames "Privacy checks · Checking", "· Checked", "· Couldn't
+   check", "Overview · Checking", "· Checked" and "Storage · Counting", "· Counted" in
+   design/admin.pen. The server answers every check at once: a scan
    sweeps the list while it works, then the answers land one row at a time, each pill popping in
    over a short wash of its tone. Only transform and opacity move; base.css cuts it all to nothing
    under reduced motion. */
@@ -28,6 +29,7 @@
   content: "";
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   background: var(--wash, transparent);
   opacity: 0;
   pointer-events: none;
@@ -295,26 +297,116 @@
   color: var(--text-secondary);
 }
 
+/* Stat tiles as a run (Storage): each tile gets its own scan pass, staggered by its --i, so the
+   scan travels along the row; the next tile is outlined in accent and says Counting. */
+.stats.run-list {
+  overflow: visible;
+}
+
+.stats.run-list--sweeping::after {
+  display: none;
+}
+
+.stat-tile.run-row {
+  overflow: hidden;
+}
+
+.stat-tile.run-row--active::before {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.stat-tile.run-row .stat-tile__value {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+}
+
+.run-list--sweeping .stat-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(100% - 90px),
+    color-mix(in srgb, var(--accent) 8%, transparent) calc(100% - 36px),
+    color-mix(in srgb, var(--accent) 20%, transparent) calc(100% - 1px),
+    var(--accent) calc(100% - 1px)
+  );
+  pointer-events: none;
+  animation: run-sweep 1400ms cubic-bezier(0.45, 0, 0.4, 1) calc(var(--i, 0) * 140ms) infinite both;
+}
+
+.figure-skeleton {
+  display: inline-block;
+  width: 60%;
+  max-width: 140px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
+}
+
+.run-list--sweeping .figure-skeleton {
+  animation: run-breathe 1300ms ease-in-out infinite;
+}
+
+.figure-counting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--accent-text);
+}
+
+.figure {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.figure-delta {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* A failed run outside a card (Storage) stands on its own. */
+.page-header ~ .run-failed {
+  border: 1px solid var(--separator);
+  border-radius: var(--radius);
+}
+
 @media (max-width: 600px) {
   .run-again {
     display: grid;
   }
   /* The re-run button sits beside the title; the run's status (and a result pill) wrap under it. */
-  .card__head:has(.run-again) {
+  .card__head:has(.run-again),
+  .page-header:has(.run-again) {
     flex-wrap: wrap;
     row-gap: 10px;
   }
   .card__head:has(.run-again) > .card__head-text {
     flex: 1 1 calc(100% - 42px);
   }
-  .card__head:has(.run-again) > .run-again {
+  .page-header:has(.run-again) > .page-header__title {
+    flex: 1 1 calc(100% - 46px);
+  }
+  .card__head:has(.run-again) > .run-again,
+  .page-header:has(.run-again) > .run-again {
     order: 1;
   }
   .card__head:has(.run-again) > .pill {
     order: 2;
   }
-  .card__head:has(.run-again) > .run-status {
+  .card__head:has(.run-again) > .run-status,
+  .page-header:has(.run-again) > .run-status {
     order: 3;
+  }
+  .figure-delta__since {
+    display: none;
   }
   .run-failed {
     flex-wrap: wrap;

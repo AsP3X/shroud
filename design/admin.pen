@@ -9366,6 +9366,20 @@
                       "fontWeight": "normal"
                     }
                   ]
+                },
+                {
+                  "id": "ieNz1",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Refresh",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw"
+                    },
+                    "aK3lq": {
+                      "content": "Refresh"
+                    }
+                  }
                 }
               ]
             },
@@ -31757,6 +31771,20 @@
                       "fontWeight": "normal"
                     }
                   ]
+                },
+                {
+                  "id": "W4NEo",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Refresh",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw"
+                    },
+                    "aK3lq": {
+                      "content": "Refresh"
+                    }
+                  }
                 }
               ]
             },
@@ -65819,6 +65847,1832 @@
                                   ]
                                 }
                               ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "oJ54P",
+      "x": 7800,
+      "y": 8457,
+      "name": "Storage · Counting",
+      "context": "Refresh, mid-run. The page asks /storage again and lands the four tiles like Privacy checks' Check again: while the server counts, each tile shows an empty bar with its own scan pass (staggered, so the scan travels along the row) and the header says \"Counting storage\"; then one tile lands every 80 ms, its figure rising in over a short wash, the next tile outlined in accent and saying Counting. A tile whose figure moved since the last count says by how much (\"+1.2 GB since last count\"; just \"+1.2 GB\" on phones). The cards below dim until the run ends. Reduced motion shows the result at once.",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$bg",
+      "children": [
+        {
+          "id": "wwIZY",
+          "type": "ref",
+          "ref": "xx7aa",
+          "name": "Sidebar",
+          "height": "fill_container",
+          "descendants": {
+            "G8KrP": {
+              "fill": "$accent-soft"
+            },
+            "G8KrP/Z80pw3": {
+              "fill": "$accent-text"
+            },
+            "G8KrP/Ws1sG": {
+              "fill": "$text-primary"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "n0yWs",
+          "name": "Main",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 24,
+          "padding": [
+            28,
+            40
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "TV9B9",
+              "name": "Header",
+              "width": "fill_container",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "V8j1J",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "j353wZ",
+                      "name": "H1",
+                      "fill": "$text-primary",
+                      "content": "Storage",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 24,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.3
+                    },
+                    {
+                      "type": "text",
+                      "id": "QxxUe",
+                      "name": "Meta",
+                      "fill": "$text-tertiary",
+                      "content": "Nebular · bucket shroud-media · local fallback /data/shroud-media",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "JrEgv",
+                  "name": "Run status",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "UH50X",
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "loader-circle",
+                      "library": "lucide",
+                      "fill": "$text-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "PbV8B",
+                      "name": "Label",
+                      "fill": "$text-secondary",
+                      "content": "2 of 4",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "id": "x1qwj",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Refresh",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw",
+                      "fill": "$text-secondary"
+                    },
+                    "aK3lq": {
+                      "content": "Refreshing…",
+                      "fill": "$text-secondary"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "jjvwh",
+              "name": "Stats",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "DC1kW",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Stored ciphertext",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Stored ciphertext"
+                    },
+                    "iY6vL": {
+                      "type": "frame",
+                      "id": "klx70",
+                      "name": "Value row",
+                      "height": 34,
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "E8zpT",
+                          "name": "Value",
+                          "fill": "$text-primary",
+                          "content": "413 GB",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 28,
+                          "fontWeight": "600",
+                          "letterSpacing": -0.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "D9gXmL",
+                          "name": "Chip · Delta",
+                          "fill": "$accent-soft",
+                          "cornerRadius": 6,
+                          "padding": [
+                            3,
+                            8
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ppBje",
+                              "name": "Label",
+                              "fill": "$accent-text",
+                              "content": "+1.2 GB since last count",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "SGZJY": {
+                      "content": "48,224 objects"
+                    }
+                  }
+                },
+                {
+                  "id": "Y1h3f",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Attached to messages",
+                  "width": "fill_container",
+                  "fill": [
+                    "$surface-2",
+                    "#8a8a991a"
+                  ],
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Attached to messages"
+                    },
+                    "iY6vL": {
+                      "type": "frame",
+                      "id": "Rbupe",
+                      "name": "Value row",
+                      "height": 34,
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "yySnG",
+                          "name": "Value",
+                          "fill": "$text-primary",
+                          "content": "46,912",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 28,
+                          "fontWeight": "600",
+                          "letterSpacing": -0.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "r3IEO",
+                          "name": "Chip · Delta",
+                          "fill": "$accent-soft",
+                          "cornerRadius": 6,
+                          "padding": [
+                            3,
+                            8
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "guWnw",
+                              "name": "Label",
+                              "fill": "$accent-text",
+                              "content": "+14 since last count",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "SGZJY": {
+                      "content": "Objects a message points at"
+                    }
+                  }
+                },
+                {
+                  "id": "e1BrZE",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Waiting for cleanup",
+                  "width": "fill_container",
+                  "fill": [
+                    "$surface-2",
+                    "#6464f21f"
+                  ],
+                  "stroke": "$accent",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Waiting for cleanup"
+                    },
+                    "iY6vL": {
+                      "type": "frame",
+                      "id": "J0ozjQ",
+                      "name": "Counting",
+                      "height": 34,
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "x1GA9",
+                          "name": "Spinner",
+                          "width": 11,
+                          "height": 11,
+                          "icon": "loader-circle",
+                          "library": "lucide",
+                          "fill": "$accent-text"
+                        },
+                        {
+                          "type": "text",
+                          "id": "RdbW2",
+                          "name": "Label",
+                          "fill": "$accent-text",
+                          "content": "Counting",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    "SGZJY": {
+                      "content": "Unattached uploads · deleted an hour after upload",
+                      "opacity": 0.5
+                    }
+                  }
+                },
+                {
+                  "id": "e4kd8T",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Moved to Nebular",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Moved to Nebular"
+                    },
+                    "iY6vL": {
+                      "type": "frame",
+                      "id": "jA7hj",
+                      "name": "Waiting",
+                      "height": 34,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 6,
+                          "id": "oz8Zp",
+                          "name": "Bar",
+                          "fill": "#8a8a9924",
+                          "width": 140,
+                          "height": 22
+                        }
+                      ]
+                    },
+                    "SGZJY": {
+                      "content": "3 reads from the legacy volume since restart",
+                      "opacity": 0.5
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "UWfQ2",
+              "name": "Body",
+              "opacity": 0.45,
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n7dSG",
+                  "name": "Left",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "U5SFms",
+                      "name": "Where media lives",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ILcor",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aaFeI",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Kfkrt",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Where media lives",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "nHwdu",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Encrypted blobs; the server stores and serves them without reading them",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "QeNaj",
+                          "name": "Rows",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            6,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Iy86h",
+                              "name": "Row · Backend",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "FFHNy",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Backend",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "hR0rp",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "Nebular (S3-compatible)",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "PxZCr",
+                              "name": "Row · Bucket",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "jok6q",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Bucket",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "r7BFf",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "shroud-media",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Szgkw",
+                              "name": "Row · Legacy local volume",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "m4AtFz",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Legacy local volume",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mC1dw",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "/data/shroud-media",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "a63sMY",
+                              "name": "Row · Largest object",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "BeZm0",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Largest object",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "mWDAe",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "2.1 GB · written to disk as it arrives",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "T2qfX",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "mtOER",
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "lock",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "WqcLd",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Media is encrypted on the device before upload, and every client labels it application/octet-stream. The server can't tell a photo from a voice message.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "J01VR",
+                      "name": "Orphan sweep",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "JQvGW",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "aWgG9",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "DxBMR",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Cleanup of unattached uploads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "B6TF2",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Runs every 15 minutes on its own; there is nothing to start by hand",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "z7n0p5",
+                          "name": "Body",
+                          "width": "fill_container",
+                          "padding": [
+                            14,
+                            20,
+                            18,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ZQZop",
+                              "name": "Text",
+                              "fill": "$text-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "An upload that no message points at after 60 minutes is deleted, with its blob. A blob the store couldn't delete keeps its row and is tried again on the next run. The server keeps no record of past runs; the counters above are since the last restart.",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "yMX7H",
+                  "name": "Right",
+                  "width": 380,
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "EZFs5",
+                      "name": "Legacy volume",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "cL4VK",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "MwJrY",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "cm6YE",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Legacy volume",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "X6P22",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Blobs from releases before Nebular",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "u6qPu",
+                          "name": "Rows",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            6,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Y6sRza",
+                              "name": "Row · Reads served from it",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "JOhDc",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Reads served from it",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "vbfIb",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "3",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "a4KK2O",
+                              "name": "Row · Blobs moved into Nebular",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "nfXt9",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Blobs moved into Nebular",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "nUw0A",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "0",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "RkX70",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ZYMjY",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "V7Gab",
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "hard-drive",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "GNGzY",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "The migration job moves remaining blobs into Nebular until the local volume is empty. Both counters restart with the server.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "cxdtL",
+      "x": 9360,
+      "y": 8457,
+      "name": "Storage · Counted",
+      "context": "Refresh has finished. The header says when the count ended and how many tiles moved; each moved tile says by how much since the last count until the next Refresh. Before the first Refresh the header shows only the button. A failed run keeps the last figures under the same \"The checks couldn't run\" banner as Privacy checks, here standing on its own under the header.",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$bg",
+      "children": [
+        {
+          "id": "jVHhI",
+          "type": "ref",
+          "ref": "xx7aa",
+          "name": "Sidebar",
+          "height": "fill_container",
+          "descendants": {
+            "G8KrP": {
+              "fill": "$accent-soft"
+            },
+            "G8KrP/Z80pw3": {
+              "fill": "$accent-text"
+            },
+            "G8KrP/Ws1sG": {
+              "fill": "$text-primary"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "G1XFs",
+          "name": "Main",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 24,
+          "padding": [
+            28,
+            40
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "vSm1y",
+              "name": "Header",
+              "width": "fill_container",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "FOXFn",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 4,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ccLuJ",
+                      "name": "H1",
+                      "fill": "$text-primary",
+                      "content": "Storage",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 24,
+                      "fontWeight": "600",
+                      "letterSpacing": -0.3
+                    },
+                    {
+                      "type": "text",
+                      "id": "l7akP",
+                      "name": "Meta",
+                      "fill": "$text-tertiary",
+                      "content": "Nebular · bucket shroud-media · local fallback /data/shroud-media",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "XRkOc",
+                  "name": "Run status",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "iKWvo",
+                      "name": "Icon",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "circle-check",
+                      "library": "lucide",
+                      "fill": "$accent-text"
+                    },
+                    {
+                      "type": "text",
+                      "id": "LPXmi",
+                      "name": "Label",
+                      "fill": "$accent-text",
+                      "content": "Checked 15:08 · 2 changed",
+                      "fontFamily": "$font-ui",
+                      "fontSize": 12,
+                      "fontWeight": "500"
+                    }
+                  ]
+                },
+                {
+                  "id": "Z2oIEl",
+                  "type": "ref",
+                  "ref": "aMNl9",
+                  "name": "Refresh",
+                  "descendants": {
+                    "DnZ4H": {
+                      "icon": "refresh-cw"
+                    },
+                    "aK3lq": {
+                      "content": "Refresh"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "HoCN4",
+              "name": "Stats",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "xvtzT",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Stored ciphertext",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Stored ciphertext"
+                    },
+                    "iY6vL": {
+                      "type": "frame",
+                      "id": "C6t6rS",
+                      "name": "Value row",
+                      "height": 34,
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "bDX68",
+                          "name": "Value",
+                          "fill": "$text-primary",
+                          "content": "413 GB",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 28,
+                          "fontWeight": "600",
+                          "letterSpacing": -0.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dTib5",
+                          "name": "Chip · Delta",
+                          "fill": "$accent-soft",
+                          "cornerRadius": 6,
+                          "padding": [
+                            3,
+                            8
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Y4CLnS",
+                              "name": "Label",
+                              "fill": "$accent-text",
+                              "content": "+1.2 GB since last count",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "SGZJY": {
+                      "content": "48,224 objects"
+                    }
+                  }
+                },
+                {
+                  "id": "D7P1iC",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Attached to messages",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Attached to messages"
+                    },
+                    "iY6vL": {
+                      "type": "frame",
+                      "id": "cXReS",
+                      "name": "Value row",
+                      "height": 34,
+                      "gap": 10,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "f4AHD",
+                          "name": "Value",
+                          "fill": "$text-primary",
+                          "content": "46,912",
+                          "fontFamily": "$font-ui",
+                          "fontSize": 28,
+                          "fontWeight": "600",
+                          "letterSpacing": -0.5
+                        },
+                        {
+                          "type": "frame",
+                          "id": "A4hGCD",
+                          "name": "Chip · Delta",
+                          "fill": "$accent-soft",
+                          "cornerRadius": 6,
+                          "padding": [
+                            3,
+                            8
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "j6Ybw7",
+                              "name": "Label",
+                              "fill": "$accent-text",
+                              "content": "+14 since last count",
+                              "fontFamily": "$font-ui",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "SGZJY": {
+                      "content": "Objects a message points at"
+                    }
+                  }
+                },
+                {
+                  "id": "EwjUF",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Waiting for cleanup",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Waiting for cleanup"
+                    },
+                    "iY6vL": {
+                      "content": "1,312"
+                    },
+                    "SGZJY": {
+                      "content": "Unattached uploads · deleted an hour after upload"
+                    }
+                  }
+                },
+                {
+                  "id": "FUMu4",
+                  "type": "ref",
+                  "ref": "VwDMj",
+                  "name": "Stat · Moved to Nebular",
+                  "width": "fill_container",
+                  "descendants": {
+                    "uwSSx": {
+                      "content": "Moved to Nebular"
+                    },
+                    "iY6vL": {
+                      "content": "0"
+                    },
+                    "SGZJY": {
+                      "content": "3 reads from the legacy volume since restart"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SZ6wY",
+              "name": "Body",
+              "width": "fill_container",
+              "height": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "P7bG5",
+                  "name": "Left",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fGZb1",
+                      "name": "Where media lives",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Uz5jE",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "sbi8K",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "aAySg",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Where media lives",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "bCWrq",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Encrypted blobs; the server stores and serves them without reading them",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ffeR5",
+                          "name": "Rows",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            6,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "L7VmeT",
+                              "name": "Row · Backend",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "bdFXC",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Backend",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "scmmO",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "Nebular (S3-compatible)",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ecnSY",
+                              "name": "Row · Bucket",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Jk9LJ",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Bucket",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "bpuNy",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "shroud-media",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "CV63i",
+                              "name": "Row · Legacy local volume",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "cPowX",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Legacy local volume",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "HWNIL",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "/data/shroud-media",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "W4ZNlB",
+                              "name": "Row · Largest object",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "wuUhW",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Largest object",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "QD3im",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "2.1 GB · written to disk as it arrives",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "MzMXh",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "e3HB9",
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "lock",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "wxOnb",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "Media is encrypted on the device before upload, and every client labels it application/octet-stream. The server can't tell a photo from a voice message.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Kt8IE",
+                      "name": "Orphan sweep",
+                      "clip": true,
+                      "width": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "WDfaj",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "TT7xb",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "w5bD1g",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Cleanup of unattached uploads",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "e1HYf",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Runs every 15 minutes on its own; there is nothing to start by hand",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "p7rn5",
+                          "name": "Body",
+                          "width": "fill_container",
+                          "padding": [
+                            14,
+                            20,
+                            18,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "Wuf4U",
+                              "name": "Text",
+                              "fill": "$text-secondary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "An upload that no message points at after 60 minutes is deleted, with its blob. A blob the store couldn't delete keeps its row and is tried again on the next run. The server keeps no record of past runs; the counters above are since the last restart.",
+                              "lineHeight": 1.5,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "y1izs3",
+                  "name": "Right",
+                  "width": 380,
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ILEk9",
+                      "name": "Legacy volume",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$surface-2",
+                      "cornerRadius": "$radius",
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "dtvou",
+                          "name": "Card Head",
+                          "width": "fill_container",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "gap": 12,
+                          "padding": [
+                            16,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Nbde3",
+                              "name": "Text",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "QTGWo",
+                                  "name": "Title",
+                                  "fill": "$text-primary",
+                                  "content": "Legacy volume",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 15,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "cFujl",
+                                  "name": "Sub",
+                                  "fill": "$text-tertiary",
+                                  "content": "Blobs from releases before Nebular",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "B3Dbef",
+                          "name": "Rows",
+                          "width": "fill_container",
+                          "layout": "vertical",
+                          "padding": [
+                            6,
+                            20
+                          ],
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Jv3yo",
+                              "name": "Row · Reads served from it",
+                              "width": "fill_container",
+                              "stroke": "$separator",
+                              "strokeWidth": {
+                                "bottom": 1
+                              },
+                              "strokeAlignment": "inner",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "MzcEs",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Reads served from it",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "lWDhm",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "3",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "GW4eL",
+                              "name": "Row · Blobs moved into Nebular",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                9,
+                                0
+                              ],
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "TqFL6",
+                                  "name": "Key",
+                                  "fill": "$text-secondary",
+                                  "content": "Blobs moved into Nebular",
+                                  "fontFamily": "$font-ui",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "fQPGB",
+                                  "name": "Value",
+                                  "fill": "$text-primary",
+                                  "content": "0",
+                                  "fontFamily": "$font-mono",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "C2FDo",
+                          "name": "Spacer",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "lenTc",
+                          "name": "Footnote",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "padding": [
+                            14,
+                            20
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "r03aB",
+                              "name": "Icon",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "hard-drive",
+                              "library": "lucide",
+                              "fill": "$text-tertiary"
+                            },
+                            {
+                              "type": "text",
+                              "id": "UwaUP",
+                              "name": "Text",
+                              "fill": "$text-tertiary",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "The migration job moves remaining blobs into Nebular until the local volume is empty. Both counters restart with the server.",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font-ui",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
                             }
                           ]
                         }
