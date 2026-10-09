@@ -167,8 +167,8 @@ export interface Push {
   channels: { name: string; registered: number; sent_to: string; dropped_when: string }[];
 }
 
-/** One line of `GET /push/check` (§3.9 #10). */
-export interface PushCheck {
+/** One line of `GET /push/check` or `GET /calls/check` (§3.9 #10, #11). */
+export interface CheckLine {
   item: string;
   state: "ok" | "failed" | "off";
   detail: string;

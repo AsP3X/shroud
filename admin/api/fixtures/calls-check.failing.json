@@ -1,0 +1,17 @@
+[
+  {
+    "item": "stun:turn.example.org:3478",
+    "state": "ok",
+    "detail": "Answered in 18 ms · sees this server at 198.51.100.24."
+  },
+  {
+    "item": "turn:turn.example.org:3478?transport=udp",
+    "state": "failed",
+    "detail": "Refused the login the API mints (401): TURN_SECRET doesn't match coturn's static-auth-secret, or the clocks are hours apart."
+  },
+  {
+    "item": "turn:turn.example.org:3478?transport=tcp",
+    "state": "failed",
+    "detail": "Refused the login the API mints (401): TURN_SECRET doesn't match coturn's static-auth-secret, or the clocks are hours apart."
+  }
+]

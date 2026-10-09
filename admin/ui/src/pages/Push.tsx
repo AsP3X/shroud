@@ -1,28 +1,20 @@
 import { BellRing, Info, RefreshCw } from "lucide-react";
 import { usePageData } from "../api/usePageData";
-import type { PushCheck, Push as PushData } from "../api/types";
-import { ChangedChip, RunFailed, RunHead, RunPill, RunProgress, runListClass, runRowClass, useCheckRun, type CheckRun } from "../components/CheckRun";
+import type { Push as PushData } from "../api/types";
+import { CheckCard, checkKeys, useCheckRun, waitingFor } from "../components/CheckRun";
 import { PageFrame } from "../components/PageFrame";
-import { Button, Card, CardBody, CardHead, Cell, Footnote, PageHeader, StatTile, TableHead, TableRow, type Tone } from "../components/ui";
+import { Button, Card, CardBody, CardHead, Cell, Footnote, PageHeader, StatTile, TableHead, TableRow } from "../components/ui";
 import { count } from "../format";
 
-const STATE: Record<PushCheck["state"], { label: string; tone: Tone }> = {
-  ok: { label: "Works", tone: "ok" },
-  failed: { label: "Fails", tone: "danger" },
-  off: { label: "Off", tone: "neutral" },
-};
-
 /** The lines the API answers, in its order: what the card waits on before the first answer. */
-const WAITING: PushCheck[] = [
+const WAITING = waitingFor([
   "APNs key",
   "Apple accepts alerts",
   "Apple accepts calls (VoIP)",
   "Web Push key",
   "Browser push services answer",
   "UnifiedPush distributors answer",
-].map((item) => ({ item, state: "off", detail: "Not checked yet" }));
-
-const keyed = (lines: PushCheck[]) => lines.map((line) => ({ key: line.item, state: STATE[line.state].label }));
+]);
 
 /** Frame "Push delivery": registrations, routing, and the delivery check. Deliveries are logged by
  *  the API, never counted. */
@@ -38,7 +30,7 @@ export function Push() {
 /** Frames "Push delivery", "· Checking" and "· Check failed": the delivery check runs when the page
  *  opens and on Check again, and plays back row by row. */
 function PushBody({ data }: { data: PushData }) {
-  const run = useCheckRun("/push/check", WAITING, keyed, { runOnMount: true });
+  const run = useCheckRun("/push/check", WAITING, checkKeys, { runOnMount: true });
   return (
     <>
       <PageHeader title="Push delivery" meta="Registrations and routing · deliveries are logged, never counted or kept per account">
@@ -54,7 +46,11 @@ function PushBody({ data }: { data: PushData }) {
       </div>
       <div className="columns">
         <div className="column">
-          <DeliveryCheck run={run} />
+          <CheckCard
+            run={run}
+            title="Delivery check"
+            sub="Asks Apple, the browser push services and the UnifiedPush distributors whether this server's setup works. Nobody is notified"
+          />
           <Card fill>
             <CardHead title="By channel" sub="Every push carries only an opaque payload the device opens itself" />
             <TableHead>
@@ -117,38 +113,5 @@ function PushBody({ data }: { data: PushData }) {
         </div>
       </div>
     </>
-  );
-}
-
-function DeliveryCheck({ run }: { run: CheckRun<PushCheck[]> }) {
-  return (
-    <Card>
-      <CardHead title="Delivery check" sub="Asks Apple, the browser push services and the UnifiedPush distributors whether this server's setup works. Nobody is notified">
-        <RunHead run={run} busy={`Running ${count(run.total)} checks`} label="Check again" />
-      </CardHead>
-      <RunProgress run={run} />
-      <RunFailed run={run} />
-      <div className={runListClass(run, "checks")} key={run.runs}>
-        {run.data.map((line, index) => {
-          const state = STATE[line.state];
-          // Until something answered, the rows are only what the card waits on.
-          const step = run.answered || run.running ? run.stepOf(index) : "queued";
-          return (
-            <div className={`check ${runRowClass(run, step, state.tone)}`} key={line.item}>
-              <RunPill step={step} tone={state.tone}>
-                {state.label}
-              </RunPill>
-              <div className="check__text run-text">
-                <div className="check__title">
-                  <span>{line.item}</span>
-                  {step === "done" ? <ChangedChip was={run.wasOf(line.item, state.label)} /> : null}
-                </div>
-                <div className="check__detail">{line.detail}</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </Card>
   );
 }

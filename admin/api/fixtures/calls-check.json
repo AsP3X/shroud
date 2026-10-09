@@ -1,0 +1,17 @@
+[
+  {
+    "item": "stun:turn.example.org:3478",
+    "state": "ok",
+    "detail": "Answered in 18 ms · sees this server at 198.51.100.24."
+  },
+  {
+    "item": "turn:turn.example.org:3478?transport=udp",
+    "state": "ok",
+    "detail": "Refused a relay without a login, then gave one to a login minted for this check in 24 ms; released at once."
+  },
+  {
+    "item": "turn:turn.example.org:3478?transport=tcp",
+    "state": "ok",
+    "detail": "Refused a relay without a login, then gave one to a login minted for this check in 31 ms; released at once."
+  }
+]

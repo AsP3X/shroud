@@ -21,6 +21,8 @@ use crate::error::AppError;
 pub const DEFAULT_TURN_CREDENTIAL_TTL_SECS: u64 = 12 * 60 * 60;
 const MIN_TURN_CREDENTIAL_TTL_SECS: u64 = 60 * 60;
 const MAX_TURN_CREDENTIAL_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// Lifetime of the login the console's call check mints ([`TurnConfig::check_credential`]).
+const CHECK_CREDENTIAL_TTL_SECS: u64 = 120;
 /// coturn takes any string; a short one is guessable offline from a single minted login.
 const MIN_TURN_SECRET_LEN: usize = 16;
 
@@ -56,6 +58,15 @@ impl TurnConfig {
     /// A login coturn accepts until `now_unix + ttl_secs`. Its name is random, not the account.
     pub fn credential_for(&self, now_unix: u64) -> IceServer {
         self.credential_named(now_unix, &Uuid::new_v4().simple().to_string())
+    }
+
+    /// A login that works for two minutes: the console's call check logs in with it once.
+    pub fn check_credential(&self, now_unix: u64) -> IceServer {
+        let short = Self {
+            ttl_secs: CHECK_CREDENTIAL_TTL_SECS,
+            ..self.clone()
+        };
+        short.credential_named(now_unix, &Uuid::new_v4().simple().to_string())
     }
 
     fn credential_named(&self, now_unix: u64, nonce: &str) -> IceServer {

@@ -219,6 +219,11 @@ async fn read_only_pages_match_the_schema() {
     );
     assert_private(&push.text);
 
+    let call_check = send(&app, "/api/admin/calls/check", Some(SESSION)).await;
+    assert_eq!(call_check.status, StatusCode::OK, "{}", call_check.text);
+    assert_schema("calls-check.schema.json", &call_check.body);
+    assert_eq!(call_check.body, fixture("calls-check.json"));
+
     let calls = send(&app, "/api/admin/calls", Some(SESSION)).await;
     assert_eq!(calls.status, StatusCode::OK, "{}", calls.text);
     assert_schema("calls.schema.json", &calls.body);
@@ -414,6 +419,9 @@ async fn read_only_pages_match_the_schema() {
     let closed = send(&app, "/api/admin/calls", Some(SESSION)).await;
     assert_eq!(closed.status, StatusCode::BAD_GATEWAY);
     assert_eq!(closed.body, fixture("error.upstream-api.json"));
+    let unchecked = send(&app, "/api/admin/calls/check", Some(SESSION)).await;
+    assert_eq!(unchecked.status, StatusCode::BAD_GATEWAY);
+    assert_eq!(unchecked.body, fixture("error.upstream-api.json"));
 
     clear(&admin, &owner, operator, user).await;
     let _ = std::fs::remove_dir_all(&build_dir);
@@ -427,6 +435,7 @@ fn fixture(name: &str) -> Value {
         "rate-limits.json" => include_str!("../fixtures/rate-limits.json"),
         "retention.json" => include_str!("../fixtures/retention.json"),
         "push-check.json" => include_str!("../fixtures/push-check.json"),
+        "calls-check.json" => include_str!("../fixtures/calls-check.json"),
         "client-versions.json" => include_str!("../fixtures/client-versions.json"),
         "client-versions.nothing-set.json" => {
             include_str!("../fixtures/client-versions.nothing-set.json")
@@ -446,6 +455,7 @@ fn assert_schema(name: &str, body: &Value) {
         }
         "push.schema.json" => include_str!("../fixtures/schema/push.schema.json"),
         "push-check.schema.json" => include_str!("../fixtures/schema/push-check.schema.json"),
+        "calls-check.schema.json" => include_str!("../fixtures/schema/calls-check.schema.json"),
         "calls.schema.json" => include_str!("../fixtures/schema/calls.schema.json"),
         "privacy-checks.schema.json" => {
             include_str!("../fixtures/schema/privacy-checks.schema.json")
@@ -717,6 +727,14 @@ async fn spawn_api(mode: Arc<AtomicU8>, web_build: Arc<Mutex<Option<String>>>) -
                          shroud_media_migrated_total 9\n\
                          shroud_calls_created_total 5\n"
                             .to_owned(),
+                    )
+                } else if path.starts_with("/operator/calls/check")
+                    && request.contains("Authorization: Bearer operator-test-token\r\n")
+                {
+                    (
+                        200,
+                        "application/json",
+                        include_str!("../fixtures/calls-check.json").to_owned(),
                     )
                 } else if path.starts_with("/operator/push/check")
                     && request.contains("Authorization: Bearer operator-test-token\r\n")

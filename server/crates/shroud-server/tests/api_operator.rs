@@ -155,6 +155,31 @@ async fn operator_port_rejects_a_bad_token_and_hides_public_routes() {
     assert_eq!(wrong_method.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
+/// With no STUN or TURN configured the call check is one `off` line; it needs no database.
+#[tokio::test]
+async fn call_check_without_servers_is_one_off_line() {
+    let app = operator_app();
+    let response = call(
+        &app,
+        "GET",
+        "/operator/calls/check",
+        Some(&format!("Bearer {TOKEN}")),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let lines: Value = serde_json::from_slice(&body_bytes(response).await).expect("json");
+    assert_eq!(
+        lines,
+        json!([{
+            "item": "No STUN or TURN server",
+            "state": "off",
+            "detail": "Calls connect only where a direct path exists, and no outside server learns anyone's address."
+        }])
+    );
+    let refused = call(&app, "GET", "/operator/calls/check", None).await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+}
+
 async fn test_pool() -> Option<sqlx::PgPool> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()

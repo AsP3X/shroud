@@ -7,7 +7,8 @@
 //! Agent: Bearer `OPERATOR_TOKEN` on every request, or 403. The three POSTs call the same
 //! functions as the user-facing handlers; `GET /operator/metrics` is the Prometheus text;
 //! `GET /operator/push/check` asks each push relay whether this server's setup works
-//! ([`crate::push::PushService::check`]), notifying no one.
+//! ([`crate::push::PushService::check`]), notifying no one; `GET /operator/calls/check` asks
+//! each STUN and TURN server callers are handed to do its job ([`crate::ice_check`]).
 //! Health and the public API are not mounted.
 
 use std::sync::Arc;
@@ -41,6 +42,7 @@ pub fn router(token: Arc<str>) -> Router<AppState> {
         .route("/operator/users/{id}/delete", post(delete_account))
         .route("/operator/metrics", get(crate::routes::health::metrics))
         .route("/operator/push/check", get(push_check))
+        .route("/operator/calls/check", get(calls_check))
         .fallback(unknown)
         .layer(middleware::from_fn(move |request: Request, next: Next| {
             let token = Arc::clone(&token);
@@ -50,6 +52,11 @@ pub fn router(token: Arc<str>) -> Router<AppState> {
 
 async fn push_check(State(state): State<AppState>) -> Json<Vec<crate::push::PushCheck>> {
     Json(state.push.check().await)
+}
+
+async fn calls_check(State(state): State<AppState>) -> Json<Vec<crate::ice_check::CallCheck>> {
+    let now = chrono::Utc::now().timestamp().unsigned_abs();
+    Json(crate::ice_check::check(&state.ice_servers, state.turn.as_ref(), now).await)
 }
 
 async fn unknown() -> StatusCode {

@@ -2,8 +2,9 @@ import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
+import type { CheckLine } from "../api/types";
 import { count } from "../format";
-import { Button, Chip, StatusPill, type Tone } from "./ui";
+import { Button, Card, CardHead, Chip, StatusPill, type Tone } from "./ui";
 
 // A check run, shared by Privacy checks and the Overview's Services card. The server answers every
 // check in one response: a scan sweeps the list while it works, then the answers land one row at a
@@ -317,5 +318,54 @@ export function RunFailed({ run }: { run: CheckRun<unknown> }) {
         Try again
       </Button>
     </div>
+  );
+}
+
+/** How a check line reads: the API's `ok`, `failed` and `off`. */
+export const CHECK_STATE: Record<CheckLine["state"], { label: string; tone: Tone }> = {
+  ok: { label: "Works", tone: "ok" },
+  failed: { label: "Fails", tone: "danger" },
+  off: { label: "Off", tone: "neutral" },
+};
+
+/** What a run compares: each line by its item. */
+export const checkKeys = (lines: CheckLine[]) => lines.map((line) => ({ key: line.item, state: CHECK_STATE[line.state].label }));
+
+/** Lines a run-on-mount card shows before the first answer. */
+export const waitingFor = (items: string[]): CheckLine[] => items.map((item) => ({ item, state: "off", detail: "Not checked yet" }));
+
+/** A card of check lines that plays each run back: Push delivery's and Calls' checks. */
+export function CheckCard({ run, title, sub, mono }: { run: CheckRun<CheckLine[]>; title: string; sub: string; mono?: boolean }) {
+  return (
+    <Card>
+      <CardHead title={title} sub={sub}>
+        <RunHead run={run} busy={`Running ${count(run.total)} checks`} label="Check again" />
+      </CardHead>
+      <RunProgress run={run} />
+      <RunFailed run={run} />
+      <div className={runListClass(run, "checks")} key={run.runs}>
+        {run.data.map((line, index) => {
+          const state = CHECK_STATE[line.state];
+          // Until something answered, the rows are only what the card waits on.
+          const step = run.answered || run.running ? run.stepOf(index) : "queued";
+          // A row that hasn't landed keeps what it said before, so the answer can't show early.
+          const detail = step === "done" ? line.detail : (run.settled.find((before) => before.item === line.item)?.detail ?? "Not checked yet");
+          return (
+            <div className={`check ${runRowClass(run, step, state.tone)}`} key={line.item}>
+              <RunPill step={step} tone={state.tone}>
+                {state.label}
+              </RunPill>
+              <div className="check__text run-text">
+                <div className="check__title">
+                  <span className={mono ? "mono" : undefined}>{line.item}</span>
+                  {step === "done" ? <ChangedChip was={run.wasOf(line.item, state.label)} /> : null}
+                </div>
+                <div className="check__detail">{detail}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }

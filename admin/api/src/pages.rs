@@ -1,8 +1,9 @@
 //! Read-only pages (§3.4, §3.9 #4).
 //!
-//! `GET /push/check` (§3.9 #10) is the API's `GET /operator/push/check` passed through after a
-//! shape check: the API asks Apple, the browser push services and the UnifiedPush distributors
-//! whether this server's setup works, notifying no one, and names hosts, never endpoints.
+//! `GET /push/check` (§3.9 #10) and `GET /calls/check` (§3.9 #11) are the API's
+//! `GET /operator/push/check` and `GET /operator/calls/check` passed through after a shape
+//! check: the API asks Apple, the push services and distributors, and every STUN and TURN
+//! server callers are handed whether this server's setup works, notifying no one.
 //!
 //! Rate limits and retention are the tables in [`crate::published`]. Storage counts and push
 //! counts use the granted columns. `GET /calls` `created_total` is the process counter
@@ -46,6 +47,7 @@ pub fn routes() -> Router<AppState> {
         .route("/retention", get(retention))
         .route("/push", get(push))
         .route("/push/check", get(push_check))
+        .route("/calls/check", get(calls_check))
         .route("/calls", get(calls))
         .route("/privacy-checks", get(privacy_checks))
         .route("/configuration", get(configuration))
@@ -374,7 +376,7 @@ async fn push(State(state): State<AppState>, headers: HeaderMap) -> Result<Respo
 
 #[derive(Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PushCheckLine {
+struct CheckLine {
     item: String,
     state: String,
     detail: String,
@@ -387,20 +389,35 @@ async fn push_check(
     if let Some(response) = require(&state, &headers).await? {
         return Ok(response);
     }
-    let fetched = operator_api::get("/operator/push/check")
+    operator_check("/operator/push/check").await
+}
+
+async fn calls_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(response) = require(&state, &headers).await? {
+        return Ok(response);
+    }
+    operator_check("/operator/calls/check").await
+}
+
+/// An operator-port check, passed on when it has the contract's shape.
+async fn operator_check(path: &str) -> Result<Response, ApiError> {
+    let fetched = operator_api::get(path)
         .await
         .map_err(|_| ApiError::upstream_api())?;
     if fetched.status != 200 {
         return Err(ApiError::upstream_api());
     }
-    let lines = push_check_lines(&fetched.body).ok_or_else(ApiError::upstream_api)?;
+    let lines = check_lines(&fetched.body).ok_or_else(ApiError::upstream_api)?;
     Ok(Json(lines).into_response())
 }
 
-/// The API's push check, when it has the contract's shape: at least one line, each with a
-/// non-empty item and detail and a known state.
-fn push_check_lines(body: &str) -> Option<Vec<PushCheckLine>> {
-    let lines: Vec<PushCheckLine> = serde_json::from_str(body).ok()?;
+/// A check's lines, when they have the contract's shape: at least one, each with a non-empty
+/// item and detail and a known state.
+fn check_lines(body: &str) -> Option<Vec<CheckLine>> {
+    let lines: Vec<CheckLine> = serde_json::from_str(body).ok()?;
     let valid = !lines.is_empty()
         && lines.iter().all(|line| {
             !line.item.is_empty()
@@ -1577,9 +1594,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn push_check_lines_pass_only_the_contract_shape() {
+    fn check_lines_pass_only_the_contract_shape() {
         let fine = r#"[{"item":"APNs key","state":"ok","detail":"Key K signs."},{"item":"Web Push key","state":"off","detail":"Not set."}]"#;
-        assert_eq!(push_check_lines(fine).map(|lines| lines.len()), Some(2));
+        assert_eq!(check_lines(fine).map(|lines| lines.len()), Some(2));
         for refused in [
             "[]",
             "{}",
@@ -1588,7 +1605,7 @@ mod tests {
             r#"[{"item":"APNs key","state":"ok","detail":""}]"#,
             r#"[{"item":"APNs key","state":"ok","detail":"x","endpoint":"https://fcm.googleapis.com/fcm/send/t"}]"#,
         ] {
-            assert!(push_check_lines(refused).is_none(), "{refused}");
+            assert!(check_lines(refused).is_none(), "{refused}");
         }
     }
 

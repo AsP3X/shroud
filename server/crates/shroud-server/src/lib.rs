@@ -7,6 +7,7 @@ pub mod auth;
 pub mod client_version;
 pub mod config;
 pub mod error;
+pub mod ice_check;
 pub mod keys;
 pub mod link_relay;
 pub mod logging;

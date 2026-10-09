@@ -62,6 +62,8 @@ function Checks({ initial }: { initial: PrivacyCheck[] }) {
               {rows.map((item, index) => {
                 const state = STATE[item.state];
                 const step = run.stepOf(index);
+                // A row that hasn't landed keeps what it said before, so the answer can't show early.
+                const detail = step === "done" ? item.detail : (run.settled.find((before) => before.item === item.item)?.detail ?? item.detail);
                 return (
                   <div className={`check ${runRowClass(run, step, state.tone)}`} key={item.item}>
                     <RunPill step={step} tone={state.tone}>
@@ -72,7 +74,7 @@ function Checks({ initial }: { initial: PrivacyCheck[] }) {
                         <span>{item.item}</span>
                         {step === "done" ? <ChangedChip was={run.wasOf(item.item, state.label)} /> : null}
                       </div>
-                      {item.detail ? <div className="check__detail">{item.detail}</div> : null}
+                      {detail ? <div className="check__detail">{detail}</div> : null}
                     </div>
                   </div>
                 );

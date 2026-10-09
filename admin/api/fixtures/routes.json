@@ -89,6 +89,14 @@
     },
     {
       "method": "GET",
+      "path": "/calls/check",
+      "file": "calls-check.json",
+      "states": {
+        "failing": "calls-check.failing.json"
+      }
+    },
+    {
+      "method": "GET",
       "path": "/privacy-checks",
       "file": "privacy-checks.json"
     },
@@ -192,6 +200,8 @@
     "push-check.json": "push-check.schema.json",
     "push-check.failing.json": "push-check.schema.json",
     "calls.json": "calls.schema.json",
+    "calls-check.json": "calls-check.schema.json",
+    "calls-check.failing.json": "calls-check.schema.json",
     "privacy-checks.json": "privacy-checks.schema.json",
     "configuration.json": "configuration.schema.json",
     "audit-log.json": "audit-log.schema.json",

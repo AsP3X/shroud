@@ -1815,6 +1815,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "jsonwebtoken",
+ "md-5",
  "password-hash",
  "rand 0.8.7",
  "redis",
@@ -1826,6 +1827,7 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite 0.26.2",
  "tokio-util",
  "tower",
@@ -1833,6 +1835,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]
