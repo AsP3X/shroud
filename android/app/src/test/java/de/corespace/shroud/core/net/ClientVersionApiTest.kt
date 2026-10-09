@@ -31,6 +31,7 @@ class ClientVersionApiTest {
             override fun onAuthenticatedSuccess() { outcomes++ }
             override fun onAuthenticationFailure() { outcomes++ }
             override fun onDeviceRemoved(token: String) { outcomes++ }
+            override fun onAccountDeleted(token: String) { outcomes++ }
         }
         api = ShroudApi(client)
     }

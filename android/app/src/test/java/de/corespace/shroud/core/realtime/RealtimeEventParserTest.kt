@@ -70,6 +70,10 @@ class RealtimeEventParserTest {
         )
         // iOS fails the socket on the type alone (RealtimeClient.swift:307-317).
         assertEquals(RealtimeFrame.AuthError(null, null), parse("""{"type":"auth.error"}"""))
+        assertEquals(
+            RealtimeFrame.AuthError("DEVICE_REMOVED", "This account was deleted.", "account_deleted"),
+            parse("""{"type":"auth.error","error":{"code":"DEVICE_REMOVED","message":"This account was deleted.","reason":"account_deleted"}}"""),
+        )
     }
 
     // ---- Messages ----

@@ -37,6 +37,7 @@ sealed interface SettingsRoute {
     data object Notifications : SettingsRoute
     data object NotificationSound : SettingsRoute
     data object PrivacySecurity : SettingsRoute
+    data object DeleteAccount : SettingsRoute
     data object Devices : SettingsRoute
     data object Appearance : SettingsRoute
     data object SavedMessages : SettingsRoute

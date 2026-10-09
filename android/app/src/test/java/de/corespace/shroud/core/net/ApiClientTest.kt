@@ -223,6 +223,27 @@ class ApiClientTest {
         assertTrue(outcomes.events.toString(), outcomes.events.isEmpty())
     }
 
+    @Test
+    fun deleteAccountWrongPasswordReportsNothingAndARemovalReportsAccountDeleted() = runTest {
+        val invalid = """{"error":{"code":"INVALID_CREDENTIALS","message":"Invalid username or password."}}"""
+        val removed = """{"error":{"code":"DEVICE_REMOVED","message":"This device was removed from your account."}}"""
+        val deleted = """{"error":{"code":"DEVICE_REMOVED","message":"This account was deleted.","reason":"account_deleted"}}"""
+        server.enqueue(MockResponse(code = 401, body = invalid))
+        server.enqueue(MockResponse(code = 401, body = removed))
+        server.enqueue(MockResponse(code = 401, body = deleted))
+        server.enqueue(MockResponse(code = 401, body = invalid))
+        server.enqueue(MockResponse(code = 401, body = deleted))
+        client.raw("DELETE", "auth/account", "tok", """{"password":"secret"}""")
+        client.raw("DELETE", "auth/account", "tok", """{"password":"secret"}""")
+        client.raw("DELETE", "auth/account", "tok", """{"password":"secret"}""")
+        client.raw("GET", "auth/me", "tok")
+        client.raw("GET", "auth/me", "tok")
+        assertEquals(
+            listOf("account-deleted:tok", "account-deleted:tok", "failure", "account-deleted:tok"),
+            outcomes.events,
+        )
+    }
+
     // ---- Client version (server `client_version.rs`) ----
 
     private val tooOld = """{"error":{"code":"UPDATE_REQUIRED","message":"This version of Shroud is no longer supported. Update the app to keep using it."}}"""
@@ -430,5 +451,6 @@ class ApiClientTest {
         override fun onAuthenticatedSuccess() { events += "success" }
         override fun onAuthenticationFailure() { events += "failure" }
         override fun onDeviceRemoved(token: String) { events += "removed:$token" }
+        override fun onAccountDeleted(token: String) { events += "account-deleted:$token" }
     }
 }

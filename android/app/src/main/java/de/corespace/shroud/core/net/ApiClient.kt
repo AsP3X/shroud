@@ -121,6 +121,11 @@ class ApiClient(
         send("DELETE", path, token, null, query)
     }
 
+    /** DELETE with a JSON body; the answer carries nothing (204). `DELETE auth/account` sends the password here. */
+    suspend fun <B> deleteUnit(path: String, token: String?, body: B, bodySerializer: KSerializer<B>) {
+        send("DELETE", path, token, encode(body, bodySerializer))
+    }
+
     /** DELETE and decode the answer (a chat delete's outcome) (`APIClient.swift:209-225`). */
     suspend fun <T> delete(path: String, token: String?, response: KSerializer<T>, query: Map<String, String> = emptyMap()): T =
         decode(send("DELETE", path, token, null, query), response)
@@ -144,7 +149,7 @@ class ApiClient(
         val request = request(verb, path, token, body, query)
         return exchange(http, request) { response ->
             val text = response.body.string()
-            noteOutcome(response.code, text, token)
+            noteOutcome(response.code, text, token, path)
             RawResponse(response.code, text)
         }
     }
@@ -157,7 +162,7 @@ class ApiClient(
     suspend fun putBytes(path: String, token: String, body: RequestBody, onProgress: ((Double) -> Unit)? = null) {
         val counted = if (onProgress != null) ProgressRequestBody(body, onProgress) else body
         val request = request("PUT", path, token, counted, emptyMap())
-        exchange(mediaHttp, request) { response -> successText(response, token) }
+        exchange(mediaHttp, request) { response -> successText(response, token, path) }
     }
 
     /**
@@ -167,7 +172,7 @@ class ApiClient(
     suspend fun getBytes(path: String, token: String, onProgress: ((Double) -> Unit)? = null): ByteArray {
         val request = request("GET", path, token, null, emptyMap())
         return exchange(mediaHttp, request) { response ->
-            requireSuccess(response, token)
+            requireSuccess(response, token, path)
             val out = Buffer()
             pump(progressSource(response, onProgress)) { source -> source.read(out, SEGMENT_BYTES) }
             out.readByteArray()
@@ -184,7 +189,7 @@ class ApiClient(
     suspend fun getToFile(path: String, token: String, target: File, onProgress: ((Double) -> Unit)? = null): Long {
         val request = request("GET", path, token, null, emptyMap())
         return exchange(mediaHttp, request) { response ->
-            requireSuccess(response, token)
+            requireSuccess(response, token, path)
             var complete = false
             try {
                 target.sink().buffer().use { sink ->
@@ -218,7 +223,7 @@ class ApiClient(
         query: Map<String, String> = emptyMap(),
     ): String {
         val request = request(method, path, token, body, query)
-        return exchange(http, request) { response -> successText(response, token) }
+        return exchange(http, request) { response -> successText(response, token, path) }
     }
 
     /** Built before any suspension: the URL is the server's at the time of the call. */
@@ -262,21 +267,21 @@ class ApiClient(
         }
 
     /** The whole body of a 2xx, after reporting the auth outcome; otherwise the error. */
-    private fun successText(response: Response, token: String?): String {
+    private fun successText(response: Response, token: String?, path: String): String {
         val text = response.body.string()
-        noteOutcome(response.code, text, token)
+        noteOutcome(response.code, text, token, path)
         if (!response.isSuccessful) throw errorFor(response.code, text, response.header("Retry-After"))
         return text
     }
 
     /** For streamed bodies: reports the outcome from the status line and throws on a non-2xx. */
-    private fun requireSuccess(response: Response, token: String?) {
+    private fun requireSuccess(response: Response, token: String?, path: String) {
         if (response.isSuccessful) {
-            noteOutcome(response.code, "", token)
+            noteOutcome(response.code, "", token, path)
             return
         }
         val text = response.body.string()
-        noteOutcome(response.code, text, token)
+        noteOutcome(response.code, text, token, path)
         throw errorFor(response.code, text, response.header("Retry-After"))
     }
 
@@ -297,23 +302,26 @@ class ApiClient(
     }
 
     /** Reports [status] to the session ([noteAuthOutcome]) and a `426 UPDATE_REQUIRED` to [updateRequired]. */
-    private fun noteOutcome(status: Int, body: String, token: String?) {
-        noteAuthOutcome(status, body, token)
+    private fun noteOutcome(status: Int, body: String, token: String?, path: String) {
+        noteAuthOutcome(status, body, token, path)
         if (status == 426 && errorFor(status, body).isUpdateRequired) updateRequired?.invoke()
     }
 
     /**
      * Session policy (`APIClient.noteAuthOutcome`, `APIClient.swift:328-342`): only requests that
      * carried a token count, `DEVICE_REMOVED` is final on the first answer, and nothing but 2xx and
-     * 401 is reported.
+     * 401 is reported. [path] lets `DELETE auth/account` keep a wrong password off the streak and
+     * report an account deletion instead of a plain removal.
      */
-    private fun noteAuthOutcome(status: Int, body: String, token: String?) {
+    private fun noteAuthOutcome(status: Int, body: String, token: String?, path: String) {
         if (token.isNullOrEmpty()) return
         val listener = authOutcomes ?: return
-        when {
-            status in 200..299 -> listener.onAuthenticatedSuccess()
-            status == 401 ->
-                if (errorFor(status, body).isDeviceRemoved) listener.onDeviceRemoved(token) else listener.onAuthenticationFailure()
+        when (notedAuthOutcome(status, errorFor(status, body), path)) {
+            NotedAuthOutcome.Success -> listener.onAuthenticatedSuccess()
+            NotedAuthOutcome.Failure -> listener.onAuthenticationFailure()
+            NotedAuthOutcome.DeviceRemoved -> listener.onDeviceRemoved(token)
+            NotedAuthOutcome.AccountDeleted -> listener.onAccountDeleted(token)
+            NotedAuthOutcome.Ignored -> Unit
         }
     }
 
@@ -338,6 +346,9 @@ class ApiClient(
     }
 
     companion object {
+        /** `DELETE /auth/account`. A wrong password on this path is not a session failure. */
+        internal const val ACCOUNT_DELETION_PATH = "auth/account"
+
         private const val ACCEPT = "application/json, application/octet-stream, */*"
         private val JSON_MEDIA_TYPE = "application/json".toMediaType()
 
@@ -388,4 +399,27 @@ private suspend fun Call.await(): Response = suspendCancellableCoroutine { conti
         }
         override fun onFailure(call: Call, e: IOException) = continuation.resumeWithException(e)
     })
+}
+
+/** What [ApiClient] tells [AuthOutcomeListener] about one answer. Token-less calls never get here. */
+internal enum class NotedAuthOutcome { Success, Failure, DeviceRemoved, AccountDeleted, Ignored }
+
+/**
+ * Session policy for one authenticated answer. `DELETE auth/account` + `INVALID_CREDENTIALS` reports
+ * nothing (a wrong password is not a dead session). `DEVICE_REMOVED` on that path is an account
+ * deletion whatever [ApiError.Server.reason] says. Every other `DEVICE_REMOVED` is an account
+ * deletion only when the reason is [ApiError.ACCOUNT_DELETED_REASON]; otherwise it is a removal.
+ * Statuses other than 2xx and 401 report nothing.
+ */
+internal fun notedAuthOutcome(status: Int, error: ApiError, path: String): NotedAuthOutcome {
+    val deletingAccount = path.trim('/') == ApiClient.ACCOUNT_DELETION_PATH
+    return when {
+        status in 200..299 -> NotedAuthOutcome.Success
+        status != 401 -> NotedAuthOutcome.Ignored
+        deletingAccount && error is ApiError.Server && error.code == ErrorCodes.INVALID_CREDENTIALS -> NotedAuthOutcome.Ignored
+        deletingAccount && error.isDeviceRemoved -> NotedAuthOutcome.AccountDeleted
+        error.isAccountDeleted -> NotedAuthOutcome.AccountDeleted
+        error.isDeviceRemoved -> NotedAuthOutcome.DeviceRemoved
+        else -> NotedAuthOutcome.Failure
+    }
 }

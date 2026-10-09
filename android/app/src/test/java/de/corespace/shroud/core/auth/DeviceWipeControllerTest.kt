@@ -215,6 +215,49 @@ class DeviceWipeControllerTest {
         assertEquals(2, h.hooks.count("haltWriters"))
     }
 
+    @Test
+    fun accountDeletedUpgradesARunningRemovalWithoutASecondWipe() = runTest {
+        val h = Harness(this)
+        h.controller.start(WipeReason.Removed)
+        h.controller.start(WipeReason.AccountDeleted)
+        assertEquals(WipeReason.AccountDeleted, h.controller.reason.value)
+        h.controller.start(WipeReason.SessionEnded)
+        assertEquals(WipeReason.AccountDeleted, h.controller.reason.value)
+        advanceUntilIdle()
+        assertEquals(1, h.serverCalls.size)
+        assertEquals(WipeReason.AccountDeleted, h.controller.reason.value)
+    }
+
+    @Test
+    fun accountDeletedDoesNotReplaceALogOut() = runTest {
+        val h = Harness(this)
+        h.controller.start(WipeReason.Logout)
+        h.controller.start(WipeReason.AccountDeleted)
+        assertEquals(WipeReason.Logout, h.controller.reason.value)
+        advanceUntilIdle()
+        assertEquals(1, h.serverCalls.size)
+        assertEquals(WipeReason.Logout, h.controller.reason.value)
+    }
+
+    @Test
+    fun anAccountDeletedAnswerUpgradesAnEndedSession() = runTest {
+        val deleted = ApiError.Server("DEVICE_REMOVED", "This account was deleted.", 401, reason = ApiError.ACCOUNT_DELETED_REASON)
+        val h = Harness(this, endServer = { throw deleted })
+        h.controller.start(WipeReason.SessionEnded)
+        advanceUntilIdle()
+        assertEquals(WipeReason.AccountDeleted, h.controller.reason.value)
+        assertEquals("Session ended", h.controller.details.value[WipeStep.Session])
+    }
+
+    @Test
+    fun anAccountDeletedAnswerLeavesALogOutAsALogOut() = runTest {
+        val deleted = ApiError.Server("DEVICE_REMOVED", "This account was deleted.", 401, reason = ApiError.ACCOUNT_DELETED_REASON)
+        val h = Harness(this, endServer = { throw deleted })
+        h.controller.start(WipeReason.Logout)
+        advanceUntilIdle()
+        assertEquals(WipeReason.Logout, h.controller.reason.value)
+    }
+
     // ---- The session step ----
 
     @Test
@@ -284,6 +327,14 @@ class DeviceWipeControllerTest {
         val revoked = ApiError.Server("UNAUTHORIZED", "This session was signed out.", 401)
         val serverError = ApiError.Server("INTERNAL", "Something went wrong.", 500)
         assertEquals(ServerSessionOutcome.Removed, DeviceWipeController.serverSessionOutcome(REMOVED))
+        assertFalse(REMOVED.isAccountDeleted)
+        assertNull(REMOVED.reason)
+        assertEquals(
+            ServerSessionOutcome.AccountDeleted,
+            DeviceWipeController.serverSessionOutcome(
+                ApiError.Server("DEVICE_REMOVED", "This account was deleted.", 401, reason = ApiError.ACCOUNT_DELETED_REASON),
+            ),
+        )
         assertEquals(ServerSessionOutcome.Ended, DeviceWipeController.serverSessionOutcome(revoked))
         assertEquals(ServerSessionOutcome.Ended, DeviceWipeController.serverSessionOutcome(serverError))
         assertEquals(ServerSessionOutcome.Offline, DeviceWipeController.serverSessionOutcome(ApiError.Transport("offline")))

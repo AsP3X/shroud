@@ -8,11 +8,11 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
-/** `{ "error": { "code", "message" } }` — every API error (`APIError.swift:3-11`; server `error.rs:268-306`). */
+/** `{ "error": { "code", "message", "reason"? } }` — every API error (`APIError.swift:3-11`; server `error.rs`). */
 @Serializable
 data class ErrorEnvelope(val error: Body) {
     @Serializable
-    data class Body(val code: String, val message: String)
+    data class Body(val code: String, val message: String, val reason: String? = null)
 }
 
 /**
@@ -34,6 +34,8 @@ sealed class ApiError(message: String) : Exception(message) {
         val status: Int,
         val retryAfterSeconds: Long? = null,
         val body: String? = null,
+        /** `error.reason`. `"account_deleted"` with `401 DEVICE_REMOVED` means the account was deleted. */
+        val reason: String? = null,
     ) : ApiError("$status $code: $serverMessage")
 
     /**
@@ -50,6 +52,13 @@ sealed class ApiError(message: String) : Exception(message) {
      * that code is not a removal (`SessionAuthFailureTests.onlyDeviceRemovedCodeIsARemoval`).
      */
     val isDeviceRemoved: Boolean get() = this is Server && status == 401 && code == ErrorCodes.DEVICE_REMOVED
+
+    /**
+     * The account was deleted: `401 DEVICE_REMOVED` whose [Server.reason] is [ACCOUNT_DELETED_REASON].
+     * Every such answer is also [isDeviceRemoved]. A removal without that reason is not this.
+     */
+    val isAccountDeleted: Boolean
+        get() = isDeviceRemoved && this is Server && reason == ACCOUNT_DELETED_REASON
 
     /**
      * HTTP 401 — the token was rejected (`APIError.isAuthenticationFailure`, `APIError.swift:19-28`).
@@ -92,6 +101,9 @@ sealed class ApiError(message: String) : Exception(message) {
         }
 
     companion object {
+        /** `error.reason` when the account itself was deleted. The code stays `DEVICE_REMOVED`. */
+        const val ACCOUNT_DELETED_REASON = "account_deleted"
+
         /** The envelope parser: unknown keys beside `error` (a reaction's `current`) are ignored, like `JSONDecoder()`. */
         private val envelopeJson = Json { ignoreUnknownKeys = true }
 
@@ -113,7 +125,14 @@ sealed class ApiError(message: String) : Exception(message) {
             }
             val retrySeconds = retryAfter?.let(::parseRetryAfter)
             return when {
-                envelope != null -> Server(envelope.error.code, envelope.error.message, status, retrySeconds, body)
+                envelope != null -> Server(
+                    envelope.error.code,
+                    envelope.error.message,
+                    status,
+                    retrySeconds,
+                    body,
+                    envelope.error.reason,
+                )
                 status == 401 -> Server(ErrorCodes.UNAUTHORIZED, "Unauthorized", 401, retrySeconds)
                 else -> Transport("Request failed with status $status")
             }

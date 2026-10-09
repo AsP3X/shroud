@@ -51,6 +51,7 @@ class SettingsDestinationTest {
         SettingsRoute.Notifications -> "Notifications and Sounds"
         SettingsRoute.NotificationSound -> "Sound"
         SettingsRoute.PrivacySecurity -> "Privacy and Security"
+        SettingsRoute.DeleteAccount -> "Delete Account"
         SettingsRoute.PushDelivery -> "Delivery"
         SettingsRoute.SavedMessages -> null
         SettingsRoute.About -> "About Shroud"
@@ -66,6 +67,7 @@ class SettingsDestinationTest {
         SettingsRoute.Notifications,
         SettingsRoute.NotificationSound,
         SettingsRoute.PrivacySecurity,
+        SettingsRoute.DeleteAccount,
         SettingsRoute.PushDelivery,
         SettingsRoute.About,
         SettingsRoute.Licenses,

@@ -390,13 +390,13 @@ class RealtimeClient(
                 everConnected = true
                 mutableEvents.emit(RealtimeEvent.Connected(frame.userId, frame.deviceId, isReconnect))
             }
-            is RealtimeFrame.AuthError -> onAuthError(frame.code)
+            is RealtimeFrame.AuthError -> onAuthError(frame.code, frame.reason)
             is RealtimeFrame.Event -> mutableEvents.emit(frame.event)
         }
     }
 
     /** Plan C31; api-realtime §11.8 (iOS `RealtimeClient.swift:307-317`, web `realtime.ts:125-132`). */
-    private fun onAuthError(code: String?) {
+    private fun onAuthError(code: String?, reason: String?) {
         if (code == ErrorCodes.RATE_LIMITED) {
             // Too many sockets on this account: the session is fine. Retry no sooner than ~30 s.
             attempt = maxOf(attempt, timing.rateLimitedAttemptFloor)
@@ -414,7 +414,10 @@ class RealtimeClient(
         mutableState.value = ConnectionState.Failed(AUTH_FAILED_REASON)
         // The account removed this device while the socket was open: wipe now (the session checks
         // that the token is still its own). Nothing else signs out from here.
-        if (code == ErrorCodes.DEVICE_REMOVED && token != null) authOutcomes()?.onDeviceRemoved(token)
+        if (code == ErrorCodes.DEVICE_REMOVED && token != null) {
+            if (reason == ApiError.ACCOUNT_DELETED_REASON) authOutcomes()?.onAccountDeleted(token)
+            else authOutcomes()?.onDeviceRemoved(token)
+        }
     }
 
     /** The current socket closed or failed (`RealtimeClient.swift:246-257`). */

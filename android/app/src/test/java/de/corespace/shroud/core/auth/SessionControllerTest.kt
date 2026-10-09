@@ -55,7 +55,10 @@ class SessionControllerTest {
     )
 
     /** Wired as AuthModule wires it: the client reports every authenticated answer to the session. */
-    private fun controller(store: SessionStore = store()): SessionController {
+    private fun controller(
+        store: SessionStore = store(),
+        onAccountDeletedWhileWiping: () -> Unit = {},
+    ): SessionController {
         val client = ApiClient({ server.url("/api/v1").toString() }, json)
         return SessionController(
             ShroudApi(client),
@@ -63,14 +66,8 @@ class SessionControllerTest {
             CoroutineScope(Dispatchers.Unconfined),
             wipeMarker = { marks++ },
             isWipePresented = { wipePresented },
+            onAccountDeletedWhileWiping = onAccountDeletedWhileWiping,
         ).also { client.authOutcomes = it.authOutcomes }
-    }
-
-    /** iOS `applySessionForTests(sampleSession)`: a stored session, no network. */
-    private fun signedIn(): SessionController {
-        val st = store()
-        st.save(SAMPLE)
-        return controller(st)
     }
 
     @Before
@@ -313,6 +310,7 @@ class SessionControllerTest {
         assertEquals("tok", store().session?.token)
         assertTrue(c.pendingFullLocalWipe.value)
         assertTrue(c.sessionEndedByDeviceRemoval.value)
+        assertEquals(WipeReason.Removed, c.pendingWipeReason)
         assertEquals(1, marks)
     }
 
@@ -426,6 +424,73 @@ class SessionControllerTest {
         c.register("noah", "pw")
         c.recordDeviceRemoved("next")
         assertTrue(c.pendingFullLocalWipe.value)
+    }
+
+    @Test
+    fun threeWrongDeletePasswordsDoNotWipeAndANormal401StillCounts() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        repeat(3) {
+            server.enqueue(MockResponse(code = 401, body = """{"error":{"code":"INVALID_CREDENTIALS","message":"Invalid username or password."}}"""))
+        }
+        server.enqueue(MockResponse(code = 401, body = ""))
+        val c = controller()
+        c.register("noah", "pw")
+        val api = ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json).also { it.authOutcomes = c.authOutcomes })
+        repeat(3) { runCatching { api.deleteAccount("tok", "wrong-password") } }
+        assertFalse(c.pendingFullLocalWipe.value)
+        assertEquals(0, c.consecutiveAuthenticationFailures)
+        runCatching { api.contacts("tok") }
+        assertEquals(1, c.consecutiveAuthenticationFailures)
+        assertFalse(c.pendingFullLocalWipe.value)
+        assertEquals(WipeReason.SessionEnded, c.pendingWipeReason)
+    }
+
+    @Test
+    fun deleteAccountDeviceRemovedWipesAsAccountDeletedWhateverTheReason() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        server.enqueue(MockResponse(code = 401, body = """{"error":{"code":"DEVICE_REMOVED","message":"removed"}}"""))
+        val c = controller()
+        c.register("noah", "pw")
+        val api = ShroudApi(ApiClient({ server.url("/api/v1").toString() }, json).also { it.authOutcomes = c.authOutcomes })
+        runCatching { api.deleteAccount("tok", "pw") }
+        assertTrue(c.pendingFullLocalWipe.value)
+        assertEquals(WipeReason.AccountDeleted, c.pendingWipeReason)
+        assertFalse(c.sessionEndedByDeviceRemoval.value)
+        assertEquals(SessionController.Validation.SignedOut, c.sessionAfterFailure())
+    }
+
+    @Test
+    fun aRemovalThatNamesAccountDeletedMarksThatWipe() = runTest {
+        server.enqueue(MockResponse(code = 201, body = session()))
+        server.enqueue(MockResponse(code = 401, body = """{"error":{"code":"DEVICE_REMOVED","message":"This account was deleted.","reason":"account_deleted"}}"""))
+        val c = controller()
+        c.register("noah", "pw")
+        assertEquals(SessionController.Validation.SignedOut, c.validate())
+        assertEquals(WipeReason.AccountDeleted, c.pendingWipeReason)
+        assertFalse(c.sessionEndedByDeviceRemoval.value)
+    }
+
+    @Test
+    fun accountDeletedOnTheSocketMarksThatWipeAndUpgradesOneAlreadyShowing() = runTest {
+        val c = signedIn()
+        c.authOutcomes.onAccountDeleted("old")
+        assertFalse(c.pendingFullLocalWipe.value)
+        c.authOutcomes.onAccountDeleted("test-token")
+        assertEquals(WipeReason.AccountDeleted, c.pendingWipeReason)
+        assertFalse(c.sessionEndedByDeviceRemoval.value)
+
+        wipePresented = true
+        var upgrades = 0
+        val showing = signedIn(onAccountDeletedWhileWiping = { upgrades++ })
+        showing.authOutcomes.onAccountDeleted("test-token")
+        assertEquals(1, upgrades)
+        assertFalse(showing.pendingFullLocalWipe.value)
+    }
+
+    private fun signedIn(onAccountDeletedWhileWiping: () -> Unit = {}): SessionController {
+        val st = store()
+        st.save(SAMPLE)
+        return controller(st, onAccountDeletedWhileWiping)
     }
 
     private companion object {

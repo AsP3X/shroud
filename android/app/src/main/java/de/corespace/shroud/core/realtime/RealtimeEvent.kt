@@ -158,7 +158,7 @@ sealed interface RealtimeFrame {
      * `auth.error` (`error {code, message}`), then the server closes. Codes: `UNAUTHORIZED`,
      * `DEVICE_REMOVED`, `RATE_LIMITED` — the policy is in plan §1.7.3 (C31).
      */
-    data class AuthError(val code: String?, val message: String?) : RealtimeFrame
+    data class AuthError(val code: String?, val message: String?, val reason: String? = null) : RealtimeFrame
 
     /** Any other event. */
     data class Event(val event: RealtimeEvent) : RealtimeFrame

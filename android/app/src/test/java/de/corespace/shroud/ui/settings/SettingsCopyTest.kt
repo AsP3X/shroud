@@ -2,7 +2,9 @@ package de.corespace.shroud.ui.settings
 
 import de.corespace.shroud.core.appearance.BrandLogoStyle
 import de.corespace.shroud.core.appearance.ColorTheme
+import de.corespace.shroud.core.auth.WipeReason
 import de.corespace.shroud.core.devices.DeviceNoun
+import de.corespace.shroud.ui.settings.privacy.DeleteAccountCopy
 import de.corespace.shroud.core.net.ServerConfiguration
 import de.corespace.shroud.core.net.ServerConnectionMode
 import de.corespace.shroud.core.notifications.NotificationAuthorization
@@ -139,5 +141,34 @@ class SettingsCopyTest {
             listOf("Detailed" to "The veil with its folds and shading.", "Simple" to "One flat shape."),
             BrandLogoStyle.entries.map { it.title to it.subtitle },
         )
+    }
+
+    /** Account-deletion plan §3.3, character for character. */
+    @Test
+    fun deleteAccountCopy() {
+        assertEquals("Delete Account", DeleteAccountCopy.ROW_TITLE)
+        assertEquals("Delete Account", DeleteAccountCopy.NAV_TITLE)
+        assertEquals("Delete Account", DeleteAccountCopy.DELETE)
+        assertEquals("Deletes your account and erases it from every device.", DeleteAccountCopy.ROW_SUBTITLE)
+        assertEquals("Delete your account?", DeleteAccountCopy.TITLE)
+        assertEquals(
+            listOf(
+                "Your messages are replaced with “Message deleted” for everyone.",
+                "Contacts who let you clear chats for them lose those chats. Everyone else keeps their own messages.",
+                "Your contacts, Saved Messages, photos, files and call history are deleted.",
+                "Your username and share code are released, so someone else can take them.",
+                "Every device signed in to this account is signed out and erased.",
+            ),
+            DeleteAccountCopy.CONSEQUENCES,
+        )
+        assertEquals("This can't be undone. Enter your password to confirm.", DeleteAccountCopy.CONFIRM)
+        assertEquals("Password", DeleteAccountCopy.PASSWORD_LABEL)
+        assertEquals("Your account password", DeleteAccountCopy.PASSWORD_PLACEHOLDER)
+        assertEquals("Deleting…", DeleteAccountCopy.DELETING)
+        assertEquals("Cancel", DeleteAccountCopy.CANCEL)
+        assertEquals("That password isn't right.", DeleteAccountCopy.WRONG_PASSWORD)
+        assertEquals("Too many tries. Try again later.", DeleteAccountCopy.RATE_LIMITED)
+        assertEquals("Couldn't reach the server. Your account wasn't deleted.", DeleteAccountCopy.UNREACHABLE)
+        assertEquals("This account was deleted. ", WipeReason.AccountDeleted.lead())
     }
 }

@@ -227,7 +227,7 @@ internal fun DeviceWipeOverlayContent(
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             contentAlignment = Alignment.TopCenter,
         ) {
-            Footer(phase, presented, onRetry, onContinue, Modifier.widthIn(max = 520.dp).fillMaxWidth())
+            Footer(phase, state.reason, presented, onRetry, onContinue, Modifier.widthIn(max = 520.dp).fillMaxWidth())
         }
         if (presented) Announcer(announcement ?: title)
     }
@@ -482,7 +482,7 @@ private fun WipeParticles(color: Color) {
  * fade (Reduce Motion: fade).
  */
 @Composable
-private fun Footer(phase: WipePhase, presented: Boolean, onRetry: () -> Unit, onContinue: () -> Unit, modifier: Modifier) {
+private fun Footer(phase: WipePhase, reason: WipeReason, presented: Boolean, onRetry: () -> Unit, onContinue: () -> Unit, modifier: Modifier) {
     val colors = ShroudTheme.colors
     val reduce = ShroudTheme.reduceMotion
     AnimatedContent(
@@ -502,17 +502,22 @@ private fun Footer(phase: WipePhase, presented: Boolean, onRetry: () -> Unit, on
             }
         } else {
             val done = phase == WipePhase.Done
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Crossfade(done, animationSpec = Motion.fade(), label = "footerGlyph") { isDone ->
-                    if (isDone) {
-                        // Only while the overlay is up: nothing repeats in its exit fade.
-                        if (presented && !reduce) Spinner(colors.textSecondary, size = 15.dp) else Box(Modifier.size(15.dp))
-                    } else {
-                        ShroudIcon(ShroudIcons.ShieldCheck, colors.textSecondary, size = 15.dp)
+            val line = WipeOverlayText.footer(done, reason)
+            if (line == null) {
+                Box(Modifier.fillMaxWidth())
+            } else {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Crossfade(done, animationSpec = Motion.fade(), label = "footerGlyph") { isDone ->
+                        if (isDone) {
+                            // Only while the overlay is up: nothing repeats in its exit fade.
+                            if (presented && !reduce) Spinner(colors.textSecondary, size = 15.dp) else Box(Modifier.size(15.dp))
+                        } else {
+                            ShroudIcon(ShroudIcons.ShieldCheck, colors.textSecondary, size = 15.dp)
+                        }
                     }
-                }
-                Crossfade(WipeOverlayText.footer(done), animationSpec = Motion.fade(), label = "footerText") { text ->
-                    ShroudText(text, inter(13f), colors.textSecondary, textAlign = TextAlign.Center)
+                    Crossfade(line, animationSpec = Motion.fade(), label = "footerText") { text ->
+                        ShroudText(text, inter(13f), colors.textSecondary, textAlign = TextAlign.Center)
+                    }
                 }
             }
         }
@@ -597,9 +602,15 @@ internal object WipeOverlayText {
     fun progress(phase: WipePhase, rows: Collection<RowState>): Float =
         if (phase == WipePhase.Done) 1f else rows.count { it == RowState.Done }.toFloat() / WipeStep.entries.size
 
-    /** The footer line (`:215-219`). */
-    fun footer(done: Boolean): String =
-        if (done) "Taking you to the welcome screen…" else "Your account and chats on other devices stay as they are."
+    /**
+     * The footer line (`:215-219`). Hidden while an account deletion is still running: the other
+     * devices do not stay as they are. The done line stays for every reason.
+     */
+    fun footer(done: Boolean, reason: WipeReason): String? = when {
+        done -> "Taking you to the welcome screen…"
+        reason == WipeReason.AccountDeleted -> null
+        else -> "Your account and chats on other devices stay as they are."
+    }
 
     /** One dot of the emblem (`Particle`, `:289-303`): where it flies (dp), its size (dp), its delay (s). */
     class Particle(val dx: Float, val dy: Float, val size: Float, val delay: Double)

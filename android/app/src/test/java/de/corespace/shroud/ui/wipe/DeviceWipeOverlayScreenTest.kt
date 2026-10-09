@@ -168,6 +168,14 @@ class DeviceWipeOverlayScreenTest {
         state = WipeOverlayState(WipePhase.Running, reason = WipeReason.Removed)
         ui.idle()
         assertTrue(ui.shows("This phone was removed from your account. Removing everything Shroud stored on this phone."))
+        assertTrue(ui.shows("Your account and chats on other devices stay as they are."))
+        state = WipeOverlayState(WipePhase.Running, reason = WipeReason.AccountDeleted, handle = "@niklas_v")
+        ui.idle()
+        assertTrue(ui.shows("This account was deleted. Removing everything Shroud stored for @niklas_v."))
+        assertFalse(ui.shows("Your account and chats on other devices stay as they are."))
+        state = WipeOverlayState(WipePhase.Done, reason = WipeReason.AccountDeleted, handle = "@niklas_v")
+        ui.idle()
+        assertTrue(ui.shows("Taking you to the welcome screen…"))
     }
 
     @Test

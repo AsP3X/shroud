@@ -8,6 +8,7 @@ import de.corespace.shroud.core.appearance.BrandLogoPreference
 import de.corespace.shroud.core.appearance.ColorThemePreference
 import de.corespace.shroud.core.auth.AndroidPrefsAccess
 import de.corespace.shroud.core.auth.AndroidSystemWipe
+import de.corespace.shroud.core.auth.AccountDeletion
 import de.corespace.shroud.core.auth.DeviceDataWipe
 import de.corespace.shroud.core.auth.DeviceNameSync
 import de.corespace.shroud.core.auth.DeviceWipeController
@@ -18,6 +19,7 @@ import de.corespace.shroud.core.auth.SessionStore
 import de.corespace.shroud.core.auth.ShroudOnboardingService
 import de.corespace.shroud.core.auth.WipeKeepList
 import de.corespace.shroud.core.auth.WipeLocations
+import de.corespace.shroud.core.auth.WipeReason
 import de.corespace.shroud.core.crypto.CryptoController
 import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.devices.DeviceNoun
@@ -67,7 +69,17 @@ class AuthModule(container: AppContainer) : AppModule(container) {
             // Built only when a session ends, so the session never builds the wipe up front.
             wipeMarker = { deviceDataWipe.markPending() },
             isWipePresented = { deviceWipe.isPresented.value },
-            // The deprecated immediate Log Out still drops the keys (until the shell runs the wipe).
+            // A wipe already on screen adopts account-deleted instead of staying a plain removal.
+            onAccountDeletedWhileWiping = { deviceWipe.start(WipeReason.AccountDeleted) },
+        )
+    }
+
+    /** `DELETE /auth/account`. The screen's model calls this; it never calls [de.corespace.shroud.core.net.ShroudApi]. */
+    val accountDeletion: AccountDeletion by lazy {
+        AccountDeletion(
+            api = container.net.api,
+            token = { sessionController.session.value?.token },
+            startWipe = { deviceWipe.start(it) },
         )
     }
 

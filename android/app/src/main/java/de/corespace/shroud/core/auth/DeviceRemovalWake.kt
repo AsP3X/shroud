@@ -90,22 +90,26 @@ class RemovalWake(
     suspend fun handle(): WakeResult {
         val deadline = clock.elapsedMillis() + DeviceRemovalWake.BUDGET_MS
         val stored = storedSession() ?: return WakeResult.NoData
-        when (confirmRemoved(stored)) {
+        val confirmed = confirmRemoved(stored)
+        when (confirmed) {
             // Still part of the account (or refused for another reason): a stale or misdirected push.
-            false -> return WakeResult.NoData
+            Confirm.Here -> return WakeResult.NoData
             // No answer in time. The socket, the next request or the next launch will tell.
-            null -> return WakeResult.Failed
-            true -> Unit
+            Confirm.Unanswered -> return WakeResult.Failed
+            Confirm.Removed, Confirm.AccountDeleted -> Unit
         }
+        val accountDeleted = confirmed == Confirm.AccountDeleted
 
         if (hasUi()) {
             // The app holds another login now (the removed session was replaced): leave it (`:47-48`).
             if (session.session.value?.token != stored.token) return WakeResult.NoData
-            session.recordDeviceRemoved(stored.token)
+            if (accountDeleted) session.recordAccountDeleted(stored.token) else session.recordDeviceRemoved(stored.token)
             if (!deviceWipe.isPresented.value) {
                 session.consumePendingFullLocalWipe()
                 // The confirm already saw DEVICE_REMOVED for this session.
-                deviceWipe.start(WipeReason.Removed)
+                deviceWipe.start(if (accountDeleted) WipeReason.AccountDeleted else WipeReason.Removed)
+            } else if (accountDeleted) {
+                deviceWipe.start(WipeReason.AccountDeleted)
             }
             while (deviceWipe.isPresented.value && deviceWipe.phase.value != WipePhase.Failed && clock.elapsedMillis() < deadline) {
                 delay(DeviceRemovalWake.POLL_MS)
@@ -116,7 +120,9 @@ class RemovalWake(
         // No UI. Nothing may write while the stores are emptied; the marker stays set (`:61-68`).
         storageSeal.seal()
         runCatching { hooks.haltWriters() }
-        if (session.session.value?.token == stored.token) session.recordDeviceRemoved(stored.token)
+        if (session.session.value?.token == stored.token) {
+            if (accountDeleted) session.recordAccountDeleted(stored.token) else session.recordDeviceRemoved(stored.token)
+        }
         try {
             withContext(io) {
                 dataWipe.markPending()
@@ -144,24 +150,32 @@ class RemovalWake(
         return WakeResult.NewData
     }
 
+    /** What `GET /auth/me` said. The push body's reason is not the decision; this answer is. */
+    private enum class Confirm { Here, Removed, AccountDeleted, Unanswered }
+
     /**
-     * True when the server says `DEVICE_REMOVED` for this session, false when it still takes it (or
-     * refuses it for another reason), null without an answer in time (`confirmRemoved`, `:71-97`).
+     * [Confirm.Removed] or [Confirm.AccountDeleted] when the server says `DEVICE_REMOVED` for this
+     * session (`account_deleted` is the latter), [Confirm.Here] when it still takes it (or refuses
+     * it for another reason), [Confirm.Unanswered] without an answer in time (`confirmRemoved`, `:71-97`).
      */
-    private suspend fun confirmRemoved(stored: Session): Boolean? = withTimeoutOrNull(DeviceRemovalWake.CONFIRM_TIMEOUT_MS) {
-        try {
-            confirm(stored)
-            false
-        } catch (e: ApiError) {
-            when {
-                e.isDeviceRemoved -> true
-                e is ApiError.Transport -> null
-                else -> false
+    private suspend fun confirmRemoved(stored: Session): Confirm {
+        val answer = withTimeoutOrNull(DeviceRemovalWake.CONFIRM_TIMEOUT_MS) {
+            try {
+                confirm(stored)
+                Confirm.Here
+            } catch (e: ApiError) {
+                when {
+                    e.isAccountDeleted -> Confirm.AccountDeleted
+                    e.isDeviceRemoved -> Confirm.Removed
+                    e is ApiError.Transport -> Confirm.Unanswered
+                    else -> Confirm.Here
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                Confirm.Unanswered
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
         }
+        return answer ?: Confirm.Unanswered
     }
 }

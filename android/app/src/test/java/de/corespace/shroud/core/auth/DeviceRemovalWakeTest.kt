@@ -63,6 +63,7 @@ class DeviceRemovalWakeTest {
         assertTrue(DeviceRemovalWake.isRemoval(mapOf("aps" to """{"content-available":1}""", "type" to "device_removed")))
         // The Web Push payload over UnifiedPush: {"v":1,"kind":"device_removed"}.
         assertTrue(DeviceRemovalWake.isRemoval(mapOf("v" to "1", "kind" to "device_removed")))
+        assertTrue(DeviceRemovalWake.isRemoval(mapOf("v" to "1", "kind" to "device_removed", "reason" to "account_deleted")))
         assertFalse(DeviceRemovalWake.isRemoval(mapOf("aps" to """{"badge":3}""")))
         assertFalse(DeviceRemovalWake.isRemoval(mapOf("type" to "message")))
         assertFalse(DeviceRemovalWake.isRemoval(mapOf("v" to "1", "kind" to "message")))
@@ -177,12 +178,31 @@ class DeviceRemovalWakeTest {
         assertEquals(WakeResult.NewData, h.wake.handle())
         advanceUntilIdle()
         assertEquals(WipeReason.Removed, h.controller.reason.value)
+        assertFalse(h.controller.reason.value == WipeReason.AccountDeleted)
         assertFalse(h.controller.isPresented.value)
         assertNull(h.session.session.value)
         assertFalse(h.session.pendingFullLocalWipe.value)
         assertTrue("router" in h.hooks.calls)
         for (gone in WipeFixture.ACCOUNT_PATHS) assertFalse("$gone survived", h.fixture.exists(gone))
         assertFalse(h.fixture.wipe.isPending)
+    }
+
+    @Test
+    fun aConfirmedAccountDeletionWithTheUiAliveRunsThatWipe() = runTest {
+        val deleted = ApiError.Server(
+            "DEVICE_REMOVED",
+            "This account was deleted.",
+            401,
+            reason = ApiError.ACCOUNT_DELETED_REASON,
+        )
+        val h = Harness(this, confirm = { throw deleted })
+        h.fixture.seedAccount()
+        h.store.save(SAMPLE)
+        assertEquals(WakeResult.NewData, h.wake.handle())
+        advanceUntilIdle()
+        assertEquals(WipeReason.AccountDeleted, h.controller.reason.value)
+        assertEquals(listOf("test-token"), h.confirmed)
+        assertNull(h.session.session.value)
     }
 
     @Test

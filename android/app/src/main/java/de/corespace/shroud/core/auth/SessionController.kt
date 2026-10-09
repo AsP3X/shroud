@@ -50,6 +50,8 @@ class SessionController(
     private val wipeMarker: WipePendingMarker = WipePendingMarker.None,
     private val isWipePresented: () -> Boolean = { false },
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** A wipe already on screen should adopt [WipeReason.AccountDeleted] instead of starting another. */
+    private val onAccountDeletedWhileWiping: () -> Unit = {},
 ) {
     private val state = MutableStateFlow(store.session)
 
@@ -73,8 +75,19 @@ class SessionController(
      */
     val sessionEndedByDeviceRemoval: StateFlow<Boolean> = removal.asStateFlow()
 
-    /** The reason to start the device wipe with for a pending wipe (`RootView.swift:193`). */
-    val pendingWipeReason: WipeReason get() = if (removal.value) WipeReason.Removed else WipeReason.SessionEnded
+    /** The pending wipe is an account deletion, not a device removal. Cleared by [logout]. */
+    private val accountDeleted = MutableStateFlow(false)
+
+    /**
+     * The reason to start the device wipe with for a pending wipe (`RootView.swift:193`).
+     * Account deletion wins over a plain removal, which wins over an ended session.
+     */
+    val pendingWipeReason: WipeReason
+        get() = when {
+            accountDeleted.value -> WipeReason.AccountDeleted
+            removal.value -> WipeReason.Removed
+            else -> WipeReason.SessionEnded
+        }
 
     /** Consecutive 401s on authenticated requests (`consecutiveAuthenticationFailures`, `:48-49`). Main-confined. */
     var consecutiveAuthenticationFailures: Int = 0
@@ -102,6 +115,10 @@ class SessionController(
 
         override fun onDeviceRemoved(token: String) {
             appScope.launch { recordDeviceRemoved(token) }
+        }
+
+        override fun onAccountDeleted(token: String) {
+            appScope.launch { recordAccountDeleted(token) }
         }
     }
 
@@ -209,6 +226,24 @@ class SessionController(
     }
 
     /**
+     * The account was deleted. Same token rule as [recordDeviceRemoved]. Does not set
+     * [sessionEndedByDeviceRemoval]: the wipe says the account was deleted. A wipe already on screen
+     * is asked to adopt that reason; one that is only pending keeps this reason for the shell.
+     */
+    fun recordAccountDeleted(token: String) {
+        val current = state.value ?: return
+        if (current.token != token) return
+        if (isWipePresented()) {
+            onAccountDeletedWhileWiping()
+            isForceLoggingOut = true
+            return
+        }
+        accountDeleted.value = true
+        if (isForceLoggingOut) return
+        markSessionEnded()
+    }
+
+    /**
      * Launch: a wipe the app was killed in is being finished. Its server call answers
      * `DEVICE_REMOVED` for a removed phone, which must not start a second wipe (`beginInterruptedWipe`, `:187-191`).
      */
@@ -239,6 +274,7 @@ class SessionController(
         consecutiveAuthenticationFailures = 0
         isForceLoggingOut = false
         removal.value = false
+        accountDeleted.value = false
         ended.value = if (forced) (if (removed) Validation.DeviceRemoved else Validation.SignedOut) else null
         if (token != null) revokeInBackground(token)
     }

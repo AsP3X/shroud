@@ -30,6 +30,10 @@ class WipeOverlayTextTest {
             "This tablet was removed from your account. Removing everything Shroud stored on this tablet.",
             WipeOverlayText.subtitle(WipePhase.Running, WipeReason.Removed, "", none, "tablet"),
         )
+        assertEquals(
+            "This account was deleted. Removing everything Shroud stored for @niklas_v.",
+            WipeOverlayText.subtitle(WipePhase.Running, WipeReason.AccountDeleted, "@niklas_v", none, "phone"),
+        )
     }
 
     @Test
@@ -109,8 +113,12 @@ class WipeOverlayTextTest {
     @Test
     fun theFooterLine() {
         // `:215-219`.
-        assertEquals("Taking you to the welcome screen…", WipeOverlayText.footer(done = true))
-        assertEquals("Your account and chats on other devices stay as they are.", WipeOverlayText.footer(done = false))
+        assertEquals("Taking you to the welcome screen…", WipeOverlayText.footer(done = true, WipeReason.Logout))
+        assertEquals("Taking you to the welcome screen…", WipeOverlayText.footer(done = true, WipeReason.AccountDeleted))
+        assertEquals("Your account and chats on other devices stay as they are.", WipeOverlayText.footer(done = false, WipeReason.Logout))
+        assertEquals("Your account and chats on other devices stay as they are.", WipeOverlayText.footer(done = false, WipeReason.Removed))
+        assertEquals("Your account and chats on other devices stay as they are.", WipeOverlayText.footer(done = false, WipeReason.SessionEnded))
+        assertNull(WipeOverlayText.footer(done = false, WipeReason.AccountDeleted))
     }
 
     @Test

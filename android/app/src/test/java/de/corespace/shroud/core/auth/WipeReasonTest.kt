@@ -16,6 +16,9 @@ class WipeReasonTest {
         assertEquals("This phone was removed from your account. ", WipeReason.Removed.lead(DeviceNoun.PHONE))
         assertEquals("This tablet was removed from your account. ", WipeReason.Removed.lead(DeviceNoun.TABLET))
         assertEquals("This phone was removed from your account. ", WipeReason.Removed.lead())
+        assertEquals("This account was deleted. ", WipeReason.AccountDeleted.lead(DeviceNoun.PHONE))
+        assertEquals("This account was deleted. ", WipeReason.AccountDeleted.lead(DeviceNoun.TABLET))
+        assertEquals("This account was deleted. ", WipeReason.AccountDeleted.lead())
     }
 
     /** A removal reaches the wipe as an ended session; the server's `DEVICE_REMOVED` turns it into the removal. */
@@ -27,6 +30,12 @@ class WipeReasonTest {
         assertEquals(WipeReason.SessionEnded, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.UpdateRequired))
         assertEquals(WipeReason.Logout, WipeReason.after(WipeReason.Logout, ServerSessionOutcome.Removed))
         assertEquals(WipeReason.Removed, WipeReason.after(WipeReason.Removed, ServerSessionOutcome.Offline))
+        assertEquals(WipeReason.AccountDeleted, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.AccountDeleted))
+        assertEquals(WipeReason.AccountDeleted, WipeReason.after(WipeReason.Removed, ServerSessionOutcome.AccountDeleted))
+        assertEquals(WipeReason.AccountDeleted, WipeReason.after(WipeReason.AccountDeleted, ServerSessionOutcome.Removed))
+        assertEquals(WipeReason.AccountDeleted, WipeReason.after(WipeReason.AccountDeleted, ServerSessionOutcome.Offline))
+        assertEquals(WipeReason.Logout, WipeReason.after(WipeReason.Logout, ServerSessionOutcome.AccountDeleted))
+        assertEquals(WipeReason.Removed, WipeReason.after(WipeReason.SessionEnded, ServerSessionOutcome.Removed))
     }
 
     /** The whole subtitle while the wipe runs (web-parity §22.7, phone wording). */
@@ -35,6 +44,10 @@ class WipeReasonTest {
         assertEquals(
             "This phone was removed from your account. Removing everything Shroud stored for @x.",
             "${WipeReason.Removed.lead(DeviceNoun.PHONE)}Removing everything Shroud stored for @x.",
+        )
+        assertEquals(
+            "This account was deleted. Removing everything Shroud stored for @x.",
+            "${WipeReason.AccountDeleted.lead(DeviceNoun.PHONE)}Removing everything Shroud stored for @x.",
         )
     }
 

@@ -70,6 +70,8 @@ import de.corespace.shroud.ui.components.ToggleRowSpacing
 import de.corespace.shroud.ui.components.highlightRow
 import de.corespace.shroud.ui.components.rememberToastState
 import de.corespace.shroud.ui.shell.LocalAppActions
+import de.corespace.shroud.ui.shell.LocalShellNavigation
+import de.corespace.shroud.ui.shell.SettingsRoute
 import de.corespace.shroud.ui.theme.Motion
 import de.corespace.shroud.ui.theme.ShroudIcons
 import de.corespace.shroud.ui.theme.ShroudTheme
@@ -99,6 +101,7 @@ fun PrivacySecurityScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
     val actions = LocalAppActions.current
+    val navigation = LocalShellNavigation.current
     val scope = rememberCoroutineScope()
     val toasts = rememberToastState()
     val privacy = container.contacts.privacy
@@ -172,6 +175,7 @@ fun PrivacySecurityScreen(onBack: () -> Unit) {
                     onRelayCalls = model::setAlwaysRelayCalls,
                     onLockNow = model::lockNow,
                     onUnblock = model::unblock,
+                    onDeleteAccount = { navigation.push(SettingsRoute.DeleteAccount) },
                 ),
             )
         }
@@ -199,6 +203,7 @@ internal class PrivacyCallbacks(
     val onRelayCalls: (Boolean) -> Unit,
     val onLockNow: () -> Unit,
     val onUnblock: (BlockItemDto) -> Unit,
+    val onDeleteAccount: () -> Unit,
 )
 
 /**
@@ -358,6 +363,25 @@ internal fun PrivacyContent(
                 if (softwareKeystore) {
                     ShroudText(PrivacyCopy.softwareKeystoreNotice(noun), inter(13f), colors.warningText)
                 }
+            }
+        }
+
+        SettingsCard {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .highlightRow(onClick = callbacks.onDeleteAccount)
+                    .semantics(mergeDescendants = true) {}
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconTile(ShroudIcons.TrashFill, colors.danger, Modifier.clearAndSetSemantics {})
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    ShroudText(DeleteAccountCopy.ROW_TITLE, inter(16f), colors.danger)
+                    ShroudText(DeleteAccountCopy.ROW_SUBTITLE, inter(13f), colors.textSecondary)
+                }
+                ShroudIcon(ShroudIcons.CaretRight, colors.chevron, size = 13.dp, modifier = Modifier.clearAndSetSemantics {})
             }
         }
 

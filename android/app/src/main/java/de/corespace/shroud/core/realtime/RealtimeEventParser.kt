@@ -70,7 +70,11 @@ object RealtimeEventParser {
      */
     private fun authError(obj: JsonObject): RealtimeFrame {
         val error = obj["error"] as? JsonObject
-        return RealtimeFrame.AuthError(code = error?.string("code"), message = error?.string("message"))
+        return RealtimeFrame.AuthError(
+            code = error?.string("code"),
+            message = error?.string("message"),
+            reason = error?.string("reason"),
+        )
     }
 
     private fun event(type: String, obj: JsonObject, json: Json): RealtimeEvent? = when (type) {

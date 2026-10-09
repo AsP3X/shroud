@@ -26,4 +26,11 @@ interface AuthOutcomeListener {
      * not wipe a newer one.
      */
     fun onDeviceRemoved(token: String)
+
+    /**
+     * The account was deleted (`DEVICE_REMOVED` with reason `account_deleted`, or `DELETE auth/account`
+     * answering `DEVICE_REMOVED` for any reason) for [token]. Same token rule as [onDeviceRemoved].
+     * The wipe reason is account deleted, not a plain removal.
+     */
+    fun onAccountDeleted(token: String)
 }

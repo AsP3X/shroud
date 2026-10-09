@@ -18,6 +18,9 @@ enum class WipeReason {
 
     /** The account removed this device (the server's `DEVICE_REMOVED`), from another device's Settings › Devices. */
     Removed,
+
+    /** The account was deleted (`DEVICE_REMOVED` with reason `account_deleted`). */
+    AccountDeleted,
     ;
 
     /**
@@ -29,6 +32,7 @@ enum class WipeReason {
         Logout -> ""
         SessionEnded -> "Your session ended. "
         Removed -> "This $device was removed from your account. "
+        AccountDeleted -> "This account was deleted. "
     }
 
     companion object {
@@ -39,8 +43,13 @@ enum class WipeReason {
          * user chose stays a Log Out, and an offline server (or one that refused this build) leaves
          * the reason as it was.
          */
-        fun after(current: WipeReason, outcome: ServerSessionOutcome): WipeReason =
-            if (current == SessionEnded && outcome == ServerSessionOutcome.Removed) Removed else current
+        fun after(current: WipeReason, outcome: ServerSessionOutcome): WipeReason = when {
+            current == Logout -> current
+            outcome == ServerSessionOutcome.AccountDeleted &&
+                (current == SessionEnded || current == Removed || current == AccountDeleted) -> AccountDeleted
+            current == SessionEnded && outcome == ServerSessionOutcome.Removed -> Removed
+            else -> current
+        }
     }
 }
 
@@ -51,6 +60,9 @@ enum class ServerSessionOutcome {
 
     /** `401 DEVICE_REMOVED`: this device is no longer part of the account. */
     Removed,
+
+    /** `401 DEVICE_REMOVED` with reason `account_deleted`: the account itself is gone. */
+    AccountDeleted,
 
     /** No answer (offline, or not within the 4 s timeout): only this phone forgot it. */
     Offline,

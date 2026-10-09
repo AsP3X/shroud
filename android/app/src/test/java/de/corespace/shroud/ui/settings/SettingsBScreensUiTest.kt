@@ -26,6 +26,7 @@ import de.corespace.shroud.ui.settings.notifications.NotificationsContent
 import de.corespace.shroud.ui.settings.notifications.NotificationsCopy
 import de.corespace.shroud.ui.settings.notifications.NotificationsSettingsState
 import de.corespace.shroud.ui.settings.notifications.SystemNotice
+import de.corespace.shroud.ui.settings.privacy.DeleteAccountCopy
 import de.corespace.shroud.ui.settings.privacy.PrivacyCallbacks
 import de.corespace.shroud.ui.settings.privacy.PrivacyContent
 import de.corespace.shroud.ui.settings.privacy.PrivacyCopy
@@ -385,6 +386,7 @@ class SettingsBScreensUiTest {
         retries: IntArray = IntArray(1),
         lockNow: IntArray = IntArray(1),
         unblocked: MutableList<UUID> = ArrayList(),
+        deleteAccount: IntArray = IntArray(1),
     ): ComposeHarness = ComposeHarness {
         PrivacyContent(
             state = state,
@@ -408,6 +410,7 @@ class SettingsBScreensUiTest {
                 onRelayCalls = {},
                 onLockNow = { lockNow[0]++ },
                 onUnblock = { unblocked += it.userId },
+                onDeleteAccount = { deleteAccount[0]++ },
             ),
         )
     }
@@ -432,7 +435,8 @@ class SettingsBScreensUiTest {
     fun privacyRowsLockNowBlockedAndTheKeystoreNotice() {
         val lockNow = IntArray(1)
         val unblocked = ArrayList<UUID>()
-        val ui = privacyScreen(lockNow = lockNow, unblocked = unblocked, softwareKeystore = true)
+        val deleteAccount = IntArray(1)
+        val ui = privacyScreen(lockNow = lockNow, unblocked = unblocked, softwareKeystore = true, deleteAccount = deleteAccount)
         assertEquals("Immediately", ui.node(PrivacyCopy.AUTO_LOCK).config.getOrNull(SemanticsProperties.StateDescription))
         assertTrue(ui.has(PrivacyCopy.autoLockFootnote(null)))
         // The kit's switch row reads its title and state only (the subtitle is not spoken: C18).
@@ -443,5 +447,11 @@ class SettingsBScreensUiTest {
         assertEquals(listOf(SettingsBFixtures.promo.userId), unblocked)
         assertTrue(ui.has(PrivacyCopy.softwareKeystoreNotice("phone")))
         assertTrue(privacyScreen(softwareKeystore = false).nodesWithText(PrivacyCopy.softwareKeystoreNotice("phone")).isEmpty())
+        assertTrue(ui.has(DeleteAccountCopy.ROW_TITLE))
+        assertTrue(ui.has(DeleteAccountCopy.ROW_SUBTITLE))
+        ui.pressable(DeleteAccountCopy.ROW_TITLE).click()
+        assertEquals(1, deleteAccount[0])
+        ui.pressable(PrivacyCopy.LOCK_NOW).click()
+        assertEquals(2, lockNow[0])
     }
 }

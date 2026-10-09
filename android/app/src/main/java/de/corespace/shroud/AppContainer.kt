@@ -96,6 +96,7 @@ class AppContainer(
         override fun onAuthenticatedSuccess() = auth.sessionController.authOutcomes.onAuthenticatedSuccess()
         override fun onAuthenticationFailure() = auth.sessionController.authOutcomes.onAuthenticationFailure()
         override fun onDeviceRemoved(token: String) = auth.sessionController.authOutcomes.onDeviceRemoved(token)
+        override fun onAccountDeleted(token: String) = auth.sessionController.authOutcomes.onAccountDeleted(token)
     }
 
     val net by lazy { NetModule(this) }                                   // W1-NET

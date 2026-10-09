@@ -128,9 +128,12 @@ data class PasswordChangeRequest(
     @SerialName("new_password") val newPassword: String,
 )
 
-/** `DELETE /auth/account` (no UI in v1, P18). */
+/** `DELETE /auth/account`. */
 @Serializable
-data class DeleteAccountRequest(val password: String)
+data class DeleteAccountRequest(val password: String) {
+    /** The password must not appear in logs. */
+    override fun toString(): String = "DeleteAccountRequest"
+}
 
 /** `GET /health` (`APIClient.swift:471-475`; iOS requires `database`, Android tolerates its absence). */
 @Serializable

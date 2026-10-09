@@ -135,7 +135,15 @@ class DeviceWipeController(
      * refill a store the wipe is about to delete.
      */
     fun start(reason: WipeReason) {
-        if (phaseState.value != WipePhase.Idle) return
+        if (phaseState.value != WipePhase.Idle) {
+            // A removal or an ended session learned the account was deleted. Don't start a second wipe.
+            if (reason == WipeReason.AccountDeleted &&
+                (reasonState.value == WipeReason.Removed || reasonState.value == WipeReason.SessionEnded)
+            ) {
+                reasonState.value = WipeReason.AccountDeleted
+            }
+            return
+        }
         reasonState.value = reason
         handleState.value = session.session.value?.username?.let { "@$it" } ?: ""
         detailsState.value = emptyMap()
@@ -213,7 +221,7 @@ class DeviceWipeController(
                 when (outcome) {
                     ServerSessionOutcome.Offline -> "Ended here · server offline"
                     ServerSessionOutcome.UpdateRequired -> "Ended here · app update needed"
-                    ServerSessionOutcome.Ended, ServerSessionOutcome.Removed -> "Session ended"
+                    ServerSessionOutcome.Ended, ServerSessionOutcome.Removed, ServerSessionOutcome.AccountDeleted -> "Session ended"
                 }
             }
             WipeStep.Messages -> {
@@ -419,6 +427,7 @@ class DeviceWipeController(
          * (`serverSessionOutcome(of:)`, `:285-291`).
          */
         fun serverSessionOutcome(error: ApiError): ServerSessionOutcome = when {
+            error.isAccountDeleted -> ServerSessionOutcome.AccountDeleted
             error.isDeviceRemoved -> ServerSessionOutcome.Removed
             error is ApiError.Transport -> ServerSessionOutcome.Offline
             error.isUpdateRequired -> ServerSessionOutcome.UpdateRequired

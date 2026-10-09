@@ -10,6 +10,7 @@ import de.corespace.shroud.ui.settings.about.LicensesScreen
 import de.corespace.shroud.ui.settings.devices.DevicesScreen
 import de.corespace.shroud.ui.settings.notifications.NotificationSoundScreen
 import de.corespace.shroud.ui.settings.notifications.NotificationsSettingsScreen
+import de.corespace.shroud.ui.settings.privacy.DeleteAccountScreen
 import de.corespace.shroud.ui.settings.privacy.PrivacySecurityScreen
 import de.corespace.shroud.ui.settings.push.PushDeliveryScreen
 import de.corespace.shroud.ui.shell.LocalShellNavigation
@@ -43,6 +44,7 @@ fun SettingsDestination(route: SettingsRoute, onBack: () -> Unit) {
         SettingsRoute.Notifications -> NotificationsSettingsScreen(onBack, onOpenSound = { navigation.push(SettingsRoute.NotificationSound) })
         SettingsRoute.NotificationSound -> NotificationSoundScreen(onBack)
         SettingsRoute.PrivacySecurity -> PrivacySecurityScreen(onBack)
+        SettingsRoute.DeleteAccount -> DeleteAccountScreen(onBack)
         SettingsRoute.PushDelivery -> PushDeliveryScreen(onBack)
         SettingsRoute.About -> AboutScreen(onBack, onOpenLicenses = { navigation.push(SettingsRoute.Licenses) })
         SettingsRoute.Licenses -> LicensesScreen(onBack, onOpen = { navigation.push(SettingsRoute.License(it)) })

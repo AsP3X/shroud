@@ -70,7 +70,9 @@ class RealtimeClientTest {
     private val focusFalseNotBackground = """{"type":"focus","focused":false,"background":false}"""
     private fun authFrame(token: String = "tok") = """{"type":"auth","token":"$token"}"""
     private fun backgroundAuthFrame(token: String = "tok") = """{"type":"auth","token":"$token","background":true}"""
-    private fun authError(code: String) = """{"type":"auth.error","error":{"code":"$code","message":"m"}}"""
+    private fun authError(code: String, reason: String? = null) =
+        if (reason == null) """{"type":"auth.error","error":{"code":"$code","message":"m"}}"""
+        else """{"type":"auth.error","error":{"code":"$code","message":"m","reason":"$reason"}}"""
     private val typingMarker = """{"type":"typing","peer_user_id":"8f14e45f-ceea-467a-9575-3a6b7a1e6c0e","is_typing":true}"""
 
     @Before
@@ -197,6 +199,7 @@ class RealtimeClientTest {
         val successes = Collections.synchronizedList(ArrayList<Unit>())
         val failures = Collections.synchronizedList(ArrayList<Unit>())
         val removed = Collections.synchronizedList(ArrayList<String>())
+        val accountDeleted = Collections.synchronizedList(ArrayList<String>())
 
         override fun onAuthenticatedSuccess() {
             successes += Unit
@@ -208,6 +211,10 @@ class RealtimeClientTest {
 
         override fun onDeviceRemoved(token: String) {
             removed += token
+        }
+
+        override fun onAccountDeleted(token: String) {
+            accountDeleted += token
         }
     }
 
@@ -515,10 +522,24 @@ class RealtimeClientTest {
         advanceTimeBy(120_000)
         settle()
         assertEquals(listOf("tok"), outcomes.removed.toList())
+        assertTrue(outcomes.accountDeleted.isEmpty())
         assertTrue(outcomes.failures.isEmpty())
         assertEquals(1, server.requestCount)
         client.onNetworkAvailable()
         settle()
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun accountDeletedOnAuthErrorReportsThatAndNotARemoval() = runTest {
+        val client = newClient()
+        val peer = Peer()
+        connect(client, peer)
+        peer.send(authError("DEVICE_REMOVED", reason = "account_deleted"))
+        await("the deletion") { outcomes.accountDeleted.isNotEmpty() }
+        assertEquals(listOf("tok"), outcomes.accountDeleted.toList())
+        assertTrue(outcomes.removed.isEmpty())
+        assertTrue(outcomes.failures.isEmpty())
         assertEquals(1, server.requestCount)
     }
 

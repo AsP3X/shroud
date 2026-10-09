@@ -93,6 +93,9 @@ class PushContentsTest {
         val removed = json("""{"v":1,"kind":"device_removed"}""")
         assertNull(PushContents.fromWebPushJson(removed))
         assertTrue(PushContents.isDeviceRemoval(removed))
+        val withReason = json("""{"v":1,"kind":"device_removed","reason":"account_deleted"}""")
+        assertNull(PushContents.fromWebPushJson(withReason))
+        assertTrue(PushContents.isDeviceRemoval(withReason))
         assertFalse(PushContents.isDeviceRemoval(json("""{"v":1,"kind":"message"}""")))
         assertFalse(PushContents.isDeviceRemoval(json("""{"type":"message"}""")))
     }

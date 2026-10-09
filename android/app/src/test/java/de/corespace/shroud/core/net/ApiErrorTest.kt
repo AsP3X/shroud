@@ -77,11 +77,31 @@ class ApiErrorTest {
     fun onlyDeviceRemovedCodeIsARemoval() {
         val removed = """{"error":{"code":"DEVICE_REMOVED","message":"x"}}"""
         val plain = """{"error":{"code":"UNAUTHORIZED","message":"x"}}"""
-        assertTrue(ApiError.from(401, removed).isDeviceRemoved)
-        assertTrue(ApiError.from(401, removed).isUnauthorized)
+        val removal = ApiError.from(401, removed)
+        assertTrue(removal.isDeviceRemoved)
+        assertTrue(removal.isUnauthorized)
+        assertFalse(removal.isAccountDeleted)
+        assertNull((removal as ApiError.Server).reason)
         assertFalse(ApiError.from(401, plain).isDeviceRemoved)
+        assertFalse(ApiError.from(401, plain).isAccountDeleted)
         assertFalse(ApiError.from(401, "").isDeviceRemoved)
         assertFalse(ApiError.from(403, removed).isDeviceRemoved)
+        assertFalse(ApiError.from(403, removed).isAccountDeleted)
+    }
+
+    @Test
+    fun accountDeletedIsARemovalThatCarriesTheReason() {
+        val body = """{"error":{"code":"DEVICE_REMOVED","message":"This account was deleted.","reason":"account_deleted"}}"""
+        val error = server(ApiError.from(401, body))
+        assertEquals(ApiError.ACCOUNT_DELETED_REASON, error.reason)
+        assertTrue(error.isDeviceRemoved)
+        assertTrue(error.isAccountDeleted)
+        val other = server(ApiError.from(401, """{"error":{"code":"DEVICE_REMOVED","message":"x","reason":"other"}}"""))
+        assertEquals("other", other.reason)
+        assertTrue(other.isDeviceRemoved)
+        assertFalse(other.isAccountDeleted)
+        assertFalse(ApiError.from(403, body).isAccountDeleted)
+        assertFalse(ApiError.from(401, """{"error":{"code":"UNAUTHORIZED","message":"x","reason":"account_deleted"}}""").isAccountDeleted)
     }
 
     @Test

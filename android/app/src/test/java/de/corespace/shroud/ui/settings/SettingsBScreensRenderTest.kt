@@ -475,7 +475,7 @@ class SettingsBScreensRenderTest {
 
     // ---- Privacy and Security ----
 
-    private val noPrivacyActions = PrivacyCallbacks({}, {}, {}, { _, _ -> }, {}, {}, {}, {}, {})
+    private val noPrivacyActions = PrivacyCallbacks({}, {}, {}, { _, _ -> }, {}, {}, {}, {}, {}, {})
 
     private fun privacy(
         state: PrivacyState = PrivacyState(),

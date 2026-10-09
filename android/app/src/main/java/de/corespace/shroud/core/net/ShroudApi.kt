@@ -150,6 +150,19 @@ class ShroudApi(internal val client: ApiClient) {
     /** `POST /auth/logout`, no body → 204 (`AuthService.swift:60-70`). */
     suspend fun logout(token: String) = client.postEmpty("auth/logout", token)
 
+    /**
+     * `DELETE /auth/account` with the account password → 204. The password is the request body only;
+     * [DeleteAccountRequest] does not print it.
+     */
+    suspend fun deleteAccount(token: String, password: String) {
+        client.deleteUnit(
+            ApiClient.ACCOUNT_DELETION_PATH,
+            token,
+            DeleteAccountRequest(password),
+            DeleteAccountRequest.serializer(),
+        )
+    }
+
     // ---- Devices (`DevicesService.swift`) ----
 
     /** `GET /devices` — non-revoked devices, oldest first (`DevicesService.swift:14-21`). */
