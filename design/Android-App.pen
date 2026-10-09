@@ -1,5 +1,5 @@
 {
-  "version": "2.20",
+  "version": "2.21",
   "children": [
     {
       "type": "frame",
@@ -76851,7 +76851,7 @@
                           "id": "tgZ5h",
                           "name": "Subtitle",
                           "fill": "$text-secondary",
-                          "content": "Official · api.shroud.app",
+                          "content": "Official · shroud-app.com",
                           "fontFamily": "$font",
                           "fontSize": 13,
                           "fontWeight": "normal"
@@ -77998,7 +77998,7 @@
                           "id": "XFWqG",
                           "name": "Subtitle",
                           "fill": "$text-secondary",
-                          "content": "Official · api.shroud.app",
+                          "content": "Official · shroud-app.com",
                           "fontFamily": "$font",
                           "fontSize": 13,
                           "fontWeight": "normal"
@@ -102664,7 +102664,7 @@
                           "id": "Lt5AN",
                           "name": "Subtitle",
                           "fill": "$text-secondary",
-                          "content": "Official · api.shroud.app",
+                          "content": "Official · shroud-app.com",
                           "fontFamily": "$font",
                           "fontSize": 13,
                           "fontWeight": "normal"
@@ -128935,7 +128935,7 @@
                           "id": "u1exCA",
                           "name": "Subtitle",
                           "fill": "$text-secondary",
-                          "content": "Official · api.shroud.app",
+                          "content": "Official · shroud-app.com",
                           "fontFamily": "$font",
                           "fontSize": 13,
                           "fontWeight": "normal"

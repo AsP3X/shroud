@@ -23,7 +23,7 @@ class ServerSettingsLogicTest {
         // Official ignores the self-hosted fields it carries.
         assertFalse(ServerSettingsLogic.endpointChanged(official.copy(host = "elsewhere"), official))
         // Self-hosted at the official root is still another mode.
-        val sameRoot = ServerConfiguration(ServerConnectionMode.SelfHosted, "api.shroud.app", "", "/api/v1", true)
+        val sameRoot = ServerConfiguration(ServerConnectionMode.SelfHosted, "shroud-app.com", "", "/api/v1", true)
         assertEquals(official.resolvedBaseUrl, sameRoot.resolvedBaseUrl)
         assertTrue(ServerSettingsLogic.endpointChanged(sameRoot, official))
     }

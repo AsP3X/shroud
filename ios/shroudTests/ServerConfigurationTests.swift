@@ -7,6 +7,7 @@ struct ServerConfigurationTests {
     func officialUsesManagedURL() {
         var config = ServerConfiguration.default
         config.mode = .official
+        #expect(ServerConfiguration.officialBaseURLString == "https://shroud-app.com/api/v1")
         #expect(config.resolvedBaseURLString == ServerConfiguration.officialBaseURLString)
     }
 

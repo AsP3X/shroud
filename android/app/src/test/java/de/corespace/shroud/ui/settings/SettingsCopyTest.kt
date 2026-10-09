@@ -102,7 +102,7 @@ class SettingsCopyTest {
 
     @Test
     fun serverSubtitle() {
-        assertEquals("Official · api.shroud.app", SettingsCopy.serverSubtitle(ServerConfiguration.official))
+        assertEquals("Official · shroud-app.com", SettingsCopy.serverSubtitle(ServerConfiguration.official))
         assertEquals("http://10.0.2.2:8080/api/v1", SettingsCopy.serverSubtitle(ServerConfiguration.localDevelopment("10.0.2.2", 8080)))
         val selfHosted = ServerConfiguration(ServerConnectionMode.SelfHosted, "chat.example.org", "", "/api/v1/", true)
         assertEquals("https://chat.example.org/api/v1", SettingsCopy.serverSubtitle(selfHosted))

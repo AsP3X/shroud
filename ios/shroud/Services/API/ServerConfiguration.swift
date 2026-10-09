@@ -17,9 +17,8 @@ nonisolated struct ServerConfiguration: Equatable, Codable, Sendable {
     /// When true, self-hosted uses `https://`.
     var useHTTPS: Bool
 
-    /// Built-in production / managed endpoint placeholder.
-    /// Human: Replace with the real managed URL when the official service ships.
-    static let officialBaseURLString = "https://api.shroud.app/api/v1"
+    /// Managed Shroud service. Release builds use this when the mode is official.
+    static let officialBaseURLString = "https://shroud-app.com/api/v1"
 
     /// Debug defaults to local Docker Compose; Release defaults to official.
     static var `default`: ServerConfiguration {
@@ -34,7 +33,7 @@ nonisolated struct ServerConfiguration: Equatable, Codable, Sendable {
         #else
         ServerConfiguration(
             mode: .official,
-            host: "api.shroud.app",
+            host: "shroud-app.com",
             port: "443",
             apiPath: "/api/v1",
             useHTTPS: true

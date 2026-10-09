@@ -43,7 +43,7 @@ class SettingsScreensUiTest {
         deviceCount = 3,
         notificationsSummary = "On",
         themeTitle = "Dark",
-        serverSubtitle = "Official · api.shroud.app",
+        serverSubtitle = "Official · shroud-app.com",
         isLoggingOut = false,
         deviceNoun = DeviceNoun.PHONE,
         appVersion = "0.1.0",
@@ -78,7 +78,7 @@ class SettingsScreensUiTest {
         assertEquals(listOf("Devices", "3"), ui.row("Devices").texts())
         assertEquals(listOf("Notifications and Sounds", "On"), ui.row("Notifications and Sounds").texts())
         assertEquals(listOf("Appearance", "Dark"), ui.row("Appearance").texts())
-        assertEquals(listOf("Server", "Official · api.shroud.app"), ui.row("Server").texts())
+        assertEquals(listOf("Server", "Official · shroud-app.com"), ui.row("Server").texts())
 
         for ((title, route) in listOf(
             "Saved Messages" to SettingsRoute.SavedMessages,

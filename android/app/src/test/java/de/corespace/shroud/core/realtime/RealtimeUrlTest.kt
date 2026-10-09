@@ -71,6 +71,6 @@ class RealtimeUrlTest {
             val target = RealtimeClient.target(base)
             assertTrue("$base → $target", target is RealtimeClient.Target.Url)
         }
-        assertEquals(RealtimeClient.Target.Url("wss://api.shroud.app/api/v1/ws"), RealtimeClient.target(ServerConfiguration.OFFICIAL_BASE_URL))
+        assertEquals(RealtimeClient.Target.Url("wss://shroud-app.com/api/v1/ws"), RealtimeClient.target(ServerConfiguration.OFFICIAL_BASE_URL))
     }
 }

@@ -301,7 +301,7 @@ class ApiClientTest {
 
         // The emulator's host and https are fine; a broken address is a transport error.
         assertEquals("http://10.0.2.2:8080/api/v1/auth/me", ApiClient({ "http://10.0.2.2:8080/api/v1/" }, json).url("/auth/me").toString())
-        assertEquals("https://api.shroud.app/api/v1/config", ApiClient({ ServerConfiguration.OFFICIAL_BASE_URL }, json).url("config").toString())
+        assertEquals("https://shroud-app.com/api/v1/config", ApiClient({ ServerConfiguration.OFFICIAL_BASE_URL }, json).url("config").toString())
         val broken = assertThrows(ApiError.Transport::class.java) { ApiClient({ "server.example/api/v1" }, json).url("config") }
         assertEquals("That server address is not a valid URL.", broken.detail)
     }

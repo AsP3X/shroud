@@ -65,10 +65,10 @@ data class ServerConfiguration(
             return '.' !in h
         }
 
-        /** Placeholder for the managed service, as on iOS. */
-        const val OFFICIAL_BASE_URL = "https://api.shroud.app/api/v1"
+        /** Managed Shroud service. Release builds use this when the mode is official. */
+        const val OFFICIAL_BASE_URL = "https://shroud-app.com/api/v1"
 
-        val official = ServerConfiguration(ServerConnectionMode.Official, "api.shroud.app", "443", "/api/v1", true)
+        val official = ServerConfiguration(ServerConnectionMode.Official, "shroud-app.com", "443", "/api/v1", true)
 
         /** Debug: a local Compose stack seen from the emulator (10.0.2.2 is the host machine). */
         fun localDevelopment(host: String, port: Int) =

@@ -1,5 +1,5 @@
 {
-  "version": "2.20",
+  "version": "2.21",
   "children": [
     {
       "type": "frame",
@@ -113770,7 +113770,7 @@
                               "id": "u404cd",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -114967,7 +114967,7 @@
                               "id": "lZ4Fa",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -116355,7 +116355,7 @@
                               "id": "GJz8H",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -118455,7 +118455,7 @@
                               "id": "KRcgP",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -122256,7 +122256,7 @@
                               "id": "kMNoS",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -124897,7 +124897,7 @@
                               "id": "P9Mbb",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -126596,7 +126596,7 @@
                               "id": "axOQI",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -128526,7 +128526,7 @@
                               "id": "xDpN8",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -130598,7 +130598,7 @@
                               "id": "N7iv0a",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -149305,7 +149305,7 @@
                               "id": "HGazD",
                               "name": "Subtitle",
                               "fill": "$text-secondary",
-                              "content": "Official · api.shroud.app",
+                              "content": "Official · shroud-app.com",
                               "fontFamily": "$font",
                               "fontSize": 13,
                               "fontWeight": "normal"

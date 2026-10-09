@@ -93,7 +93,7 @@ class AboutScreenTest {
                 deviceCount = 3,
                 notificationsSummary = "On",
                 themeTitle = "System",
-                serverSubtitle = "Official · api.shroud.app",
+                serverSubtitle = "Official · shroud-app.com",
                 isLoggingOut = false,
                 deviceNoun = DeviceNoun.PHONE,
                 appVersion = "0.1.0",

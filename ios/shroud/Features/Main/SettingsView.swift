@@ -187,7 +187,7 @@ struct SettingsView: View {
     private var serverSubtitle: String {
         switch serverConfig.configuration.mode {
         case .official:
-            return "Official · api.shroud.app"
+            return "Official · shroud-app.com"
         case .selfHosted:
             return serverConfig.configuration.selfHostedPreviewString
         }

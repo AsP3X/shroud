@@ -57,7 +57,7 @@ show_help() {
 
   ${BOLD}What you get:${NC}
     A signed release APK for a phone, by default. It opens on the official
-    server (api.shroud.app). The file is copied to the output folder.
+    server (shroud-app.com). The file is copied to the output folder.
 
   ${BOLD}Options:${NC}
     Saved in android/.apk.env. Change them with ./apk.sh --edit, or edit the
@@ -155,7 +155,7 @@ kind_label() {
 
 server_label() {
   if [[ "$VARIANT" == "release" ]]; then
-    printf 'Official · api.shroud.app'
+    printf 'Official · shroud-app.com'
   else
     printf 'Local · http://10.0.2.2:8080/api/v1'
   fi

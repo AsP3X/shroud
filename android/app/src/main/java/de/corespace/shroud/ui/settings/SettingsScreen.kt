@@ -169,7 +169,7 @@ object SettingsCopy {
     /** TalkBack while signing out, without the ellipsis (`SettingsView.swift:550`). */
     const val SIGNING_OUT_SPOKEN = "Signing out"
     const val LOG_OUT_TITLE = "Log out of Shroud?"
-    const val OFFICIAL_SERVER_SUBTITLE = "Official · api.shroud.app"
+    const val OFFICIAL_SERVER_SUBTITLE = "Official · shroud-app.com"
     const val ABOUT = "About Shroud"
 
     /** TalkBack for the About row's dot (`SettingsView.swift:548`). */
