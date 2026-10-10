@@ -68,6 +68,11 @@ export function longDate(iso: string): string {
 
 export type Presence = { online: boolean; lastSeenAt: string | null };
 
+/** A deleted account has no presence: no online dot and no last seen. */
+export function visiblePresence(deleted: boolean | undefined, presence: Presence | undefined): Presence | undefined {
+  return deleted ? undefined : presence;
+}
+
 export function presenceLabel(presence: Presence | undefined): string {
   if (!presence) return "";
   if (presence.online) return "online";

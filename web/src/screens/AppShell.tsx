@@ -32,7 +32,7 @@ import { ProfileSheet } from "../components/ProfileSheet";
 import { MyQrSheet } from "../components/qr/MyQrSheet";
 import { Rail, TabBar, type Tab } from "../components/Rail";
 import { Thread } from "../components/Thread";
-import { listTimestamp, presenceLabel, type Presence } from "../format";
+import { listTimestamp, presenceLabel, visiblePresence, type Presence } from "../format";
 import { acceptChangedPeerKey, isPeerKeyBlocked, onPeerKeyBlocked, PEER_KEY_CHANGED } from "../crypto/peerIdentity";
 import type { IdentityMaterial } from "../crypto/identity";
 import { loadIdentity } from "../crypto/store";
@@ -637,11 +637,25 @@ export function AppShell({ session }: { session: Session }) {
     setError(errors.length === 3 ? errors[0] : null);
     setLoading(false);
     const convs = nextConv ?? conversationsRef.current;
+    const deletedIds = new Set(convs.filter((c) => c.peer.deleted).map((c) => c.peer.id.toLowerCase()));
+    if (deletedIds.size) {
+      setPresenceByUser((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of deletedIds) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
     const rosterIds = [
       ...convs.map((c) => c.peer.id),
       ...(roster.status === "fulfilled" ? roster.value.contacts.map((c) => c.user_id) : []),
     ];
-    const uniqueIds = [...new Set(rosterIds.map((id) => id.toLowerCase()))];
+    const uniqueIds = [...new Set(rosterIds.map((id) => id.toLowerCase()))].filter((id) => !deletedIds.has(id));
     const now = Date.now();
     if (now - lastPresenceSweep.current >= 30_000) {
       lastPresenceSweep.current = now;
@@ -1739,8 +1753,8 @@ export function AppShell({ session }: { session: Session }) {
         username: c.peer.deleted ? "Deleted account" : displayContactName(session.user.id, c.peer.id),
         subtitle: previewLine(session.user.id, c.peer.id),
         timestamp: listTimestamp(c.last_message_at),
-        online: Boolean(presenceByUser[c.peer.id.toLowerCase()]?.online),
-        activity: activityFor(c.peer.id, typingPeers, recordingPeers),
+        online: Boolean(visiblePresence(c.peer.deleted, presenceByUser[c.peer.id.toLowerCase()])?.online),
+        activity: c.peer.deleted ? undefined : activityFor(c.peer.id, typingPeers, recordingPeers),
         // The open chat never shows one: it is being looked at.
         newReactions:
           (c.unseen_reactions ?? 0) > 0 && selected?.id.toLowerCase() !== c.peer.id.toLowerCase(),
@@ -2541,8 +2555,14 @@ export function AppShell({ session }: { session: Session }) {
       ? { ...session, user: { ...session.user, share_code: newShareCode } }
       : session;
   const shareLink = shareUrl(profile.user.share_code);
-  const selectedPresence = selected ? presenceByUser[selected.id.toLowerCase()] : undefined;
-  const selectedActivity = selected
+  const selectedConversation = selected
+    ? conversations.find((c) => c.peer.id.toLowerCase() === selected.id.toLowerCase())
+    : undefined;
+  const selectedDeleted = Boolean(selectedConversation?.peer.deleted);
+  const selectedPresence = selected
+    ? visiblePresence(selectedDeleted, presenceByUser[selected.id.toLowerCase()])
+    : undefined;
+  const selectedActivity = selected && !selectedDeleted
     ? activityFor(selected.id, typingPeers, recordingPeers)
     : undefined;
   const requests = incoming.map((request) => ({
@@ -2556,9 +2576,6 @@ export function AppShell({ session }: { session: Session }) {
       username: c.peer.deleted ? "Deleted account" : displayContactName(session.user.id, c.peer.id),
       mute: c.mute as ChatMute,
     }));
-  const selectedConversation = selected
-    ? conversations.find((c) => c.peer.id.toLowerCase() === selected.id.toLowerCase())
-    : undefined;
   const selectedLabel = !selected
     ? ""
     : selectedConversation?.peer.deleted
@@ -2877,7 +2894,7 @@ export function AppShell({ session }: { session: Session }) {
               online={Boolean(selectedPresence?.online)}
             />
             <strong>{selectedLabel}</strong>
-            {selectedActivity ? (
+            {selectedDeleted ? null : selectedActivity ? (
               <TypingLabel word={selectedActivity} />
             ) : (
               <span className={selectedPresence?.online ? "online" : undefined}>

@@ -867,6 +867,18 @@ pub(crate) async fn delete_user_account(
                 "peer_user_id": contact_id,
             });
             events.push((*contact_id, event));
+            // The contact rows are already gone, so closing the sockets cannot fan
+            // presence out. Without this, a peer keeps the last "online" it heard
+            // on the "Deleted account" row.
+            events.push((
+                *contact_id,
+                serde_json::json!({
+                    "type": "presence.update",
+                    "user_id": user_id,
+                    "online": false,
+                    "last_seen_at": serde_json::Value::Null,
+                }),
+            ));
         }
         events.extend(ended_calls);
         for (peer_user_id, event) in events {

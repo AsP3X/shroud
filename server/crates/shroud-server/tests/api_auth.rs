@@ -1857,6 +1857,12 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
     assert!(events.iter().any(|event| event["type"] == "contact.removed"
         && event["user_id"] == alice_id.as_str()
         && event["peer_user_id"] == bob_id.as_str()));
+    let bob_presence = events
+        .iter()
+        .find(|event| event["type"] == "presence.update" && event["user_id"] == alice_id.as_str())
+        .expect("presence.update for Bob");
+    assert_eq!(bob_presence["online"], false);
+    assert!(bob_presence["last_seen_at"].is_null());
     // Her ringing call stops ringing on Bob's side, as if she had hung up.
     let call_event = events
         .iter()
@@ -1908,6 +1914,12 @@ async fn deleting_an_account_deletes_each_chat_for_both() {
         .expect("conversation.deleted for Carol");
     assert_eq!(chat_event["user_id"], alice_id.as_str());
     assert_eq!(chat_event["cleared_for_peer"], true);
+    let carol_presence = events
+        .iter()
+        .find(|event| event["type"] == "presence.update" && event["user_id"] == alice_id.as_str())
+        .expect("presence.update for Carol");
+    assert_eq!(carol_presence["online"], false);
+    assert!(carol_presence["last_seen_at"].is_null());
     // The reactions went with the purged messages, so her catch-up has nothing to report, not
     // even a removal.
     let carol_caught_up = reaction_changes(&app, &carol, &alice_id, carol_cursor).await;
