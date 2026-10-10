@@ -234,12 +234,23 @@ yet on `dev`. Shots in `/tmp/c5-shots/`, compared with the same frames.
 
 | Fix | Shot | Result |
 | --- | ---- | ------ |
-| F1 iPhone | `ios/delete-account-deleting.png` | Back, Cancel and the password card are faded as in the frame. **Open:** the password dots are missing from the faded field (the row shows only "Password"); the frame keeps them, dimmed. With the password revealed the text does show (`…-kept.png`, `…-1502.png`), and before the fade the dots showed while deleting (`/tmp/g5-shots/ios/ios-delete-account-deleting.png`). Either the 0.5 opacity on the card stops the secure field's dots being drawn, or it is an artefact of the test's paste. Check in the running app before merging; if real, fade the label, eye and background and leave the secure field out of the group opacity. |
+| F1 iPhone | `ios/delete-account-deleting.png` | Back, Cancel and the password card are faded as in the frame. The password dots are missing from that shot (the row shows only "Password"), but that is the capture, not the fade: see the check below. |
 | F1 iPad | none | `/tmp/c5-shots/ipad/` is empty. The view is shared with iPhone, so the same modifiers apply, but no screenshot shows it, and the dots question applies there too. |
 | F2 web | `web/delete-account-deleting.png` | Matches: field, Back and Cancel faded, dots kept. |
 | F3 Android | `android/delete-account.png` | Matches: label and Cancel Regular, heading 26 sp, message-with-x icon. |
 | F4 web | `web/peer-deleted-no-dot.png` | "Deleted account" has no online dot. The delete now sends the peers `presence.update` with `online: false`; nothing about what is deleted changed. |
 | iOS welcome | `ios/welcome-after-wipe.png` | Shows the welcome screen itself. The proof gap in §5.1 is closed for iPhone. |
+
+**The dots (checked 2026-10-10, iPhone 17e simulator, iOS 27.0, the same OS as the test run).** A
+throwaway app with the password card's code from `fix/delete-account-c5` (the secure and plain
+fields in one ZStack, `.disabled(isDeleting)`, `.opacity(isDeleting ? 0.5 : 1)`), captured with
+`simctl io screenshot`. The dots stay, dimmed, in every case: text set before launch; the field
+focused and then deleting; revealed, text entered, hidden again, then deleting (the order the UI
+test used); and text typed with real keys into the secure field, then deleting. Without the fade
+they are at full strength, as in the first G5 shot. So the 0.5 opacity does not hide the dots and
+F1 is right as committed. Why the test's shot lacks them was not traced; it took its picture with
+`XCUIScreen.main.screenshot()`, the harness with `simctl`. A shot of the real screen taken with
+`simctl` would close it, on iPhone and on iPad.
 
 ## 6. Order
 
