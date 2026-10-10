@@ -80,7 +80,7 @@ internal fun ChatsScaffold(
                 modifier = Modifier
                     .fillMaxSize()
                     .edgeEffectSource(backdrop)
-                    .nestedScroll(rememberKeyboardDismissOnDrag()),
+                    .nestedScroll(rememberKeyboardDismissOnDrag(state.interactionSource)),
                 contentPadding = PaddingValues(top = barBlock, bottom = bottom),
             ) {
                 item(key = MainScrollBackdrop.HEADER_KEY, contentType = MainScrollBackdrop.HEADER_KEY) {

@@ -86,7 +86,7 @@ fun PushedScreen(
                 Modifier
                     .fillMaxSize()
                     .edgeEffectSource(backdrop)
-                    .nestedScroll(rememberKeyboardDismissOnDrag())
+                    .nestedScroll(rememberKeyboardDismissOnDrag(scrollState.interactionSource))
                     .verticalScroll(scrollState)
                     .padding(top = statusTop + PushedBarMetrics.height),
                 content = content,

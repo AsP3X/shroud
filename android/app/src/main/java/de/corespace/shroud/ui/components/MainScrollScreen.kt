@@ -1,6 +1,8 @@
 package de.corespace.shroud.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -88,7 +90,7 @@ fun MainScrollScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .edgeEffectSource(backdrop)
-                .nestedScroll(rememberKeyboardDismissOnDrag()),
+                .nestedScroll(rememberKeyboardDismissOnDrag(state.interactionSource)),
             contentPadding = PaddingValues(top = barBlock, bottom = bottom),
         ) {
             if (header != null) {
@@ -143,18 +145,23 @@ object MainScrollBackdrop {
 /**
  * A nested-scroll connection that hides the keyboard and clears focus when the user drags the
  * list (iOS `.scrollDismissesKeyboard(.interactively)`; shell-chats §4.4). Consumes nothing.
+ *
+ * [interactionSource] is the scroll state's: only a finger drag counts. The scroll that brings a
+ * focused field above the opening keyboard also reports [NestedScrollSource.UserInput], and
+ * hiding on it would close the keyboard the moment it opens.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun rememberKeyboardDismissOnDrag(): NestedScrollConnection {
+internal fun rememberKeyboardDismissOnDrag(interactionSource: InteractionSource): NestedScrollConnection {
     val keyboard by rememberUpdatedState(LocalSoftwareKeyboardController.current)
     val focus by rememberUpdatedState(LocalFocusManager.current)
     val imeVisible by rememberUpdatedState(WindowInsets.isImeVisible)
+    val dragged = interactionSource.collectIsDraggedAsState()
     return remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 // Only while the keyboard is up: a hide request on every scroll frame would be waste.
-                if (imeVisible && source == NestedScrollSource.UserInput && available.y != 0f) {
+                if (imeVisible && dragged.value && source == NestedScrollSource.UserInput && available.y != 0f) {
                     keyboard?.hide()
                     focus.clearFocus()
                 }
