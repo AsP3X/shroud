@@ -227,6 +227,20 @@ Proof gap, not a design difference: `ios-welcome-after-wipe.png`, `ipad-welcome-
 welcome screen…"), not the welcome screen. The done state is right and carries no other-devices
 footnote; the welcome screen itself is shown only by the Android and web shots.
 
+### 5.2 Re-check of the fixes (2026-10-10)
+
+The fixes are four commits on `fix/delete-account-c5` (7be11546, 3b833c58, d62d1979, ef6b8059), not
+yet on `dev`. Shots in `/tmp/c5-shots/`, compared with the same frames.
+
+| Fix | Shot | Result |
+| --- | ---- | ------ |
+| F1 iPhone | `ios/delete-account-deleting.png` | Back, Cancel and the password card are faded as in the frame. **Open:** the password dots are missing from the faded field (the row shows only "Password"); the frame keeps them, dimmed. With the password revealed the text does show (`…-kept.png`, `…-1502.png`), and before the fade the dots showed while deleting (`/tmp/g5-shots/ios/ios-delete-account-deleting.png`). Either the 0.5 opacity on the card stops the secure field's dots being drawn, or it is an artefact of the test's paste. Check in the running app before merging; if real, fade the label, eye and background and leave the secure field out of the group opacity. |
+| F1 iPad | none | `/tmp/c5-shots/ipad/` is empty. The view is shared with iPhone, so the same modifiers apply, but no screenshot shows it, and the dots question applies there too. |
+| F2 web | `web/delete-account-deleting.png` | Matches: field, Back and Cancel faded, dots kept. |
+| F3 Android | `android/delete-account.png` | Matches: label and Cancel Regular, heading 26 sp, message-with-x icon. |
+| F4 web | `web/peer-deleted-no-dot.png` | "Deleted account" has no online dot. The delete now sends the peers `presence.update` with `online: false`; nothing about what is deleted changed. |
+| iOS welcome | `ios/welcome-after-wipe.png` | Shows the welcome screen itself. The proof gap in §5.1 is closed for iPhone. |
+
 ## 6. Order
 
 | Step | Needs | Unblocks |
