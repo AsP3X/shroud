@@ -4,7 +4,8 @@
 `docs/account-deletion/` (`ios-`, `ipad-`, `web-`, `android-` + `privacy-and-security`,
 `delete-account`, `delete-account-{filled,deleting,wrong-password,too-many-tries,couldnt-reach}`,
 `wipe-account-deleted`; Android also `privacy-and-security-dark`). G1–G4 are on `dev` (0df8546d).
-C5 done 2026-10-10: see §5.1 for what matched and the four fixes left for Grok.
+C5 done 2026-10-10: §5.1 lists what matched and four fixes; §5.2 their re-check. The fixes are on
+`dev` (d6089317). Left: a `simctl` shot of the real deleting state on iPhone and iPad, and the deploy.
 **Scope:** let a person delete their own account from iOS, the web client and Android. The server
 already does the deletion (`DELETE /auth/account`, `routes/auth.rs`, documented in
 `docs/server-plan.md` § `DELETE /auth/account`). No app offers it yet; Android has only the request
@@ -229,8 +230,10 @@ footnote; the welcome screen itself is shown only by the Android and web shots.
 
 ### 5.2 Re-check of the fixes (2026-10-10)
 
-The fixes are four commits on `fix/delete-account-c5` (7be11546, 3b833c58, d62d1979, ef6b8059), not
-yet on `dev`. Shots in `/tmp/c5-shots/`, compared with the same frames.
+The fixes are four commits (7be11546, 3b833c58, d62d1979, ef6b8059), merged into `dev` on
+2026-10-10 (d6089317) after the branch was caught up and checked: 342 server tests against Postgres
+and Redis, the web type-check and self-tests, 161 Android settings unit tests and the iOS simulator
+build. Shots in `/tmp/c5-shots/`, compared with the same frames.
 
 | Fix | Shot | Result |
 | --- | ---- | ------ |
