@@ -88,6 +88,8 @@ struct DeleteAccountView: View {
                             .foregroundStyle(Theme.textPrimary)
                     }
                     .disabled(true)
+                    // The explicit colour would otherwise stay at full strength while disabled.
+                    .opacity(0.35)
                     .accessibilityLabel("Back")
                 }
             }
@@ -216,6 +218,7 @@ struct DeleteAccountView: View {
         .background(Theme.background)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .disabled(isDeleting)
+        .opacity(isDeleting ? 0.5 : 1)
     }
 
     private var deleteButton: some View {
@@ -252,6 +255,8 @@ struct DeleteAccountView: View {
         .frame(maxWidth: .infinity)
         .frame(minHeight: 44)
         .disabled(isDeleting)
+        // The explicit colour would otherwise stay at full strength while disabled.
+        .opacity(isDeleting ? 0.35 : 1)
     }
 
     private func submit() async {
