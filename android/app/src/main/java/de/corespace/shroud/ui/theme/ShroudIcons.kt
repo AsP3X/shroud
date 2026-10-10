@@ -354,6 +354,14 @@ object ShroudIcons {
         "M9 21H3v-6")
     }
 
+    /** Lucide `message-square-x`. */
+    val MessageSquareX: ImageVector by lazy {
+        icon("MessageSquareX", 24f, true,
+        "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z",
+        "m14.5 8.5-5 5",
+        "m9.5 8.5 5 5")
+    }
+
     /** Lucide `mic`. */
     val Mic: ImageVector by lazy {
         icon("Mic", 24f, true,

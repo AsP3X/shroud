@@ -82,7 +82,7 @@ internal object DeleteAccountCopy {
 }
 
 private val consequenceIcons = listOf(
-    ShroudIcons.ChatCircleDots,
+    ShroudIcons.MessageSquareX,
     ShroudIcons.Users,
     ShroudIcons.Trash,
     ShroudIcons.AtSign,
@@ -152,7 +152,7 @@ internal fun DeleteAccountForm(
     ) {
         ShroudText(
             DeleteAccountCopy.TITLE,
-            inter(28f, FontWeight.Bold),
+            inter(26f, FontWeight.Bold),
             colors.textPrimary,
             Modifier.semantics { heading() },
         )
@@ -234,7 +234,7 @@ private fun PasswordCard(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ShroudText(DeleteAccountCopy.PASSWORD_LABEL, inter(16f, FontWeight.SemiBold), colors.textPrimary)
+            ShroudText(DeleteAccountCopy.PASSWORD_LABEL, inter(16f), colors.textPrimary)
             Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.CenterStart) {
                 NoLearningTextInput {
                     BasicTextField(
@@ -333,7 +333,7 @@ internal fun DeleteAccountActions(
                 .padding(vertical = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
-            ShroudText(DeleteAccountCopy.CANCEL, inter(17f, FontWeight.SemiBold), colors.accent)
+            ShroudText(DeleteAccountCopy.CANCEL, inter(17f), colors.accent)
         }
     }
 }

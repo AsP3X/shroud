@@ -42,7 +42,7 @@ LUCIDE = [
     "copy", "download", "ellipsis", "ellipsis-vertical", "external-link", "eye", "eye-off", "flip-horizontal-2", "folder", "forward",
     "globe", "hand", "hash", "image", "images", "info", "key-round", "link", "list",
     "loader-circle", "lock", "lock-keyhole", "lock-open", "maximize-2", "mic", "mic-off",
-    "minimize-2", "monitor-smartphone", "panel-left", "pencil", "phone", "phone-off", "pin", "play", "plus",
+    "message-square-x", "minimize-2", "monitor-smartphone", "panel-left", "pencil", "phone", "phone-off", "pin", "play", "plus",
     "qr-code", "refresh-cw", "reply", "rotate-ccw", "rotate-ccw-square", "scan", "scan-face",
     "scan-text", "screen-share", "search", "share-2", "shield", "shield-alert", "shield-check",
     "shield-half", "smartphone", "smile", "square-pen", "square-user", "trash-2", "triangle-alert", "user-plus",
