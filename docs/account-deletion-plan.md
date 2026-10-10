@@ -3,7 +3,8 @@
 **Status:** proposed 2026-10-09. Design C1–C4 drawn 2026-10-09; the frames are exported to
 `docs/account-deletion/` (`ios-`, `ipad-`, `web-`, `android-` + `privacy-and-security`,
 `delete-account`, `delete-account-{filled,deleting,wrong-password,too-many-tries,couldnt-reach}`,
-`wipe-account-deleted`; Android also `privacy-and-security-dark`). No code is written yet.
+`wipe-account-deleted`; Android also `privacy-and-security-dark`). G1–G4 are on `dev` (0df8546d).
+C5 done 2026-10-10: see §5.1 for what matched and the four fixes left for Grok.
 **Scope:** let a person delete their own account from iOS, the web client and Android. The server
 already does the deletion (`DELETE /auth/account`, `routes/auth.rs`, documented in
 `docs/server-plan.md` § `DELETE /auth/account`). No app offers it yet; Android has only the request
@@ -109,6 +110,8 @@ failed) stay as they are.
 | - | ---- | ------ | -------- |
 | 1 | 2026-10-09 | Wipe screen for reason **account deleted**: the footnote under the steps (iOS "Your account and chats on other devices stay as they are.", and its web and Android equivalents) is hidden, because it would be false. No new copy. | Claude (C1) |
 | 2 | 2026-10-09 | Layout, all platforms: C2 is the row's subtitle inside the Delete Account card (as "Lock chats now" carries its subtitle), not a footer below it. The card is the last one on the screen, after "Encrypted on this device". The row has a red trash icon tile, the title in red and a chevron. Errors C7–C9 sit as red 13 pt text directly under the password card. | Claude (C1) |
+| 3 | 2026-10-10 | iPad: accepted difference. The frames in `design/iPad-App.pen` show a sidebar and a 600 pt detail column; the app has no split view anywhere, and Privacy and Security, the screen that opens Delete Account, is one full-width column too. Delete Account follows that screen (16 pt margins, full-width cards and button, buttons directly under the field). The frames stay as the target for a later iPad layout pass; that pass is not part of Delete Account. | Claude (C5) |
+| 4 | 2026-10-10 | iPhone and iPad, wrong password: accepted difference. §3.2 says the password stays selected; the frames show it highlighted. The secure field shows no selection in the app (`ios-delete-account-wrong-password.png`), and iOS replaces a secure field's contents on the first keystroke after it is refocused, so retyping works without it. Web and Android do select it. | Claude (C5) |
 
 ---
 
@@ -192,6 +195,37 @@ and commits them with the `.pen` change, so Grok can build from them without ope
 
 C1–C4 run in parallel with G1. Grok's UI tasks (G2–G4) start from the frames once C1–C4 are done,
 and from §3.3 alone if they aren't yet.
+
+### 5.1 C5 result (2026-10-10)
+
+Compared Grok's shots in `/tmp/g5-shots/` with the frames in `docs/account-deletion/`, pair by pair,
+and the copy constants in `DeleteAccount.swift`, `deleteAccount.ts` and `DeleteAccountScreen.kt`
+with §3.3: every string is word for word (C1–C10), on all three clients.
+
+| Platform | Matches the frame | Differs |
+| -------- | ----------------- | ------- |
+| iPhone | privacy-and-security, delete-account, filled, too-many-tries, couldnt-reach, wipe-account-deleted | deleting (F1); wrong-password only in the missing selection (§3.4 #4) |
+| iPad | copy, colours, states and order of every pair; wipe-account-deleted | layout of every pair (§3.4 #3); deleting (F1); wrong-password selection (§3.4 #4) |
+| Web | privacy-and-security, delete-account, filled, wrong-password, too-many-tries, couldnt-reach, wipe-account-deleted (shots are the light theme of the same tokens) | deleting (F2) |
+| Android | privacy-and-security, privacy-and-security-dark, deleting, wrong-password, too-many-tries, couldnt-reach, wipe-account-deleted | delete-account and filled in three details (F3) |
+
+Not differences: C5's note wraps to two lines on iPhone and Android (system font metrics); the red
+field border in the web deleting shot is the error border caught mid-fade on a retry; the amber
+Keystore line on Android is the emulator's own.
+
+Fixes for Grok:
+
+| # | Where | Fix |
+| - | ----- | --- |
+| F1 | iOS `DeleteAccountView.swift`, iPhone and iPad | While deleting, Back, Cancel and the password card are disabled but look enabled (`ios-delete-account-deleting.png`, `ipad-…`). Fade them as the frame does: Back and Cancel to 0.35, the password card to 0.5. Cancel's explicit `foregroundStyle` and the toolbar stand-in's keep them at full strength. |
+| F2 | Web `index.css` | While deleting, the password field stays at full strength: `.delete-account .afield-input:disabled` and `.afield-reveal:disabled` force `opacity: 1`. Fade the field to 0.5 as the frame does. Back and Cancel already fade. |
+| F3 | Android `DeleteAccountScreen.kt` | Three details against `android-delete-account.png`: the "Password" label and Cancel are SemiBold, the frame has them Regular (as iOS does); the heading is 28 sp, the frame 26; the first consequence uses `ChatCircleDots`, which reads as typing, where the frame has a message with an x. |
+| F4 | Web chat list, outside the frames | `web/peer-tombstone.png`: the "Deleted account" row shows the green online dot. A deleted account should show no presence. Check whether the server still reports it online or the web client keeps a stale presence entry. |
+
+Proof gap, not a design difference: `ios-welcome-after-wipe.png`, `ipad-welcome-after-wipe.png` and
+`ios-multi-welcome.png` show the wipe's done state ("This iPhone is clear", "Taking you to the
+welcome screen…"), not the welcome screen. The done state is right and carries no other-devices
+footnote; the welcome screen itself is shown only by the Android and web shots.
 
 ## 6. Order
 
