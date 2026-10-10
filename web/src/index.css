@@ -2071,9 +2071,9 @@ button.reply-quote { cursor: pointer; }
   color: var(--danger); font-size: var(--fs-sm); line-height: 1.4;
 }
 .delete-account .afield-input:disabled {
-  opacity: 1; color: var(--text-primary); -webkit-text-fill-color: var(--text-primary);
+  opacity: 0.5; color: var(--text-primary); -webkit-text-fill-color: var(--text-primary);
 }
-.delete-account .afield-reveal:disabled { opacity: 1; cursor: default; }
+.delete-account .afield-reveal:disabled { opacity: 0.5; cursor: default; }
 .delete-account .afield-reveal:disabled:hover { background: transparent; color: var(--text-tertiary); }
 .delete-account-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .delete-account-actions .btn {
