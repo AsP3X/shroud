@@ -3,7 +3,9 @@
 A read-only review of the whole repository at `d4134a4` (dev): server, admin console, deployment,
 web, iOS and Android. Each finding below was traced through the code from a real entry point to
 its effect. Where a finding could not be run end to end here (a browser, a locked iPhone), it says
-so. H1–H5 and M1 are fixed since; each says how under **Fixed**. The rest is open.
+so. H1–H5 and M1–M10 are fixed since; each says how under **Fixed**. The iOS and Android parts of
+M7–M9 were not compiled or run (no Xcode or Android SDK where they were written) and need a build
+and test run before release. The Low items and the dependency updates are open.
 
 Severity is what an attacker gains, weighted by what they need first. "Server" in a client finding
 means a malicious or compromised Shroud server, which the E2EE design is meant to withstand.
@@ -18,15 +20,15 @@ means a malicious or compromised Shroud server, which the E2EE design is meant t
 | H4 | High | Web | A contact chooses the MIME type of a received photo; `blob:` in `script-src` can turn it into script on Shroud's origin | Fixed |
 | H5 | High | Deploy, admin | The console's DB role can create a schema that the superuser API then resolves first | Fixed (path pinned) |
 | M1 | Medium | Admin | A half-enrolled operator signs in with a password that is in the source | Fixed |
-| M2 | Medium | Admin | Anyone can lock every operator out; parallel sign-ins can exhaust host memory | Open |
-| M3 | Medium | Server | Argon2 runs on Tokio worker threads: a login flood stalls the whole API | Open |
-| M4 | Medium | Server | No media quota: one account stores ~120 GiB/min permanently; scratch files leak | Open |
-| M5 | Medium | Server | WebSocket frames have no size or rate limit; focus toggles amplify into presence fan-out | Open |
-| M6 | Medium | Server | A link-relay pipe outlives its lifetime and idle limits | Open |
-| M7 | Medium | Web (check iOS/Android) | History accepts messages from people outside the chat (server) | Open |
-| M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Open |
-| M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Open |
-| M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Open |
+| M2 | Medium | Admin | Anyone can lock every operator out; parallel sign-ins can exhaust host memory | Fixed |
+| M3 | Medium | Server | Argon2 runs on Tokio worker threads: a login flood stalls the whole API | Fixed |
+| M4 | Medium | Server | No media quota: one account stores ~120 GiB/min permanently; scratch files leak | Fixed |
+| M5 | Medium | Server | WebSocket frames have no size or rate limit; focus toggles amplify into presence fan-out | Fixed |
+| M6 | Medium | Server | A link-relay pipe outlives its lifetime and idle limits | Fixed |
+| M7 | Medium | Web, iOS, Android | History accepts messages from people outside the chat (server) | Fixed (iOS/Android unbuilt) |
+| M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Fixed (unbuilt) |
+| M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Fixed (iOS/Android unbuilt) |
+| M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Fixed (opt-in `ADMIN_HOST`) |
 | L1–L19 | Low | various | See [Low](#low) | Open |
 | — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Open |
 
