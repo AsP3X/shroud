@@ -255,7 +255,8 @@ async fn recover_operator(
         .await
         .map_err(bootstrap_db)?;
     sqlx::query(
-        "UPDATE admin.setup_links SET used_at = now() WHERE operator_id = $1 AND used_at IS NULL",
+        "UPDATE admin.setup_links SET used_at = now(), totp_secret_enc = NULL
+         WHERE operator_id = $1 AND used_at IS NULL",
     )
     .bind(id)
     .execute(&mut **tx)
@@ -620,7 +621,7 @@ async fn setup_get(
     let pool = db_pool(&state)?;
     let key = copy_key(&state)?;
     let link = open_link(&pool, &token).await?;
-    let secret = ensure_secret(&pool, &key, link.operator_id).await?;
+    let secret = ensure_link_secret(&pool, &key, &link).await?;
     let uri = totp::uri(&link.name, &secret);
     let qr_svg = totp::qr_svg(&uri).map_err(|_| ApiError::internal())?;
     Ok(Json(SetupView {
@@ -647,7 +648,7 @@ async fn setup_post(
     if let Some(secs) = state.limiter().retry_after(&limit_key) {
         return Err(ApiError::rate_limited(secs));
     }
-    let secret = operator_secret(&pool, &key, link.operator_id).await?;
+    let secret = link_secret(&pool, &key, &link).await?;
     let Some(secret) = secret else {
         return Err(ApiError::validation(
             "Open the setup link before choosing a password.",
@@ -716,20 +717,24 @@ async fn open_link(pool: &PgPool, token: &str) -> Result<SetupLink, ApiError> {
     })
 }
 
-async fn ensure_secret(
+/// The secret the link shows, made on first open and kept with the link, not the operator: until
+/// setup completes, the operator has no second factor anyone could have copied (security audit
+/// M1). Reopening the link shows the same one.
+async fn ensure_link_secret(
     pool: &PgPool,
     key: &[u8; 32],
-    operator_id: Uuid,
+    link: &SetupLink,
 ) -> Result<Vec<u8>, ApiError> {
-    if let Some(existing) = operator_secret(pool, key, operator_id).await? {
+    if let Some(existing) = link_secret(pool, key, link).await? {
         return Ok(existing);
     }
     let fresh = totp::secret();
     let sealed = crypto::seal(key, &fresh).map_err(|_| ApiError::internal())?;
     let updated = sqlx::query(
-        "UPDATE admin.operators SET totp_secret_enc = $2 WHERE id = $1 AND totp_secret_enc IS NULL",
+        "UPDATE admin.setup_links SET totp_secret_enc = $2
+         WHERE token_hash = $1 AND totp_secret_enc IS NULL AND used_at IS NULL",
     )
-    .bind(operator_id)
+    .bind(&link.token_hash)
     .bind(&sealed)
     .execute(pool)
     .await
@@ -737,9 +742,24 @@ async fn ensure_secret(
     if updated.rows_affected() == 1 {
         return Ok(fresh.to_vec());
     }
-    operator_secret(pool, key, operator_id)
+    link_secret(pool, key, link)
         .await?
-        .ok_or_else(ApiError::internal)
+        .ok_or_else(ApiError::link_used)
+}
+
+async fn link_secret(
+    pool: &PgPool,
+    key: &[u8; 32],
+    link: &SetupLink,
+) -> Result<Option<Vec<u8>>, ApiError> {
+    let blob: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT totp_secret_enc FROM admin.setup_links WHERE token_hash = $1")
+            .bind(&link.token_hash)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?
+            .flatten();
+    open_sealed_secret(key, blob)
 }
 
 async fn operator_secret(
@@ -754,6 +774,10 @@ async fn operator_secret(
             .await
             .map_err(db_err)?
             .flatten();
+    open_sealed_secret(key, blob)
+}
+
+fn open_sealed_secret(key: &[u8; 32], blob: Option<Vec<u8>>) -> Result<Option<Vec<u8>>, ApiError> {
     match blob {
         None => Ok(None),
         Some(blob) => match crypto::open(key, &blob) {
@@ -773,7 +797,8 @@ async fn issue_codes(
 ) -> Result<Vec<String>, ApiError> {
     let mut tx = pool.begin().await.map_err(db_err)?;
     let row = sqlx::query(
-        "SELECT used_at, expires_at FROM admin.setup_links WHERE token_hash = $1 FOR UPDATE",
+        "SELECT used_at, expires_at, totp_secret_enc FROM admin.setup_links
+         WHERE token_hash = $1 FOR UPDATE",
     )
     .bind(&link.token_hash)
     .fetch_optional(&mut *tx)
@@ -790,13 +815,21 @@ async fn issue_codes(
     if expires_at <= Utc::now() {
         return Err(ApiError::link_unknown());
     }
+    // The secret the code was checked against, still sealed: it moves to the operator here.
+    let sealed_secret: Option<Vec<u8>> = row.try_get("totp_secret_enc").map_err(db_err)?;
+    let Some(sealed_secret) = sealed_secret else {
+        return Err(ApiError::link_used());
+    };
     let codes = unique_codes();
-    sqlx::query("UPDATE admin.operators SET password_hash = $2 WHERE id = $1")
-        .bind(link.operator_id)
-        .bind(password_hash)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_err)?;
+    sqlx::query(
+        "UPDATE admin.operators SET password_hash = $2, totp_secret_enc = $3 WHERE id = $1",
+    )
+    .bind(link.operator_id)
+    .bind(password_hash)
+    .bind(&sealed_secret)
+    .execute(&mut *tx)
+    .await
+    .map_err(db_err)?;
     sqlx::query("DELETE FROM admin.recovery_codes WHERE operator_id = $1")
         .bind(link.operator_id)
         .execute(&mut *tx)
@@ -811,8 +844,10 @@ async fn issue_codes(
             .await
             .map_err(db_err)?;
     }
-    sqlx::query("UPDATE admin.setup_links SET used_at = now() WHERE token_hash = $1")
-        .bind(&link.token_hash)
+    sqlx::query(
+        "UPDATE admin.setup_links SET used_at = now(), totp_secret_enc = NULL WHERE token_hash = $1",
+    )
+    .bind(&link.token_hash)
         .execute(&mut *tx)
         .await
         .map_err(db_err)?;

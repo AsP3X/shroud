@@ -293,7 +293,8 @@ async fn reset_totp(
         .await
         .map_err(db_err)?;
     sqlx::query(
-        "UPDATE admin.setup_links SET used_at = now() WHERE operator_id = $1 AND used_at IS NULL",
+        "UPDATE admin.setup_links SET used_at = now(), totp_secret_enc = NULL
+         WHERE operator_id = $1 AND used_at IS NULL",
     )
     .bind(operator_id)
     .execute(&mut *tx)

@@ -198,7 +198,10 @@ the secret on setup completion, or clear it when the link expires.
 
 **Fixed:** `check_password` still runs the dummy hash for timing, but never answers yes without a
 stored hash. `tests/session.rs` signs in with the dummy password and a valid code after the setup
-link is opened: 204 before the fix, 401 after. The secret is still stored when the link is opened.
+link is opened: 204 before the fix, 401 after. The secret now stays with the setup link (admin
+migration 003, sealed like before) until setup completes, when it moves to the operator in the same
+transaction as the password; a used or superseded link drops it. The session test asserts the
+operator has no secret after the link is opened (fails before) and that reopening shows the same one.
 
 ### M2. Anyone can lock operators out, and sign-in can exhaust memory
 

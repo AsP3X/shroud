@@ -74,10 +74,30 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     let secret = secret_from_uri(setup.body["totp_uri"].as_str().unwrap());
     let code = code_at(&secret, base - 1);
 
-    // Opening the link stored the secret, and no password is set yet. The dummy hash that stands
-    // in for a missing one must never sign in (security audit M1).
+    // Opening the link keeps the secret with the link: the operator has none until setup
+    // completes, and the dummy hash that stands in for a missing password never signs in
+    // (security audit M1). Reopening the link shows the same secret.
+    let pending: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT totp_secret_enc FROM admin.operators")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        pending.is_none(),
+        "no secret on the operator before setup completes"
+    );
     let half_enrolled = sign_in(&app, "operator", "not-a-real-operator-password", &code).await;
     assert_eq!(half_enrolled.status, StatusCode::UNAUTHORIZED);
+    let again = send(
+        &app,
+        "GET",
+        &format!("/api/admin/setup/{token}"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(again.body["totp_uri"], setup.body["totp_uri"]);
 
     let short = send(
         &app,
@@ -547,6 +567,12 @@ async fn assert_no_plaintext(
         .await
         .unwrap();
     assert_ne!(token_hash, token.as_bytes());
+    let link_secret: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT totp_secret_enc FROM admin.setup_links")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(link_secret.is_none(), "a used link keeps no secret");
 
     let stored_codes: Vec<Vec<u8>> =
         sqlx::query_scalar("SELECT code_hash FROM admin.recovery_codes")
