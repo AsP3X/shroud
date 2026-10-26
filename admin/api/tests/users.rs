@@ -34,8 +34,9 @@ const ENDPOINT: &str = "https://leak.example/endpoint-do-not-leak";
 const OBJECT_KEY: &str = "secret/object-key-do-not-leak";
 const LOST_OPERATOR: &str = "00000000-0000-4000-8000-00000000b1c3";
 const LOST_SESSION: &str = "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc";
-const LOST_USER: &str = "a11ce000-0000-4000-8000-0000000000c3";
-const LOST_DEVICE: &str = "a11ce000-0000-4000-8000-00000000c3d1";
+// Not under `a11ce000`: the tests run at once, and the list test pages over that prefix.
+const LOST_USER: &str = "105e0000-0000-4000-8000-0000000000c3";
+const LOST_DEVICE: &str = "105e0000-0000-4000-8000-00000000c3d1";
 const LOST_TOKEN: &str = "lost-apns-token-do-not-leak";
 const LOST_ENDPOINT: &str = "https://leak.example/lost-endpoint-do-not-leak";
 
@@ -378,7 +379,7 @@ async fn seed(admin: &PgPool, owner: &PgPool, operator: Uuid, users: &[Uuid]) {
                  VALUES ($1, $2, 'overview-secret-hash', $3, $4)",
             )
             .bind(id)
-            .bind(vec![10 + index as u8; 32])
+            .bind(vec![0xa1 + index as u8; 32])
             .bind(format!("USERS{:04}", index + 1))
             .bind(sql_time(&created))
             .execute(owner)
