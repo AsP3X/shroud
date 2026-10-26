@@ -218,6 +218,10 @@ END
 $body$;
 GRANT CONNECT, CREATE ON DATABASE :"dbname" TO shroud_admin;
 GRANT USAGE ON SCHEMA public TO shroud_admin;
+-- shroud_admin keeps CREATE on the database (its first migration creates schema admin), so it can
+-- make a schema named after this role. Every later session of this role (the API, grants.sql,
+-- psql) searches public only, so such a schema can never shadow the API's tables.
+ALTER ROLE CURRENT_USER SET search_path = public;
 '@
     Invoke-WithDataDirEnv {
         $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "pwd=$pass" -v "dbname=$db" | Out-Null

@@ -1,6 +1,6 @@
 # Admin console operations
 
-The console is the `admin` Compose service (`shroud-admin`). It uses role `shroud_admin` and schema `admin` in the API's Postgres database. `ADMIN_SECRET_KEY` is 64 hex characters. The console will not start while `ADMIN_DATABASE_URL` is set and the key is missing or not that length.
+The console is the `admin` Compose service (`shroud-admin`). It uses role `shroud_admin` and schema `admin` in the API's Postgres database. `shroud_admin` keeps `CREATE` on the database, because its first migration creates schema `admin`. So the API pins `search_path` to `public` on every connection, and the deploy scripts set it on the API's role too: a schema the console creates is never searched by the API or by `psql` as that role. `ADMIN_SECRET_KEY` is 64 hex characters. The console will not start while `ADMIN_DATABASE_URL` is set and the key is missing or not that length.
 
 ## Deploying the console
 

@@ -35,7 +35,7 @@ use axum::{
     extract::{MatchedPath, Request},
     middleware,
 };
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tower_http::LatencyUnit;
 use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -117,9 +117,17 @@ pub async fn run() -> Result<(), AppError> {
     );
 
     tracing::info!("connecting to postgres");
+    // Human: Only `public`, never the default `"$user", public`: a schema named after this role,
+    // created by any role with CREATE on the database (the console's), would otherwise be
+    // searched first and could shadow these tables with ones that run code as this role.
+    let connect = config
+        .database_url
+        .parse::<PgConnectOptions>()
+        .map_err(|_| AppError::Internal("DATABASE_URL is not a Postgres URL".into()))?
+        .options([("search_path", "public")]);
     let pool = PgPoolOptions::new()
         .max_connections(config.database_pool_max)
-        .connect(&config.database_url)
+        .connect_with(connect)
         .await
         .map_err(|err| AppError::Internal(format!("database connection failed: {err}")))?;
     tracing::info!(
