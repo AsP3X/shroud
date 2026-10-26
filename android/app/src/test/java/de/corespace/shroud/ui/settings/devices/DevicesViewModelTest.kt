@@ -1,5 +1,7 @@
 package de.corespace.shroud.ui.settings.devices
 
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.devices.DeviceKind
 import de.corespace.shroud.core.devices.DeviceRow
@@ -8,6 +10,7 @@ import de.corespace.shroud.core.devices.DevicesState
 import de.corespace.shroud.core.devices.RemoveOutcome
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.ui.components.Toast
+import de.corespace.shroud.ui.settings.privacy.DeleteAccountCopy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.TestScope
@@ -63,6 +66,7 @@ class DevicesViewModelTest {
         var nextError: String? = null
         var refreshes = 0
         val removed = ArrayList<UUID>()
+        val passwords = ArrayList<String>()
         var removeOutcome: RemoveOutcome = RemoveOutcome.Removed
         var removeAllOutcome: RemoveOutcome = RemoveOutcome.Removed
         var removeAllCalls = 0
@@ -84,8 +88,9 @@ class DevicesViewModelTest {
             return renameAnswer
         }
 
-        override suspend fun remove(id: UUID): RemoveOutcome {
+        override suspend fun remove(id: UUID, password: String): RemoveOutcome {
             removed += id
+            passwords += password
             if (removeOutcome == RemoveOutcome.Removed || removeOutcome == RemoveOutcome.AlreadyRemoved) {
                 next = next.filterNot { it.id == id }
             }
@@ -94,8 +99,9 @@ class DevicesViewModelTest {
             return removeOutcome
         }
 
-        override suspend fun removeAllOthers(): RemoveOutcome {
+        override suspend fun removeAllOthers(password: String): RemoveOutcome {
             removeAllCalls++
+            passwords += password
             return removeAllOutcome
         }
 
@@ -173,13 +179,16 @@ class DevicesViewModelTest {
         val recorder = Recorder()
         val vm = model(devices, recorder)
         vm.refresh()
-        vm.revoke(laptopRow)
+        val answers = ArrayList<RemoveOutcome>()
+        assertTrue(vm.revoke(laptopRow, "correct horse") { answers += it })
         assertTrue(vm.state.isRevoking(laptopRow))
         assertTrue(vm.state.isRemoving)
         // A second tap while it runs does nothing.
-        vm.revoke(laptopRow)
+        assertFalse(vm.revoke(laptopRow, "correct horse"))
         advanceUntilIdle()
         assertEquals(listOf(laptop), devices.removed)
+        assertEquals(listOf("correct horse"), devices.passwords)
+        assertEquals(listOf<RemoveOutcome>(RemoveOutcome.Removed), answers)
         assertEquals(listOf(thisPhone, tablet), vm.state.rows?.map { it.id })
         assertFalse(vm.state.isRemoving)
         assertEquals(listOf(Haptic.Success), recorder.haptics)
@@ -187,7 +196,7 @@ class DevicesViewModelTest {
         assertEquals(Toast.Style.Success, recorder.toasts.single().style)
 
         // This phone is never removed here: that is Log Out.
-        vm.revoke(phoneRow)
+        assertFalse(vm.revoke(phoneRow, "correct horse"))
         advanceUntilIdle()
         assertEquals(listOf(laptop), devices.removed)
     }
@@ -202,7 +211,7 @@ class DevicesViewModelTest {
         val recorder = Recorder()
         val vm = model(devices, recorder)
         vm.refresh()
-        vm.revoke(laptopRow)
+        vm.revoke(laptopRow, "pw")
         advanceUntilIdle()
         assertEquals(listOf(thisPhone), vm.state.rows?.map { it.id })
         assertTrue(recorder.haptics.isEmpty())
@@ -220,7 +229,7 @@ class DevicesViewModelTest {
         val recorder = Recorder()
         val vm = model(devices, recorder)
         vm.refresh()
-        vm.revoke(laptopRow)
+        vm.revoke(laptopRow, "pw")
         advanceUntilIdle()
         assertEquals("Something went wrong.", vm.state.actionError)
         assertEquals(listOf(Haptic.Error), recorder.haptics)
@@ -235,10 +244,10 @@ class DevicesViewModelTest {
         val recorder = Recorder()
         val vm = model(devices, recorder)
         vm.refresh()
-        vm.revokeAllOthers()
+        assertTrue(vm.revokeAllOthers("pw"))
         assertTrue(vm.state.isRevokingAll)
         assertTrue(vm.state.isRevoking(laptopRow))
-        vm.revokeAllOthers()
+        assertFalse(vm.revokeAllOthers("pw"))
         advanceUntilIdle()
         assertEquals(1, devices.removeAllCalls)
         assertFalse(vm.state.isRevokingAll)
@@ -246,13 +255,13 @@ class DevicesViewModelTest {
         assertEquals(listOf(Haptic.Success), recorder.haptics)
 
         devices.removeAllOutcome = RemoveOutcome.Partial(removed = 1, failed = 1)
-        vm.revokeAllOthers()
+        vm.revokeAllOthers("pw")
         advanceUntilIdle()
         assertEquals(listOf(Haptic.Success, Haptic.Error), recorder.haptics)
         assertEquals(1, recorder.toasts.size)
 
         devices.removeAllOutcome = RemoveOutcome.Failed("The device could not be removed. Something went wrong.")
-        vm.revokeAllOthers()
+        vm.revokeAllOthers("pw")
         advanceUntilIdle()
         assertEquals(Haptic.Error, recorder.haptics.last())
         assertEquals(1, recorder.toasts.size)
@@ -260,9 +269,115 @@ class DevicesViewModelTest {
         // Nothing to remove: nothing asked.
         devices.next = listOf(phoneRow)
         vm.refresh()
-        vm.revokeAllOthers()
+        assertFalse(vm.revokeAllOthers("pw"))
         advanceUntilIdle()
         assertEquals(3, devices.removeAllCalls)
+    }
+
+    /** Security audit L4: a refused password leaves the list alone; the confirmation shows why. */
+    @Test
+    fun aWrongPasswordOrTheRateLimitStaysInTheConfirmation() = runTest {
+        val devices = FakeDevices().apply {
+            next = listOf(phoneRow, laptopRow, tabletRow)
+            removeOutcome = RemoveOutcome.WrongPassword
+            removeAllOutcome = RemoveOutcome.RateLimited
+        }
+        val recorder = Recorder()
+        val vm = model(devices, recorder)
+        vm.refresh()
+        val answers = ArrayList<RemoveOutcome>()
+        vm.revoke(laptopRow, "wrong") { answers += it }
+        advanceUntilIdle()
+        vm.revokeAllOthers("pw") { answers += it }
+        advanceUntilIdle()
+        assertEquals(listOf(RemoveOutcome.WrongPassword, RemoveOutcome.RateLimited), answers)
+        assertEquals(listOf(Haptic.Error, Haptic.Error), recorder.haptics)
+        assertTrue(recorder.toasts.isEmpty())
+        assertNull(vm.state.actionError)
+        assertFalse(vm.state.isRemoving)
+    }
+
+    @Test
+    fun theConfirmationAsksForThePasswordAndStaysOpenWhenItIsWrong() {
+        val confirm = RemoveConfirmModel()
+        assertNull(confirm.target)
+        confirm.open(RemovalTarget.One(laptopRow))
+        assertEquals(RemovalTarget.One(laptopRow), confirm.target)
+        // Remove stays disabled until something is typed.
+        assertFalse(confirm.canSubmit)
+        var runs = 0
+        confirm.submit { _, _ -> runs++; true }
+        assertEquals(0, runs)
+
+        confirm.onPasswordChange(TextFieldValue("hunter2"))
+        assertTrue(confirm.canSubmit)
+        var answer: ((RemoveOutcome) -> Unit)? = null
+        confirm.submit { password, onAnswer ->
+            assertEquals("hunter2", password)
+            answer = onAnswer
+            true
+        }
+        assertTrue(confirm.submitting)
+        assertFalse(confirm.canSubmit)
+        // While it runs it cannot be closed or edited.
+        confirm.dismiss()
+        confirm.onPasswordChange(TextFieldValue("other"))
+        assertEquals(RemovalTarget.One(laptopRow), confirm.target)
+        assertEquals("hunter2", confirm.password.text)
+
+        // Wrong: stays open, Delete Account's line, the password selected to retype.
+        answer!!(RemoveOutcome.WrongPassword)
+        assertEquals(RemovalTarget.One(laptopRow), confirm.target)
+        assertFalse(confirm.submitting)
+        assertEquals("That password isn't right.", confirm.error)
+        assertEquals(TextRange(0, 7), confirm.password.selection)
+        // Typing clears the line.
+        confirm.onPasswordChange(TextFieldValue("hunter3"))
+        assertNull(confirm.error)
+
+        confirm.submit { _, onAnswer -> onAnswer(RemoveOutcome.RateLimited); true }
+        assertEquals("Too many tries. Try again later.", confirm.error)
+        assertEquals(RemovalTarget.One(laptopRow), confirm.target)
+
+        // Anything else closes it and forgets the password; the screen shows the result.
+        confirm.submit { _, onAnswer -> onAnswer(RemoveOutcome.Failed("Something went wrong.")); true }
+        assertNull(confirm.target)
+        assertEquals("", confirm.password.text)
+        assertNull(confirm.error)
+
+        confirm.open(RemovalTarget.AllOthers)
+        confirm.onPasswordChange(TextFieldValue("pw"))
+        // Nothing started (a removal already running): the button comes back.
+        confirm.submit { _, _ -> false }
+        assertFalse(confirm.submitting)
+        confirm.submit { _, onAnswer -> onAnswer(RemoveOutcome.Removed); true }
+        assertNull(confirm.target)
+
+        // Cancel forgets what was typed.
+        confirm.open(RemovalTarget.AllOthers)
+        confirm.onPasswordChange(TextFieldValue("pw"))
+        confirm.toggleRevealed()
+        assertTrue(confirm.revealed)
+        confirm.dismiss()
+        assertNull(confirm.target)
+        assertEquals("", confirm.password.text)
+        assertFalse(confirm.revealed)
+    }
+
+    @Test
+    fun theConfirmationWords() {
+        val state = DevicesUiState(DevicesState(rows = listOf(phoneRow, tabletRow, laptopRow), hasLoaded = true))
+        val one = removeDeviceSheetText(RemovalTarget.One(laptopRow), state, "phone")
+        assertEquals("Remove Chrome on Mac?", one.title)
+        assertEquals(DevicesCopy.CONFIRM_MESSAGE_ONE, one.message)
+        assertEquals("Remove", one.actionTitle)
+        val all = removeDeviceSheetText(RemovalTarget.AllOthers, state, "phone")
+        assertEquals("Remove all other devices?", all.title)
+        assertEquals(DevicesCopy.confirmAllMessage("phone"), all.message)
+        assertEquals("Remove 2", all.actionTitle)
+        assertEquals("Enter your password to confirm.", DevicesCopy.CONFIRM_PASSWORD)
+        assertEquals(DevicesController.WRONG_PASSWORD, DeleteAccountCopy.WRONG_PASSWORD)
+        assertEquals(DevicesController.RATE_LIMITED, DeleteAccountCopy.RATE_LIMITED)
     }
 
     @Test

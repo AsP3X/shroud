@@ -1,5 +1,10 @@
 package de.corespace.shroud.ui.settings.devices
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import de.corespace.shroud.core.devices.DeviceKind
 import de.corespace.shroud.core.devices.DeviceRow
 import de.corespace.shroud.core.devices.DevicesController
@@ -8,6 +13,7 @@ import de.corespace.shroud.core.devices.RemoveOutcome
 import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.net.DEVICE_LIMIT
 import de.corespace.shroud.ui.components.Toast
+import de.corespace.shroud.ui.settings.privacy.DeleteAccountCopy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -89,6 +95,9 @@ object DevicesCopy {
     const val CONFIRM_MESSAGE_ALL =
         "They are signed out right away and erase everything of your account on them: messages, keys and files, as soon as they are online or next opened. What they already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
     const val CONFIRM_ALL_TITLE = "Remove all other devices?"
+
+    /** Under the consequences, over the password card (security audit L4). */
+    const val CONFIRM_PASSWORD = "Enter your password to confirm."
 
     // Device Details (`DevicesView.swift:590-780`).
     const val DETAILS_PANE = "Device details"
@@ -215,54 +224,68 @@ class DevicesViewModel(
     suspend fun refresh() = devices.refresh()
 
     /**
-     * Removes [row] (`revoke`, `DevicesView.swift:485-506`): never this phone (that is Log Out).
-     * Removed → success haptic and "<name> removed"; a failure → error haptic, and core's sentence
-     * under the list. The row's spinner lasts until core has reloaded the list.
+     * Removes [row] with the account [password] typed in the confirmation (`revoke`,
+     * `DevicesView.swift`; security audit L4): never this phone (that is Log Out). Removed → success
+     * haptic and "<name> removed"; any failure → error haptic — a wrong password or the rate limit
+     * stays in the confirmation, anything else is core's sentence under the list. The row's spinner
+     * lasts until core has reloaded the list. [onAnswer] gets the outcome (on [actionScope]); false
+     * when nothing started.
      */
-    fun revoke(row: DeviceRow) {
-        if (row.isThisDevice || row.id in mutableRemovals.value.revokingIds) return
+    fun revoke(row: DeviceRow, password: String, onAnswer: (RemoveOutcome) -> Unit = {}): Boolean {
+        if (row.isThisDevice || row.id in mutableRemovals.value.revokingIds) return false
         val name = DevicesCopy.displayName(row)
         mutableRemovals.update { it.copy(revokingIds = it.revokingIds + row.id) }
         actionScope.launch {
-            try {
-                when (devices.remove(row.id)) {
-                    RemoveOutcome.Removed -> {
-                        haptic(Haptic.Success)
-                        toast(Toast.success(DevicesCopy.removed(name)))
-                    }
-                    // A 404: core already dropped the row; iOS says so without a haptic (`:497-499`).
-                    RemoveOutcome.AlreadyRemoved -> toast(Toast.info(DevicesCopy.alreadyRemoved(name)))
-                    is RemoveOutcome.Partial, is RemoveOutcome.Failed -> haptic(Haptic.Error)
-                }
+            val outcome = try {
+                devices.remove(row.id, password)
             } finally {
                 mutableRemovals.update { it.copy(revokingIds = it.revokingIds - row.id) }
             }
+            when (outcome) {
+                RemoveOutcome.Removed -> {
+                    haptic(Haptic.Success)
+                    toast(Toast.success(DevicesCopy.removed(name)))
+                }
+                // A 404: core already dropped the row; iOS says so without a haptic (`:497-499`).
+                RemoveOutcome.AlreadyRemoved -> toast(Toast.info(DevicesCopy.alreadyRemoved(name)))
+                RemoveOutcome.WrongPassword, RemoveOutcome.RateLimited,
+                is RemoveOutcome.Partial, is RemoveOutcome.Failed,
+                -> haptic(Haptic.Error)
+            }
+            onAnswer(outcome)
         }
+        return true
     }
 
     /**
-     * Removes every other device (`revokeAllOthers`, `DevicesView.swift:508-544`): all removed →
-     * success haptic and "n devices removed"; any failure → error haptic and core's "1 of 3 devices
-     * could not be removed. …" line under the list.
+     * Removes every other device with [password] (`revokeAllOthers`, `DevicesView.swift`): all
+     * removed → success haptic and "n devices removed"; any failure → error haptic — a wrong password
+     * or the rate limit before anything was removed stays in the confirmation, anything else is
+     * core's "1 of 3 devices could not be removed. …" line under the list. [onAnswer] as for [revoke].
      */
-    fun revokeAllOthers() {
+    fun revokeAllOthers(password: String, onAnswer: (RemoveOutcome) -> Unit = {}): Boolean {
         val count = state.others.size
-        if (count == 0 || mutableRemovals.value.isRevokingAll) return
+        if (count == 0 || mutableRemovals.value.isRevokingAll) return false
         mutableRemovals.update { it.copy(isRevokingAll = true) }
         actionScope.launch {
-            try {
-                when (devices.removeAllOthers()) {
-                    // Core counts a 404 as removed here and never returns AlreadyRemoved; both read as done.
-                    RemoveOutcome.Removed, RemoveOutcome.AlreadyRemoved -> {
-                        haptic(Haptic.Success)
-                        toast(Toast.success(DevicesCopy.removedCount(count)))
-                    }
-                    is RemoveOutcome.Partial, is RemoveOutcome.Failed -> haptic(Haptic.Error)
-                }
+            val outcome = try {
+                devices.removeAllOthers(password)
             } finally {
                 mutableRemovals.update { it.copy(isRevokingAll = false) }
             }
+            when (outcome) {
+                // Core counts a 404 as removed here and never returns AlreadyRemoved; both read as done.
+                RemoveOutcome.Removed, RemoveOutcome.AlreadyRemoved -> {
+                    haptic(Haptic.Success)
+                    toast(Toast.success(DevicesCopy.removedCount(count)))
+                }
+                RemoveOutcome.WrongPassword, RemoveOutcome.RateLimited,
+                is RemoveOutcome.Partial, is RemoveOutcome.Failed,
+                -> haptic(Haptic.Error)
+            }
+            onAnswer(outcome)
         }
+        return true
     }
 
     /**
@@ -277,4 +300,100 @@ class DevicesViewModel(
 
     /** The newest copy of [row] (the open details show the new name, `DevicesView.swift:575-576`). */
     fun latest(row: DeviceRow): DeviceRow = devices.state.value.rows.firstOrNull { it.id == row.id } ?: row
+}
+
+/** Who the password confirmation removes (security audit L4). */
+sealed interface RemovalTarget {
+    data class One(val row: DeviceRow) : RemovalTarget
+
+    data object AllOthers : RemovalTarget
+}
+
+/**
+ * The password confirmation before a removal (security audit L4; `RemoveDeviceSheet`): Delete
+ * Account's password card, red line and button, in Compose state like [de.corespace.shroud.ui.settings.privacy.DeleteAccountModel].
+ *
+ * Human: Remove stays disabled until something is typed. A wrong password or the rate limit keeps
+ * the confirmation open with Delete Account's words under the field, a wrong password selected so
+ * it can be retyped. Any other answer closes it, and the screen shows the result as before (toast,
+ * or the line under the list). While the request runs it cannot be closed. The password is cleared
+ * whenever it closes and is never kept anywhere else.
+ */
+internal class RemoveConfirmModel {
+    var target by mutableStateOf<RemovalTarget?>(null)
+        private set
+
+    var password by mutableStateOf(TextFieldValue(""))
+        private set
+
+    var revealed by mutableStateOf(false)
+        private set
+
+    var submitting by mutableStateOf(false)
+        private set
+
+    var error by mutableStateOf<String?>(null)
+        private set
+
+    /** Any non-empty value enables Remove, including spaces. Disabled while the request runs. */
+    val canSubmit: Boolean get() = password.text.isNotEmpty() && !submitting
+
+    fun open(target: RemovalTarget) {
+        clearFields()
+        this.target = target
+    }
+
+    /** Cancel, Back, the scrim or a drag; ignored while the request runs. */
+    fun dismiss() {
+        if (submitting) return
+        target = null
+        clearFields()
+    }
+
+    fun onPasswordChange(value: TextFieldValue) {
+        if (submitting) return
+        if (value.text != password.text) error = null
+        password = value
+    }
+
+    fun toggleRevealed() {
+        if (!submitting) revealed = !revealed
+    }
+
+    /**
+     * Hands the typed password to [run], which starts the removal and reports its outcome through
+     * the callback it is given; [run] returns false when nothing started.
+     */
+    fun submit(run: (password: String, onAnswer: (RemoveOutcome) -> Unit) -> Boolean) {
+        if (!canSubmit || target == null) return
+        submitting = true
+        error = null
+        if (!run(password.text, this::answer)) submitting = false
+    }
+
+    /** What the removal answered. */
+    fun answer(outcome: RemoveOutcome) {
+        when (outcome) {
+            RemoveOutcome.WrongPassword -> {
+                password = password.copy(selection = TextRange(0, password.text.length))
+                error = DeleteAccountCopy.WRONG_PASSWORD
+                submitting = false
+            }
+            RemoveOutcome.RateLimited -> {
+                error = DeleteAccountCopy.RATE_LIMITED
+                submitting = false
+            }
+            RemoveOutcome.Removed, RemoveOutcome.AlreadyRemoved, is RemoveOutcome.Partial, is RemoveOutcome.Failed -> {
+                target = null
+                clearFields()
+            }
+        }
+    }
+
+    private fun clearFields() {
+        password = TextFieldValue("")
+        revealed = false
+        error = null
+        submitting = false
+    }
 }

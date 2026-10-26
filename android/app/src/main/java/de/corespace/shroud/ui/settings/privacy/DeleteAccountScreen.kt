@@ -211,8 +211,12 @@ private fun ConsequenceRow(icon: ImageVector, line: String) {
     }
 }
 
+/**
+ * The account-password card: "Password", the masked field, the show/hide eye. Also the password
+ * confirmation before removing a device (`devices/RemoveDeviceSheet.kt`, security audit L4).
+ */
 @Composable
-private fun PasswordCard(
+internal fun PasswordCard(
     password: TextFieldValue,
     onPasswordChange: (TextFieldValue) -> Unit,
     revealed: Boolean,
@@ -289,6 +293,10 @@ private fun PasswordCard(
     }
 }
 
+/**
+ * The danger capsule (pale and disabled until [canSubmit]; spinner and [busyTitle] while
+ * [submitting]) over Cancel. [actionTitle] and [busyTitle] let Remove Device reuse it.
+ */
 @Composable
 internal fun DeleteAccountActions(
     submitting: Boolean,
@@ -296,9 +304,11 @@ internal fun DeleteAccountActions(
     onDelete: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    actionTitle: String = DeleteAccountCopy.DELETE,
+    busyTitle: String = DeleteAccountCopy.DELETING,
 ) {
     val colors = ShroudTheme.colors
-    val title = if (submitting) DeleteAccountCopy.DELETING else DeleteAccountCopy.DELETE
+    val title = if (submitting) busyTitle else actionTitle
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             Modifier

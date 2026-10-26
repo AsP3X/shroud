@@ -55,8 +55,6 @@ import de.corespace.shroud.core.model.Haptic
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.DEVICE_LIMIT
 import de.corespace.shroud.ui.LocalAppContainer
-import de.corespace.shroud.ui.components.ActionSheet
-import de.corespace.shroud.ui.components.ActionSheetItem
 import de.corespace.shroud.ui.components.InsetDivider
 import de.corespace.shroud.ui.components.ListLoadError
 import de.corespace.shroud.ui.components.SectionFooter
@@ -85,7 +83,8 @@ import java.util.Date
  * `Device Details` `nUbf0`).
  *
  * Human: Same data and rules as the iPhone and the web: this phone cannot be removed here (that is
- * Log Out); every other device can, one at a time or all at once, after a confirmation sheet. The
+ * Log Out); every other device can, one at a time or all at once, after a confirmation sheet that
+ * asks for the account password (security audit L4; [RemoveDeviceSheet]). The
  * account holds at most five devices, so this is also where you make room for a new one. Names are
  * sealed with the phrase, so only your devices read them. Pull down to reload.
  *
@@ -118,8 +117,8 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
     val noun = remember(context) { DeviceNoun.current(context) }
     val timeLabel = rememberDeviceTimeLabel(container.clock)
 
-    var pendingRevoke by remember { mutableStateOf<DeviceRow?>(null) }
-    var showRevokeAllConfirm by remember { mutableStateOf(false) }
+    // The password confirmation before a removal (security audit L4).
+    val confirm = remember { RemoveConfirmModel() }
     var detail by remember { mutableStateOf<DeviceRow?>(null) }
     // Remove in the details: the confirmation waits until the sheet has gone (`DevicesView.swift:30-32, 110-113`).
     var revokeAfterSheet by remember { mutableStateOf<DeviceRow?>(null) }
@@ -127,7 +126,7 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
         val target = revokeAfterSheet ?: return@LaunchedEffect
         if (detail != null) return@LaunchedEffect
         delay(SHEET_EXIT_MS)
-        pendingRevoke = target
+        confirm.open(RemovalTarget.One(target))
         revokeAfterSheet = null
     }
 
@@ -139,8 +138,8 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
                 timeLabel = timeLabel,
                 onRetry = { model.refresh() },
                 onOpen = { detail = it },
-                onRemove = { pendingRevoke = it },
-                onRemoveAll = { showRevokeAllConfirm = true },
+                onRemove = { confirm.open(RemovalTarget.One(it)) },
+                onRemoveAll = { confirm.open(RemovalTarget.AllOthers) },
             )
         }
         ToastHost(toasts)
@@ -163,20 +162,25 @@ fun DevicesScreen(onBack: () -> Unit, onCount: ((Int) -> Unit)? = null) {
         onDismiss = { detail = null },
     )
 
-    val confirming = pendingRevoke
-    ActionSheet(
-        visible = confirming != null,
-        title = DevicesCopy.confirmTitle(confirming?.let(state::displayName)),
-        message = DevicesCopy.CONFIRM_MESSAGE_ONE,
-        items = listOf(ActionSheetItem(DevicesCopy.REMOVE, destructive = true) { confirming?.let(model::revoke) }),
-        onDismiss = { pendingRevoke = null },
-    )
-    ActionSheet(
-        visible = showRevokeAllConfirm,
-        title = DevicesCopy.CONFIRM_ALL_TITLE,
-        message = DevicesCopy.confirmAllMessage(noun),
-        items = listOf(ActionSheetItem(DevicesCopy.confirmAllButton(state.others.size), destructive = true) { model.revokeAllOthers() }),
-        onDismiss = { showRevokeAllConfirm = false },
+    RemoveDeviceSheet(
+        text = confirm.target?.let { removeDeviceSheetText(it, state, noun) },
+        password = confirm.password,
+        onPasswordChange = confirm::onPasswordChange,
+        revealed = confirm.revealed,
+        onToggleReveal = confirm::toggleRevealed,
+        error = confirm.error,
+        submitting = confirm.submitting,
+        canSubmit = confirm.canSubmit,
+        onSubmit = {
+            confirm.submit { password, onAnswer ->
+                when (val target = confirm.target) {
+                    is RemovalTarget.One -> model.revoke(target.row, password, onAnswer)
+                    RemovalTarget.AllOthers -> model.revokeAllOthers(password, onAnswer)
+                    null -> false
+                }
+            }
+        },
+        onDismiss = confirm::dismiss,
     )
 }
 
@@ -530,6 +534,6 @@ private fun copyDeviceId(context: Context, device: DeviceRow) {
 
 /**
  * How long the details sheet takes to leave before the removal confirmation rises: the sheet's
- * `Motion.standard` exit settles in about this time (iOS presents the alert on the sheet's dismissal).
+ * `Motion.standard` exit settles in about this time (iOS presents its confirmation on the sheet's dismissal).
  */
 private const val SHEET_EXIT_MS = 350L

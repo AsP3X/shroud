@@ -173,8 +173,19 @@ class ShroudApi(internal val client: ApiClient) {
     suspend fun putDeviceName(token: String, deviceId: UUID, sealedName: String) =
         client.putUnit("devices/${Ids.wire(deviceId)}/name", token, PutDeviceNameRequest(sealedName), PutDeviceNameRequest.serializer())
 
-    /** `DELETE /devices/{id}` → 204 (`DevicesService.swift:32-37`). */
-    suspend fun revokeDevice(token: String, deviceId: UUID) = client.deleteUnit("devices/${Ids.wire(deviceId)}", token)
+    /**
+     * `DELETE /devices/{id}` with the account password → 204 (`DevicesService.swift`, security audit
+     * L4). `401 INVALID_CREDENTIALS` is a wrong password (not a dead session, see [notedAuthOutcome]),
+     * `429` the budget shared with password change and account deletion, `404` not a live device of
+     * the account. The password is the request body only; [RemoveDeviceRequest] does not print it.
+     */
+    suspend fun revokeDevice(token: String, deviceId: UUID, password: String) =
+        client.deleteUnit(
+            "devices/${Ids.wire(deviceId)}",
+            token,
+            RemoveDeviceRequest(password),
+            RemoveDeviceRequest.serializer(),
+        )
 
     // ---- Keys (`KeyBundleService.swift`) ----
 

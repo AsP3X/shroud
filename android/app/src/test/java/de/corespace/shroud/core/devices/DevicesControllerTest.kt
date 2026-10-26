@@ -21,6 +21,9 @@ import org.junit.Test
 import java.time.Instant
 import java.util.UUID
 
+/** The account password a removal sends (security audit L4). */
+private const val PASSWORD = "correct horse"
+
 /**
  * Sort, this-phone detection, rename sealing and removal against a fake device list.
  * No server and no account.
@@ -202,12 +205,12 @@ class DevicesControllerTest {
         harness.revokeError = { id ->
             if (id == laptop) ApiError.Server(ErrorCodes.NOT_FOUND, "Not found.", 404) else null
         }
-        assertEquals(RemoveOutcome.AlreadyRemoved, harness.controller.remove(laptop))
+        assertEquals(RemoveOutcome.AlreadyRemoved, harness.controller.remove(laptop, PASSWORD))
         assertTrue(harness.revoked.isEmpty())
         assertTrue(harness.controller.state.value.rows.none { it.id == laptop })
         assertNull(harness.controller.state.value.error)
 
-        val note = harness.controller.remove(thisPhone)
+        val note = harness.controller.remove(thisPhone, PASSWORD)
         assertEquals(
             "To remove this phone from your account, use Log Out in Settings. It also erases everything Shroud keeps here.",
             (note as RemoveOutcome.Failed).message,
@@ -227,7 +230,7 @@ class DevicesControllerTest {
                 else -> null
             }
         }
-        val outcome = harness.controller.removeAllOthers()
+        val outcome = harness.controller.removeAllOthers(PASSWORD)
         assertEquals(RemoveOutcome.Partial(removed = 2, failed = 1), outcome)
         assertEquals(listOf(tablet), harness.revoked)
         assertEquals(
@@ -243,7 +246,7 @@ class DevicesControllerTest {
         harness.devices.removeAll { it.id != thisPhone && it.id != laptop }
         harness.controller.refresh()
         harness.revokeError = { ApiError.Server(ErrorCodes.INTERNAL_ERROR, "Something went wrong.", 500) }
-        val outcome = harness.controller.removeAllOthers()
+        val outcome = harness.controller.removeAllOthers(PASSWORD)
         assertEquals(
             RemoveOutcome.Failed("The device could not be removed. Something went wrong."),
             outcome,
@@ -251,12 +254,60 @@ class DevicesControllerTest {
         assertTrue(harness.controller.state.value.rows.any { it.id == laptop })
     }
 
+    /** Security audit L4: a refused password removes nothing, reloads nothing and says nothing under the list. */
+    @Test
+    fun aWrongPasswordOrTheRateLimitRemovesNothing() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        harness.revokeError = { ApiError.Server(ErrorCodes.INVALID_CREDENTIALS, "Invalid username or password.", 401) }
+        assertEquals(RemoveOutcome.WrongPassword, harness.controller.remove(laptop, "wrong"))
+        assertEquals(listOf("wrong"), harness.passwords)
+        harness.revokeError = { ApiError.Server(ErrorCodes.RATE_LIMITED, "Slow down.", 429) }
+        assertEquals(RemoveOutcome.RateLimited, harness.controller.remove(laptop, PASSWORD))
+        assertTrue(harness.revoked.isEmpty())
+        assertEquals(1, harness.listCalls)
+        assertNull(harness.controller.state.value.error)
+        assertEquals(4, harness.controller.state.value.rows.size)
+    }
+
+    /** One wrong password refuses every device the same way: the first answer stops the rest. */
+    @Test
+    fun removeAllOthersStopsAtAWrongPassword() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        harness.revokeError = { ApiError.Server(ErrorCodes.INVALID_CREDENTIALS, "Invalid username or password.", 401) }
+        assertEquals(RemoveOutcome.WrongPassword, harness.controller.removeAllOthers("wrong"))
+        assertEquals(listOf("wrong"), harness.passwords)
+        assertEquals(1, harness.listCalls)
+        assertNull(harness.controller.state.value.error)
+        assertEquals(4, harness.controller.state.value.rows.size)
+    }
+
+    /** The rate limit after some were removed: the rest are not tried, and the line says so. */
+    @Test
+    fun removeAllOthersStopsAtTheRateLimitAfterRemovingSome() = runTest(main.dispatcher) {
+        val harness = harness()
+        harness.controller.refresh()
+        harness.revokeError = { id ->
+            if (id == oldPhone) ApiError.Server(ErrorCodes.RATE_LIMITED, "Slow down.", 429) else null
+        }
+        val outcome = harness.controller.removeAllOthers(PASSWORD)
+        assertEquals(RemoveOutcome.Partial(removed = 1, failed = 2), outcome)
+        assertEquals(listOf(tablet), harness.revoked)
+        assertEquals(listOf(PASSWORD, PASSWORD), harness.passwords)
+        assertEquals(
+            "2 of 3 devices could not be removed. Too many tries. Try again later.",
+            harness.controller.state.value.error,
+        )
+        assertEquals(listOf(thisPhone, oldPhone, laptop), harness.controller.state.value.rows.map { it.id })
+    }
+
     @Test
     fun removeAllOthersCountsEvery404AsRemoved() = runTest(main.dispatcher) {
         val harness = harness()
         harness.controller.refresh()
         harness.revokeError = { ApiError.Server(ErrorCodes.NOT_FOUND, "Gone.", 404) }
-        assertEquals(RemoveOutcome.Removed, harness.controller.removeAllOthers())
+        assertEquals(RemoveOutcome.Removed, harness.controller.removeAllOthers(PASSWORD))
         assertEquals(listOf(thisPhone), harness.controller.state.value.rows.map { it.id })
         assertNull(harness.controller.state.value.error)
     }
@@ -312,7 +363,7 @@ class DevicesControllerTest {
         harness.controller.refresh()
         val gate = CompletableDeferred<Unit>()
         harness.listGate = gate
-        val removing = launch { harness.controller.remove(laptop) }
+        val removing = launch { harness.controller.remove(laptop, PASSWORD) }
         assertEquals(listOf(laptop), harness.revoked)
         assertEquals(2, harness.listCalls)
         harness.controller.clear()
@@ -326,7 +377,7 @@ class DevicesControllerTest {
         val harness = harness()
         harness.devices.removeAll { it.id != thisPhone }
         harness.controller.refresh()
-        assertEquals(RemoveOutcome.Removed, harness.controller.removeAllOthers())
+        assertEquals(RemoveOutcome.Removed, harness.controller.removeAllOthers(PASSWORD))
         assertTrue(harness.revoked.isEmpty())
     }
 
@@ -335,8 +386,8 @@ class DevicesControllerTest {
         val harness = harness()
         harness.controller.refresh()
         harness.session = null
-        assertEquals(RemoveOutcome.Failed(DevicesController.SIGN_IN), harness.controller.remove(laptop))
-        assertEquals(RemoveOutcome.Failed(DevicesController.SIGN_IN), harness.controller.removeAllOthers())
+        assertEquals(RemoveOutcome.Failed(DevicesController.SIGN_IN), harness.controller.remove(laptop, PASSWORD))
+        assertEquals(RemoveOutcome.Failed(DevicesController.SIGN_IN), harness.controller.removeAllOthers(PASSWORD))
         assertEquals(DevicesController.SIGN_IN, harness.controller.state.value.error)
         assertEquals(4, harness.controller.state.value.rows.size)
         assertTrue(harness.revoked.isEmpty())
@@ -348,7 +399,7 @@ class DevicesControllerTest {
         val gate = CompletableDeferred<Unit>()
         harness.listGate = gate
         val loading = launch { harness.controller.refresh() }
-        val removing = launch { harness.controller.remove(laptop) }
+        val removing = launch { harness.controller.remove(laptop, PASSWORD) }
         assertEquals(1, harness.listCalls)
         assertEquals(listOf(laptop), harness.revoked)
         gate.complete(Unit)
@@ -402,6 +453,7 @@ private class DevicesHarness(
     private val history: ByteArray,
 ) {
     val revoked = mutableListOf<UUID>()
+    val passwords = mutableListOf<String>()
     val named = mutableListOf<UUID>()
     var listCalls = 0
     var listGate: CompletableDeferred<Unit>? = null
@@ -416,7 +468,8 @@ private class DevicesHarness(
             listError?.let { throw it }
             devices.toList()
         },
-        revokeDevice = { _, id ->
+        revokeDevice = { _, id, password ->
+            passwords += password
             revokeError(id)?.let { error ->
                 if ((error as? ApiError)?.isNotFound == true) devices.removeAll { it.id == id }
                 throw error

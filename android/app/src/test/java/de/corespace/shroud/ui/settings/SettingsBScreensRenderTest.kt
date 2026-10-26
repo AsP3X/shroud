@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -40,11 +41,14 @@ import de.corespace.shroud.ui.settings.devices.DevicesContent
 import de.corespace.shroud.ui.settings.devices.DevicesCopy
 import de.corespace.shroud.ui.settings.devices.DevicesUiState
 import de.corespace.shroud.ui.settings.devices.RefreshablePushedScreen
+import de.corespace.shroud.ui.settings.devices.RemoveDeviceSheet
+import de.corespace.shroud.ui.settings.devices.RemoveDeviceSheetText
 import de.corespace.shroud.ui.settings.notifications.NotificationSoundContent
 import de.corespace.shroud.ui.settings.notifications.NotificationsContent
 import de.corespace.shroud.ui.settings.notifications.NotificationsCopy
 import de.corespace.shroud.ui.settings.notifications.NotificationsSettingsState
 import de.corespace.shroud.ui.settings.notifications.SystemNotice
+import de.corespace.shroud.ui.settings.privacy.DeleteAccountCopy
 import de.corespace.shroud.ui.settings.privacy.PrivacyCallbacks
 import de.corespace.shroud.ui.settings.privacy.PrivacyContent
 import de.corespace.shroud.ui.settings.privacy.PrivacyCopy
@@ -250,32 +254,63 @@ class SettingsBScreensRenderTest {
         render(devices(SettingsBFixtures.devices(designDevices, removals = DeviceRemovals(isRevokingAll = true))), "c7-07-devices-removing-all")
     }
 
+    /** The password confirmation before a removal (security audit L4): Delete Account's card and button. */
+    private fun removeSheet(
+        text: RemoveDeviceSheetText,
+        password: String = "",
+        error: String? = null,
+        submitting: Boolean = false,
+    ): @Composable () -> Unit = {
+        RemoveDeviceSheet(
+            text = text,
+            password = TextFieldValue(password),
+            onPasswordChange = {},
+            revealed = false,
+            onToggleReveal = {},
+            error = error,
+            submitting = submitting,
+            canSubmit = password.isNotEmpty() && !submitting,
+            onSubmit = {},
+            onDismiss = {},
+        )
+    }
+
+    private val removeOneText = RemoveDeviceSheetText(
+        title = DevicesCopy.confirmTitle("Chrome on Mac"),
+        message = DevicesCopy.CONFIRM_MESSAGE_ONE,
+        actionTitle = DevicesCopy.REMOVE,
+    )
+
     @Test
     fun devicesRemoveConfirmation() {
-        val ui = devices(SettingsBFixtures.devices(designDevices)) {
-            ActionSheet(
-                visible = true,
-                title = DevicesCopy.confirmTitle("Chrome on Mac"),
-                message = DevicesCopy.CONFIRM_MESSAGE_ONE,
-                items = listOf(ActionSheetItem(DevicesCopy.REMOVE, destructive = true) {}),
-                onDismiss = {},
-            )
-        }
-        render(ui, "c7-08-devices-remove-confirmation")
+        render(devices(SettingsBFixtures.devices(designDevices), overlay = removeSheet(removeOneText)), "c7-08-devices-remove-confirmation")
     }
 
     @Test
     fun devicesRemoveAllConfirmation() {
-        val ui = devices(SettingsBFixtures.devices(designDevices)) {
-            ActionSheet(
-                visible = true,
-                title = DevicesCopy.CONFIRM_ALL_TITLE,
-                message = DevicesCopy.confirmAllMessage("phone"),
-                items = listOf(ActionSheetItem(DevicesCopy.confirmAllButton(2), destructive = true) {}),
-                onDismiss = {},
-            )
-        }
-        render(ui, "c7-09-devices-remove-all-confirmation")
+        val all = RemoveDeviceSheetText(
+            title = DevicesCopy.CONFIRM_ALL_TITLE,
+            message = DevicesCopy.confirmAllMessage("phone"),
+            actionTitle = DevicesCopy.confirmAllButton(2),
+        )
+        render(devices(SettingsBFixtures.devices(designDevices), overlay = removeSheet(all, password = "hunter2")), "c7-09-devices-remove-all-confirmation")
+    }
+
+    @Test
+    fun devicesRemoveWrongPassword() {
+        val ui = devices(
+            SettingsBFixtures.devices(designDevices),
+            overlay = removeSheet(removeOneText, password = "hunter2", error = DeleteAccountCopy.WRONG_PASSWORD),
+        )
+        render(ui, "c7-08b-devices-remove-wrong-password")
+    }
+
+    @Test
+    fun devicesRemoving() {
+        render(
+            devices(SettingsBFixtures.devices(designDevices), overlay = removeSheet(removeOneText, password = "hunter2", submitting = true)),
+            "c7-08c-devices-remove-removing",
+        )
     }
 
     /** `nUbf0`, this phone: the 64 dp green phone tile, "Android app", the Log Out note. */

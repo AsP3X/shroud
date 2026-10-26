@@ -244,6 +244,30 @@ class ApiClientTest {
         )
     }
 
+    /** Security audit L4: removing a device asks for the password; a wrong one is not a dead session. */
+    @Test
+    fun removeDeviceWrongPasswordReportsNothing() = runTest {
+        val invalid = """{"error":{"code":"INVALID_CREDENTIALS","message":"Invalid username or password."}}"""
+        val unauthorized = """{"error":{"code":"UNAUTHORIZED","message":"nope"}}"""
+        val device = "devices/11111111-1111-4111-8111-111111111111"
+        repeat(3) { server.enqueue(MockResponse(code = 401, body = invalid)) }
+        server.enqueue(MockResponse(code = 401, body = unauthorized))
+        repeat(3) { client.raw("DELETE", device, "tok", """{"password":"wrong"}""") }
+        client.raw("DELETE", device, "tok", """{"password":"right"}""")
+        assertEquals(listOf("failure"), outcomes.events)
+
+        val wrong = ApiError.Server(ErrorCodes.INVALID_CREDENTIALS, "no", 401)
+        assertEquals(NotedAuthOutcome.Ignored, notedAuthOutcome(401, wrong, device))
+        assertEquals(NotedAuthOutcome.Ignored, notedAuthOutcome(401, wrong, "/$device"))
+        // Only `devices/{id}` checks a password; a rename or the list does not.
+        assertEquals(NotedAuthOutcome.Failure, notedAuthOutcome(401, wrong, "$device/name"))
+        assertEquals(NotedAuthOutcome.Failure, notedAuthOutcome(401, wrong, "devices"))
+        assertEquals(
+            NotedAuthOutcome.DeviceRemoved,
+            notedAuthOutcome(401, ApiError.Server(ErrorCodes.DEVICE_REMOVED, "x", 401), device),
+        )
+    }
+
     // ---- Client version (server `client_version.rs`) ----
 
     private val tooOld = """{"error":{"code":"UPDATE_REQUIRED","message":"This version of Shroud is no longer supported. Update the app to keep using it."}}"""

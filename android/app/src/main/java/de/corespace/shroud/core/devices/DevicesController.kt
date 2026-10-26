@@ -6,6 +6,7 @@ import de.corespace.shroud.core.crypto.DeviceNameSeal
 import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.DEVICE_LIMIT
+import de.corespace.shroud.core.net.ErrorCodes
 import de.corespace.shroud.core.net.LinkedDeviceDto
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -53,13 +54,21 @@ data class DevicesState(
  * A single [DevicesController.remove] whose DELETE is 404 is [AlreadyRemoved]: the row is dropped,
  * and the screen owns the info toast (`DevicesView.swift:497-499`). [DevicesController.removeAllOthers]
  * still counts that 404 as removed — the device is gone (`:523-524`) — and never returns
- * [AlreadyRemoved]. [Partial] is some devices removed and some not.
+ * [AlreadyRemoved]. [Partial] is some devices removed and some not. [WrongPassword] and
+ * [RateLimited] mean nothing was removed and nothing changed on screen: the password confirmation
+ * stays open and shows them (security audit L4).
  */
 sealed interface RemoveOutcome {
     data object Removed : RemoveOutcome
 
     /** The DELETE was 404. The row is gone; the UI says "<name> was already removed". */
     data object AlreadyRemoved : RemoveOutcome
+
+    /** `401 INVALID_CREDENTIALS`: the password was wrong. Nothing was removed. */
+    data object WrongPassword : RemoveOutcome
+
+    /** `429`: the budget removal shares with password change and account deletion. Nothing was removed. */
+    data object RateLimited : RemoveOutcome
 
     data class Partial(val removed: Int, val failed: Int) : RemoveOutcome
 
@@ -99,29 +108,42 @@ interface DevicesController {
     suspend fun rename(id: UUID, name: String): String?
 
     /**
-     * Removes [id]. A 404 is [RemoveOutcome.AlreadyRemoved] (`DevicesView.swift:497-499`).
-     * This device is never removed here.
+     * Removes [id] with the account [password] (security audit L4). A 404 is
+     * [RemoveOutcome.AlreadyRemoved] (`DevicesView.swift:497-499`); a wrong password is
+     * [RemoveOutcome.WrongPassword] and a `429` [RemoveOutcome.RateLimited], both without a reload
+     * or a sentence under the list. This device is never removed here.
      */
-    suspend fun remove(id: UUID): RemoveOutcome
+    suspend fun remove(id: UUID, password: String): RemoveOutcome
 
-    /** One DELETE per other device, carrying on past failures. A 404 counts as removed (`DevicesView.swift:523-524`). */
-    suspend fun removeAllOthers(): RemoveOutcome
+    /**
+     * One DELETE per other device, each with [password], carrying on past failures. A 404 counts as
+     * removed (`DevicesView.swift:523-524`). A wrong password or a `429` stops at once — every other
+     * device would be refused the same way, and each try spends the shared budget; with nothing
+     * removed yet that is [RemoveOutcome.WrongPassword] / [RemoveOutcome.RateLimited], otherwise
+     * [RemoveOutcome.Partial] with the sentence under the list.
+     */
+    suspend fun removeAllOthers(password: String): RemoveOutcome
 
     companion object {
         const val SIGN_IN = "Sign in to see your devices."
         const val UNLOCK_TO_RENAME = "Unlock Shroud to rename devices."
         const val ENTER_A_NAME = "Enter a name."
+
+        /** Delete Account's words for the same answers (account-deletion plan §3.3). */
+        const val WRONG_PASSWORD = "That password isn't right."
+        const val RATE_LIMITED = "Too many tries. Try again later."
     }
 }
 
 /**
- * [DevicesController] on `GET /devices`, `DELETE /devices/{id}` and `PUT /devices/{id}/name`.
+ * [DevicesController] on `GET /devices`, `DELETE /devices/{id}` (with the password) and
+ * `PUT /devices/{id}/name`.
  * The name callbacks are the crypto controller's history key; they return null while the chats
  * are locked and must not seal with another account's key.
  */
 class ShroudDevicesController(
     private val listDevices: suspend (token: String) -> List<LinkedDeviceDto>,
-    private val revokeDevice: suspend (token: String, id: UUID) -> Unit,
+    private val revokeDevice: suspend (token: String, id: UUID, password: String) -> Unit,
     private val putDeviceName: suspend (token: String, id: UUID, sealedName: String) -> Unit,
     private val session: () -> Session?,
     private val unlockedUserId: () -> String?,
@@ -191,12 +213,12 @@ class ShroudDevicesController(
         null
     }
 
-    override suspend fun remove(id: UUID): RemoveOutcome = withContext(main) {
+    override suspend fun remove(id: UUID, password: String): RemoveOutcome = withContext(main) {
         val started = currentEpoch()
         val current = session() ?: return@withContext signedOut(started)
         if (isThisDevice(id, current)) return@withContext RemoveOutcome.Failed(currentDeviceNote())
         val outcome = try {
-            revokeDevice(current.token, id)
+            revokeDevice(current.token, id, password)
             onEpoch(started) { drop(listOf(id)) }
             RemoveOutcome.Removed
         } catch (e: CancellationException) {
@@ -206,24 +228,26 @@ class ShroudDevicesController(
                 onEpoch(started) { drop(listOf(id)) }
                 RemoveOutcome.AlreadyRemoved
             } else {
-                RemoveOutcome.Failed(SessionController.userMessage(e))
+                refusal(e) ?: RemoveOutcome.Failed(SessionController.userMessage(e))
             }
         }
+        // Refused before anything changed: the confirmation shows it; the list stays as it is.
+        if (outcome == RemoveOutcome.WrongPassword || outcome == RemoveOutcome.RateLimited) return@withContext outcome
         reloadAfterAction(started, (outcome as? RemoveOutcome.Failed)?.message)
         outcome
     }
 
-    override suspend fun removeAllOthers(): RemoveOutcome = withContext(main) {
+    override suspend fun removeAllOthers(password: String): RemoveOutcome = withContext(main) {
         val started = currentEpoch()
         val current = session() ?: return@withContext signedOut(started)
         val targets = mutableState.value.rows.filterNot { it.isThisDevice }
         if (targets.isEmpty()) return@withContext RemoveOutcome.Removed
         var removed = 0
-        var failed = 0
         var lastError: Throwable? = null
+        var refused: RemoveOutcome? = null
         for (row in targets) {
             try {
-                revokeDevice(current.token, row.id)
+                revokeDevice(current.token, row.id, password)
                 onEpoch(started) { drop(listOf(row.id)) }
                 removed++
             } catch (e: CancellationException) {
@@ -233,11 +257,16 @@ class ShroudDevicesController(
                     onEpoch(started) { drop(listOf(row.id)) }
                     removed++
                 } else {
-                    failed++
                     lastError = e
+                    // A wrong password or the rate limit refuses every other device the same way.
+                    refused = refusal(e)
+                    if (refused != null) break
                 }
             }
         }
+        if (removed == 0 && refused != null) return@withContext refused
+        // Devices not tried after a refusal count as not removed.
+        val failed = targets.size - removed
         val sentence = lastError?.let { removeAllFailure(failed, targets.size, it) }
         val outcome = when {
             failed == 0 -> RemoveOutcome.Removed
@@ -388,14 +417,30 @@ class ShroudDevicesController(
 
         fun isAlreadyRemoved(error: Throwable): Boolean = (error as? ApiError)?.isNotFound == true
 
-        /** `DevicesView.swift:531-536`. [total] 1 uses the singular sentence; the message is [SessionController.userMessage]. */
+        /** A wrong password (`401 INVALID_CREDENTIALS`) or the rate limit (`429`); null for anything else. */
+        fun refusal(error: Throwable): RemoveOutcome? = when {
+            error is ApiError.Server && error.status == 401 && error.code == ErrorCodes.INVALID_CREDENTIALS ->
+                RemoveOutcome.WrongPassword
+            (error as? ApiError)?.isRateLimited == true -> RemoveOutcome.RateLimited
+            else -> null
+        }
+
+        /**
+         * `DevicesView.swift:531-536`. [total] 1 uses the singular sentence; the message is Delete
+         * Account's for a wrong password or the rate limit, else [SessionController.userMessage].
+         */
         fun removeAllFailure(failed: Int, total: Int, error: Throwable): String {
             val lead = if (total == 1) {
                 "The device could not be removed. "
             } else {
                 "$failed of $total devices could not be removed. "
             }
-            return lead + SessionController.userMessage(error)
+            val reason = when (refusal(error)) {
+                RemoveOutcome.WrongPassword -> DevicesController.WRONG_PASSWORD
+                RemoveOutcome.RateLimited -> DevicesController.RATE_LIMITED
+                else -> SessionController.userMessage(error)
+            }
+            return lead + reason
         }
     }
 }

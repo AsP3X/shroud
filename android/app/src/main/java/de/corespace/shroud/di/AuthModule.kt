@@ -99,7 +99,7 @@ class AuthModule(container: AppContainer) : AppModule(container) {
         val crypto = container.keys.cryptoController
         ShroudDevicesController(
             listDevices = { token -> container.net.api.devices(token) },
-            revokeDevice = { token, id -> container.net.api.revokeDevice(token, id) },
+            revokeDevice = { token, id, password -> container.net.api.revokeDevice(token, id, password) },
             putDeviceName = { token, id, sealedName -> container.net.api.putDeviceName(token, id, sealedName) },
             session = { sessionController.session.value },
             unlockedUserId = { crypto.unlockedUserId.value },

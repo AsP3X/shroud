@@ -406,20 +406,30 @@ internal enum class NotedAuthOutcome { Success, Failure, DeviceRemoved, AccountD
 
 /**
  * Session policy for one authenticated answer. `DELETE auth/account` + `INVALID_CREDENTIALS` reports
- * nothing (a wrong password is not a dead session). `DEVICE_REMOVED` on that path is an account
- * deletion whatever [ApiError.Server.reason] says. Every other `DEVICE_REMOVED` is an account
- * deletion only when the reason is [ApiError.ACCOUNT_DELETED_REASON]; otherwise it is a removal.
+ * nothing (a wrong password is not a dead session), and so does `DELETE devices/{id}` +
+ * `INVALID_CREDENTIALS` (removing another device asks for the password, security audit L4).
+ * `DEVICE_REMOVED` on the account path is an account deletion whatever [ApiError.Server.reason]
+ * says. Every other `DEVICE_REMOVED` is an account deletion only when the reason is
+ * [ApiError.ACCOUNT_DELETED_REASON]; otherwise it is a removal.
  * Statuses other than 2xx and 401 report nothing.
  */
 internal fun notedAuthOutcome(status: Int, error: ApiError, path: String): NotedAuthOutcome {
-    val deletingAccount = path.trim('/') == ApiClient.ACCOUNT_DELETION_PATH
+    val trimmed = path.trim('/')
+    val deletingAccount = trimmed == ApiClient.ACCOUNT_DELETION_PATH
+    val checksPassword = deletingAccount || isDevicePath(trimmed)
     return when {
         status in 200..299 -> NotedAuthOutcome.Success
         status != 401 -> NotedAuthOutcome.Ignored
-        deletingAccount && error is ApiError.Server && error.code == ErrorCodes.INVALID_CREDENTIALS -> NotedAuthOutcome.Ignored
+        checksPassword && error is ApiError.Server && error.code == ErrorCodes.INVALID_CREDENTIALS -> NotedAuthOutcome.Ignored
         deletingAccount && error.isDeviceRemoved -> NotedAuthOutcome.AccountDeleted
         error.isAccountDeleted -> NotedAuthOutcome.AccountDeleted
         error.isDeviceRemoved -> NotedAuthOutcome.DeviceRemoved
         else -> NotedAuthOutcome.Failure
     }
+}
+
+/** `devices/{id}` — the one route there is `DELETE` (a rename is `devices/{id}/name`). */
+private fun isDevicePath(trimmedPath: String): Boolean {
+    val segments = trimmedPath.split('/')
+    return segments.size == 2 && segments[0] == "devices" && segments[1].isNotEmpty()
 }

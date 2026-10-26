@@ -35,5 +35,12 @@ data class DevicesResponse(val devices: List<LinkedDeviceDto>)
 @Serializable
 data class PutDeviceNameRequest(@SerialName("sealed_name") val sealedName: String)
 
+/** `DELETE /devices/{id}`: the account password, which removing a device asks for (security audit L4). */
+@Serializable
+data class RemoveDeviceRequest(val password: String) {
+    /** The password must not appear in logs. */
+    override fun toString(): String = "RemoveDeviceRequest"
+}
+
 /** Devices one account may have (`DevicesService.swift:10`). */
 const val DEVICE_LIMIT = 5

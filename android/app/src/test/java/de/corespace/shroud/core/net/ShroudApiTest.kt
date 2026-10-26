@@ -223,10 +223,12 @@ class ShroudApiTest {
         val (_, name) = exchange(noContent) { api.putDeviceName("tok", user, "c2VhbGVk") }
         name.assertRoute("PUT", "devices/$userWire/name")
         name.assertJson("""{"sealed_name":"c2VhbGVk"}""")
-        val (_, revoke) = exchange(noContent) { api.revokeDevice("tok", user) }
+        // Removing a device carries the account password (security audit L4).
+        val (_, revoke) = exchange(noContent) { api.revokeDevice("tok", user, "correct horse") }
         revoke.assertRoute("DELETE", "devices/$userWire")
         revoke.assertToken()
-        revoke.assertNoBody()
+        revoke.assertJson("""{"password":"correct horse"}""")
+        assertEquals("RemoveDeviceRequest", RemoveDeviceRequest("correct horse").toString())
     }
 
     // ---- Keys (KeyBundleService.swift) ----
