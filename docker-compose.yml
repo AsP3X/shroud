@@ -336,6 +336,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Two Argon2 runs of 19 MiB at most (auth.rs ARGON2_SLOTS); a flood of sign-ins must not be
+    # able to take the host's memory.
+    mem_limit: 256m
     logging: *log-rotation
     restart: unless-stopped
 

@@ -145,9 +145,13 @@ pub async fn run() -> Result<(), StartupError> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|source| StartupError::Bind { addr, source })?;
-    axum::serve(listener, app)
-        .await
-        .map_err(StartupError::Serve)?;
+    // The peer address keys sign-in failures (see `limit::ClientAddr`).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .map_err(StartupError::Serve)?;
     Ok(())
 }
 

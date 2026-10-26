@@ -57,6 +57,14 @@ server {
         proxy_pass $shroud_admin;
     }
 
+    location ^~ /api/admin/session {
+        limit_req zone=admin_sign_in burst=10 nodelay;
+        limit_req_status 429;
+        include /etc/nginx/admin-proxy.conf;
+        set $shroud_admin ${ADMIN_UPSTREAM};
+        proxy_pass $shroud_admin;
+    }
+
     location = /admin {
         return 308 /admin/;
     }

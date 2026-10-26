@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use crate::crypto::{self, normalize_code};
 use crate::error::ApiError;
+use crate::limit::ClientAddr;
 use crate::password;
 use crate::state::AppState;
 use crate::totp;
@@ -393,14 +394,17 @@ struct LiveSession {
 
 async fn sign_in(
     State(state): State<AppState>,
+    ClientAddr(addr): ClientAddr,
     body: Result<Json<SignInBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(body) = body.map_err(|_| ApiError::validation("The request body isn't valid."))?;
     check_sign_in_fields(&body.operator, &body.password, &body.totp)?;
     let pool = db_pool(&state)?;
     let key = copy_key(&state)?;
-    let limit_key = limit_key(&body.operator);
-    let retry = state.limiter().retry_after(&limit_key);
+    let limit_key = limit_key(&addr, &body.operator);
+    if let Some(secs) = state.limiter().retry_after(&limit_key) {
+        return Err(ApiError::rate_limited(secs));
+    }
     let operator = fetch_operator(&pool, body.operator.trim()).await?;
     let password_ok = check_password(
         body.password,
@@ -413,9 +417,6 @@ async fn sign_in(
     let totp_ok = secret
         .as_deref()
         .is_some_and(|secret| totp::accept(secret, body.totp.trim(), Utc::now().timestamp()));
-    if let Some(secs) = retry {
-        return Err(ApiError::rate_limited(secs));
-    }
     let allowed = operator.as_ref().is_some_and(|op| op.enabled) & password_ok & totp_ok;
     if !allowed {
         state.limiter().record_failure(&limit_key);
@@ -443,13 +444,16 @@ async fn sign_in(
 
 async fn recover_session(
     State(state): State<AppState>,
+    ClientAddr(addr): ClientAddr,
     body: Result<Json<RecoveryBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(body) = body.map_err(|_| ApiError::validation("The request body isn't valid."))?;
     check_sign_in_fields(&body.operator, &body.password, &body.recovery_code)?;
     let pool = db_pool(&state)?;
-    let limit_key = limit_key(&body.operator);
-    let retry = state.limiter().retry_after(&limit_key);
+    let limit_key = limit_key(&addr, &body.operator);
+    if let Some(secs) = state.limiter().retry_after(&limit_key) {
+        return Err(ApiError::rate_limited(secs));
+    }
     let operator = fetch_operator(&pool, body.operator.trim()).await?;
     let password_ok = check_password(
         body.password,
@@ -463,9 +467,6 @@ async fn recover_session(
             None
         }
     };
-    if let Some(secs) = retry {
-        return Err(ApiError::rate_limited(secs));
-    }
     let allowed = operator.as_ref().is_some_and(|op| op.enabled) & password_ok & matched.is_some();
     if !allowed {
         state.limiter().record_failure(&limit_key);
@@ -541,6 +542,7 @@ async fn sign_out(State(state): State<AppState>, headers: HeaderMap) -> Result<R
 
 async fn reauth(
     State(state): State<AppState>,
+    ClientAddr(addr): ClientAddr,
     headers: HeaderMap,
     body: Result<Json<TotpBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
@@ -558,7 +560,7 @@ async fn reauth(
     if !csrf_matches(&headers, &session.csrf) {
         return Err(ApiError::csrf());
     }
-    let limit_key = limit_key(&session.name);
+    let limit_key = limit_key(&addr, &session.name);
     if let Some(secs) = state.limiter().retry_after(&limit_key) {
         return Err(ApiError::rate_limited(secs));
     }
@@ -829,13 +831,34 @@ fn check_sign_in_fields(operator: &str, password: &str, extra: &str) -> Result<(
     Ok(())
 }
 
-fn limit_key(name: &str) -> String {
+/// Failures count per client address and operator name: nobody elsewhere can lock an operator out.
+fn limit_key(addr: &str, name: &str) -> String {
     let trimmed = name.trim();
-    if trimmed.is_empty() || trimmed.chars().count() > 64 {
+    let name = if trimmed.is_empty() || trimmed.chars().count() > 64 {
         "#".to_owned()
     } else {
         trimmed.to_lowercase()
-    }
+    };
+    format!("{addr} {name}")
+}
+
+/// Argon2 runs at once: each holds 19 MiB and a blocking thread. Past this a sign-in waits a few
+/// seconds, then is told to retry, so a flood can't grow memory without bound.
+const ARGON2_SLOTS: usize = 2;
+const ARGON2_SLOT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn run_argon2<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, password::HashError> + Send + 'static,
+) -> Result<T, ApiError> {
+    static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(ARGON2_SLOTS);
+    let _slot = tokio::time::timeout(ARGON2_SLOT_WAIT, SLOTS.acquire())
+        .await
+        .map_err(|_| ApiError::rate_limited(1))?
+        .map_err(|_| ApiError::internal())?;
+    tokio::task::spawn_blocking(job)
+        .await
+        .map_err(|_| ApiError::internal())?
+        .map_err(|_| ApiError::internal())
 }
 
 /// Without a hash (no such operator, or one who opened a setup link and never set a password)
@@ -843,19 +866,15 @@ fn limit_key(name: &str) -> String {
 /// password is in this source.
 async fn check_password(password: String, hash: Option<String>) -> Result<bool, ApiError> {
     let has_password = hash.is_some();
-    let hash = hash.unwrap_or_else(|| password::dummy_hash().to_owned());
-    let opened = tokio::task::spawn_blocking(move || password::verify(&password, &hash))
-        .await
-        .map_err(|_| ApiError::internal())?
-        .map_err(|_| ApiError::internal())?;
+    let opened = run_argon2(move || {
+        password::verify(&password, hash.as_deref().unwrap_or(password::dummy_hash()))
+    })
+    .await?;
     Ok(has_password && opened)
 }
 
 async fn hash_password(password: String) -> Result<String, ApiError> {
-    tokio::task::spawn_blocking(move || password::hash(&password))
-        .await
-        .map_err(|_| ApiError::internal())?
-        .map_err(|_| ApiError::internal())
+    run_argon2(move || password::hash(&password)).await
 }
 
 async fn fetch_operator(pool: &PgPool, name: &str) -> Result<Option<Operator>, ApiError> {
