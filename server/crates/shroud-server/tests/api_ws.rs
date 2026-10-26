@@ -1365,3 +1365,68 @@ async fn a_background_socket_counts_nowhere_across_replicas() {
         let _ = server.await;
     }
 }
+
+/// Each focus flip updates the database and tells every contact; a socket that sends far more
+/// frames than any client does is closed instead (security audit M5).
+#[tokio::test]
+async fn websocket_closes_a_socket_that_floods_frames() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping websocket_closes_a_socket_that_floods_frames: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let (token, _) = register(&client, addr).await;
+    let mut socket = connect_authed(addr, &token).await;
+
+    for flip in 0..40 {
+        let frame = json!({ "type": "focus", "focused": flip % 2 == 0 }).to_string();
+        if socket.send(Message::Text(frame.into())).await.is_err() {
+            break;
+        }
+    }
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Close(frame))) => return frame.map(|frame| u16::from(frame.code)),
+                None | Some(Err(_)) => return None,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await
+    .expect("the socket is closed");
+    assert_eq!(closed, Some(1008));
+    let _ = shutdown.send(());
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn websocket_refuses_an_oversized_frame() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping websocket_refuses_an_oversized_frame: DATABASE_URL unavailable");
+        return;
+    };
+    let (addr, shutdown, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let (token, _) = register(&client, addr).await;
+    let mut socket = connect_authed(addr, &token).await;
+
+    let padding = "x".repeat(64 * 1024);
+    let frame = json!({ "type": "typing", "pad": padding }).to_string();
+    let _ = socket.send(Message::Text(frame.into())).await;
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "an oversized frame ends the socket");
+    let _ = shutdown.send(());
+    let _ = server.await;
+}

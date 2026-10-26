@@ -41,6 +41,8 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Hard end of every pipe.
 const MAX_LIFETIME: Duration = Duration::from_secs(45);
+/// How long closing either side may take once the pipe has ended.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Browser → website: a TLS handshake and one small GET request.
 const MAX_UPSTREAM_BYTES: usize = 64 * 1024;
 /// Website → browser: a certificate chain plus a page head (≤ 512 KB) or an image (≤ 5 MB).
@@ -119,7 +121,12 @@ pub async fn link_relay_upgrade(
         .rate_limiter
         .check_budget("link_relay_ip", &ip, budgets::LINK_RELAY_IP)
         .await?;
-    Ok(ws.on_upgrade(move |socket| relay_socket(socket, state)))
+    // A TLS record is at most ~16 KiB, and a pipe carries 64 KiB up in all; without a limit one
+    // message could be 64 MiB, buffered whole, the hello frame included.
+    Ok(ws
+        .max_message_size(MAX_UPSTREAM_BYTES)
+        .max_frame_size(MAX_UPSTREAM_BYTES)
+        .on_upgrade(move |socket| relay_socket(socket, state)))
 }
 
 async fn relay_socket(mut socket: WebSocket, state: AppState) {
@@ -257,11 +264,7 @@ async fn pipe(socket: WebSocket, stream: TcpStream) -> PipeEnd {
         })
         .await;
         let Ok(event) = event else {
-            break if Instant::now() >= deadline {
-                PipeEnd::Expired
-            } else {
-                PipeEnd::Idle
-            };
+            break out_of_time(deadline);
         };
         match event {
             Event::Site(Ok(0) | Err(_)) => break PipeEnd::WebsiteClosed,
@@ -271,8 +274,12 @@ async fn pipe(socket: WebSocket, stream: TcpStream) -> PipeEnd {
                     break PipeEnd::DownstreamCap;
                 }
                 let chunk = buffer.split().freeze();
-                if sink.send(Message::Binary(chunk)).await.is_err() {
-                    break PipeEnd::SendFailed;
+                // Writes are under the same deadline as reads: a browser that stops reading
+                // (or a site that stops accepting) must not hold the pipe past its limits.
+                match timeout_at(idle_deadline, sink.send(Message::Binary(chunk))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break PipeEnd::SendFailed,
+                    Err(_) => break out_of_time(deadline),
                 }
                 buffer.reserve(READ_CHUNK);
             }
@@ -281,13 +288,17 @@ async fn pipe(socket: WebSocket, stream: TcpStream) -> PipeEnd {
                 if sent_up > MAX_UPSTREAM_BYTES {
                     break PipeEnd::UpstreamCap;
                 }
-                if to_site.write_all(&data).await.is_err() {
-                    break PipeEnd::WebsiteClosed;
+                match timeout_at(idle_deadline, to_site.write_all(&data)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break PipeEnd::WebsiteClosed,
+                    Err(_) => break out_of_time(deadline),
                 }
             }
             Event::Browser(Some(Ok(Message::Ping(data)))) => {
-                if sink.send(Message::Pong(data)).await.is_err() {
-                    break PipeEnd::SendFailed;
+                match timeout_at(idle_deadline, sink.send(Message::Pong(data))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break PipeEnd::SendFailed,
+                    Err(_) => break out_of_time(deadline),
                 }
             }
             Event::Browser(Some(Ok(Message::Text(_) | Message::Pong(_)))) => {}
@@ -296,9 +307,18 @@ async fn pipe(socket: WebSocket, stream: TcpStream) -> PipeEnd {
             }
         }
     };
-    let _ = to_site.shutdown().await;
-    let _ = sink.close().await;
+    let _ = timeout(CLOSE_TIMEOUT, to_site.shutdown()).await;
+    let _ = timeout(CLOSE_TIMEOUT, sink.close()).await;
     end
+}
+
+/// Why a pipe ran out of time: its whole lifetime, or one idle wait.
+fn out_of_time(deadline: Instant) -> PipeEnd {
+    if Instant::now() >= deadline {
+        PipeEnd::Expired
+    } else {
+        PipeEnd::Idle
+    }
 }
 
 enum Event {

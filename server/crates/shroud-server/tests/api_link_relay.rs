@@ -80,6 +80,21 @@ async fn echo_listener() -> u16 {
     port
 }
 
+/// A website stand-in that sends as fast as the relay takes it, until the pipe closes.
+async fn flood_listener() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind flood");
+    let port = listener.local_addr().expect("flood addr").port();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let chunk = vec![0u8; 64 * 1024];
+                while socket.write_all(&chunk).await.is_ok() {}
+            });
+        }
+    });
+    port
+}
+
 async fn register(addr: SocketAddr) -> String {
     let id = &Uuid::new_v4().simple().to_string()[..12];
     let response = reqwest::Client::new()
@@ -280,5 +295,38 @@ async fn relay_limits_open_pipes_per_account() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let mut again = open(addr, hello).await;
     assert_eq!(reply(&mut again).await["type"], "connected");
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn relay_frees_the_slot_of_a_browser_that_stops_reading() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping: DATABASE_URL unavailable");
+        return;
+    };
+    let port = flood_listener().await;
+    let state =
+        AppState::for_integration_tests(pool).with_link_relay_policy(RelayPolicy::for_tests(port));
+    let (addr, shutdown) = serve(state).await;
+    let token = register(addr).await;
+    let hello = json!({ "type": "connect", "token": token, "host": "localhost" });
+
+    // This browser stops reading after `connected`. The site keeps sending, so the relay's write
+    // to the browser stalls well before the downstream cap; it must still end at the idle limit.
+    let mut stalled = open(addr, hello.clone()).await;
+    assert_eq!(reply(&mut stalled).await["type"], "connected");
+    tokio::time::sleep(Duration::from_secs(20)).await;
+
+    let mut open_pipes = Vec::new();
+    for _ in 0..routes::link_relay::MAX_CONCURRENT_PER_USER {
+        let mut socket = open(addr, hello.clone()).await;
+        assert_eq!(
+            reply(&mut socket).await["type"],
+            "connected",
+            "the stalled pipe still holds a slot"
+        );
+        open_pipes.push(socket);
+    }
+    drop(stalled);
     let _ = shutdown.send(());
 }

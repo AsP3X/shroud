@@ -13,7 +13,7 @@
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code};
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -41,6 +41,16 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 /// A write the peer does not take within this is a dead socket: a full send buffer would
 /// otherwise block the loop, idle close included, until TCP gave up many minutes later.
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest frame a client may send. Its frames are small JSON (auth, typing, focus); without a
+/// limit each one could be 64 MiB, buffered whole before it is parsed, before auth too.
+const MAX_CLIENT_MESSAGE_BYTES: usize = 16 * 1024;
+/// Text frames one socket may send per [`CLIENT_FRAME_WINDOW`].
+///
+/// Human: Clients send a typing frame at most every 3 s per chat, and a focus frame when the app
+/// comes and goes. Past this the socket is closed: each focus flip updates the database and sends
+/// a presence update to every contact, whose queues would fill and drop their real events.
+const CLIENT_FRAMES_PER_WINDOW: u32 = 20;
+const CLIENT_FRAME_WINDOW: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Deserialize)]
 struct ClientMessage {
@@ -70,7 +80,35 @@ pub async fn ws_upgrade(
         .rate_limiter
         .check_budget("ws_ip", &ip, budgets::WS_CONNECT_IP)
         .await?;
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
+    Ok(ws
+        .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
+        .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_socket(socket, state)))
+}
+
+/// A fixed-window count of one socket's text frames.
+struct FrameBudget {
+    window_start: tokio::time::Instant,
+    used: u32,
+}
+
+impl FrameBudget {
+    fn new(now: tokio::time::Instant) -> Self {
+        Self {
+            window_start: now,
+            used: 0,
+        }
+    }
+
+    /// Counts one frame; false once the window's budget is spent.
+    fn take(&mut self, now: tokio::time::Instant) -> bool {
+        if now.duration_since(self.window_start) >= CLIENT_FRAME_WINDOW {
+            self.window_start = now;
+            self.used = 0;
+        }
+        self.used += 1;
+        self.used <= CLIENT_FRAMES_PER_WINDOW
+    }
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -213,6 +251,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     ping.tick().await;
     let idle = tokio::time::sleep(IDLE_TIMEOUT);
     tokio::pin!(idle);
+    let mut frames = FrameBudget::new(tokio::time::Instant::now());
 
     // Set when the session ended while the socket was open: signed out, or removed.
     let mut ended: Option<SessionState> = None;
@@ -271,6 +310,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
+                        if !frames.take(tokio::time::Instant::now()) {
+                            tracing::debug!(%user_id, %device_id, "ws.client too many frames");
+                            let close = Message::Close(Some(CloseFrame {
+                                code: close_code::POLICY,
+                                reason: "Too many messages.".into(),
+                            }));
+                            let _ = timeout(SEND_TIMEOUT, sink.send(close)).await;
+                            break;
+                        }
                         match handle_client_text(&state, user_id, device_id, connection_id, &text).await {
                             OnlineChange::CameOnline => counts_online = true,
                             OnlineChange::WentOffline => counts_online = false,
@@ -502,4 +550,20 @@ async fn authenticate_text(
         SocketMode::Foreground
     };
     Ok((ids_for_token(&state.pool, &token).await?, mode))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_budget_refuses_past_the_window_and_resets() {
+        let start = tokio::time::Instant::now();
+        let mut budget = FrameBudget::new(start);
+        for _ in 0..CLIENT_FRAMES_PER_WINDOW {
+            assert!(budget.take(start));
+        }
+        assert!(!budget.take(start + Duration::from_secs(1)));
+        assert!(budget.take(start + CLIENT_FRAME_WINDOW));
+    }
 }
