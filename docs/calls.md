@@ -590,8 +590,17 @@ pushes; a muted chat does not.
 
 coturn runs in the host's network namespace (it needs thousands of relay ports) behind the
 Compose profile `calls`. It accepts only logins the API minted: `--use-auth-secret` with
-`TURN_SECRET`, username `<expiry>:<user id>`, password `base64(HMAC-SHA1(TURN_SECRET,
-username))`, valid for `TURN_CREDENTIAL_TTL_SECS` (12 h). It refuses to relay to loopback,
+`TURN_SECRET`, username `<expiry>:<32 random hex digits>` (random per login, so coturn never
+learns the account), password `base64(HMAC-SHA1(TURN_SECRET, username))`, valid for
+`TURN_CREDENTIAL_TTL_SECS` (12 h). It refuses to relay to loopback,
 private, link-local, CGNAT, multicast and other reserved ranges (so a TURN login cannot reach
 Postgres, Redis or Nebular on the Docker networks), and offers no TCP relay (RFC 6062): WebRTC
 relays UDP, and reaches the TURN server over TCP where UDP is blocked.
+
+`GET /calls/ice-servers` mints one login per request, at most 60 a minute per account (a
+device asks once per call it places or answers). coturn holds each login to
+`TURN_USER_QUOTA` relays (12), the server to `TURN_TOTAL_QUOTA` (100, one relay port each),
+and each relay to `TURN_MAX_BPS` bytes per second each way (1000000, about 8 Mbit/s, twice a
+1080p video call). The login is not tied to one call: the caller asks before the call exists,
+and coturn checks the expiry on every refresh, so the lifetime also caps the longest call
+over TURN; a shorter one would cut long calls off.

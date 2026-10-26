@@ -383,6 +383,14 @@ services:
       - --use-auth-secret
       - --static-auth-secret=${TURN_SECRET:-}
       - --realm=${TURN_REALM:-shroud}
+      # Limits per minted login and for the whole relay: a login works for hours, so these
+      # bound what someone holding many of them can take. A device in a call allocates once per
+      # TURN URL and network (a few, more during an ICE restart). --max-bps is bytes per second
+      # per allocation and direction; 1 MB/s is twice a 1080p video call (about 4 Mbit/s).
+      # Raise TURN_TOTAL_QUOTA with the port range: each allocation holds one relay port.
+      - --user-quota=${TURN_USER_QUOTA:-12}
+      - --total-quota=${TURN_TOTAL_QUOTA:-100}
+      - --max-bps=${TURN_MAX_BPS:-1000000}
       - --no-cli
       - --no-tls
       - --no-dtls

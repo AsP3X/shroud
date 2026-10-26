@@ -191,8 +191,16 @@ impl CallRow {
 /// caller. The login is random, so it does not name the account.
 pub async fn ice_servers(
     State(state): State<AppState>,
-    _auth: AuthContext,
+    auth: AuthContext,
 ) -> Result<Json<IceServersResponse>, AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "ice_servers_user",
+            &auth.user_id.to_string(),
+            budgets::ICE_SERVERS_USER,
+        )
+        .await?;
     let mut ice_servers = state.ice_servers.clone();
     if let Some(turn) = &state.turn {
         ice_servers.push(turn.credential_for(Utc::now().timestamp().unsigned_abs()));

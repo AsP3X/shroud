@@ -572,6 +572,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Contact requests | 10/hour per user |
 | Message send | 120/min per user |
 | Call create / signal | 30/min per user |
+| ICE servers (`GET /calls/ice-servers`, mints a TURN login) | 60/min per user |
 | Media upload registration | 60/min per user |
 | WebSocket connect | 30/min per IP |
 | Link relay connect | 120/min per IP; 60/min per user (plus 6 open pipes per account) |
@@ -1374,7 +1375,7 @@ there (`online: false`); opening or closing it in the background announces nothi
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/calls/ice-servers` | Auth; STUN/TURN for WebRTC |
+| GET | `/calls/ice-servers` | Auth; STUN/TURN for WebRTC; 60/min per user (`429 RATE_LIMITED`) |
 | POST | `/calls` | `{ peer_user_id, modality?, sdp_offer? }` → `201` ringing |
 | GET | `/calls/:id` | Participant only |
 | POST | `/calls/:id/accept` | Callee; `{ sdp_answer? }` |

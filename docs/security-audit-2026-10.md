@@ -487,6 +487,14 @@ and set, for the web and the console host and each kind of path. The cookie path
   `a_block_ends_the_pairs_calls` and `accept_and_signal_are_refused_across_a_block`
   (`api_calls.rs`).
 
+- **Fixed (L9):** `GET /calls/ice-servers` has a budget of 60 a minute per account
+  (`ICE_SERVERS_USER`, twice the call budget; a device asks once per call it places or answers).
+  coturn now runs with `--user-quota` (12 relays per minted login), `--total-quota` (100, the
+  relay port range) and `--max-bps` (1 MB/s per relay and direction, twice a 1080p call), set by
+  `TURN_USER_QUOTA`, `TURN_TOTAL_QUOTA` and `TURN_MAX_BPS`. `docs/calls.md` gives the random
+  login name. The 12 h lifetime stays, not tied to a call: the caller asks before the call
+  exists, and coturn checks the expiry on every refresh, so a shorter one would end long calls.
+
 ## Design notes (no change asked for here)
 
 - **Forward secrecy.** Every v3 message also carries a `peer` identity box, and a failed ratchet

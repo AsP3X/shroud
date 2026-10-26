@@ -45,6 +45,9 @@ pub mod budgets {
     /// A call's signals and heartbeats: an offer, an answer, batches of ICE candidates, and a
     /// heartbeat every 10 s from each device, with room for ICE restarts.
     pub const CALL_SIGNAL_USER: (u64, Duration) = (600, Duration::from_secs(60));
+    /// `GET /calls/ice-servers`: a device asks once per call it places or answers, and each
+    /// answer mints a TURN login. Twice the call budget.
+    pub const ICE_SERVERS_USER: (u64, Duration) = (60, Duration::from_secs(60));
     /// Password change and account delete (expensive / sensitive).
     pub const AUTH_SENSITIVE_USER: (u64, Duration) = (5, Duration::from_secs(3600));
     /// Link-preview relay upgrades per client IP (a preview is a page plus its image,

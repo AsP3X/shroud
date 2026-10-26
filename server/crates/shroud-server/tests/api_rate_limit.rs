@@ -447,3 +447,75 @@ async fn session_status_rate_limited_by_ip() {
             .all(|status| *status == StatusCode::TOO_MANY_REQUESTS)
     );
 }
+
+#[tokio::test]
+async fn ice_servers_rate_limited_per_user() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!("skipping ice_servers_rate_limited_per_user: DATABASE_URL unavailable");
+        return;
+    };
+
+    let username = format!("ice_{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", fresh_ip())
+                .body(Body::from(
+                    json!({
+                        "username_hash": shroud_server::auth::username_hash_b64(&username),
+                        "password": "correct-horse-battery",
+                        "device_name": "RL"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let token = json_body(response).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A device fetches once per call it places or answers: 60 a minute is far more than anyone
+    // calls, and a script minting TURN logins stops there.
+    let mut statuses = Vec::new();
+    for _ in 0..62 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/calls/ice-servers")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("oneshot");
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok()),
+                Some("60")
+            );
+        }
+        statuses.push(response.status());
+    }
+    assert!(
+        statuses[..60]
+            .iter()
+            .all(|status| *status == StatusCode::OK)
+    );
+    assert!(
+        statuses[60..]
+            .iter()
+            .all(|status| *status == StatusCode::TOO_MANY_REQUESTS)
+    );
+}
