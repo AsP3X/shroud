@@ -2,11 +2,11 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { Play } from "lucide-react";
 import type { ChatMessage } from "../messaging";
 import { peekImage, type LoadedImage } from "../media/images";
-import { displaySiteName, type LinkPreview } from "../links";
+import { displayHost, type LinkPreview } from "../links";
 
 /**
  * Telegram's link preview block (`LinkPreviewIn` / `LinkPreviewOut` / `LinkPreviewIn · thumb` in
- * design/webclient.pen): accent stripe, tinted card, site name, title, description, and either
+ * design/webclient.pen): accent stripe, tinted card, host, title, description, and either
  * a small thumbnail the text flows around or a large picture underneath.
  *
  * Everything shown was sealed into the message by the sender's phone. The small thumbnail is
@@ -58,10 +58,10 @@ export function LinkPreviewCard({
       target="_blank"
       rel="noopener noreferrer nofollow"
       onClick={(event) => event.stopPropagation()}
-      aria-label={`Link preview: ${[displaySiteName(preview), preview.title].filter(Boolean).join(", ")}`}
+      aria-label={`Link preview: ${[displayHost(preview), preview.title].filter(Boolean).join(", ")}`}
     >
       {thumb ? <img className="link-preview-thumb" src={thumb} alt="" /> : null}
-      <span className="link-preview-site">{displaySiteName(preview)}</span>
+      <span className="link-preview-site">{displayHost(preview)}</span>
       {preview.title ? <span className="link-preview-title">{preview.title}</span> : null}
       {preview.summary ? <span className="link-preview-desc">{preview.summary}</span> : null}
       {large ? (

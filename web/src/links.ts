@@ -280,7 +280,11 @@ export function linkPreviewWire(preview: LinkPreview): Record<string, unknown> {
   return wire;
 }
 
-/** Host without `www.`, the fallback site name. */
+/**
+ * First line of the preview block: the host the card opens, without `www.`. Never the sealed
+ * site name, which the sender writes: a card could then read "paypal.com" for a link to another
+ * host (security audit L14).
+ */
 export function displayHost(preview: LinkPreview): string {
   try {
     const host = new URL(preview.url).hostname.toLowerCase();
@@ -288,11 +292,6 @@ export function displayHost(preview: LinkPreview): string {
   } catch {
     return preview.url;
   }
-}
-
-/** First line of the preview block: the site's own name, else its host. */
-export function displaySiteName(preview: LinkPreview): string {
-  return preview.siteName ?? displayHost(preview);
 }
 
 /** True for links this client opens (the detector never produces anything else). */

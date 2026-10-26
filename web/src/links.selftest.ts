@@ -1,6 +1,6 @@
 import {
   detectLinks,
-  displaySiteName,
+  displayHost,
   firstPreviewableUrl,
   linkPreviewWire,
   MAX_THUMBNAIL_BYTES,
@@ -100,8 +100,20 @@ const long = parseLinkPreview({ u: "https://example.com", ti: "a".repeat(500) })
 if ([...(long?.title ?? "")].length !== MAX_TITLE || !long?.title?.endsWith("…")) {
   fail("parseLinkPreview: long titles are clamped");
 }
-if (displaySiteName(parseLinkPreview({ u: "https://www.example.com/a" })!) !== "example.com") {
-  fail("displaySiteName: host fallback");
+if (displayHost(parseLinkPreview({ u: "https://www.example.com/a" })!) !== "example.com") {
+  fail("displayHost: drops www.");
+}
+/* The card's site line is the URL's host, never the sealed site name (security audit L14). */
+const spoofed = parseLinkPreview({ u: "https://login.evil.example/pay", n: "paypal.com", ti: "PayPal" })!;
+if (displayHost(spoofed) !== "login.evil.example") fail("displayHost: ignores the sender's site name");
+if (displayHost(parseLinkPreview({ u: "https://paypal.com@evil.example/" })!) !== "evil.example") {
+  fail("displayHost: user info is not the host");
+}
+if (displayHost(parseLinkPreview({ u: "https://WWW.Example.COM:8443/a" })!) !== "example.com") {
+  fail("displayHost: lower case, no port");
+}
+if (!displayHost(parseLinkPreview({ u: "https://pаypal.com/" })!).startsWith("xn--")) {
+  fail("displayHost: a look-alike host shows as punycode");
 }
 
 /* --- text envelope ------------------------------------------------------- */
