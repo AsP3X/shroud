@@ -188,6 +188,72 @@ class MessageDecoderTest {
         assertEquals(peer, message.peerUserId)
     }
 
+    // --- Senders outside the chat (security audit M7) ----------------------------------------------
+
+    /**
+     * The server lists a message account X sealed in the chat with the peer: it is not opened, X's key
+     * is neither fetched nor pinned, nothing is cached, and it shows as unreadable in the peer's chat.
+     */
+    @Test
+    fun aMessageFromOutsideTheChatIsNeverOpened() = runTest {
+        val stranger = UUID.randomUUID()
+        val dto = Dtos.message(sender = stranger, ciphertext = Dtos.sealed("this is Bob"))
+        val message = decoder().decode(dto, context(), forcePeer = peer, chatPeer = peer)
+        assertEquals("[Unable to decrypt]", message.text)
+        assertTrue(ThreadMessageMerge.isFailedDecryptText(message.text))
+        assertEquals(peer, message.peerUserId)
+        assertFalse(message.isMine)
+        assertTrue(opener.calls.isEmpty())
+        assertTrue(peerKeys.resolved.isEmpty())
+        assertNull(store.plaintexts[dto.id])
+    }
+
+    /** Another chat's message re-listed here: neither the copy this phone holds nor the cache is shown. */
+    @Test
+    fun anotherChatsMessageListedHereIsNotShown() = runTest {
+        val alice = UUID.randomUUID()
+        val dto = Dtos.message(sender = alice, ciphertext = Dtos.sealed("for your eyes"))
+        store.plaintexts[dto.id] = "for your eyes".toByteArray()
+        val alices = ChatMessage(dto.id, alice, alice, "for your eyes", Instant.now(), isMine = false, receipt = ReceiptStatus.Sent)
+        val message = decoder().decode(dto, context(threads = mapOf(alice to listOf(alices))), forcePeer = peer, chatPeer = peer)
+        assertEquals("[Unable to decrypt]", message.text)
+        assertEquals(peer, message.peerUserId)
+        assertTrue(opener.calls.isEmpty())
+    }
+
+    /** Media from outside the chat leaves nothing to download or show. */
+    @Test
+    fun mediaFromOutsideTheChatHasNothingToFetch() = runTest {
+        val payload = MediaMessagePayload(t = "image", mime = "image/jpeg", w = 4, h = 3, k = "a2V5", c = "At the lake")
+        val dto = Dtos.message(sender = UUID.randomUUID(), contentType = ContentType.MEDIA, ciphertext = media(payload), mediaObjectId = UUID.randomUUID())
+        mediaOnDevice += dto.id
+        val message = decoder().decode(dto, context(), forcePeer = peer, chatPeer = peer)
+        assertEquals("[Unable to decrypt]", message.text)
+        assertEquals(ChatMessageKind.Text, message.kind)
+        assertNull(message.mediaObjectId)
+        assertFalse(message.hasFullMedia)
+        assertTrue(opener.calls.isEmpty())
+    }
+
+    /** Ours and the peer's still open with the chat named; in Notes the chat's peer is our own id. */
+    @Test
+    fun oursAndThePeersStillOpenWithTheChatNamed() = runTest {
+        val decoder = decoder()
+        val theirs = decoder.decode(Dtos.message(sender = peer, ciphertext = Dtos.sealed("from them")), context(), forcePeer = peer, chatPeer = peer)
+        assertEquals("from them", theirs.text)
+        val conversation = Dtos.conversation(peer)
+        val mine = decoder.decode(
+            Dtos.message(sender = me, conversation = conversation.id, ciphertext = Dtos.sealed("from me")),
+            context(conversations = listOf(conversation)),
+            forcePeer = peer,
+            chatPeer = peer,
+        )
+        assertEquals("from me", mine.text)
+        val note = decoder.decode(Dtos.message(sender = me, ciphertext = Dtos.sealed("note")), context(), chatPeer = me)
+        assertEquals("note", note.text)
+        assertEquals(listOf(OpenAs.Recipient, OpenAs.Sender, OpenAs.Sender), opener.calls.map { it.role })
+    }
+
     // --- A copy the thread already shows (`:60-136`) -------------------------------------------------
 
     private fun held(id: UUID, text: String, kind: ChatMessageKind = ChatMessageKind.Text, isMine: Boolean = false, receipt: ReceiptStatus = ReceiptStatus.Sent) =

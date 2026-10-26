@@ -119,6 +119,19 @@ class MediaHydratorTest {
         assertEquals(0, w.transfers.downloads)
     }
 
+    /** The server re-lists the message under another sender: it is not opened, that key not fetched (security audit M7). */
+    @Test
+    fun aRecoveredMessageFromAnotherSenderIsNeverOpened() = runTest(main.dispatcher) {
+        val w = world(meFirst = false)
+        val message = inbound(w, image, cachePayload = false)
+        val listed = w.server.messages.indexOfFirst { it.id == message.id }
+        w.server.messages[listed] = w.server.messages[listed].copy(senderUserId = java.util.UUID.randomUUID())
+        val hydrator = MediaHydrator(w.state, w.deps)
+        assertNull(hydrator.payloadData(message))
+        assertTrue(w.identities.resolved.isEmpty())
+        assertNull(w.store.plaintexts[message.id])
+    }
+
     @Test
     fun ourOwnPhotoIsRecoveredThroughTheSelfBox() = runTest(main.dispatcher) {
         val w = world()

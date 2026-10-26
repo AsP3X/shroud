@@ -166,7 +166,8 @@ class HistoryPager(
         // The server sends newest first.
         for (dto in response.messages.asReversed()) {
             page.serverIds += dto.id
-            var message = decoder.decode(dto, decodeContext(me), forcePeer = storePeer)
+            // Only our messages and the peer's are opened (security audit M7).
+            var message = decoder.decode(dto, decodeContext(me), forcePeer = storePeer, chatPeer = apiPeer)
             if (dto.contentType == ContentType.ANNOTATION) {
                 noteAnnotation(dto, message)
                 if (!isNotes && dto.senderUserId != me) page.inboundIds += dto.id

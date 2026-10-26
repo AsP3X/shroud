@@ -271,6 +271,19 @@ shared transcripts from outside the chat. Search and notifications read the deco
 Notes, the chat list) fail on the code before. Sealing the recipient's id into the plaintext is
 still open, as are iOS and Android.
 
+**Fixed (Android):** Android had the same gap. A history page (`HistoryPager.fetchHistoryPage`) and
+a push's preview (`MessagingController.notificationText`) opened each listed message with the
+pinned (else fetched and pinned) key of its `sender_user_id`, then filed it under the page's chat;
+`MediaHydrator.payloadData` re-opened a listed media message the same way. `MessageDecoder.decode`
+now takes the chat's peer (our own id for Notes). A message that is neither ours nor from that peer
+becomes the existing `[Unable to decrypt]` text bubble with no media: it is not opened, no held
+copy or cached plaintext is used, and its sender's key is never fetched. The media recovery returns
+nothing for a listed message whose sender is not the chat's peer and the bubble's sender. A live
+`message.new` was already safe: a peer's message is filed under its own sender, never under another
+chat. Tests: `MessageDecoderTest` (`aMessageFromOutsideTheChatIsNeverOpened` and three more),
+`MediaHydratorTest.aRecoveredMessageFromAnotherSenderIsNeverOpened`. **Not compiled or run** (no
+Android SDK reachable). **Open:** the `self` box still does not name the recipient.
+
 ### M8. A locked iPhone trusts any identity key the server sends (malicious server)
 
 `ios/shroud/Services/API/PeerIdentityStore.swift:21-34,86-97`,

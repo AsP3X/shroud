@@ -91,11 +91,25 @@ class MessageDecoder(
      * The bubble for [dto] (`decodeMessage`, `MessagingController.swift:4447-4506`). [forcePeer] keys
      * it under that thread whatever the decode guessed: a page decode always knows its thread
      * (messaging-core §8.2 Android improvement; iOS forces only for Notes).
+     *
+     * [chatPeer] is the peer of the chat the server listed [dto] in (our own id for Notes). A message
+     * that is neither ours nor theirs is shown as unreadable: it is not opened, nothing is read from
+     * the caches for it, and its sender's key is never fetched or pinned. Otherwise the server could
+     * have account X seal a message and list it in the chat with Bob, where it would show as Bob's
+     * (security audit M7).
      */
-    suspend fun decode(dto: MessageDto, context: Context, forcePeer: UUID? = null): ChatMessage {
-        val message = decodeAsIs(dto, context)
+    suspend fun decode(dto: MessageDto, context: Context, forcePeer: UUID? = null, chatPeer: UUID? = null): ChatMessage {
+        val message = if (chatPeer != null && dto.senderUserId != context.me && dto.senderUserId != chatPeer) {
+            outsider(dto, forcePeer ?: chatPeer)
+        } else {
+            decodeAsIs(dto, context)
+        }
         return if (forcePeer != null && message.peerUserId != forcePeer) message.copy(peerUserId = forcePeer) else message
     }
+
+    /** A text bubble saying it cannot be read, with no media to fetch: the existing failed-decrypt state. */
+    private fun outsider(dto: MessageDto, peer: UUID): ChatMessage =
+        Base(dto, peer, isMine = false, receipt = ReceiptStatus.Sent).message(text = ThreadMessageMerge.UNABLE_TO_DECRYPT)
 
     /** `MessageDecoder.decode`, `MessageDecoder.swift:30-294`. */
     private suspend fun decodeAsIs(dto: MessageDto, context: Context): ChatMessage {

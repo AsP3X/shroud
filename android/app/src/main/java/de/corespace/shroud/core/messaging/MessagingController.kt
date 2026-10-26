@@ -299,7 +299,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         val dto = page.messages.firstOrNull { it.id == messageId } ?: return null
         if (dto.contentType == ContentType.ANNOTATION || dto.deletedForEveryone) return null
         val decoded = try {
-            decoder.decode(dto, decodeContext(me), forcePeer = peerUserId)
+            decoder.decode(dto, decodeContext(me), forcePeer = peerUserId, chatPeer = peerUserId)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {

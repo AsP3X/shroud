@@ -313,6 +313,9 @@ class MediaHydrator(
         // Inbound recovery: the thread was reloaded before the first open saved the payload (MC:4048-4058).
         val response = deps.api.messages(token, apiPeer, INBOUND_RECOVERY_PAGE)
         val dto = response.messages.firstOrNull { it.id == message.id } ?: return null
+        // Only from the chat's peer, as the bubble said: a message re-listed under another sender
+        // is never opened, and that sender's key never fetched (security audit M7).
+        if (dto.senderUserId != apiPeer || dto.senderUserId != message.senderUserId) return null
         val envelope = dto.ciphertext?.let(MessageCrypto::fromWire) ?: return null
         // A concurrent decode of the same message may have cached it meanwhile (MC:4060-4063).
         cachedPayload(message.id, message.senderUserId)?.let { return it }
