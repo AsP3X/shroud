@@ -46,9 +46,10 @@ const NO_STORE: &str = "no-store";
 const BODY_LIMIT: usize = 16 * 1024;
 /// Scripts, connections and fonts stay on this origin. The enrolment QR is a `data:` image.
 /// Style attributes are allowed because the UI sets them; `default-src 'self'` alone blocks
-/// those attributes.
-const CONTENT_SECURITY_POLICY: &str =
-    "default-src 'self'; img-src 'self' data:; style-src-attr 'unsafe-inline'";
+/// those attributes. No page may frame the console (`frame-ancestors`, and `X-Frame-Options` for
+/// older browsers), so its buttons can't be clicked through a disguise.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
+    style-src-attr 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const REFERRER_POLICY: &str = "no-referrer";
 
 /// Process configuration. `HOST` defaults to `0.0.0.0`, `PORT` to `8082`,
@@ -303,6 +304,7 @@ async fn harden(request: Request, next: Next) -> Response {
             header::REFERRER_POLICY,
             HeaderValue::from_static(REFERRER_POLICY),
         );
+        headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
         headers.insert(
             HeaderName::from_static("x-request-id"),
             HeaderValue::from_str(&request_id).expect("request id is a token"),
@@ -551,6 +553,14 @@ mod tests {
                 .get(header::REFERRER_POLICY)
                 .and_then(|value| value.to_str().ok()),
             Some(REFERRER_POLICY)
+        );
+        assert!(CONTENT_SECURITY_POLICY.contains("frame-ancestors 'none'"));
+        assert_eq!(
+            response
+                .headers()
+                .get(header::X_FRAME_OPTIONS)
+                .and_then(|value| value.to_str().ok()),
+            Some("DENY")
         );
         let id = response
             .headers()
