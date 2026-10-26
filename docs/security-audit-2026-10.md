@@ -3,10 +3,10 @@
 A read-only review of the whole repository at `d4134a4` (dev): server, admin console, deployment,
 web, iOS and Android. Each finding below was traced through the code from a real entry point to
 its effect. Where a finding could not be run end to end here (a browser, a locked iPhone), it says
-so. Every finding is fixed since, except L16; each says how under **Fixed** (the
-Low items under [Low: fixed](#low-fixed)). The iOS and Android changes were not compiled or run (no
-Xcode or Android SDK where they were written) and need a build and test run before release. The
-dependency updates are open.
+so. Every finding is fixed since, except L16 and the rest of H3, which is accepted (see H3); each
+says how under **Fixed** (the Low items under [Low: fixed](#low-fixed)). The iOS and Android changes
+were not compiled or run (no Xcode or Android SDK where they were written) and need a build and test
+run before release, and the deploy scripts' H5 changes were not run against Docker.
 
 Severity is what an attacker gains, weighted by what they need first. "Server" in a client finding
 means a malicious or compromised Shroud server, which the E2EE design is meant to withstand.
@@ -17,9 +17,9 @@ means a malicious or compromised Shroud server, which the E2EE design is meant t
 | - | -------- | ---- | ------- | ------ |
 | H1 | High | Server, nginx | Per-IP rate limits use a client-chosen IP, or one key shared by everyone | Fixed |
 | H2 | High | Server | Per-account login budget is bypassed by whitespace or a legacy digest: unlimited password guessing | Fixed |
-| H3 | High | Server | Registering an unmigrated user's name locks them out for good and takes the name | Fixed (lockout) |
+| H3 | High | Server | Registering an unmigrated user's name locks them out for good and takes the name | Fixed (lockout); the rest accepted |
 | H4 | High | Web | A contact chooses the MIME type of a received photo; `blob:` in `script-src` can turn it into script on Shroud's origin | Fixed |
-| H5 | High | Deploy, admin | The console's DB role can create a schema that the superuser API then resolves first | Fixed (path pinned) |
+| H5 | High | Deploy, admin | The console's DB role can create a schema that the superuser API then resolves first | Fixed |
 | M1 | Medium | Admin | A half-enrolled operator signs in with a password that is in the source | Fixed |
 | M2 | Medium | Admin | Anyone can lock every operator out; parallel sign-ins can exhaust host memory | Fixed |
 | M3 | Medium | Server | Argon2 runs on Tokio worker threads: a login flood stalls the whole API | Fixed |
@@ -31,7 +31,7 @@ means a malicious or compromised Shroud server, which the E2EE design is meant t
 | M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Fixed (iOS/Android unbuilt) |
 | M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Fixed (opt-in `ADMIN_HOST`) |
 | L1–L19 | Low | various | See [Low](#low) | Fixed, except L16 (iOS/Android unbuilt) |
-| — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Open |
+| — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Fixed |
 
 ## High
 
@@ -113,6 +113,11 @@ in through the legacy digest. Test:
 fix). **Open:** the squatter keeps the new digest. Usernames are not looked up by hash (contacts
 are found by share code), so it gains no one's messages, but the owner's account never migrates.
 Register cannot refuse it server-side: the server cannot tell that two digests name the same user.
+**Accepted:** closing this needs the server to check that the squatter's Argon2 digest and the
+owner's SHA-256 digest come from one name, which it can only do by learning the name, the thing the
+digests exist to keep from it; "register also sends the SHA-256 digest" only stops honest clients,
+since a squatter sends a random one. What is left is that the owner's row keeps the legacy digest
+(the account works, and the name stays taken for everyone else).
 
 ### H4. A contact chooses the MIME type of a received photo
 
@@ -547,8 +552,13 @@ run (no Xcode or Android SDK where they were written).
   through `GRANT_TEST_SUPER_URL`.
 - **L4 (server):** the hourly session job revokes sessions unused for `SESSION_IDLE_DAYS`
   (default 90, 0 for never); they answer like a sign-out. Chosen knowing the iPhone and web
-  clients clear local data on a sign-out. Test `idle_sessions_are_revoked`. **Open:** asking for
-  the password before removing a device, which would change the clients' API.
+  clients clear local data on a sign-out. Test `idle_sessions_are_revoked`. Removing a device now
+  takes the account password: `DELETE /devices/{id}` with `{ "password" }` (400 without it, 401
+  `INVALID_CREDENTIALS` when wrong, 10 tries an hour per account), and the web, iOS and Android
+  removal confirmations ask for it, single and "remove all others" alike; a wrong password keeps
+  the dialog open and the session signed in. Tests in `api_auth.rs` (no password, wrong
+  password), `removeDevice.selftest.ts`, `RemoveDeviceTests` (iOS) and `DevicesControllerTest`,
+  `DevicesViewModelTest`, `ShroudApiTest` (Android); the iOS and Android code was not compiled.
 - **L5 (server):** the operator listener binds `OPERATOR_HOST` (127.0.0.1 unless set; Compose
   sets 0.0.0.0 on the internal network) and refuses a token under 32 bytes. Unit tests.
 - **L6 (server):** a block, an accept and a contact request (the mutual auto-accept included) now take
@@ -612,8 +622,12 @@ run (no Xcode or Android SDK where they were written).
   for renewal whenever it signs one and holds at most 256, evicting the soonest to expire.
 - **L14 (web):** a sealed preview counts only when its URL is one of the message's own links
   (`previewOfText`), for text and large-picture link messages; every client builds previews that
-  way. Self-test cases fail before. **Open:** showing the host instead of the sender's site name,
-  a design change (`design/webclient.pen` via Pencil, not available here).
+  way. Self-test cases fail before. The cards' site line now always shows the link's own host
+  (lower case, no `www.`, no port, punycode for look-alikes), never the sender's site name, on
+  web, iOS and Android; iOS and Android also drop a received preview whose URL is not one of the
+  text's links, as the web does, and filter previews already stored. Cases in
+  `links.selftest.ts`, `LinkPreviewPayloadTests` (iOS), `LinkPreviewPayloadTest` and
+  `StoredModelsTest` (Android).
 - **L15 (iOS):** `EncryptionPhrasePasteboard.copy` writes the phrase with
   `setItems(_:options:)` and `[.localOnly: true, .expirationDate: now + 60 s]`, so Universal
   Clipboard no longer hands it to the user's other devices; other apps on the iPhone still paste
@@ -681,7 +695,14 @@ run (no Xcode or Android SDK where they were written).
 
 ## Dependencies
 
-`cargo audit` (RustSec DB, 2026-10-26):
+**Fixed:** the lockfiles now carry `h2` 0.4.20, `rustls` 0.23.46, `rustls-webpki` 0.103.16,
+`webpki-roots` 1.0.11, `tokio` 1.54.1 (server and admin), `quinn-proto` 0.11.19, `event-listener`
+5.4.2 and `chacha20` 0.10.2, and `npm audit fix` took `vite` 7.3.7, `sharp` 0.35.5 and `source-map-js`
+1.2.2 (patch releases). `cargo audit` then lists only `rsa` (no fix released; not compiled in) and
+`npm audit` nothing. The server suite, the admin suites, the web type check, self-tests and
+`vite build`, and the link TLS client's wasm build pass.
+
+`cargo audit` (RustSec DB, 2026-10-26), before the update:
 
 | Lockfile | Applies | Fix |
 | -------- | ------- | --- |
