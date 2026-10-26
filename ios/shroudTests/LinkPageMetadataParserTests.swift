@@ -1,3 +1,4 @@
+import Network
 import UIKit
 import XCTest
 
@@ -161,11 +162,34 @@ final class LinkPageMetadataParserTests: XCTestCase {
     }
 
     func testFetchesBypassTheSystemProxy() {
-        // An empty dictionary, not nil: nil means "use the system proxy settings".
-        let configuration = LinkPreviewFetcher.sessionConfiguration()
-        XCTAssertEqual(configuration.connectionProxyDictionary?.isEmpty, true)
-        XCTAssertNil(configuration.urlCache)
-        XCTAssertEqual(configuration.httpCookieAcceptPolicy, .never)
+        let parameters = LinkPreviewConnection.parameters(
+            serverName: "example.com",
+            verifyQueue: DispatchQueue(label: "test"),
+            idleTimeout: 8
+        )
+        XCTAssertTrue(parameters.preferNoProxies)
+    }
+
+    func testFetchesConnectToTheCheckedAddresses() {
+        // The client connects to exactly these; it never resolves the name a second time.
+        XCTAssertEqual(
+            LinkPreviewFetcher.publicAddresses(of: "1.1.1.1"),
+            [LinkPreviewFetcher.ResolvedAddress.v4([1, 1, 1, 1])]
+        )
+        XCTAssertNil(LinkPreviewFetcher.publicAddresses(of: "10.1.2.3"))
+        XCTAssertNil(LinkPreviewFetcher.publicAddresses(of: "::1"))
+        XCTAssertNil(LinkPreviewFetcher.publicAddresses(of: "not-a-real-host.invalid"))
+
+        XCTAssertEqual(
+            LinkPreviewConnection.endpointHost(.v4([1, 1, 1, 1])),
+            NWEndpoint.Host.ipv4(IPv4Address("1.1.1.1")!)
+        )
+        XCTAssertEqual(
+            LinkPreviewConnection.endpointHost(.v6([0x26, 0x06, 0x47, 0, 0x47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11, 0x11])),
+            NWEndpoint.Host.ipv6(IPv6Address("2606:4700:4700::1111")!)
+        )
+        XCTAssertNil(LinkPreviewConnection.endpointHost(.v4([1, 1, 1])))
+        XCTAssertNil(LinkPreviewConnection.endpointHost(.v6([1, 2, 3, 4])))
     }
 
     func testIPv6RangesThatReachIPv4OrLocalNetworksAreNotFetched() {

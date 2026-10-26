@@ -216,8 +216,8 @@ class LinkPreviewFetcher internal constructor(
     /**
      * GET [start] (already allowed and checked), following redirects by hand: each hop's `Location`
      * is resolved against the current URL and must pass [LinkTargetRules.allowedTarget] and the
-     * address check, as iOS's `RedirectGuard` demands (`LinkPreviewFetcher.swift:455-482`, an
-     * `http` hop is upgraded). A refused hop surfaces like iOS's unfollowed 3xx: a bad response.
+     * address check, as iOS's `LinkPreviewHTTPClient.get` demands (`LinkPreviewHTTPClient.swift`,
+     * an `http` hop is upgraded). A refused hop surfaces like iOS's: a bad response.
      */
     private suspend fun <T> follow(start: HttpUrl, accept: String, read: (HttpUrl, Response) -> T): T {
         var current = start

@@ -3,7 +3,7 @@
 A read-only review of the whole repository at `d4134a4` (dev): server, admin console, deployment,
 web, iOS and Android. Each finding below was traced through the code from a real entry point to
 its effect. Where a finding could not be run end to end here (a browser, a locked iPhone), it says
-so. Every finding is fixed since, except L16 and part of L17; each says how under **Fixed** (the
+so. Every finding is fixed since, except L16; each says how under **Fixed** (the
 Low items under [Low: fixed](#low-fixed)). The iOS and Android changes were not compiled or run (no
 Xcode or Android SDK where they were written) and need a build and test run before release. The
 dependency updates are open.
@@ -30,7 +30,7 @@ means a malicious or compromised Shroud server, which the E2EE design is meant t
 | M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Fixed (unbuilt) |
 | M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Fixed (iOS/Android unbuilt) |
 | M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Fixed (opt-in `ADMIN_HOST`) |
-| L1–L19 | Low | various | See [Low](#low) | Fixed, except L16 and part of L17 (iOS/Android unbuilt) |
+| L1–L19 | Low | various | See [Low](#low) | Fixed, except L16 (iOS/Android unbuilt) |
 | — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Open |
 
 ## High
@@ -576,13 +576,23 @@ run (no Xcode or Android SDK where they were written).
   rest), fetch the files the way Android's `WhisperModelStore` does (pinned `resolve/<commit>/`
   URLs, size and hash checked before the file is moved into place, a failed check deletes it),
   and hand the folders to `WhisperKitConfig(modelFolder:tokenizerFolder:…, download: false)`.
-- **L17 (iOS), in part:** the link-preview session sets `connectionProxyDictionary = [:]`,
-  so no system or PAC proxy resolves the name past the address check or sees the links. **Open:**
-  the rebinding window. URLSession resolves the name again after the `getaddrinfo` check and has
-  no way to connect to the checked address; closing it would take an HTTP client of our own on
-  Network.framework (TLS with SNI, redirects, chunked and compressed bodies), more than a Low fix
-  should carry. What remains is a TCP and TLS attempt to a private address on port 443 with the
-  certificate checked against the public name, so nothing is read back. Not compiled or run.
+- **L17 (iOS):** link previews no longer use URLSession. `LinkPreviewFetcher.publicAddresses`
+  resolves the host once with `getaddrinfo` and returns its addresses only when every one is
+  public; `LinkPreviewHTTPClient` opens an `NWConnection` to one of those addresses
+  (`NWEndpoint.hostPort` with the IP, port 443), so nothing resolves the name a second time. TLS
+  1.2+ sends the host name as SNI (`sec_protocol_options_set_tls_server_name`), offers ALPN
+  `http/1.1`, and a verify block evaluates the chain with `SecPolicyCreateSSL` for that name
+  (system trust, no pinning). `preferNoProxies` keeps system and PAC proxies out. Over it goes
+  one HTTP/1.1 GET (`Host`, `Connection: close`, `Accept-Encoding: identity`, the old
+  User-Agent, Accept and Accept-Language); the response head is capped at 64 KB, bodies are read
+  by `Content-Length`, `chunked` or connection close, and any other transfer or content coding
+  is refused. Redirects (301/302/303/307/308, at most 16) are followed by hand: each hop goes
+  through `allowedTarget`, a new address check and a new connection to the checked address.
+  The old limits stay: 8 s idle, 15 s per fetch, 512 KB of page head, 5 MB per image (the image
+  goes through the same client). The parsing is pure (`LinkPreviewHTTP`) and covered by
+  `LinkPreviewHTTPTests`; `LinkPageMetadataParserTests` checks the proxy setting and the address
+  conversion. Not compiled or run (no Xcode here); needs a build and a device check that
+  previews still load, over IPv4 and IPv6.
 - **L18 (Compose, CI):** the API container runs read-only with a tmpfs `/tmp`,
   `no-new-privileges`, and only CHOWN, FOWNER, SETUID and SETGID (for its entrypoint); Compose
   stops without `POSTGRES_PASSWORD`/`REDIS_PASSWORD` instead of using "shroud". CI: read-only

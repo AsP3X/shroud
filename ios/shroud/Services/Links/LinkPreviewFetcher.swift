@@ -42,8 +42,11 @@ nonisolated protocol LinkPreviewFetching: Sendable {
 /// the message. To keep the fetch from being turned against the sender:
 /// - HTTPS only, default port, and never an IP literal, a local name (`.local`, `.internal`,
 ///   `localhost`), or a name that resolves to a private, loopback, or link-local address, so a
-///   pasted link cannot probe the home network. Redirects are held to the same rules.
-/// - An ephemeral session: no cookies, no cache, no credentials, no proxy, nothing kept afterwards.
+///   pasted link cannot probe the home network. The connection goes to the address that was
+///   checked, not to a second lookup (`LinkPreviewHTTPClient`). Redirects are held to the same
+///   rules, hop by hop.
+/// - Our own minimal HTTP/1.1 client: no cookies, no cache, no credentials, no proxy, nothing
+///   kept afterwards.
 /// - Only the page head is read (≤ 512 KB) and images are capped at 5 MB and 40 MP and decoded
 ///   downsampled, so a hostile page cannot run the phone out of memory.
 /// Agent: HTTP GET to the link's host only; never to the Shroud server. No logging of URLs.
@@ -85,33 +88,17 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
 
     // MARK: - Pipeline
 
-    /// Human: The host is checked with `getaddrinfo` and then resolved again by URLSession, so a
-    /// name with a very short TTL could answer a public address to the check and a private one
-    /// to the connection (DNS rebinding). URLSession has no hook to connect to a checked address,
-    /// and the fetch is HTTPS on 443 with the certificate checked against the name, so what is
-    /// left is a TCP and TLS connection attempt to a private address on port 443, nothing read
-    /// back. Android closes it with its own resolver (`PublicAddressDns`); here it would take an
-    /// HTTP client written on Network.framework, so it stays open (security audit L17).
-    private static let session = URLSession(configuration: sessionConfiguration())
-
-    static func sessionConfiguration() -> URLSessionConfiguration {
-        let configuration = URLSessionConfiguration.ephemeral
-        // No system or PAC proxy: a proxy resolves the name itself, past the address check, and
-        // would see every previewed link.
-        configuration.connectionProxyDictionary = [:]
-        configuration.httpCookieAcceptPolicy = .never
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 8
-        configuration.timeoutIntervalForResource = 15
-        configuration.waitsForConnectivity = false
-        configuration.httpAdditionalHeaders = [
-            "User-Agent": userAgent,
-            "Accept-Language": acceptLanguage,
+    /// Human: URLSession would resolve the host again after the address check, so a name with a
+    /// very short TTL could answer a public address to the check and a private one to the
+    /// connection (DNS rebinding, security audit L17). The fetch therefore runs on
+    /// `LinkPreviewHTTPClient`, which connects to an address the check accepted and checks TLS
+    /// against the name. Android does the same with its own resolver (`PublicAddressDns`).
+    private static func requestHeaders(accept: String) -> [(name: String, value: String)] {
+        [
+            (name: "User-Agent", value: userAgent),
+            (name: "Accept", value: accept),
+            (name: "Accept-Language", value: acceptLanguage),
         ]
-        return configuration
     }
 
     /// `de-DE,de;q=0.9,en;q=0.8` — the page in the sender's language when it has one.
@@ -124,10 +111,8 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
     }
 
     private static func fetch(_ url: URL) async throws -> LinkPreviewDraft {
-        guard let target = allowedTarget(url),
-              let host = target.host,
-              resolvesOnlyToPublicAddresses(host)
-        else { throw FetchError.notAllowed }
+        // The address check runs in `LinkPreviewHTTPClient.get`, right before it connects.
+        guard let target = allowedTarget(url) else { throw FetchError.notAllowed }
         let (head, finalURL, contentType) = try await fetchHead(target)
         try Task.checkCancellation()
 
@@ -139,15 +124,9 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
             metadata = LinkPageMetadataParser.parse(head, pageURL: finalURL, contentType: contentType)
         }
         if let imageURL = metadata.imageURL {
-            // Fetch the upgraded https URL, not the page's original http one.
-            if let allowed = allowedTarget(imageURL),
-               let host = allowed.host,
-               resolvesOnlyToPublicAddresses(host)
-            {
-                metadata.imageURL = allowed
-            } else {
-                metadata.imageURL = nil
-            }
+            // Fetch the upgraded https URL, not the page's original http one. Its addresses are
+            // checked when it is fetched; a refused image leaves a text-only preview.
+            metadata.imageURL = allowedTarget(imageURL)
         }
         guard !metadata.isEmpty else { throw FetchError.empty }
 
@@ -189,16 +168,15 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
 
     /// Reads the page until `</head>` or `maxHeadBytes`, whichever comes first.
     private static func fetchHead(_ url: URL) async throws -> (Data, URL, String) {
-        var request = URLRequest(url: url)
-        request.setValue("text/html,application/xhtml+xml;q=0.9,*/*;q=0.5", forHTTPHeaderField: "Accept")
-        let (bytes, response) = try await session.bytes(for: request, delegate: RedirectGuard.shared)
-        defer { bytes.task.cancel() }
-        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
-            throw FetchError.badResponse
-        }
-        let finalURL = http.url ?? url
+        let response = try await LinkPreviewHTTPClient.get(
+            url,
+            headers: requestHeaders(accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
+        )
+        defer { response.close() }
+        guard (200 ..< 300).contains(response.status) else { throw FetchError.badResponse }
+        let finalURL = response.url
         guard allowedTarget(finalURL) != nil else { throw FetchError.notAllowed }
-        let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+        let contentType = response.contentType
         if contentType.hasPrefix("image/") {
             return (Data(), finalURL, contentType)
         }
@@ -210,31 +188,28 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
         buffer.reserveCapacity(64 * 1024)
         let headEnd = Data("</head".utf8)
         let headEndUpper = Data("</HEAD".utf8)
-        for try await byte in bytes {
-            buffer.append(byte)
-            if buffer.count >= maxHeadBytes { break }
-            // Checking every 4 KB keeps the scan cheap; the window overlaps the last check.
-            if buffer.count % 4096 == 0 {
-                let window = buffer.suffix(4096 + headEnd.count)
-                if window.range(of: headEnd) != nil || window.range(of: headEndUpper) != nil { break }
-            }
+        while buffer.count < maxHeadBytes, let chunk = try await response.nextChunk() {
+            buffer.append(chunk)
+            // Only the new bytes, plus enough before them to catch a tag split across chunks.
+            let window = buffer.suffix(chunk.count + headEnd.count - 1)
+            if window.range(of: headEnd) != nil || window.range(of: headEndUpper) != nil { break }
         }
+        if buffer.count > maxHeadBytes { buffer = Data(buffer.prefix(maxHeadBytes)) }
         return (buffer, finalURL, contentType)
     }
 
     private static func fetchImage(_ url: URL) async throws -> Data {
-        var request = URLRequest(url: url)
-        request.setValue("image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8", forHTTPHeaderField: "Accept")
-        let (bytes, response) = try await session.bytes(for: request, delegate: RedirectGuard.shared)
-        defer { bytes.task.cancel() }
-        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
-            throw FetchError.badResponse
-        }
-        if response.expectedContentLength > Int64(maxImageBytes) { throw FetchError.imageTooLarge }
+        let response = try await LinkPreviewHTTPClient.get(
+            url,
+            headers: requestHeaders(accept: "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8")
+        )
+        defer { response.close() }
+        guard (200 ..< 300).contains(response.status) else { throw FetchError.badResponse }
+        if let length = response.contentLength, length > maxImageBytes { throw FetchError.imageTooLarge }
         var data = Data()
-        data.reserveCapacity(Int(max(0, min(response.expectedContentLength, Int64(maxImageBytes)))))
-        for try await byte in bytes {
-            data.append(byte)
+        data.reserveCapacity(min(response.contentLength ?? 0, maxImageBytes))
+        while let chunk = try await response.nextChunk() {
+            data.append(chunk)
             if data.count > maxImageBytes { throw FetchError.imageTooLarge }
         }
         return data
@@ -268,22 +243,54 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
     /// link-local, multicast, or otherwise not globally routable. `getaddrinfo` of an IP
     /// literal does not use the network.
     static func resolvesOnlyToPublicAddresses(_ host: String) -> Bool {
+        publicAddresses(of: host) != nil
+    }
+
+    /// An address `getaddrinfo` returned, in network byte order.
+    nonisolated enum ResolvedAddress: Equatable, Sendable {
+        /// 4 bytes.
+        case v4([UInt8])
+        /// 16 bytes.
+        case v6([UInt8])
+    }
+
+    /// Every address `host` resolves to, in the resolver's order, or nil unless all of them are
+    /// public unicast addresses (the rule of `resolvesOnlyToPublicAddresses`).
+    ///
+    /// Agent: `LinkPreviewHTTPClient` connects to one of these and never resolves `host` again;
+    /// that is what closes the DNS-rebinding window (security audit L17). Duplicates dropped.
+    static func publicAddresses(of host: String) -> [ResolvedAddress]? {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
         var info: UnsafeMutablePointer<addrinfo>?
-        guard getaddrinfo(host, nil, &hints, &info) == 0, let info else { return false }
+        guard getaddrinfo(host, nil, &hints, &info) == 0, let info else { return nil }
         defer { freeaddrinfo(info) }
-        var sawAddress = false
+        var addresses: [ResolvedAddress] = []
         var cursor: UnsafeMutablePointer<addrinfo>? = info
         while let current = cursor {
             if let address = current.pointee.ai_addr {
-                sawAddress = true
-                if !isGloballyRoutable(address) { return false }
+                guard isGloballyRoutable(address), let resolved = resolvedAddress(address) else { return nil }
+                if !addresses.contains(resolved) { addresses.append(resolved) }
             }
             cursor = current.pointee.ai_next
         }
-        return sawAddress
+        return addresses.isEmpty ? nil : addresses
+    }
+
+    private static func resolvedAddress(_ address: UnsafePointer<sockaddr>) -> ResolvedAddress? {
+        switch Int32(address.pointee.sa_family) {
+        case AF_INET:
+            return address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { pointer in
+                ResolvedAddress.v4(withUnsafeBytes(of: pointer.pointee.sin_addr) { Array($0) })
+            }
+        case AF_INET6:
+            return address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { pointer in
+                ResolvedAddress.v6(withUnsafeBytes(of: pointer.pointee.sin6_addr) { Array($0) })
+            }
+        default:
+            return nil
+        }
     }
 
     /// `ip` is in host byte order (`1.1.1.1` is `0x01010101`).
@@ -477,34 +484,5 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
         )
         guard CGImageDestinationFinalize(destination) else { return nil }
         return output as Data
-    }
-}
-
-/// Holds redirects to the same rules as the first request.
-///
-/// Human: The completion-handler form on purpose — the `async` form of this delegate method
-/// crashes the Swift 6.2 compiler (SILGen thunk) under this target's concurrency settings.
-/// Agent: Hands back nil (stop, surface the 3xx) for any redirect `allowedTarget` rejects.
-private nonisolated final class RedirectGuard: NSObject, URLSessionTaskDelegate, Sendable {
-    static let shared = RedirectGuard()
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) {
-        guard let url = request.url,
-              let allowed = LinkPreviewFetcher.allowedTarget(url),
-              let host = allowed.host,
-              LinkPreviewFetcher.resolvesOnlyToPublicAddresses(host)
-        else {
-            completionHandler(nil)
-            return
-        }
-        var redirected = request
-        redirected.url = allowed
-        completionHandler(redirected)
     }
 }
