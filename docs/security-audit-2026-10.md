@@ -528,6 +528,20 @@ and set, for the web and the console host and each kind of path. The cookie path
   Network.framework (TLS with SNI, redirects, chunked and compressed bodies), more than a Low fix
   should carry. What remains is a TCP and TLS attempt to a private address on port 443 with the
   certificate checked against the public name, so nothing is read back. Not compiled or run.
+- **L16. Open (iOS), blocked:** iOS runs a different model from Android, so Android's pin cannot
+  be reused. WhisperKit fetches the Core ML folder `openai_whisper-<variant>` from
+  `argmaxinc/whisperkit-coreml` and the tokenizer from `openai/whisper-<variant>`, both from
+  `main`; Android's revision `5359861c…` and SHA-256s are for the ggml files of
+  `ggerganov/whisper.cpp`. Nothing in this repository records a revision or file hash of either
+  iOS repository, and huggingface.co could not be reached where this was checked, so none was
+  pinned (none is invented). WhisperKit 0.18.0's `WhisperKit.download(variant:downloadBase:…)`
+  takes no revision; swift-transformers 1.1.9's `HubApi.snapshot(from:revision:matching:)` does,
+  but it checks a file's SHA-256 only when it reuses a cached copy, never right after a download,
+  and the app does not link `Hub` itself. To close it: pick commits of the three repositories,
+  record each file's size and SHA-256 (`X-Linked-Etag` for LFS files, a full download for the
+  rest), fetch the files the way Android's `WhisperModelStore` does (pinned `resolve/<commit>/`
+  URLs, size and hash checked before the file is moved into place, a failed check deletes it),
+  and hand the folders to `WhisperKitConfig(modelFolder:tokenizerFolder:…, download: false)`.
 
 ## Design notes (no change asked for here)
 
