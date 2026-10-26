@@ -1245,6 +1245,7 @@ final class MessagingController {
                 me: me,
                 material: material,
                 token: token,
+                chatPeerUserID: apiPeerID,
                 forcePeerUserID: isNotes ? storePeerID : nil
             )
             if dto.contentType == MessageAnnotation.contentType {
@@ -4833,7 +4834,11 @@ final class MessagingController {
             token: token,
             limit: 80
         )
+        // Only the chat's peer: a message the server lists here under anyone else's name is
+        // never opened, nor their key fetched (security audit M7).
         guard let dto = response.messages.first(where: { $0.id == message.id }),
+              dto.senderUserId == message.peerUserID,
+              dto.senderUserId == message.senderUserID,
               let ciphertextB64 = dto.ciphertext,
               let envelopeData = Data(base64Encoded: ciphertextB64)
         else { return nil }
@@ -5231,6 +5236,7 @@ final class MessagingController {
         me: UUID,
         material: IdentityKeyMaterial,
         token: String,
+        chatPeerUserID: UUID? = nil,
         forcePeerUserID: UUID? = nil
     ) async -> ChatMessage {
         var message = await MessageDecoder.decode(
@@ -5250,7 +5256,8 @@ final class MessagingController {
                         return material.identityPublicKeyData
                     }
                     return try await self.resolvePeerIdentityPublicKey(peerUserID: peerID, token: tok)
-                }
+                },
+                chatPeerUserID: chatPeerUserID
             )
         )
         if let forcePeerUserID, message.peerUserID != forcePeerUserID {

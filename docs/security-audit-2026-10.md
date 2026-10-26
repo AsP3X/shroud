@@ -284,6 +284,18 @@ chat. Tests: `MessageDecoderTest` (`aMessageFromOutsideTheChatIsNeverOpened` and
 `MediaHydratorTest.aRecoveredMessageFromAnotherSenderIsNeverOpened`. **Not compiled or run** (no
 Android SDK reachable). **Open:** the `self` box still does not name the recipient.
 
+**Fixed (iOS):** iOS had the same gap in history pages: `fetchHistoryPage` filed every listed
+message under the open chat, and `MessageDecoder.decode` opened one not from me with the key of
+whatever sender the server named (or reused a cached plaintext or held bubble of that sender's).
+`decode` now gets the chat's peer (`Context.chatPeerUserID`, me in Notes); a message not from me
+whose sender is not that peer returns the existing "[Unable to decrypt]" / "Media" bubble before
+any cache, open or key lookup. The media payload recovery (`mediaPayloadData`) opens only a
+message whose sender is the chat's peer. Realtime messages (`ingestIncoming`) were already filed
+under their own sender, not the chat the server names; the notification extension opens no
+messages, and reactions were already limited to me and the peer (`fetchHistoryPage`).
+`SenderBoundPlaintextTests` covers it. Not compiled or run in this review (no Xcode here). The
+`self`-box part (no recipient in the plaintext) is still open.
+
 ### M8. A locked iPhone trusts any identity key the server sends (malicious server)
 
 `ios/shroud/Services/API/PeerIdentityStore.swift:21-34,86-97`,

@@ -15,6 +15,10 @@ enum MessageDecoder {
         let local: MessagingLocalRepository
         let mediaService: MediaService
         let resolvePeerIdentityPublicKey: (UUID, String) async throws -> Data
+        /// The other person in the chat a history page was listed for (me in Notes); nil for a
+        /// message filed by its own sender (realtime). A message neither from me nor from them
+        /// is never opened.
+        var chatPeerUserID: UUID? = nil
     }
 
     static func receiptStatus(from dto: MessageDTO) -> MessageReceiptStatus {
@@ -40,6 +44,24 @@ enum MessageDecoder {
         let receipt = isMine ? receiptStatus(from: dto) : MessageReceiptStatus.sent
         let isMedia = dto.contentType == "media"
         let local = context.local
+
+        // The server lists a chat's messages and names their senders. One from someone outside
+        // this chat would open under that account's key and show as the peer's (security audit
+        // M7): it stays undecrypted, and the stranger's key is never fetched or pinned.
+        if !isMine, let chatPeer = context.chatPeerUserID, dto.senderUserId != chatPeer {
+            return MessagingController.ChatMessage(
+                id: dto.id,
+                peerUserID: chatPeer,
+                senderUserID: dto.senderUserId,
+                text: isMedia ? "Media" : "[Unable to decrypt]",
+                createdAt: dto.createdAt,
+                createdAtWire: dto.createdAtWire,
+                isMine: false,
+                deleted: false,
+                receipt: receipt,
+                kind: isMedia ? .image : .text
+            )
+        }
 
         if dto.deletedForEveryone {
             return MessagingController.ChatMessage(

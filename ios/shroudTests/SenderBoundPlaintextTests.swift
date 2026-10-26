@@ -87,6 +87,41 @@ final class SenderBoundPlaintextTests: XCTestCase {
         XCTAssertEqual(resolved.ids, [alice])
     }
 
+    /// A history page lists only my messages and the peer's. One the server names as from
+    /// anyone else is not opened, not even from a cache or a held bubble, and their key is
+    /// never asked for (security audit M7).
+    func testHistoryNeverOpensAMessageFromOutsideTheChat() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        repository.saveSealedPlaintext(messageID: id, senderUserID: carol, text: "from carol")
+        let resolved = Resolved()
+        var aliceChat = context(
+            repository: repository,
+            threads: [carol: [bubble(id: id, peer: carol, sender: carol, text: "from carol")]],
+            resolved: resolved
+        )
+        aliceChat.chatPeerUserID = alice
+
+        let stranger = try await MessageDecoder.decode(
+            dto(id: id, sender: carol, ciphertext: Data("sealed-by-carol".utf8).base64EncodedString()),
+            context: aliceChat
+        )
+        XCTAssertEqual(stranger.text, "[Unable to decrypt]")
+        XCTAssertEqual(stranger.peerUserID, alice)
+        XCTAssertEqual(stranger.senderUserID, carol)
+        XCTAssertFalse(stranger.isMine)
+        XCTAssertTrue(resolved.ids.isEmpty)
+
+        let peerID = UUID()
+        messageIDs.append(peerID)
+        _ = try await MessageDecoder.decode(
+            dto(id: peerID, sender: alice, ciphertext: Data("sealed-by-alice".utf8).base64EncodedString()),
+            context: aliceChat
+        )
+        XCTAssertEqual(resolved.ids, [alice])
+    }
+
     /// An idempotent replay stores the server row's payload and blob, not this attempt's key.
     func testReplayCachesTheKeptRow() throws {
         let repository = unlocked()
