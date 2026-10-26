@@ -176,7 +176,7 @@ class ShroudApi(internal val client: ApiClient) {
     /**
      * `DELETE /devices/{id}` with the account password → 204 (`DevicesService.swift`, security audit
      * L4). `401 INVALID_CREDENTIALS` is a wrong password (not a dead session, see [notedAuthOutcome]),
-     * `429` the budget shared with password change and account deletion, `404` not a live device of
+     * `429` the removal budget (10 an hour), `404` not a live device of
      * the account. The password is the request body only; [RemoveDeviceRequest] does not print it.
      */
     suspend fun revokeDevice(token: String, deviceId: UUID, password: String) =
