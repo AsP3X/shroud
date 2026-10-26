@@ -516,6 +516,11 @@ and set, for the web and the console host and each kind of path. The cookie path
   Clipboard no longer hands it to the user's other devices; other apps on the iPhone still paste
   it, and it still clears after 60 s. The fallback write uses the same options instead of
   `pasteboard.string = …`, which synced and never expired. Not compiled or run (no Xcode here).
+- **L12. Fixed (iOS):** `LinkPreviewFetcher.isGloballyRoutableIPv6` now checks the IPv4 address
+  inside NAT64 `64:ff9b::/96` and 6to4 `2002::/16` against the IPv4 rules (iOS synthesizes
+  `64:ff9b::` answers on IPv6-only carrier networks, so the range itself must stay allowed), and
+  refuses the rest of `64:ff9b::/32` (local-use `64:ff9b:1::/48` included), site-local
+  `fec0::/10` and all of `::/96`. Not compiled or run (no Xcode here).
 
 ## Design notes (no change asked for here)
 

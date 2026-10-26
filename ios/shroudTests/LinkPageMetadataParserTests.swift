@@ -160,6 +160,45 @@ final class LinkPageMetadataParserTests: XCTestCase {
         XCTAssertTrue(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("8.8.8.8"))
     }
 
+    func testIPv6RangesThatReachIPv4OrLocalNetworksAreNotFetched() {
+        func v6(_ text: String) -> [UInt8] {
+            var address = in6_addr()
+            XCTAssertEqual(inet_pton(AF_INET6, text, &address), 1, text)
+            return withUnsafeBytes(of: address) { Array($0) }
+        }
+        for allowed in [
+            "2606:4700:4700::1111",
+            "2a00:1450:4001:80b::200e",
+            "64:ff9b::101:101",   // NAT64 of 1.1.1.1, as an IPv6-only carrier network answers
+            "2002:808:808::1",    // 6to4 of 8.8.8.8
+        ] {
+            XCTAssertTrue(LinkPreviewFetcher.isGloballyRoutableIPv6(v6(allowed)), allowed)
+        }
+        for blocked in [
+            "::",
+            "::1",
+            "::7f00:1",           // IPv4-compatible 127.0.0.1
+            "::ffff:192.168.1.1",
+            "64:ff9b::7f00:1",    // NAT64 of 127.0.0.1
+            "64:ff9b::c0a8:101",  // NAT64 of 192.168.1.1
+            "64:ff9b::a00:1",     // NAT64 of 10.0.0.1
+            "64:ff9b:1::a00:1",   // local-use NAT64
+            "2002:c0a8:101::1",   // 6to4 of 192.168.1.1
+            "2002:7f00:1::1",     // 6to4 of 127.0.0.1
+            "fec0::1",            // site-local
+            "feff::1",
+            "fe80::1",
+            "fd00::1",
+            "ff02::1",
+            "2001:db8::1",
+        ] {
+            XCTAssertFalse(LinkPreviewFetcher.isGloballyRoutableIPv6(v6(blocked)), blocked)
+        }
+        XCTAssertFalse(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("64:ff9b::7f00:1"))
+        XCTAssertFalse(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("2002:c0a8:101::1"))
+        XCTAssertFalse(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("fec0::1"))
+    }
+
     // MARK: - Images
 
     func testDecompressionBombsAreRefusedByTheirDeclaredSize() {

@@ -301,25 +301,41 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
             }
         case AF_INET6:
             return address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { pointer in
-                isGloballyRoutableIPv6(pointer.pointee.sin6_addr)
+                isGloballyRoutableIPv6(withUnsafeBytes(of: pointer.pointee.sin6_addr) { Array($0) })
             }
         default:
             return false
         }
     }
 
-    private static func isGloballyRoutableIPv6(_ address: in6_addr) -> Bool {
-        let bytes = withUnsafeBytes(of: address) { Array($0) }
+    /// `bytes` is the 16-byte address in network order.
+    ///
+    /// Human: NAT64 and 6to4 carry an IPv4 address inside, and the network turns them back into
+    /// it, so they are only as public as that address. On an IPv6-only carrier network iOS itself
+    /// answers every IPv4-only site with a `64:ff9b::` address, so that range cannot be refused.
+    static func isGloballyRoutableIPv6(_ bytes: [UInt8]) -> Bool {
         guard bytes.count == 16 else { return false }
-        if bytes.allSatisfy({ $0 == 0 }) { return false }
-        if bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes[15] == 1 { return false }
+        func ipv4(at start: Int) -> UInt32 {
+            (UInt32(bytes[start]) << 24) | (UInt32(bytes[start + 1]) << 16)
+                | (UInt32(bytes[start + 2]) << 8) | UInt32(bytes[start + 3])
+        }
+        // ::/96: unspecified, loopback and the deprecated IPv4-compatible addresses.
+        if bytes[..<12].allSatisfy({ $0 == 0 }) { return false }
         // IPv4-mapped (::ffff:a.b.c.d) is only as public as the v4 address inside it.
         if bytes[..<10].allSatisfy({ $0 == 0 }) && bytes[10] == 0xFF && bytes[11] == 0xFF {
-            let v4 = (UInt32(bytes[12]) << 24) | (UInt32(bytes[13]) << 16)
-                | (UInt32(bytes[14]) << 8) | UInt32(bytes[15])
-            return isGloballyRoutableIPv4(v4)
+            return isGloballyRoutableIPv4(ipv4(at: 12))
         }
+        if bytes[0] == 0x00 && bytes[1] == 0x64 && bytes[2] == 0xFF && bytes[3] == 0x9B {
+            // NAT64 well-known prefix 64:ff9b::/96 carries the v4 address in its last four bytes.
+            if bytes[4 ..< 12].allSatisfy({ $0 == 0 }) { return isGloballyRoutableIPv4(ipv4(at: 12)) }
+            // Everything else under 64:ff9b::/32, including local-use NAT64 64:ff9b:1::/48.
+            return false
+        }
+        // 6to4 (2002:a.b.c.d::/48) carries the v4 address in bytes 2–5.
+        if bytes[0] == 0x20 && bytes[1] == 0x02 { return isGloballyRoutableIPv4(ipv4(at: 2)) }
         if bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80 { return false }
+        // Site-local fec0::/10 (deprecated, still routed inside some networks).
+        if bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0xC0 { return false }
         if (bytes[0] & 0xFE) == 0xFC { return false }
         if bytes[0] == 0xFF { return false }
         if bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0D && bytes[3] == 0xB8 { return false }
