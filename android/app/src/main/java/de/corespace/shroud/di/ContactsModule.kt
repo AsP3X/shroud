@@ -16,7 +16,10 @@ import de.corespace.shroud.core.contacts.PrivacyController
 import de.corespace.shroud.core.contacts.ShroudContactsBackend
 import de.corespace.shroud.core.contacts.agreementKeys
 import de.corespace.shroud.core.model.Ids
+import de.corespace.shroud.core.storage.KeystoreSealer
 import de.corespace.shroud.core.storage.PrefsFiles
+import de.corespace.shroud.core.storage.SealedFile
+import java.io.File
 
 /**
  * Contacts, peer identity, privacy (00-plan §1.7.8, C6). Owner: W2-CONTACTS. Nobody else constructs
@@ -37,6 +40,22 @@ class ContactsModule(container: AppContainer) : AppModule(container) {
 
     private val backend: ContactsBackend by lazy { ShroudContactsBackend(container.net.api) }
 
+    /** AFU, like the notification names: the roster also refreshes while the phone is locked. */
+    private val nameSealer: KeystoreSealer by lazy { KeystoreSealer(ContactNameBook.KEY_ALIAS) }
+
+    /**
+     * `contact-names.sealed` in no-backup storage (security audit M9). Older builds kept the names
+     * in `shroud.preferences`; the book moves them into the record and deletes those keys.
+     */
+    private val nameBook: ContactNameBook by lazy {
+        ContactNameBook(
+            file = SealedFile(File(container.appContext.noBackupFilesDir, ContactNameBook.FILE_NAME), nameSealer),
+            deleteKey = { nameSealer.deleteKey() },
+            seal = container.storageSeal,
+            legacy = container.appContext.getSharedPreferences(PrefsFiles.PREFERENCES, Context.MODE_PRIVATE),
+        )
+    }
+
     private val contactsController: ContactsController by lazy {
         ContactsController(
             backend = backend,
@@ -46,9 +65,7 @@ class ContactsModule(container: AppContainer) : AppModule(container) {
             clock = container.clock,
             listeners = { listOf(privacyController, peerIdentityController) },
             names = MutualContactNames(
-                book = ContactNameBook(
-                    container.appContext.getSharedPreferences(PrefsFiles.PREFERENCES, Context.MODE_PRIVATE),
-                ),
+                book = nameBook,
                 owner = { Ids.parse(session()?.userId) },
                 username = { session()?.username },
                 keys = { container.keys.cryptoController.withMaterial { it.agreementKeys() } },
@@ -82,6 +99,11 @@ class ContactsModule(container: AppContainer) : AppModule(container) {
             onSharePresenceChanged = { contactsController.onSharePresenceChanged(it) },
             setLastError = { contactsController.reportLastError(it) },
         )
+    }
+
+    /** Reads the name book once, off the main thread, so the first roster does not wait for the Keystore. */
+    override fun onProcessStart() {
+        nameBook.preload()
     }
 
     /** The roster, requests, presence and blocks (`ContactsController`). */

@@ -4,76 +4,298 @@ import android.content.SharedPreferences
 import de.corespace.shroud.core.crypto.ContactNameBookSeal
 import de.corespace.shroud.core.crypto.ContactNameSeal
 import de.corespace.shroud.core.crypto.IdentityKeyMaterial
+import de.corespace.shroud.core.model.Ids
 import de.corespace.shroud.core.net.ApiError
 import de.corespace.shroud.core.net.ContactItemDto
 import de.corespace.shroud.core.net.ContactNamesDto
-import org.json.JSONObject
+import de.corespace.shroud.core.net.wire.LenientJson
+import de.corespace.shroud.core.storage.RecordRead
+import de.corespace.shroud.core.storage.SealedFile
+import de.corespace.shroud.core.storage.StorageSeal
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 /** Shown until a mutual contact's seal opens on this phone. */
 const val CONTACT_PLACEHOLDER = "Contact"
 
 /**
- * Usernames this phone has opened. Stored in the preferences file Log Out wipes.
- * The server never has them.
+ * Usernames this phone has opened, and a fingerprint of the name it last published to each
+ * contact. The server never has them (security audit M9).
+ *
+ * Stored as `contact-names.sealed` in no-backup storage: JSON
+ * `{"<owner id>": {"names": {"<peer id>": "<username>"}, "published": {"<peer id>": "<fingerprint>"}}}`
+ * sealed by the Keystore key `shroud.contact-names.v1` **without** `unlockedDeviceRequired` (AFU), as
+ * `NotificationNameCache` is: the roster also refreshes while the phone is locked. The Log Out /
+ * removal wipe deletes the file and the key with every other sealed record and alias; [forget] also
+ * drops the copy in memory (`ContactsController.stop(wipe = true)`), so no later write puts the
+ * account's names back.
+ *
+ * Older builds kept the two maps as JSON strings in [legacy] (`contact.names.<owner>`,
+ * `contact.names.published.<owner>`). The first read of the record takes them over, and the keys
+ * are deleted once a record holding them is written.
+ *
+ * Reads come from memory after the first load ([preload] at process start, else on the calling
+ * thread — a file read and one Keystore open). Changes land in memory at once; the record is
+ * written on [writer] (one thread), and never while [seal] is set (a wipe is running). A record
+ * that cannot be read right now (phone locked before its first unlock, a transient Keystore error)
+ * is never written over: what this process learns meanwhile stays in memory only, and is merged
+ * into the record once it reads. Never logs names or ids. Thread-safe.
  */
-class ContactNameBook(private val prefs: SharedPreferences) {
-    fun name(owner: UUID, peer: UUID): String? {
-        val stored = read(bookKey(owner)).optString(peer.toString(), "")
-        return stored.takeIf { NAME.matches(it) }
+class ContactNameBook(
+    private val file: SealedFile,
+    private val deleteKey: () -> Unit,
+    private val seal: StorageSeal,
+    private val legacy: SharedPreferences? = null,
+    private val writer: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-contact-names").apply { isDaemon = true } },
+) {
+    private class Entry(
+        val names: MutableMap<UUID, String> = LinkedHashMap(),
+        val published: MutableMap<UUID, String> = LinkedHashMap(),
+    )
+
+    private val lock = Any()
+
+    /** By owner: the record once it was read, plus every change of this process. Guarded by [lock]. */
+    private var entries = LinkedHashMap<UUID, Entry>()
+
+    /** The record was read (or there is none), so [entries] may be written over it. */
+    private var loaded = false
+
+    /** [entries] holds something the record does not. */
+    private var dirty = false
+
+    /** [legacy] keys to delete once a record holding their names is written. */
+    private var legacyKeys = emptySet<String>()
+
+    fun name(owner: UUID, peer: UUID): String? = synchronized(lock) {
+        load()
+        entries[owner]?.names?.get(peer)
     }
 
     fun remember(owner: UUID, peer: UUID, name: String) {
         if (!NAME.matches(name)) return
-        val map = read(bookKey(owner))
-        map.put(peer.toString(), name)
-        write(bookKey(owner), map)
+        synchronized(lock) {
+            load()
+            if (entries.getOrPut(owner) { Entry() }.names.put(peer, name) != name) changed()
+        }
     }
 
     /** Every name this phone has, by lowercase peer id (for the shared [ContactNameBookSeal]). */
-    fun all(owner: UUID): Map<String, String> {
-        val map = read(bookKey(owner))
-        return map.keys().asSequence().associateWith { map.optString(it, "") }.filterValues { NAME.matches(it) }
+    fun all(owner: UUID): Map<String, String> = synchronized(lock) {
+        load()
+        entries[owner]?.names.orEmpty().mapKeys { Ids.wire(it.key) }
     }
 
     fun retain(owner: UUID, peers: Collection<UUID>) {
-        val keep = peers.map { it.toString() }.toSet()
-        for (key in listOf(bookKey(owner), publishedKey(owner))) {
-            val map = read(key)
-            val drop = map.keys().asSequence().filter { it !in keep }.toList()
-            if (drop.isEmpty()) continue
-            drop.forEach { map.remove(it) }
-            write(key, map)
+        val keep = peers.toSet()
+        synchronized(lock) {
+            load()
+            val entry = entries[owner] ?: return
+            val namesDropped = entry.names.keys.retainAll(keep)
+            val publishedDropped = entry.published.keys.retainAll(keep)
+            if (namesDropped || publishedDropped) changed()
         }
     }
 
-    fun published(owner: UUID, peer: UUID): String? =
-        read(publishedKey(owner)).optString(peer.toString(), "").ifEmpty { null }
+    fun published(owner: UUID, peer: UUID): String? = synchronized(lock) {
+        load()
+        entries[owner]?.published?.get(peer)
+    }
 
     fun rememberPublished(owner: UUID, peer: UUID, fingerprint: String) {
-        val map = read(publishedKey(owner))
-        map.put(peer.toString(), fingerprint)
-        write(publishedKey(owner), map)
+        if (fingerprint.isEmpty()) return
+        synchronized(lock) {
+            load()
+            if (entries.getOrPut(owner) { Entry() }.published.put(peer, fingerprint) != fingerprint) changed()
+        }
     }
 
-    private fun read(key: String): JSONObject =
-        try {
-            JSONObject(prefs.getString(key, null) ?: "{}")
-        } catch (_: Exception) {
-            JSONObject()
+    /** Reads the record now (and takes over an older build's names), off the calling thread. */
+    fun preload() {
+        writer.execute { synchronized(lock) { load() } }
+    }
+
+    /**
+     * Forgets every name: memory, the record, its Keystore key and an older build's keys (Log Out /
+     * removal). Runs at once, on the calling thread, after a write in flight finished.
+     */
+    fun forget() {
+        synchronized(lock) {
+            entries = LinkedHashMap()
+            loaded = false
+            dirty = false
+            legacyKeys = emptySet()
+            runCatching { file.delete() }
+            runCatching { deleteKey() }
+            runCatching { removeLegacy(legacyKeyNames()) }
+        }
+    }
+
+    /** Waits until queued work ran (tests). */
+    fun drain() {
+        val done = java.util.concurrent.CountDownLatch(1)
+        writer.execute { done.countDown() }
+        done.await()
+    }
+
+    /**
+     * Under [lock]. Reads the record once: what it holds, then an older build's names where it has
+     * none, then this process's changes on top. Until the record can be read, every call tries
+     * again, and the older build's names fill in for display.
+     */
+    private fun load() {
+        if (loaded) return
+        val stored: LinkedHashMap<UUID, Entry> = when (val record = file.readClassified()) {
+            is RecordRead.Found -> try {
+                decode(record.bytes)
+            } finally {
+                record.bytes.fill(0)
+            }
+            RecordRead.NotFound -> LinkedHashMap()
+            RecordRead.DeviceLocked, RecordRead.Failed -> {
+                for ((owner, old) in readLegacy()) fill(entries.getOrPut(owner) { Entry() }, old)
+                return
+            }
+        }
+        val keys = legacyKeyNames()
+        var added = false
+        for ((owner, old) in readLegacy()) {
+            if (fill(stored.getOrPut(owner) { Entry() }, old)) added = true
+        }
+        for ((owner, mine) in entries) {
+            val entry = stored.getOrPut(owner) { Entry() }
+            for ((peer, name) in mine.names) if (entry.names.put(peer, name) != name) added = true
+            for ((peer, fingerprint) in mine.published) if (entry.published.put(peer, fingerprint) != fingerprint) added = true
+        }
+        entries = stored
+        loaded = true
+        legacyKeys = keys
+        if (added || keys.isNotEmpty()) changed()
+    }
+
+    /** Puts [old]'s pairs into [entry] where it has none; true when that added something. */
+    private fun fill(entry: Entry, old: Entry): Boolean {
+        var added = false
+        for ((peer, name) in old.names) if (entry.names.putIfAbsent(peer, name) == null) added = true
+        for ((peer, fingerprint) in old.published) if (entry.published.putIfAbsent(peer, fingerprint) == null) added = true
+        return added
+    }
+
+    /** Under [lock]. Writes [entries] on [writer] once the record has been read; dropped during a wipe. */
+    private fun changed() {
+        dirty = true
+        if (!loaded || seal.isSealed) return
+        writer.execute {
+            // The write happens under the lock too, so [forget] never races a write in flight
+            // (which would put the names back on disk under a fresh key).
+            synchronized(lock) {
+                if (!dirty || !loaded || seal.isSealed) return@execute
+                try {
+                    file.write(encode(entries))
+                } catch (_: Exception) {
+                    return@execute // The old record stays; the next change tries again.
+                }
+                dirty = false
+                if (legacyKeys.isNotEmpty()) {
+                    runCatching { removeLegacy(legacyKeys) }
+                    legacyKeys = emptySet()
+                }
+            }
+        }
+    }
+
+    private fun legacyKeyNames(): Set<String> =
+        legacy?.all?.keys.orEmpty().filter { it.startsWith(LEGACY_PREFIX) }.toSet()
+
+    /** An older build's maps by owner. Keys that name no owner, and values that are no JSON object, are skipped. */
+    private fun readLegacy(): Map<UUID, Entry> {
+        val prefs = legacy ?: return emptyMap()
+        val out = LinkedHashMap<UUID, Entry>()
+        for ((key, stored) in prefs.all) {
+            if (!key.startsWith(LEGACY_PREFIX)) continue
+            val published = key.startsWith(LEGACY_PUBLISHED_PREFIX)
+            val owner = Ids.parse(key.removePrefix(if (published) LEGACY_PUBLISHED_PREFIX else LEGACY_PREFIX)) ?: continue
+            val json = (stored as? String)?.let { LenientJson.parseObject(it) } ?: continue
+            val entry = out.getOrPut(owner) { Entry() }
+            for ((id, value) in json) {
+                val peer = LenientJson.uuidExact(id) ?: continue
+                val text = LenientJson.string(value) ?: continue
+                if (published) {
+                    if (text.isNotEmpty()) entry.published[peer] = text
+                } else if (NAME.matches(text)) {
+                    entry.names[peer] = text
+                }
+            }
+        }
+        return out
+    }
+
+    private fun removeLegacy(keys: Set<String>) {
+        val prefs = legacy ?: return
+        if (keys.isEmpty()) return
+        val edit = prefs.edit()
+        keys.forEach { edit.remove(it) }
+        edit.apply()
+    }
+
+    companion object {
+        /** File name under `noBackupFilesDir`. */
+        const val FILE_NAME = "contact-names.sealed"
+
+        /** The AFU Keystore alias (`KeystoreSealer` without `unlockedDeviceRequired`). */
+        const val KEY_ALIAS = "shroud.contact-names.v1"
+
+        private const val LEGACY_PREFIX = "contact.names."
+        private const val LEGACY_PUBLISHED_PREFIX = "contact.names.published."
+        private const val NAMES = "names"
+        private const val PUBLISHED = "published"
+        private val NAME = Regex("^[a-z0-9_]{3,32}$")
+
+        private fun encode(entries: Map<UUID, Entry>): ByteArray = LenientJson.encodeToBytes(
+            buildJsonObject {
+                for ((owner, entry) in entries.entries.sortedBy { Ids.wire(it.key) }) {
+                    if (entry.names.isEmpty() && entry.published.isEmpty()) continue
+                    put(
+                        Ids.wire(owner),
+                        buildJsonObject {
+                            put(NAMES, pairs(entry.names))
+                            put(PUBLISHED, pairs(entry.published))
+                        },
+                    )
+                }
+            },
+        )
+
+        private fun pairs(map: Map<UUID, String>): JsonObject = buildJsonObject {
+            for ((peer, value) in map.entries.sortedBy { Ids.wire(it.key) }) put(Ids.wire(peer), JsonPrimitive(value))
         }
 
-    private fun write(key: String, map: JSONObject) {
-        prefs.edit().putString(key, map.toString()).apply()
-    }
-
-    private fun bookKey(owner: UUID) = "contact.names.$owner"
-    private fun publishedKey(owner: UUID) = "contact.names.published.$owner"
-
-    private companion object {
-        val NAME = Regex("^[a-z0-9_]{3,32}$")
+        /** Pairs that are not a canonical id and a valid name (or a non-empty fingerprint) are skipped. */
+        private fun decode(bytes: ByteArray): LinkedHashMap<UUID, Entry> {
+            val out = LinkedHashMap<UUID, Entry>()
+            val json = LenientJson.parseObject(bytes) ?: return out
+            for ((ownerId, value) in json) {
+                val owner = LenientJson.uuidExact(ownerId) ?: continue
+                val record = value as? JsonObject ?: continue
+                val entry = Entry()
+                (record[NAMES] as? JsonObject)?.forEach { (id, name) ->
+                    val peer = LenientJson.uuidExact(id) ?: return@forEach
+                    LenientJson.string(name)?.takeIf { NAME.matches(it) }?.let { entry.names[peer] = it }
+                }
+                (record[PUBLISHED] as? JsonObject)?.forEach { (id, fingerprint) ->
+                    val peer = LenientJson.uuidExact(id) ?: return@forEach
+                    LenientJson.string(fingerprint)?.takeIf { it.isNotEmpty() }?.let { entry.published[peer] = it }
+                }
+                out[owner] = entry
+            }
+            return out
+        }
     }
 }
 
@@ -87,6 +309,9 @@ open class ContactNameExchange {
         contacts: List<ContactItemDto>,
         previous: List<ContactItemDto>,
     ): List<ContactItemDto> = keepLocal(contacts, previous)
+
+    /** Log Out / removal: forgets every name this phone keeps. */
+    open fun forget() {}
 
     companion object {
         val KEEP_LOCAL = ContactNameExchange()
@@ -162,6 +387,8 @@ class MutualContactNames(
             row.copy(username = book.name(me, row.userId) ?: CONTACT_PLACEHOLDER)
         }
     }
+
+    override fun forget() = book.forget()
 
     /**
      * Merges the book the account's devices share with this phone's names, and writes the union

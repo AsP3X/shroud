@@ -311,7 +311,19 @@ written; the chat shell only runs with the vault open. `sealLegacyStorage` seals
 the unlocking account in place on the next unlock. The public API is unchanged. Cases in
 `crypto/vault.selftest.ts` (a pre-vault book and record are sealed on the first unlock and still
 read; locked, nothing reads or is written) fail on the code before; `deviceWipe.selftest.ts` checks
-that a sealed book without a session is swept. iOS and Android are still open.
+that a sealed book without a session is swept.
+
+**Fixed (Android):** `ContactNameBook` keeps the names and the published-name fingerprints in
+`contact-names.sealed` in no-backup storage, sealed by its own AFU Keystore key
+`shroud.contact-names.v1`, as `NotificationNameCache` is. Its first read (preloaded at process
+start) moves an older build's `contact.names.*` keys out of `shroud.preferences` and deletes them
+once the record holding them is written. A record that cannot be read now (phone locked before the
+first unlock, a Keystore error) is never written over: names learnt meanwhile stay in memory and
+are merged once it reads. Log Out and removal delete the file and the key (the wipe's sweep of
+sealed records and aliases), and `ContactsController.stop(wipe = true)` also drops the copy in
+memory. Tests: `ContactNameBookTest`, `ContactsControllerTest.onlyAWipeForgetsTheNameBook`.
+**Not compiled or run:** no Android SDK or Google Maven could be reached from the machine this was
+written on.
 
 ### M10. The operator console shares the messenger's origin
 

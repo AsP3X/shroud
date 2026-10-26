@@ -53,7 +53,10 @@ class ContactsControllerTest {
     private val stopped = mutableListOf<Boolean>()
     private var activations = 0
 
-    private fun TestScope.controller(bind: Boolean = true) = ContactsController(
+    private fun TestScope.controller(
+        bind: Boolean = true,
+        names: ContactNameExchange = ContactNameExchange.KEEP_LOCAL,
+    ) = ContactsController(
         backend = backend,
         session = { currentSession },
         events = events,
@@ -72,6 +75,7 @@ class ContactsControllerTest {
                 }
             })
         },
+        names = names,
     ).also { if (bind) it.bind(hooks) }
 
     // ---- Refresh (`:766-840`) ----
@@ -604,6 +608,22 @@ class ContactsControllerTest {
         runCurrent()
         assertEquals(listOf(alice), contacts.contacts.value)
         contacts.stop(wipe = false)
+    }
+
+    /** Locking keeps the usernames this phone opened; Log Out / removal forgets them (security audit M9). */
+    @Test
+    fun onlyAWipeForgetsTheNameBook() = runTest(main.dispatcher) {
+        var forgotten = 0
+        val names = object : ContactNameExchange() {
+            override fun forget() {
+                forgotten++
+            }
+        }
+        val contacts = controller(names = names)
+        contacts.stop(wipe = false)
+        assertEquals(0, forgotten)
+        contacts.stop(wipe = true)
+        assertEquals(1, forgotten)
     }
 
     @Test

@@ -120,7 +120,7 @@ interface SystemWipe {
  *   external cache directories; OkHttp's connection pool.
  * - Keys: [KeyMaterialWipe] (`no_backup/keys/**` and every `shroud.` alias), every sealed record at the
  *   no-backup root (`session.sealed`, `device-anchor.sealed`, `call-secrets.sealed`, `unifiedpush.sealed`,
- *   `notification-names.sealed`, …) and every other Keystore alias of the app. Deleting never needs
+ *   `notification-names.sealed`, `contact-names.sealed`, …) and every other Keystore alias of the app. Deleting never needs
  *   authentication or an unlocked phone.
  * - Settings: every SharedPreferences key not kept — removed through the API and **committed**, never by
  *   deleting the XML (`SharedPreferencesImpl` would write its cached copy back); the voice statistics;

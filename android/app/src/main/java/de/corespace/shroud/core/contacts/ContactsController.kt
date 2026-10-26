@@ -188,7 +188,8 @@ class ContactsController(
      * Chats locked or signed out (`stopActivity` + `clearInMemoryState`, `:520-592`): the poll and
      * socket events stop, the in-flight refresh is dropped (not cancelled — its waiters still return),
      * every list, presence, block and load state is cleared. [wipe] (Log Out, removal) also forgets
-     * an App Link invite that waited for the unlock. The listeners reset the privacy settings and
+     * an App Link invite that waited for the unlock, and the usernames this phone opened
+     * ([ContactNameExchange.forget]). The listeners reset the privacy settings and
      * the peer-identity memory ([wipe]: also every pin, `clearLocalData`, `:558-564`).
      */
     override fun stop(wipe: Boolean) {
@@ -206,7 +207,10 @@ class ContactsController(
         blockedState.value = emptyList()
         listStateFlow.value = ContactsListState()
         lastPresenceSweepAt = null
-        if (wipe) pendingInvite.value = null
+        if (wipe) {
+            pendingInvite.value = null
+            names.forget()
+        }
         listeners().forEach { it.onContactsStopped(wipe) }
     }
 
