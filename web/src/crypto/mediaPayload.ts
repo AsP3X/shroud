@@ -72,6 +72,42 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
   }
 }
 
+/** Raster picture types a received photo or link picture keeps. */
+const PICTURE_MIMES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/avif",
+  "image/bmp",
+  "image/tiff",
+]);
+
+/** `audio/…` or `video/…`, with parameters such as `;codecs=opus`, in printable ASCII. */
+const PLAYABLE_MIME = /^(audio|video)\/[a-z0-9][a-z0-9.+-]*(;[ -~]*)?$/;
+
+/**
+ * The type a received picture's bytes get. The sender writes `mime`, and a blob typed
+ * `text/html` or `image/svg+xml` opens as a page on this origin ("Open image in new tab"), so
+ * anything but a raster type is drawn as JPEG. Decoders read the real format from the bytes.
+ */
+export function receivedPictureMime(mime: string): string {
+  const type = mime.trim().toLowerCase();
+  return PICTURE_MIMES.has(type) ? type : "image/jpeg";
+}
+
+/**
+ * The type a received voice note or video gets: the sender's `audio/…` or `video/…` type as
+ * sent, else `fallback`. Nothing else, and no control characters: a Blob turns such a type into
+ * "", and a tab opened on an untyped blob sniffs it, as HTML too.
+ */
+export function receivedPlayableMime(mime: string, kind: "audio" | "video", fallback: string): string {
+  const type = mime.trim().toLowerCase();
+  return PLAYABLE_MIME.test(type) && type.startsWith(`${kind}/`) ? type : fallback;
+}
+
 /**
  * A shared file, whatever its `mime` says. Checked before the MIME sniffing below: a PDF, an
  * `audio/` or `video/` file sent as a file must never read as a voice note or a clip.

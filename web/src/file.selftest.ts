@@ -405,6 +405,23 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   check(ref.kind === "file" && ref.snippet === "invoice.MP4", "a reply quotes the file name");
   const spoofed = messageFromMediaPayload(base, { ...payload, n: "notes.pdf", mime: "text/html" }, null);
   check(spoofed.mime === "application/pdf", "the sender's mime is ignored");
+  // Photos, link pictures, voice notes and videos keep a media type only (security audit H4).
+  const received = (fields: Record<string, unknown>) =>
+    messageFromMediaPayload(base, parseMediaPayload(JSON.stringify({ k: "a2V5", w: 0, h: 0, ...fields }))!, null);
+  check(received({ t: "image", mime: "text/html" }).mime === "image/jpeg", "an html photo is drawn as JPEG");
+  check(received({ t: "image", mime: "image/svg+xml" }).mime === "image/jpeg", "an svg photo is drawn as JPEG");
+  check(received({ t: "image", mime: " Image/HEIC " }).mime === "image/heic", "a raster type is kept");
+  const lp = { u: "https://example.com/", ti: "Example" };
+  const link = received({ t: "link", mime: "text/html", lp });
+  check(link.kind === "text" && link.mime === "image/jpeg", "an html link picture is drawn as JPEG");
+  check(received({ t: "voice", mime: "text/html" }).mime === "audio/mp4", "an html voice note plays as audio/mp4");
+  check(
+    received({ t: "voice", mime: "audio/webm;codecs=opus" }).mime === "audio/webm;codecs=opus",
+    "a voice note keeps its codecs",
+  );
+  check(received({ t: "voice", mime: "audio/mp4\u0000" }).mime === "audio/mp4", "control characters are refused");
+  check(received({ t: "video", mime: "audio/mp4" }).mime === "video/mp4", "a video stays a video type");
+  check(received({ t: "video", mime: "video/quicktime" }).mime === "video/quicktime", "a video type is kept");
   const odd = messageFromMediaPayload(base, { ...payload, n: "page.html" }, null);
   check(odd.kind === "file" && odd.mime === null, "an unsupported file stays a file, with no type");
   check(tombstone(msg).fileName === null && tombstone(msg).mediaKey === null, "tombstone forgets the file");
