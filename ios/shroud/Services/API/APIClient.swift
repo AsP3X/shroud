@@ -421,7 +421,8 @@ nonisolated final class APIClient: Sendable {
     /// Login/register (no Bearer) must not force-logout an existing local session.
     /// `DEVICE_REMOVED` is final on the first answer. `reason` `account_deleted` — and any
     /// `DEVICE_REMOVED` from `DELETE auth/account` — wipes as an account deletion.
-    /// A wrong password on that delete (`401 INVALID_CREDENTIALS`) is not a dead session.
+    /// A wrong password on that delete or on `DELETE devices/{id}` (`401 INVALID_CREDENTIALS`)
+    /// is not a dead session.
     static func noteOutcome(method: String, path: String, status: Int, data: Data, bearerToken: String?) {
         if status == 426 {
             if startsVersionCheck(path: path, status: status, data: data) {
@@ -449,7 +450,8 @@ nonisolated final class APIClient: Sendable {
     }
 
     /// Classifies one response for the 401 streak. `DELETE auth/account` + `INVALID_CREDENTIALS`
-    /// is `.none`: a wrong delete password must not sign the device out. The same call's
+    /// is `.none`: a wrong delete password must not sign the device out, and neither must a
+    /// wrong password on `DELETE devices/{id}` (removing another device). The delete's
     /// `DEVICE_REMOVED` (any `reason`) is an account deletion.
     static func sessionAuthNote(
         method: String,
@@ -462,7 +464,9 @@ nonisolated final class APIClient: Sendable {
         if (200 ..< 300).contains(status) { return .success }
         guard status == 401 else { return .none }
         let error = APIError.from(data: data, statusCode: status)
-        if isDeleteAccountWrongPassword(method: method, path: path, error: error) {
+        if isDeleteAccountWrongPassword(method: method, path: path, error: error)
+            || isRemoveDeviceWrongPassword(method: method, path: path, error: error)
+        {
             return .none
         }
         if error.isDeviceRemoval {
@@ -483,6 +487,20 @@ nonisolated final class APIClient: Sendable {
     /// Wrong password on the delete-account call. Not a session failure.
     static func isDeleteAccountWrongPassword(method: String, path: String, error: APIError) -> Bool {
         guard isDeleteAccount(method: method, path: path) else { return false }
+        guard case let .server(code, _, statusCode, _) = error else { return false }
+        return statusCode == 401 && code == "INVALID_CREDENTIALS"
+    }
+
+    /// `DELETE /devices/{id}`.
+    static func isRemoveDevice(method: String, path: String) -> Bool {
+        guard method.uppercased() == "DELETE" else { return false }
+        let parts = path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).split(separator: "/")
+        return parts.count == 2 && parts[0] == "devices"
+    }
+
+    /// Wrong password on removing a device (security audit L4). Not a session failure either.
+    static func isRemoveDeviceWrongPassword(method: String, path: String, error: APIError) -> Bool {
+        guard isRemoveDevice(method: method, path: path) else { return false }
         guard case let .server(code, _, statusCode, _) = error else { return false }
         return statusCode == 401 && code == "INVALID_CREDENTIALS"
     }

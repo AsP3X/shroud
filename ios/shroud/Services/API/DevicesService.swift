@@ -4,7 +4,8 @@ import Foundation
 ///
 /// Human: The server caps an account at `deviceLimit` devices; this list is the only place to
 /// get back under it. Removing a device revokes its sessions and deletes its row.
-/// Agent: HTTP GET `/devices`, DELETE `/devices/{id}`, PUT `/devices/{id}/name` (sealed only).
+/// Agent: HTTP GET `/devices`, DELETE `/devices/{id}` (with the account password),
+/// PUT `/devices/{id}/name` (sealed only).
 struct DevicesService: Sendable {
     /// Mirrors `MAX_DEVICES_PER_USER` on the server.
     static let deviceLimit = 5
@@ -29,10 +30,24 @@ struct DevicesService: Sendable {
         )
     }
 
-    func revoke(deviceID: UUID, token: String) async throws {
-        try await client.deleteNoContent(
-            path: "devices/\(deviceID.uuidString.lowercased())",
+    /// Removes another device of the account. The server asks for the account password
+    /// (security audit L4): `204` removed, `401 INVALID_CREDENTIALS` wrong password (not counted
+    /// toward the 401 streak, see `APIClient.sessionAuthNote`), `429` the budget it shares with
+    /// password change and account deletion, `404` not a live device of the account.
+    /// The password is sent once and not stored here.
+    func revoke(deviceID: UUID, password: String, token: String) async throws {
+        let (status, data) = try await client.response(
+            "DELETE",
+            path: Self.revokePath(deviceID),
+            jsonBody: try JSONEncoder.api.encode(RemoveDeviceRequest(password: password)),
             bearerToken: token
         )
+        guard (200 ..< 300).contains(status) else {
+            throw APIError.from(data: data, statusCode: status)
+        }
+    }
+
+    static func revokePath(_ deviceID: UUID) -> String {
+        "devices/\(deviceID.uuidString.lowercased())"
     }
 }

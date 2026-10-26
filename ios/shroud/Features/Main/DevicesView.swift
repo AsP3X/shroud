@@ -5,7 +5,8 @@ import SwiftUI
 /// Human: Same data and rules as the web client's Devices page — this device can't be
 /// removed here (that's Log Out), every other one can, one at a time or all at once. The
 /// account holds at most `DevicesService.deviceLimit` devices, so this is also where you make
-/// room for a new one.
+/// room for a new one. Removing asks for the account password first (security audit L4), in
+/// the same password row Delete Account uses.
 /// Agent: CALLS DevicesService (GET/DELETE `/devices`, PUT `/devices/{id}/name` sealed); READS
 /// SessionController for the token and this device's id, CryptoController for the history key
 /// that opens and seals the names; 401s are counted by `SessionAuthBridge` like every request.
@@ -24,11 +25,11 @@ struct DevicesView: View {
     @State private var actionError: String?
     @State private var revokingIDs: Set<UUID> = []
     @State private var isRevokingAll = false
-    @State private var pendingRevoke: LinkedDeviceDTO?
-    @State private var showRevokeAllConfirm = false
+    /// The open password confirmation, if any.
+    @State private var removal: DeviceRemoval?
     @State private var detailDevice: LinkedDeviceDTO?
     /// Remove tapped in the detail sheet; the confirmation waits until the sheet is gone,
-    /// since an alert presented mid-dismissal is dropped.
+    /// since a sheet presented mid-dismissal is dropped.
     @State private var revokeAfterSheet: LinkedDeviceDTO?
     @State private var toast: Toast?
 
@@ -82,33 +83,30 @@ struct DevicesView: View {
         .toolbar(.visible, for: .navigationBar)
         .toast($toast)
         .task { await load() }
-        .alert(
-            "Remove \(pendingRevoke.map(displayName) ?? "this device")?",
-            isPresented: Binding(
-                get: { pendingRevoke != nil },
-                set: { if !$0 { pendingRevoke = nil } }
-            ),
-            presenting: pendingRevoke
-        ) { device in
-            Button("Remove", role: .destructive) { revoke(device) }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text(Self.revokeConsequences(plural: false))
-        }
-        .alert(
-            "Remove all other devices?",
-            isPresented: $showRevokeAllConfirm
-        ) {
-            Button("Remove \(otherDevices.count)", role: .destructive) { revokeAllOthers() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "Only this \(UIDevice.current.model) stays signed in. "
-                    + Self.revokeConsequences(plural: true)
-            )
+        .sheet(item: $removal) { removal in
+            Group {
+                switch removal {
+                case let .one(device):
+                    RemoveDeviceSheet(
+                        title: "Remove \(displayName(device))?",
+                        message: Self.revokeConsequences(plural: false),
+                        confirmTitle: "Remove",
+                        onConfirm: { password in await revoke(device, password: password) }
+                    )
+                case .allOthers:
+                    RemoveDeviceSheet(
+                        title: "Remove all other devices?",
+                        message: "Only this \(UIDevice.current.model) stays signed in. "
+                            + Self.revokeConsequences(plural: true),
+                        confirmTitle: "Remove \(otherDevices.count)",
+                        onConfirm: { password in await revokeAllOthers(password: password) }
+                    )
+                }
+            }
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: $detailDevice, onDismiss: {
-            pendingRevoke = revokeAfterSheet
+            removal = revokeAfterSheet.map { DeviceRemoval.one($0) }
             revokeAfterSheet = nil
         }) { device in
             DeviceDetailSheet(
@@ -128,7 +126,7 @@ struct DevicesView: View {
         }
     }
 
-    /// Shared by both confirmations — what a removal actually does, server side included.
+    /// Shared by both password confirmations — what a removal actually does, server side included.
     ///
     /// Human: The server keeps the removed device's row as history, so the messages and files
     /// it sent stay in every chat. It only loses its sessions, keys and push token. The web
@@ -137,12 +135,6 @@ struct DevicesView: View {
         plural
             ? "They are signed out right away and erase everything of your account on them: messages, keys and files, as soon as they are online or next opened. What they already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
             : "It is signed out right away and erases everything of your account on it: messages, keys and files, as soon as it is online or next opened. What it already sent stays in your chats. Signing in there again takes your password and 12-word phrase."
-    }
-
-    /// A 404 means the device is already gone (removed elsewhere meanwhile) — the goal is met.
-    private static func isAlreadyRemoved(_ error: Error) -> Bool {
-        if case let .server(_, _, statusCode, _) = error as? APIError { return statusCode == 404 }
-        return false
     }
 
     // MARK: - Content
@@ -289,7 +281,7 @@ struct DevicesView: View {
                 } else {
                     Button {
                         Haptics.impact(.light)
-                        pendingRevoke = device
+                        removal = .one(device)
                     } label: {
                         // 44 pt tall target; still shorter than the row, so the row keeps its height.
                         Text("Remove")
@@ -327,7 +319,7 @@ struct DevicesView: View {
     private var revokeAllButton: some View {
         // HighlightRowButtonStyle gives the press-down tick; no second haptic on release.
         Button {
-            showRevokeAllConfirm = true
+            removal = .allOthers
         } label: {
             HStack(spacing: 12) {
                 ZStack {
@@ -482,65 +474,95 @@ struct DevicesView: View {
         }
     }
 
-    private func revoke(_ device: LinkedDeviceDTO) {
-        guard !isCurrent(device), let token = sessionController.bearerToken else { return }
-        pendingRevoke = nil
+    /// Removes one device with the password typed in the confirmation. A wrong password or the
+    /// rate limit goes back to the confirmation, which stays open and shows it under the field;
+    /// anything else closes it and behaves as before (toast, or the error under the list).
+    private func revoke(_ device: LinkedDeviceDTO, password: String) async -> RemoveDeviceAnswer {
+        // Never this device (that is Log Out), and nothing without a session: close, as before.
+        guard !isCurrent(device), let token = sessionController.bearerToken else {
+            removal = nil
+            return .failed("")
+        }
         actionError = nil
         revokingIDs.insert(device.id)
-        Task {
-            defer { revokingIDs.remove(device.id) }
-            do {
-                try await service.revoke(deviceID: device.id, token: token)
-                removeLocally([device.id])
-                Haptics.notification(.success)
-                toast = Toast("\(displayName(device)) removed")
-            } catch where Self.isAlreadyRemoved(error) {
-                removeLocally([device.id])
-                toast = .info("\(displayName(device)) was already removed")
-            } catch {
-                actionError = SessionController.userMessage(for: error)
-                Haptics.notification(.error)
-            }
-            await load()
+        defer { revokingIDs.remove(device.id) }
+        let answer: RemoveDeviceAnswer
+        do {
+            try await service.revoke(deviceID: device.id, password: password, token: token)
+            answer = .removed
+        } catch {
+            answer = RemoveDevice.answer(of: error)
         }
+        switch answer {
+        case .removed:
+            removal = nil
+            removeLocally([device.id])
+            Haptics.notification(.success)
+            toast = Toast("\(displayName(device)) removed")
+        case .alreadyRemoved:
+            removal = nil
+            removeLocally([device.id])
+            toast = .info("\(displayName(device)) was already removed")
+        case .wrongPassword, .tooManyTries:
+            return answer
+        case let .failed(message):
+            removal = nil
+            actionError = message
+            Haptics.notification(.error)
+        }
+        await load()
+        return answer
     }
 
-    /// No bulk endpoint on the server — one DELETE per device, carrying on past failures so a
-    /// single stale row doesn't leave the rest signed in.
-    private func revokeAllOthers() {
-        guard let token = sessionController.bearerToken else { return }
+    /// No bulk endpoint on the server — one DELETE per device, each with the password, carrying
+    /// on past failures so a single stale row doesn't leave the rest signed in. A wrong password
+    /// or the rate limit stops at once: every other device would be refused the same way, and
+    /// each try spends the budget removal shares with password change and account deletion.
+    /// When that stopped it before anything was removed, the confirmation stays open with the
+    /// reason; otherwise it closes and any failure shows under the list, as before.
+    private func revokeAllOthers(password: String) async -> RemoveDeviceAnswer {
         let targets = otherDevices
-        guard !targets.isEmpty else { return }
+        guard let token = sessionController.bearerToken, !targets.isEmpty else {
+            removal = nil
+            return .removed
+        }
         actionError = nil
         isRevokingAll = true
-        Task {
-            var removed: [UUID] = []
-            var lastError: Error?
-            for device in targets {
-                do {
-                    try await service.revoke(deviceID: device.id, token: token)
+        var removed: [UUID] = []
+        var lastFailure: RemoveDeviceAnswer?
+        for device in targets {
+            do {
+                try await service.revoke(deviceID: device.id, password: password, token: token)
+                removed.append(device.id)
+            } catch {
+                let answer = RemoveDevice.answer(of: error)
+                if answer == .alreadyRemoved {
                     removed.append(device.id)
-                } catch where Self.isAlreadyRemoved(error) {
-                    removed.append(device.id)
-                } catch {
-                    lastError = error
+                    continue
                 }
+                lastFailure = answer
+                if answer == .wrongPassword || answer == .tooManyTries { break }
             }
-            removeLocally(removed)
-            isRevokingAll = false
-            if let lastError {
-                let failed = targets.count - removed.count
-                let lead = targets.count == 1
-                    ? "The device could not be removed. "
-                    : "\(failed) of \(targets.count) devices could not be removed. "
-                actionError = lead + SessionController.userMessage(for: lastError)
-                Haptics.notification(.error)
-            } else {
-                Haptics.notification(.success)
-                toast = Toast(removed.count == 1 ? "1 device removed" : "\(removed.count) devices removed")
-            }
-            await load()
         }
+        isRevokingAll = false
+        if removed.isEmpty, let lastFailure, RemoveDevice.keepsConfirmationOpen(lastFailure) {
+            return lastFailure
+        }
+        removal = nil
+        removeLocally(removed)
+        if let lastFailure {
+            let failed = targets.count - removed.count
+            let lead = targets.count == 1
+                ? "The device could not be removed. "
+                : "\(failed) of \(targets.count) devices could not be removed. "
+            actionError = lead + (RemoveDevice.message(for: lastFailure) ?? "")
+            Haptics.notification(.error)
+        } else {
+            Haptics.notification(.success)
+            toast = Toast(removed.count == 1 ? "1 device removed" : "\(removed.count) devices removed")
+        }
+        await load()
+        return .removed
     }
 
     private func removeLocally(_ ids: [UUID]) {
@@ -582,6 +604,161 @@ struct DevicesView: View {
         // The row's HighlightRowButtonStyle already ticks on press-down; the detail sheet
         // shows the confirmation, since this screen's toast would sit under it.
         UIPasteboard.general.string = device.id.uuidString.lowercased()
+    }
+}
+
+// MARK: - Remove confirmation
+
+/// What the password confirmation removes.
+private enum DeviceRemoval: Identifiable {
+    case one(LinkedDeviceDTO)
+    case allOthers
+
+    var id: String {
+        switch self {
+        case let .one(device): device.id.uuidString
+        case .allOthers: "all-others"
+        }
+    }
+}
+
+/// Asks for the account password before a removal (security audit L4).
+///
+/// Human: Was an alert. An alert closes on any button, so a wrong password could not stay on
+/// screen; this sheet keeps Delete Account's password row and errors instead. The Remove button
+/// stays pale and disabled until something is typed, and the sheet cannot be dismissed while
+/// the request runs. A wrong password stays in the field, selected.
+/// Agent: `onConfirm` runs the removal. A wrong password or the rate limit
+/// (`RemoveDevice.keepsConfirmationOpen`) is shown under the password; on any other answer the
+/// Devices screen has already closed this sheet. The password is cleared when the sheet goes.
+private struct RemoveDeviceSheet: View {
+    let title: String
+    let message: String
+    let confirmTitle: String
+    let onConfirm: (String) async -> RemoveDeviceAnswer
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var password = ""
+    @State private var isRemoving = false
+    @State private var errorMessage: String?
+    @State private var selectPasswordRequest = 0
+
+    private var hasPassword: Bool { !password.isEmpty }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(title)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(message)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(RemoveDeviceCopy.passwordPrompt)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    AccountPasswordCard(
+                        password: $password,
+                        label: RemoveDeviceCopy.passwordLabel,
+                        placeholder: RemoveDeviceCopy.passwordPlaceholder,
+                        isBusy: isRemoving,
+                        selectRequest: selectPasswordRequest,
+                        focusOnAppear: true,
+                        onSubmit: { Task { await submit() } }
+                    )
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
+                }
+
+                removeButton
+                    .padding(.top, 6)
+                cancelButton
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
+            .padding(.bottom, 24)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollDismissesKeyboard(.interactively)
+        .background(Theme.backgroundGrouped)
+        .interactiveDismissDisabled(isRemoving)
+        .onDisappear { password = "" }
+        .onChange(of: password) {
+            guard !isRemoving else { return }
+            errorMessage = nil
+        }
+    }
+
+    /// Delete Account's button: danger capsule, pale until a password is typed.
+    private var removeButton: some View {
+        Button {
+            Task { await submit() }
+        } label: {
+            HStack(spacing: 8) {
+                if isRemoving {
+                    ProgressView()
+                        .tint(Color.white)
+                }
+                Text(isRemoving ? RemoveDeviceCopy.removing : confirmTitle)
+                    .font(.system(size: 17, weight: .semibold))
+                    .contentTransition(.opacity)
+            }
+            .foregroundStyle(Color.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(hasPassword ? Theme.danger : Theme.danger.opacity(0.45))
+            .clipShape(Capsule())
+            .animation(Motion.snappy, value: isRemoving)
+        }
+        .pressable(scale: 0.975, dimming: 0.05, haptic: .medium)
+        .disabled(!hasPassword || isRemoving)
+        .accessibilityLabel(isRemoving ? RemoveDeviceCopy.removing : confirmTitle)
+    }
+
+    private var cancelButton: some View {
+        Button(RemoveDeviceCopy.cancel) {
+            dismiss()
+        }
+        .font(.system(size: 17))
+        .foregroundStyle(Theme.accent)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 44)
+        .disabled(isRemoving)
+        // The explicit colour would otherwise stay at full strength while disabled.
+        .opacity(isRemoving ? 0.35 : 1)
+    }
+
+    private func submit() async {
+        guard !isRemoving, hasPassword else { return }
+        let typed = password
+        isRemoving = true
+        errorMessage = nil
+        defer { isRemoving = false }
+        let answer = await onConfirm(typed)
+        guard RemoveDevice.keepsConfirmationOpen(answer), let message = RemoveDevice.message(for: answer) else {
+            // The Devices screen has closed this sheet and shows the result itself.
+            password = ""
+            return
+        }
+        errorMessage = message
+        Haptics.notification(.error)
+        AccessibilityNotification.Announcement(message).post()
+        if answer == .wrongPassword {
+            selectPasswordRequest += 1
+        }
     }
 }
 

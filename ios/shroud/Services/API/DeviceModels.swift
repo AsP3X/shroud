@@ -33,3 +33,9 @@ nonisolated struct PutDeviceNameRequest: Encodable, Equatable, Sendable {
         case sealedName = "sealed_name"
     }
 }
+
+/// `DELETE /devices/{id}` body: the account password, which removing a device asks for
+/// (security audit L4). It is sent once and not stored or logged.
+nonisolated struct RemoveDeviceRequest: Encodable, Equatable, Sendable {
+    let password: String
+}

@@ -17,14 +17,10 @@ struct DeleteAccountView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var password = ""
-    @State private var revealed = false
     @State private var isDeleting = false
     @State private var errorMessage: String?
-    @FocusState private var focused: PasswordField?
-
-    private enum PasswordField: Hashable {
-        case secure, revealed
-    }
+    /// Bumped after a wrong password: the card selects what was typed.
+    @State private var selectPasswordRequest = 0
 
     private var hasPassword: Bool { !password.isEmpty }
 
@@ -172,53 +168,14 @@ struct DeleteAccountView: View {
     }
 
     private var passwordCard: some View {
-        HStack(spacing: 10) {
-            Text(DeleteAccountCopy.passwordLabel)
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.textPrimary)
-            ZStack(alignment: .leading) {
-                SecureField(DeleteAccountCopy.passwordPlaceholder, text: $password)
-                    .textContentType(.password)
-                    .focused($focused, equals: .secure)
-                    .opacity(revealed ? 0 : 1)
-                    .allowsHitTesting(!revealed)
-                    .accessibilityHidden(revealed)
-                TextField(DeleteAccountCopy.passwordPlaceholder, text: $password)
-                    .textContentType(.password)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focused, equals: .revealed)
-                    .opacity(revealed ? 1 : 0)
-                    .allowsHitTesting(revealed)
-                    .accessibilityHidden(!revealed)
-            }
-            .font(.system(size: 16))
-            .submitLabel(.go)
-            .onSubmit { Task { await submit() } }
-            Button {
-                let wasEditing = focused != nil
-                revealed.toggle()
-                if wasEditing {
-                    focused = revealed ? .revealed : .secure
-                }
-            } label: {
-                Image(systemName: revealed ? "eye" : "eye.slash")
-                    .font(.system(size: 18))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(isDeleting)
-            .accessibilityLabel(revealed ? "Hide password" : "Show password")
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 3)
-        .frame(minHeight: 50)
-        .background(Theme.background)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .disabled(isDeleting)
-        .opacity(isDeleting ? 0.5 : 1)
+        AccountPasswordCard(
+            password: $password,
+            label: DeleteAccountCopy.passwordLabel,
+            placeholder: DeleteAccountCopy.passwordPlaceholder,
+            isBusy: isDeleting,
+            selectRequest: selectPasswordRequest,
+            onSubmit: { Task { await submit() } }
+        )
     }
 
     private var deleteButton: some View {
@@ -280,7 +237,7 @@ struct DeleteAccountView: View {
                 wipe.start(reason: .accountDeleted)
             case .wrongPassword:
                 show(.wrongPassword)
-                selectPasswordText()
+                selectPasswordRequest += 1
             case .tooManyTries:
                 show(.tooManyTries)
             case .unreachable:
@@ -294,20 +251,6 @@ struct DeleteAccountView: View {
         Haptics.notification(.error)
         if let errorMessage {
             AccessibilityNotification.Announcement(errorMessage).post()
-        }
-    }
-
-    /// C7 leaves the password in the field and selects it so it can be retyped.
-    private func selectPasswordText() {
-        focused = revealed ? .revealed : .secure
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
-            UIApplication.shared.sendAction(
-                #selector(UIResponder.selectAll(_:)),
-                to: nil,
-                from: nil,
-                for: nil
-            )
         }
     }
 }
