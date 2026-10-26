@@ -4,6 +4,7 @@ import de.corespace.shroud.core.crypto.B64
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.util.UUID
 
 /**
  * Plaintext sealed inside the message ciphertext for `content_type = media` — iOS
@@ -48,6 +49,12 @@ data class MediaMessagePayload(
     val ti: String? = null,
     /** An audio [KIND_FILE]'s artist tag, as [ti]. */
     val ar: String? = null,
+    /**
+     * The recipient ([SealedRecipient], security audit M7): set when sealing, checked on open from
+     * the plaintext itself. [parse] does not read it back, so a parsed payload re-encoded never
+     * carries an old recipient along.
+     */
+    val to: UUID? = null,
 ) {
     /**
      * `t == file` (docs/file-sharing.md §1): a file whatever its `mime` says. Every reader asks this
@@ -112,6 +119,7 @@ data class MediaMessagePayload(
         pg?.let { fields["pg"] = JsonPrimitive(it) }
         ti?.let { fields["ti"] = JsonPrimitive(it) }
         ar?.let { fields["ar"] = JsonPrimitive(it) }
+        to?.let { fields[SealedRecipient.KEY] = SealedRecipient.wire(it) }
         return LenientJson.encodeToBytes(JsonObject(fields))
     }
 

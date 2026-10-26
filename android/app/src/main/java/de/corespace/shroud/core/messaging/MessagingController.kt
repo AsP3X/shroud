@@ -868,8 +868,6 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         if (!keys.isUnlocked) return
         val generation = state.lockGeneration
         val fromPeer = dto.senderUserId != me
-        // Annotations included (`:4378-4380`).
-        if (fromPeer) ignoringErrors { deps.backend.markDelivered(token, dto.id) }
         val threadPeer = if (fromPeer) {
             dto.senderUserId
         } else {
@@ -878,7 +876,12 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
                 ?: dto.senderUserId
         }
         val isNotes = state.isNotes(threadPeer)
-        val decoded = decoder.decode(dto, decodeContext(me), forcePeer = threadPeer)
+        // The chat it is filed under is the one its sealed recipient must be (security audit M7).
+        val checked = decoder.decodeChecked(dto, decodeContext(me), forcePeer = threadPeer, chatPeer = state.apiPeer(threadPeer))
+        val decoded = checked.message
+        // Annotations included (`:4378-4380`); acked once decoded: one sealed for someone else was
+        // not delivered here.
+        if (fromPeer && !checked.refused) ignoringErrors { deps.backend.markDelivered(token, dto.id) }
         if (generation != state.lockGeneration) return
 
         if (dto.contentType == ContentType.ANNOTATION) {

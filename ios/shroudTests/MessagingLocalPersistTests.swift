@@ -87,17 +87,34 @@ final class MessagingLocalPersistTests: XCTestCase {
         XCTAssertEqual(repository.sealedPlaintext(for: link.id, senderUserID: peerA), payload)
     }
 
-    /// A reply's cache holds its quote, as the full save writes it.
+    /// A reply's cache holds its quote, as the full save writes it — and the recipient of its
+    /// chat, which for the peer's message is us (security audit M7).
     func testThreadSaveCachesTheReplyQuote() {
         let repository = unlockedRepository()
         var reply = message(peer: peerA, text: "yes")
         reply.replyTo = MessageReplyReference(messageID: UUID(), senderUserID: peerA, kind: .text, snippet: "ok?")
-        let wire = MessageTextPayload.wire(body: reply.text, replyTo: reply.replyTo, linkPreview: nil)
+        let wire = MessageTextPayload.wire(body: reply.text, replyTo: reply.replyTo, linkPreview: nil, to: userID)
         XCTAssertNotEqual(wire, reply.text)
 
         persistThread(repository, peer: peerA, messages: [reply])
 
         XCTAssertEqual(repository.sealedPlaintextText(for: reply.id, senderUserID: peerA), wire)
+    }
+
+    /// A cache that already makes the bubble is left as it is: a legacy body without `to` is
+    /// not rewritten, and one naming its recipient keeps it (security audit M7).
+    func testThreadSaveKeepsACacheThatDecodesToTheBubble() {
+        let repository = unlockedRepository()
+        let legacy = message(peer: peerA, text: "from an older build")
+        repository.saveSealedPlaintext(messageID: legacy.id, senderUserID: peerA, text: "from an older build")
+        let bound = message(peer: peerA, text: "for you")
+        let boundWire = #"{"t":"text","c":"for you","to":"\#(userID.uuidString.lowercased())"}"#
+        repository.saveSealedPlaintext(messageID: bound.id, senderUserID: peerA, text: boundWire)
+
+        persistThread(repository, peer: peerA, messages: [legacy, bound])
+
+        XCTAssertEqual(repository.sealedPlaintextText(for: legacy.id, senderUserID: peerA), "from an older build")
+        XCTAssertEqual(repository.sealedPlaintextText(for: bound.id, senderUserID: peerA), boundWire)
     }
 
     /// Older builds merged a missed delete in with the message's content still on the tombstone,

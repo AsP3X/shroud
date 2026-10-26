@@ -126,37 +126,59 @@ nonisolated struct MessageReplyReference: Codable, Equatable, Hashable, Sendable
 
 /// Plaintext of a `content_type = text` message.
 ///
-/// Human: An ordinary message is still sealed as raw UTF-8 — byte for byte what every build has
-/// sent since v1 — so nothing changes for the common case, and a build without reply support
-/// still shows it correctly. A *reply* has to carry its quote, and a message with a link preview
-/// its preview, so those are sealed as a small JSON envelope instead. Anything that does not
-/// parse as that envelope is read back as raw text, which is what keeps the shapes
-/// interoperable in both directions — a build that predates previews simply ignores `lp`.
+/// Human: A message sent to someone is sealed as a small JSON envelope that names its recipient
+/// (`to`, see `SealedRecipient`, security audit M7), with its quote (`re`) when it is a reply and
+/// its preview (`lp`) when it has a link preview. Builds from before `to` sealed a plain message
+/// as raw UTF-8, and every build since replies reads the envelope's `c` and ignores keys it does
+/// not know. Anything that does not parse as that envelope is read back as raw text, which is
+/// what keeps the shapes interoperable in both directions — a build that predates previews
+/// simply ignores `lp`.
 /// Agent: READS/WRITES sealed plaintext only. Shared with `web/src/reply.ts`
-/// (`parseTextPayload` / `textPayload`); change both sides together.
+/// (`parseTextPayload` / `textPayload`) and Android `MessageTextPayload`; change all together.
 nonisolated enum MessageTextPayload {
     /// Discriminator of the JSON envelope (`{"t":"text", …}`).
     static let kind = "text"
 
     /// Plaintext to seal: the body itself when there is nothing to attach, else the envelope.
+    /// `to` is the recipient (`SealedRecipient`).
     static func wire(
         body: String,
         replyTo: MessageReplyReference?,
-        linkPreview: LinkPreview? = nil
+        linkPreview: LinkPreview? = nil,
+        to recipient: UUID? = nil
     ) -> String {
-        guard replyTo != nil || linkPreview != nil else { return body }
+        guard replyTo != nil || linkPreview != nil || recipient != nil else { return body }
         var object: [String: Any] = [
             "t": kind,
             "c": body,
         ]
         if let replyTo { object["re"] = replyTo.wireObject }
         if let linkPreview { object["lp"] = linkPreview.wireObject }
-        // Sorted, so the same message always yields the same bytes: the local cache skips a
-        // rewrite only when they match, and dictionary order differs from call to call.
-        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-              let json = String(data: data, encoding: .utf8)
-        else { return body }
-        return json
+        if let recipient { object[SealedRecipient.key] = SealedRecipient.wire(recipient) }
+        return sortedJSON(object) ?? body
+    }
+
+    /// `wire` naming `recipient` as its recipient: an envelope gets `to` added (or replaced) with
+    /// everything else kept as it is; anything else — raw text, a Notes todo marker — becomes the
+    /// envelope with that text as `c`. What a receiver shows is unchanged: the same `parse` body,
+    /// quote and preview.
+    static func bound(_ plaintext: String, to recipient: UUID) -> String {
+        let trimmed = plaintext.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+              let data = trimmed.data(using: .utf8),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["t"] as? String == kind,
+              object["c"] as? String != nil
+        else { return wire(body: plaintext, replyTo: nil, linkPreview: nil, to: recipient) }
+        object[SealedRecipient.key] = SealedRecipient.wire(recipient)
+        return sortedJSON(object) ?? plaintext
+    }
+
+    /// Sorted, so the same message always yields the same bytes: the local cache skips a
+    /// rewrite only when they match, and dictionary order differs from call to call.
+    private static func sortedJSON(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     /// Splits sealed plaintext into the body, the quote it replies to and its link preview.

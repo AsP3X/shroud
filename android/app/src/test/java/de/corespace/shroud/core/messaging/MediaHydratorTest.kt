@@ -52,12 +52,13 @@ class MediaHydratorTest {
         caption: String? = null,
         text: String = "Photo",
         linkPreview: LinkPreview? = null,
+        to: java.util.UUID? = null,
     ): ChatMessage {
         val blob = w.transfers.upload(PlainSource.InMemory(bytes), "tok")
         w.transfers.uploads.clear()
         val payload = MediaMessagePayload(
             t = payloadKind, mime = "application/octet-stream", w = 640, h = 480, k = blob.keyBase64,
-            c = caption, d = 2_500, s = bytes.size.toLong(), lp = linkPreview,
+            c = caption, d = 2_500, s = bytes.size.toLong(), lp = linkPreview, to = to,
         ).encoded()
         val dto = w.peerSends(payload, ContentType.MEDIA, blob.mediaObjectId)
         if (cachePayload) w.store.savePlaintext(dto.id, payload)
@@ -130,6 +131,23 @@ class MediaHydratorTest {
         assertNull(hydrator.payloadData(message))
         assertTrue(w.identities.resolved.isEmpty())
         assertNull(w.store.plaintexts[message.id])
+    }
+
+    /** A recovered payload naming another recipient is neither used nor cached (security audit M7). */
+    @Test
+    fun aRecoveredPayloadForSomeoneElseIsNotUsed() = runTest(main.dispatcher) {
+        val w = world(meFirst = false)
+        val message = inbound(w, image, cachePayload = false, to = java.util.UUID.randomUUID())
+        val hydrator = MediaHydrator(w.state, w.deps)
+        assertNull(hydrator.payloadData(message))
+        assertNull(w.store.plaintexts[message.id])
+        hydrator.ensureImageLoaded(message)
+        assertFalse(w.held(message.id).hasFullMedia)
+        assertEquals(0, w.transfers.downloads)
+
+        // One naming us is recovered as before.
+        val forUs = inbound(w, image, cachePayload = false, to = w.me)
+        assertEquals(MediaMessagePayload.KIND_IMAGE, MediaMessagePayload.parse(hydrator.payloadData(forUs)!!)!!.t)
     }
 
     @Test

@@ -78,6 +78,10 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
     var ti: String? = nil
     /// Artist tag of an audio file message, like `ti`.
     var ar: String? = nil
+    /// The recipient (`SealedRecipient`, security audit M7): set when sealing, checked on open
+    /// from the plaintext itself. `parse` does not read it back, so a parsed payload sealed again
+    /// never carries an old recipient along.
+    var to: UUID? = nil
 
     static let kindImage = "image"
     static let kindVoice = "voice"
@@ -206,6 +210,7 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
         if let pg { object["pg"] = pg }
         if let ti { object["ti"] = ti }
         if let ar { object["ar"] = ar }
+        if let to { object[SealedRecipient.key] = SealedRecipient.wire(to) }
         return try JSONSerialization.data(withJSONObject: object)
     }
 

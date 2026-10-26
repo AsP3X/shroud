@@ -8,7 +8,9 @@ import de.corespace.shroud.core.model.ChatMessageKind
 import de.corespace.shroud.core.model.MediaTransfer
 import de.corespace.shroud.core.model.fileType
 import de.corespace.shroud.core.model.hasLargeLinkImage
+import de.corespace.shroud.core.net.ContentType
 import de.corespace.shroud.core.net.wire.MediaMessagePayload
+import de.corespace.shroud.core.net.wire.SealedRecipient
 import de.corespace.shroud.core.net.wire.WireText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -295,10 +297,14 @@ class MediaHydrator(
      * it (plan §1.4, messaging-core §23 item 2), so a concurrent page decode cannot open it twice.
      */
     internal suspend fun payloadData(message: ChatMessage): ByteArray? {
-        cachedPayload(message.id, message.senderUserId)?.let { return it }
+        val apiPeer = state.apiPeer(message.peerUserId)
+        // The payload must name this chat's recipient, if it names one (security audit M7): the
+        // chat's peer for ours (us in Notes), us for theirs. One for someone else is never used.
+        val recipient = if (message.isMine) apiPeer else state.myUserId
+        val addressed = { payload: ByteArray -> recipient == null || SealedRecipient.accepts(payload, ContentType.MEDIA, recipient) }
+        cachedPayload(message.id, message.senderUserId)?.let { return it.takeIf(addressed) }
         // A cached text may be the display label if something wrote the wrong blob — ignored (MC:4021).
         val token = state.session?.token ?: return null
-        val apiPeer = state.apiPeer(message.peerUserId)
         if (message.isMine) {
             val response = deps.api.messages(token, apiPeer, OWN_RECOVERY_PAGE)
             val dto = response.messages.firstOrNull { it.id == message.id } ?: return null
@@ -306,7 +312,7 @@ class MediaHydrator(
             val envelope = dto.ciphertext?.let(MessageCrypto::fromWire) ?: return null
             // Our own message: the self box, no ratchet (MC:4032-4040).
             val payload = deps.open(envelope, apiPeer, null, OpenAs.Sender) ?: return null
-            if (MediaMessagePayload.parse(payload) == null) return null
+            if (MediaMessagePayload.parse(payload) == null || !addressed(payload)) return null
             savePlaintext(message.id, message.senderUserId, payload)
             return payload
         }
@@ -319,13 +325,13 @@ class MediaHydrator(
         if (dto.senderUserId != apiPeer || dto.senderUserId != message.senderUserId) return null
         val envelope = dto.ciphertext?.let(MessageCrypto::fromWire) ?: return null
         // A concurrent decode of the same message may have cached it meanwhile (MC:4060-4063).
-        cachedPayload(message.id, message.senderUserId)?.let { return it }
+        cachedPayload(message.id, message.senderUserId)?.let { return it.takeIf(addressed) }
         val senderPublic = deps.peerIdentities().resolvePublicKey(dto.senderUserId)
         return deps.peerLocks.withPeer(dto.senderUserId) {
             // Only when no plaintext at all is cached: a non-payload blob must not burn a second open (MC:4069-4073).
             if (withContext(deps.io) { deps.store().plaintext(message.id, message.senderUserId) } != null) return@withPeer null
             val payload = deps.open(envelope, dto.senderUserId, senderPublic, OpenAs.Recipient) ?: return@withPeer null
-            if (MediaMessagePayload.parse(payload) == null) return@withPeer null
+            if (MediaMessagePayload.parse(payload) == null || !addressed(payload)) return@withPeer null
             savePlaintext(message.id, message.senderUserId, payload)
             payload
         }

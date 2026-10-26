@@ -21,6 +21,7 @@ import {
   type MediaPayload,
 } from "./crypto/mediaPayload";
 import { clampSnippet, parseTextPayload, textWire, type ReplyRef } from "./reply";
+import { RECIPIENT_KEY, recipientAccepted, recipientWire } from "./sealedRecipient";
 import { fileTypeOf, sanitizeFileName, unsupportedRefusal } from "./files";
 import { audioDisplayTitle, audioDurationOf, cleanTagText, isAudioFileName } from "./audioFiles";
 import { linkPreviewWire, type LinkPreview } from "./links";
@@ -146,10 +147,18 @@ const seenAnnotations = new Set<string>();
 const sharedTranscripts = new Map<string, string>();
 const peerLocks = new Map<string, Promise<unknown>>();
 
+/**
+ * Messages whose sealed recipient is not who this chat is with (`recipientAccepted`, security
+ * audit M7), by lowercase id: shown as not opening and never acked, like one from outside the
+ * chat. A later decode that accepts the id takes it out again.
+ */
+const misaddressed = new Set<string>();
+
 /** Lock and logout: shared transcripts leave memory with the rest of the unlocked shell. */
 export function forgetDecryptedState(): void {
   sharedTranscripts.clear();
   seenAnnotations.clear();
+  misaddressed.clear();
 }
 
 function noteSharedTranscript(annotation: Annotation): void {
@@ -225,11 +234,14 @@ function sentInChat(dto: WireMessage, me: string, peerUserId: string): boolean {
   return sender === me.toLowerCase() || sender === peerUserId.toLowerCase();
 }
 
-/** Queues one ack per id not acked yet in this tab; returns at once. */
+/**
+ * Queues one ack per id not acked yet in this tab; returns at once. Called once the ids are
+ * decoded: one whose sealed recipient is someone else (`misaddressed`) was not delivered here.
+ */
 function acknowledgeDelivery(token: string, messageIds: string[]): void {
   for (const raw of messageIds) {
     const id = raw.toLowerCase();
-    if (acknowledgedDeliveries.has(id)) continue;
+    if (acknowledgedDeliveries.has(id) || misaddressed.has(id)) continue;
     acknowledgedDeliveries.add(id);
     deliveryQueue = deliveryQueue.then(() => postDelivered(token, id));
   }
@@ -287,10 +299,13 @@ export async function ingestIncoming(
   token: string,
   material: IdentityMaterial,
 ): Promise<ChatMessage> {
-  return withPeerLock(peerUserId, () => {
-    // Acked before decoding, as iOS `ingestIncoming` does (`MessagingController.swift:4318-4320`).
-    if (deliveryAckDue(dto, me, peerUserId)) acknowledgeDelivery(token, [dto.id]);
-    return decodeIncoming(dto, me, peerUserId, token, material);
+  return withPeerLock(peerUserId, async () => {
+    // Due is asked before decoding, which caches the body; the ack goes out once the decode has
+    // checked the sealed recipient (a misaddressed message is not acked).
+    const due = deliveryAckDue(dto, me, peerUserId);
+    const msg = await decodeIncoming(dto, me, peerUserId, token, material);
+    if (due) acknowledgeDelivery(token, [dto.id]);
+    return msg;
   });
 }
 
@@ -523,9 +538,8 @@ export async function decodeIncoming(
       annotation,
     };
   };
-  // A sender who is neither of us is a message the server filed under the wrong chat. Neither a
-  // cached body nor the sender's key is touched: it fails like an envelope that does not open.
-  if (!sentInChat(dto, me, peerUserId)) {
+  /* Fails like an envelope that does not open: nothing of a body is shown or cached. */
+  const refused = (): ChatMessage => {
     if (isAnnotation) return annotationFrom(null);
     const msg: ChatMessage = {
       ...base,
@@ -535,7 +549,21 @@ export async function decodeIncoming(
     };
     rememberPreview(me, peerUserId, msg);
     return msg;
-  }
+  };
+  // A sender who is neither of us is a message the server filed under the wrong chat. Neither a
+  // cached body nor the sender's key is touched: it fails like an envelope that does not open.
+  if (!sentInChat(dto, me, peerUserId)) return refused();
+  // Whom the plaintext must name, if it names anyone: the peer for mine, me for theirs (me in
+  // Notes). Another recipient is my message to someone else, re-filed under this chat (M7).
+  const expectedRecipient = isMine ? peerUserId : me;
+  const misfiled = (plain: string): boolean => {
+    if (recipientAccepted(plain, dto.content_type, expectedRecipient)) {
+      misaddressed.delete(dto.id.toLowerCase());
+      return false;
+    }
+    misaddressed.add(dto.id.toLowerCase());
+    return true;
+  };
   if (dto.deleted_for_everyone) {
     if (isAnnotation) return annotationFrom(null);
     const msg: ChatMessage = { ...base, text: "Message deleted" };
@@ -543,6 +571,8 @@ export async function decodeIncoming(
     return msg;
   }
   const cached = loadPlaintext(dto.id, dto.sender_user_id);
+  // Cached for this id and sender, but maybe for another chat: the recipient is checked here too.
+  if (cached != null && cached !== "[media]" && misfiled(cached)) return refused();
   if (isAnnotation && cached != null) return annotationFrom(cached);
   if (cached != null && cached !== "[media]") {
     if (isMedia) {
@@ -589,6 +619,8 @@ export async function decodeIncoming(
       asSender: isMine,
     });
     const decoded = utf8decode(plain);
+    // Checked before anything is cached: a misaddressed body is never stored.
+    if (misfiled(decoded)) return refused();
     if (isAnnotation) {
       savePlaintext(dto.id, dto.sender_user_id, decoded);
       return annotationFrom(decoded);
@@ -729,7 +761,12 @@ export async function hydratePreviews(
       const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
       // A stranger's message filed under this chat shows as one that does not open (M7).
       const inChat = sentInChat(dto, me, peer.id);
-      const cached = inChat ? loadPlaintext(dto.id, dto.sender_user_id) : null;
+      const held = inChat ? loadPlaintext(dto.id, dto.sender_user_id) : null;
+      // A body that names someone else is my message to them, re-filed here (M7): not shown.
+      const cached =
+        held && held !== "[media]" && !recipientAccepted(held, dto.content_type, mine ? peer.id : me) ? null : held;
+      // A tombstone carries no body to check: it reads "Message deleted" as in the thread.
+      const misfiled = held != null && cached == null && !dto.deleted_for_everyone;
       if (cached && cached !== "[media]") {
         const payload = dto.content_type === "media" ? parseMediaPayload(cached) : null;
         let transcript = payload?.t === "voice" ? payload.c?.trim() || null : null;
@@ -737,7 +774,9 @@ export async function hydratePreviews(
           for (const other of res.messages) {
             if (other.content_type !== "annotation" || !sentInChat(other, me, peer.id)) continue;
             const raw = loadPlaintext(other.id, other.sender_user_id);
-            const shared = raw ? parseAnnotation(raw) : null;
+            const otherMine = other.sender_user_id.toLowerCase() === me.toLowerCase();
+            const shared =
+              raw && recipientAccepted(raw, "annotation", otherMine ? peer.id : me) ? parseAnnotation(raw) : null;
             if (shared?.r === dto.id.toLowerCase()) {
               transcript = shared.c;
               break;
@@ -767,7 +806,7 @@ export async function hydratePreviews(
         });
         continue;
       }
-      if (inChat && (mine || dto.deleted_for_everyone)) {
+      if (inChat && !misfiled && (mine || dto.deleted_for_everyone)) {
         await decodeIncoming(dto, me, peer.id, token, material);
         if (stillCurrent && !stillCurrent(peer.id)) {
           forgetMessageLocally(dto.id);
@@ -865,7 +904,8 @@ export async function sendText(opts: {
 }): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
-  const { wire, sealedPreview } = textWire(opts.text, opts.replyTo, opts.linkPreview);
+  // Names the recipient inside the sealed text (M7); in Notes that is me.
+  const { wire, sealedPreview } = textWire(opts.text, opts.replyTo, opts.linkPreview, peer);
   return withPeerLock(peer, async () => {
     const peerPub = await peerIdentityForSending(opts.token, peer);
     const envelope = await sealMessage({
@@ -984,6 +1024,7 @@ export async function sendVoice(opts: {
         s: opts.take.data.byteLength,
         // Sealed like the iPhone does, so the recipient never has to transcribe it.
         ...(transcript ? { c: transcript } : {}),
+        to: recipientWire(peer),
       },
       opts.replyTo,
     );
@@ -1281,7 +1322,10 @@ async function openOwnEnvelope(
     senderIdentityPublic: material.agreementPublic,
     asSender: true,
   });
-  return utf8decode(plain);
+  const opened = utf8decode(plain);
+  // The row the server kept must be this chat's: one naming another recipient is not cached.
+  if (!recipientAccepted(opened, "media", peer)) throw new Error("open: sealed for another recipient");
+  return opened;
 }
 
 /** Seals a media payload for the peer and sends it; `keep` stores the sent file under the server's id. */
@@ -1300,6 +1344,8 @@ async function sendMediaEnvelope(
 ): Promise<ChatMessage> {
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
+  // Names the recipient inside the sealed payload (M7); in Notes that is me.
+  payload.to = recipientWire(peer);
   return withPeerLock(peer, async () => {
     const peerPub = await peerIdentityForSending(opts.token, peer);
     const seal = () =>
@@ -1378,10 +1424,12 @@ export async function shareTranscript(opts: {
 
   const peer = opts.peerUserId.toLowerCase();
   const me = opts.me.toLowerCase();
+  // Names the recipient inside the sealed annotation (M7); `parseAnnotation` ignores it.
+  const sealedJson = JSON.stringify({ ...annotation, [RECIPIENT_KEY]: recipientWire(peer) });
   await withPeerLock(peer, async () => {
     const peerPub = await peerIdentityForSending(opts.token, peer);
     const envelope = await sealMessage({
-      plaintext: utf8(JSON.stringify(annotation)),
+      plaintext: utf8(sealedJson),
       peerUserId: peer,
       ourUserId: me,
       ourPrivate: opts.material.agreementPrivate,
@@ -1394,7 +1442,7 @@ export async function shareTranscript(opts: {
       content_type: "annotation",
       ciphertext: envelopeToWireB64(envelope),
     });
-    savePlaintext(dto.id, dto.sender_user_id, JSON.stringify(annotation));
+    savePlaintext(dto.id, dto.sender_user_id, sealedJson);
   });
 }
 

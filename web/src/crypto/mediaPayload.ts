@@ -36,6 +36,12 @@ export type MediaPayload = {
    */
   ti?: string | null;
   ar?: string | null;
+  /**
+   * The recipient's user id, lowercased (my own in Notes): set when sealing, checked on open by
+   * `recipientAccepted` (`sealedRecipient.ts`, security audit M7). Absent on payloads from before
+   * it; `parseMediaPayload` does not read it.
+   */
+  to?: string | null;
 };
 
 /** `pg` as sealed, or null when it is missing or not a page count. */

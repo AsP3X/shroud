@@ -185,7 +185,7 @@ final class MessagingLocalRepository {
                 snapshot.threads[mapKey] = rows
             }
             state.threads[peerID] = messages
-            recachePlaintext(of: messages)
+            recachePlaintext(of: messages, userID: userID)
         }
         if !scrubbed.isEmpty {
             removeCaches(messageIDs: scrubbed)
@@ -233,7 +233,7 @@ final class MessagingLocalRepository {
         var threadMap: [String: [LocalMessageStore.StoredMessage]] = [:]
         for (peerID, messages) in threads {
             threadMap[peerID.uuidString.lowercased()] = messages.map(LocalMessageStore.StoredMessage.from)
-            recachePlaintext(of: messages)
+            recachePlaintext(of: messages, userID: userID)
         }
         snapshot.threads = threadMap
 
@@ -286,7 +286,7 @@ final class MessagingLocalRepository {
             }
         }
         writeThread(peerID.uuidString.lowercased(), messages: prunedMessages, userID: userID, historyKey: key)
-        recachePlaintext(of: messages)
+        recachePlaintext(of: messages, userID: userID)
 
         // Roster always saved so list previews / unread stay current.
         var unread: [String: Int] = [:]
@@ -309,9 +309,11 @@ final class MessagingLocalRepository {
     /// Keeps each text message's sealed plaintext equal to the wire it decodes from, quote and
     /// preview included, so a decode from this cache rebuilds the same bubble. A link message
     /// whose picture is a media blob keeps its sealed media payload: that holds the blob key.
-    /// Each save is an atomic write plus a read-back, so an entry that already holds these
-    /// bytes is left alone.
-    private func recachePlaintext(of messages: [MessagingController.ChatMessage]) {
+    /// Each save is an atomic write plus a read-back, so an entry that already decodes to this
+    /// bubble is left alone — with the recipient it names, if any (security audit M7). A
+    /// rewritten entry names the recipient of the chat the bubble is in: its peer for mine
+    /// (`userID` in Notes), `userID` for theirs.
+    private func recachePlaintext(of messages: [MessagingController.ChatMessage], userID: UUID) {
         guard let key = historyKey else { return }
         for message in messages where !message.deleted {
             plaintextCache.bindLegacy(messageID: message.id, senderUserID: message.senderUserID, historyKey: key)
@@ -320,15 +322,26 @@ final class MessagingLocalRepository {
             where !message.deleted && message.kind == .text && message.mediaObjectId == nil
         {
             guard !ThreadMessageMerge.isFailedDecryptText(message.text) else { continue }
+            let recipient = message.isMine
+                ? (message.peerUserID == LocalMessageStore.notesPeerID ? userID : message.peerUserID)
+                : userID
             let wire = MessageTextPayload.wire(
                 body: message.text,
                 replyTo: message.replyTo,
-                linkPreview: message.linkPreview
+                linkPreview: message.linkPreview,
+                to: recipient
             )
-            if sealedPlaintextText(for: message.id, senderUserID: message.senderUserID) != wire {
-                saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, text: wire)
-            }
+            let cached = sealedPlaintextText(for: message.id, senderUserID: message.senderUserID)
+            if let cached, cached == wire || Self.decodesAlike(cached, wire) { continue }
+            saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, text: wire)
         }
+    }
+
+    /// Whether two text plaintexts make the same bubble: body, quote and preview (not `to`).
+    private static func decodesAlike(_ lhs: String, _ rhs: String) -> Bool {
+        let left = MessageTextPayload.parse(lhs)
+        let right = MessageTextPayload.parse(rhs)
+        return left.body == right.body && left.replyTo == right.replyTo && left.linkPreview == right.linkPreview
     }
 
     /// `updatedAt` is stamped on every write; it is not part of what the roster holds.

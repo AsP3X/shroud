@@ -130,8 +130,9 @@ class AnnotationSender internal constructor(
         val me = state.myUserId ?: return
         if (!deps.keyring.isUnlocked) return
         try {
-            val plaintext = MessageAnnotation.transcript(text, voiceId).encoded()
             val apiPeer = state.apiPeer(storePeer)
+            // Names its recipient inside (security audit M7).
+            val plaintext = MessageAnnotation.transcript(text, voiceId, to = apiPeer).encoded()
             val peerPublic = deps.peerIdentities().publicKeyForSending(apiPeer)
             val sealed = deps.seal(plaintext, apiPeer, me, peerPublic)
             val dto = deps.api.sendMessage(

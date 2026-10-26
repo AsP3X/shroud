@@ -15,6 +15,9 @@ nonisolated struct MessageAnnotation: Codable, Equatable, Sendable {
     var r: String
     /// Annotation body — the transcript text.
     var c: String
+    /// The recipient's user id, lowercased (`SealedRecipient`, security audit M7): written when
+    /// sealing, checked on open from the plaintext itself. Absent on annotations from before it.
+    var to: String? = nil
 
     static let contentType = "annotation"
     static let kindTranscript = "transcript"
@@ -43,8 +46,14 @@ nonisolated struct MessageAnnotation: Codable, Equatable, Sendable {
         return kept.trimmingCharacters(in: .whitespacesAndNewlines) + ellipsis
     }
 
-    static func transcript(_ text: String, for messageID: UUID) -> MessageAnnotation {
-        MessageAnnotation(t: kindTranscript, r: messageID.uuidString.lowercased(), c: clampTranscript(text))
+    /// The annotation sharing `text` as the transcript of `messageID`, sealed for `recipient`.
+    static func transcript(_ text: String, for messageID: UUID, to recipient: UUID? = nil) -> MessageAnnotation {
+        MessageAnnotation(
+            t: kindTranscript,
+            r: messageID.uuidString.lowercased(),
+            c: clampTranscript(text),
+            to: recipient.map(SealedRecipient.wire)
+        )
     }
 
     /// The shared transcript and the voice message it belongs to, or nil if `plaintext` isn't one.

@@ -166,18 +166,21 @@ class HistoryPager(
         // The server sends newest first.
         for (dto in response.messages.asReversed()) {
             page.serverIds += dto.id
-            // Only our messages and the peer's are opened (security audit M7).
-            var message = decoder.decode(dto, decodeContext(me), forcePeer = storePeer, chatPeer = apiPeer)
+            // Only our messages and the peer's are opened, and only shown when their sealed recipient is
+            // this chat's (security audit M7). One refused for either was not delivered here: no ack.
+            val checked = decoder.decodeChecked(dto, decodeContext(me), forcePeer = storePeer, chatPeer = apiPeer)
+            var message = checked.message
+            val inbound = !isNotes && dto.senderUserId != me && !checked.refused
             if (dto.contentType == ContentType.ANNOTATION) {
                 noteAnnotation(dto, message)
-                if (!isNotes && dto.senderUserId != me) page.inboundIds += dto.id
+                if (inbound) page.inboundIds += dto.id
                 continue
             }
             if (isNotes) message = NotesLocal.fromServer(message)
             // Over retention: drop now rather than publish and strip.
             if (!isNotes && message.createdAt < cutoff && !message.pendingSync) continue
             page.messages += message
-            if (!isNotes && dto.senderUserId != me) page.inboundIds += dto.id
+            if (inbound) page.inboundIds += dto.id
             val records = dto.reactions
             if (!records.isNullOrEmpty() && !message.deleted) {
                 val trusted = ReactionMerge.pageRecords(dto.id, records, setOf(me, apiPeer))

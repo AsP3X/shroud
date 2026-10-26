@@ -3,7 +3,8 @@ import XCTest
 @testable import shroud
 
 /// A message id is not a capability. Cached plaintext and a held bubble are reused only for
-/// the same sender, and an idempotent media replay remembers the row the server kept.
+/// the same sender, a plaintext naming another recipient is not shown, and an idempotent media
+/// replay remembers the row the server kept.
 @MainActor
 final class SenderBoundPlaintextTests: XCTestCase {
     private let me = UUID()
@@ -222,6 +223,147 @@ final class SenderBoundPlaintextTests: XCTestCase {
         LocalMessageStore().clear(userID: me)
     }
 
+    // MARK: - The sealed recipient (security audit M7, the `self` box)
+
+    /// The server lists my message to Alice in my chat with Bob: my self box opens, but the
+    /// plaintext names Alice, so it does not show there or in Notes, is not cached, and is
+    /// refused (no ack). In Alice's chat it opens.
+    func testMyMessageToSomeoneElseDoesNotOpenInThisChat() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        let alicePublic = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        let wire = MessageTextPayload.wire(body: "only for Alice", replyTo: nil, to: alice)
+        let message = try dto(id: id, sender: me, ciphertext: sealedByMe(wire, for: alicePublic))
+        let resolved = Resolved()
+
+        var bobChat = context(repository: repository, threads: [:], resolved: resolved)
+        bobChat.chatPeerUserID = bob
+        let inBob = await MessageDecoder.decodeChecked(message, context: bobChat)
+        XCTAssertTrue(inBob.refused)
+        XCTAssertEqual(inBob.message.text, "[Unable to decrypt]")
+        XCTAssertTrue(inBob.message.isMine)
+        XCTAssertEqual(inBob.message.peerUserID, bob)
+        XCTAssertNil(repository.sealedPlaintext(for: id, senderUserID: me))
+
+        var notes = context(repository: repository, threads: [:], resolved: resolved)
+        notes.chatPeerUserID = me
+        let inNotes = await MessageDecoder.decodeChecked(message, context: notes)
+        XCTAssertTrue(inNotes.refused)
+        XCTAssertNil(repository.sealedPlaintext(for: id, senderUserID: me))
+
+        var aliceChat = context(repository: repository, threads: [:], resolved: resolved)
+        aliceChat.chatPeerUserID = alice
+        let inAlice = await MessageDecoder.decodeChecked(message, context: aliceChat)
+        XCTAssertFalse(inAlice.refused)
+        XCTAssertEqual(inAlice.message.text, "only for Alice")
+        XCTAssertEqual(repository.sealedPlaintextText(for: id, senderUserID: me), wire)
+        XCTAssertTrue(resolved.ids.isEmpty)
+    }
+
+    /// A body cached for this id and sender in Alice's chat is checked like the envelope.
+    func testACachedBodyNamingSomeoneElseIsNotShown() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        let wire = MessageTextPayload.wire(body: "only for Alice", replyTo: nil, to: alice)
+        repository.saveSealedPlaintext(messageID: id, senderUserID: me, text: wire)
+        var bobChat = context(repository: repository, threads: [:], resolved: Resolved())
+        bobChat.chatPeerUserID = bob
+
+        let listed = try dto(id: id, sender: me, ciphertext: Data("not-an-envelope".utf8).base64EncodedString())
+        let refused = await MessageDecoder.decodeChecked(listed, context: bobChat)
+        XCTAssertTrue(refused.refused)
+        XCTAssertEqual(refused.message.text, "[Unable to decrypt]")
+        // Alice's chat keeps its body.
+        XCTAssertEqual(repository.sealedPlaintextText(for: id, senderUserID: me), wire)
+    }
+
+    /// My bubble held in Alice's thread is not reused for the same id listed in Bob's chat.
+    func testMyHeldBubbleFromAnotherChatIsNotReused() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        let alicePublic = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        let wire = MessageTextPayload.wire(body: "only for Alice", replyTo: nil, to: alice)
+        var bobChat = context(
+            repository: repository,
+            threads: [alice: [bubble(id: id, peer: alice, sender: me, text: "only for Alice")]],
+            resolved: Resolved()
+        )
+        bobChat.chatPeerUserID = bob
+
+        let listed = try dto(id: id, sender: me, ciphertext: sealedByMe(wire, for: alicePublic))
+        let refused = await MessageDecoder.decodeChecked(listed, context: bobChat)
+        XCTAssertTrue(refused.refused)
+        XCTAssertEqual(refused.message.text, "[Unable to decrypt]")
+    }
+
+    /// A message of the peer's that names someone else is refused; one naming me opens.
+    func testAPeersMessageNamingSomeoneElseIsRefused() async throws {
+        let repository = unlocked()
+        let elsewhere = UUID()
+        let forMe = UUID()
+        messageIDs.append(contentsOf: [elsewhere, forMe])
+        repository.saveSealedPlaintext(
+            messageID: elsewhere,
+            senderUserID: alice,
+            text: MessageTextPayload.wire(body: "meant for Bob", replyTo: nil, to: bob)
+        )
+        repository.saveSealedPlaintext(
+            messageID: forMe,
+            senderUserID: alice,
+            text: MessageTextPayload.wire(body: "for you", replyTo: nil, to: me)
+        )
+        var aliceChat = context(repository: repository, threads: [:], resolved: Resolved())
+        aliceChat.chatPeerUserID = alice
+
+        let misaddressed = try dto(id: elsewhere, sender: alice, ciphertext: nil)
+        let refused = await MessageDecoder.decodeChecked(misaddressed, context: aliceChat)
+        XCTAssertTrue(refused.refused)
+        XCTAssertEqual(refused.message.text, "[Unable to decrypt]")
+        XCTAssertFalse(refused.message.isMine)
+
+        let addressed = try dto(id: forMe, sender: alice, ciphertext: nil)
+        let opened = await MessageDecoder.decodeChecked(addressed, context: aliceChat)
+        XCTAssertFalse(opened.refused)
+        XCTAssertEqual(opened.message.text, "for you")
+    }
+
+    /// A photo of mine for Alice shows nothing of its payload in Bob's chat.
+    func testMyMediaForSomeoneElseIsNotShown() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        let payload = MediaMessagePayload(t: "image", mime: "image/jpeg", w: 4, h: 3, k: "a2V5", c: "for Alice", to: alice)
+        let encoded = try payload.encoded()
+        repository.saveSealedPlaintext(messageID: id, senderUserID: me, data: encoded)
+        var bobChat = context(repository: repository, threads: [:], resolved: Resolved())
+        bobChat.chatPeerUserID = bob
+
+        let listed = try dto(id: id, sender: me, ciphertext: nil, contentType: "media")
+        let refused = await MessageDecoder.decodeChecked(listed, context: bobChat)
+        XCTAssertTrue(refused.refused)
+        XCTAssertEqual(refused.message.text, "Media")
+        XCTAssertNil(refused.message.previewData)
+        XCTAssertNil(refused.message.mediaObjectId)
+    }
+
+    /// Bodies from builds before the recipient was sealed open wherever they are listed.
+    func testAPlaintextNamingNobodyStillOpens() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        let alicePublic = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        var bobChat = context(repository: repository, threads: [:], resolved: Resolved())
+        bobChat.chatPeerUserID = bob
+
+        let listed = try dto(id: id, sender: me, ciphertext: sealedByMe("from an older build", for: alicePublic))
+        let legacy = await MessageDecoder.decodeChecked(listed, context: bobChat)
+        XCTAssertFalse(legacy.refused)
+        XCTAssertEqual(legacy.message.text, "from an older build")
+    }
+
     // MARK: - Helpers
 
     private func unlocked() -> MessagingLocalRepository {
@@ -242,6 +384,28 @@ final class SenderBoundPlaintextTests: XCTestCase {
         )
     }
 
+    /// My identity for every decode of one test, so an envelope I seal opens from my self box.
+    private lazy var material = IdentityKeyMaterial(
+        userID: me,
+        registrationID: 1,
+        agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey(),
+        signingPrivateKey: Curve25519.Signing.PrivateKey(),
+        historyKey: key,
+        signedPreKeyID: 1,
+        signedPreKeyPrivate: Curve25519.KeyAgreement.PrivateKey(),
+        oneTimePreKeys: []
+    )
+
+    /// A v2 envelope of mine (no ratchet state) sealed for `peerPublic`, as the wire carries it.
+    private func sealedByMe(_ plaintext: String, for peerPublic: Data) throws -> String {
+        try MessageCrypto.seal(
+            plaintext: Data(plaintext.utf8),
+            toPeerIdentityPublicKey: peerPublic,
+            ourPrivateKey: material.agreementPrivateKey,
+            ourIdentityPublicKey: material.identityPublicKeyData
+        ).base64EncodedString()
+    }
+
     private func context(
         repository: MessagingLocalRepository,
         threads: [UUID: [MessagingController.ChatMessage]],
@@ -249,16 +413,7 @@ final class SenderBoundPlaintextTests: XCTestCase {
     ) -> MessageDecoder.Context {
         MessageDecoder.Context(
             me: me,
-            material: IdentityKeyMaterial(
-                userID: me,
-                registrationID: 1,
-                agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey(),
-                signingPrivateKey: Curve25519.Signing.PrivateKey(),
-                historyKey: key,
-                signedPreKeyID: 1,
-                signedPreKeyPrivate: Curve25519.KeyAgreement.PrivateKey(),
-                oneTimePreKeys: []
-            ),
+            material: material,
             token: "token",
             conversations: [],
             threads: threads,
@@ -271,14 +426,14 @@ final class SenderBoundPlaintextTests: XCTestCase {
         )
     }
 
-    private func dto(id: UUID, sender: UUID, ciphertext: String?) throws -> MessageDTO {
+    private func dto(id: UUID, sender: UUID, ciphertext: String?, contentType: String = "text") throws -> MessageDTO {
         var json: [String: Any] = [
             "id": id.uuidString,
             "conversation_id": UUID().uuidString,
             "sender_user_id": sender.uuidString,
             "sender_device_id": UUID().uuidString,
             "client_message_id": UUID().uuidString,
-            "content_type": "text",
+            "content_type": contentType,
             "deleted_for_everyone": false,
             "created_at": "2026-10-02T12:00:00Z",
         ]

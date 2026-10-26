@@ -35,11 +35,13 @@ final class MessagingLocalRepositoryTests: XCTestCase {
 
         _ = repository.hydrate(userID: userID)
 
-        XCTAssertEqual(repository.sealedPlaintextText(for: messageID, senderUserID: userID), "hello")
+        // Rewritten as the wire of the bubble, naming the chat's peer as its recipient (M7).
+        let wire = MessageTextPayload.wire(body: "hello", replyTo: nil, to: peerID)
+        XCTAssertEqual(repository.sealedPlaintextText(for: messageID, senderUserID: userID), wire)
         // A fresh repository reads the disk copy, not the in-memory one.
         let reopened = MessagingLocalRepository()
         reopened.setHistoryKey(key)
-        XCTAssertEqual(reopened.sealedPlaintextText(for: messageID, senderUserID: userID), "hello")
+        XCTAssertEqual(reopened.sealedPlaintextText(for: messageID, senderUserID: userID), wire)
     }
 
     private var plaintextURL: URL {

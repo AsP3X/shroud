@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.net.wire
 
 import de.corespace.shroud.core.model.Ids
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
@@ -23,11 +24,18 @@ data class MessageAnnotation(
     val r: String,
     /** Annotation body: the transcript text. */
     val c: String,
+    /**
+     * The recipient ([SealedRecipient], security audit M7): written when set, checked on open from
+     * the plaintext itself; [parseTranscript] does not read it.
+     */
+    val to: UUID? = null,
 ) {
-    /** `{"t":…,"r":…,"c":…}` — iOS `JSONEncoder` field order, the web's too. */
-    fun encoded(): ByteArray = LenientJson.encodeToBytes(
-        JsonObject(linkedMapOf("t" to JsonPrimitive(t), "r" to JsonPrimitive(r), "c" to JsonPrimitive(c))),
-    )
+    /** `{"t":…,"r":…,"c":…,"to":…}` — iOS `JSONEncoder` field order, the web's too; `to` only when set. */
+    fun encoded(): ByteArray {
+        val fields = linkedMapOf<String, JsonElement>("t" to JsonPrimitive(t), "r" to JsonPrimitive(r), "c" to JsonPrimitive(c))
+        to?.let { fields[SealedRecipient.KEY] = SealedRecipient.wire(it) }
+        return LenientJson.encodeToBytes(JsonObject(fields))
+    }
 
     override fun toString(): String = "MessageAnnotation(t=$t, text=${c.length} chars)"
 
@@ -67,9 +75,12 @@ data class MessageAnnotation(
             return WireText.trimWhitespacesAndNewlines(kept.toString()) + WireText.ELLIPSIS
         }
 
-        /** The annotation sharing [text] as the transcript of [messageId] (`:46-48`): `r` lower case, `c` clamped. */
-        fun transcript(text: String, messageId: UUID): MessageAnnotation =
-            MessageAnnotation(t = KIND_TRANSCRIPT, r = Ids.wire(messageId), c = clampTranscript(text))
+        /**
+         * The annotation sharing [text] as the transcript of [messageId] (`:46-48`): `r` lower case,
+         * `c` clamped, sealed for [to] when given.
+         */
+        fun transcript(text: String, messageId: UUID, to: UUID? = null): MessageAnnotation =
+            MessageAnnotation(t = KIND_TRANSCRIPT, r = Ids.wire(messageId), c = clampTranscript(text), to = to)
 
         /**
          * The shared transcript in [plaintext], or null (`:50-58`). Strict like iOS's `JSONDecoder`:

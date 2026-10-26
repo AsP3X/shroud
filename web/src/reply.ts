@@ -5,13 +5,17 @@
  * server never sees it — a reply is an ordinary `text` or `media` message whose plaintext
  * happens to carry `re`, so the relay still cannot tell which message answers which.
  *
- * Plain text messages stay raw UTF-8, exactly as before; only a reply (or a message whose
- * sender attached a link preview, `lp`) is sealed as the JSON envelope
- * `{"t":"text","c":<body>,"re":{…},"lp":{…}}`. Anything that does not parse as that envelope
- * is read back verbatim, which is what lets old and new builds talk to each other.
+ * A message sent to someone is sealed as the JSON envelope
+ * `{"t":"text","c":<body>,"re":{…},"lp":{…},"to":<recipient>}`: `to` names the recipient
+ * (`sealedRecipient.ts`, security audit M7); `re` and `lp` are there when it quotes a message or
+ * carries a link preview. Builds from before `to` sealed a plain message as raw UTF-8, and every
+ * build since replies reads the envelope's `c` and ignores keys it does not know. Anything that
+ * does not parse as that envelope is read back verbatim, which is what lets old and new builds
+ * talk to each other.
  */
 
 import { linkPreviewWire, parseLinkPreview, previewOfText, type LinkPreview } from "./links";
+import { RECIPIENT_KEY, recipientWire } from "./sealedRecipient";
 
 /**
  * `file` quotes carry the file name as `x`, `audio` quotes (an audio file) its display title
@@ -67,18 +71,21 @@ export function replyRefWire(ref: ReplyRef): Record<string, string> {
 }
 
 /**
- * Plaintext to seal for a text message: the body itself, or the envelope carrying its quote
- * (`re`) and/or its link preview (`lp`) — the same shape iOS `MessageTextPayload.wire` seals.
+ * Plaintext to seal for a text message: the envelope carrying its recipient (`to`), its quote
+ * (`re`) and/or its link preview (`lp`) — the same shape iOS `MessageTextPayload.wire` seals —
+ * or, with none of them, the body itself.
  */
 export function textPayload(
   text: string,
   replyTo: ReplyRef | null | undefined,
   linkPreview?: LinkPreview | null,
+  to?: string | null,
 ): string {
-  if (!replyTo && !linkPreview) return text;
+  if (!replyTo && !linkPreview && !to) return text;
   const envelope: Record<string, unknown> = { t: "text", c: text };
   if (replyTo) envelope.re = replyRefWire(replyTo);
   if (linkPreview) envelope.lp = linkPreviewWire(linkPreview);
+  if (to) envelope[RECIPIENT_KEY] = recipientWire(to);
   return JSON.stringify(envelope);
 }
 
@@ -97,20 +104,22 @@ export function textWire(
   text: string,
   replyTo: ReplyRef | null | undefined,
   linkPreview: LinkPreview | null | undefined,
+  /** The recipient's user id, sealed as `to` (`sealedRecipient.ts`). */
+  to?: string | null,
 ): { wire: string; sealedPreview: LinkPreview | null } {
-  if (!linkPreview) return { wire: textPayload(text, replyTo), sealedPreview: null };
+  if (!linkPreview) return { wire: textPayload(text, replyTo, null, to), sealedPreview: null };
   const candidates: LinkPreview[] = [
     linkPreview,
     { ...linkPreview, thumbnail: null },
     { ...linkPreview, thumbnail: null, summary: null },
   ];
   for (const candidate of candidates) {
-    const wire = textPayload(text, replyTo, candidate);
+    const wire = textPayload(text, replyTo, candidate, to);
     if (new TextEncoder().encode(wire).byteLength <= MAX_TEXT_PLAINTEXT_BYTES) {
       return { wire, sealedPreview: candidate };
     }
   }
-  return { wire: textPayload(text, replyTo), sealedPreview: null };
+  return { wire: textPayload(text, replyTo, null, to), sealedPreview: null };
 }
 
 /**

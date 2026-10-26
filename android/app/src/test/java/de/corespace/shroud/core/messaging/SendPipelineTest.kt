@@ -75,10 +75,14 @@ class SendPipelineTest {
         assertFalse(sent.pendingSync)
         assertEquals(dto.createdAtWire, sent.createdAtWire)
         // What was sealed is cached under the server id; nothing stays under the client id (MC:4851-4852).
-        assertEquals("hello there", w.store.plaintextString(dto.id))
+        // It names its recipient (security audit M7).
+        val sealedWire = MessageTextPayload.wire("hello there", null, null, w.peer)
+        assertEquals(sealedWire, w.store.plaintextString(dto.id))
         assertNull(w.store.plaintexts[request.clientMessageId])
         assertEquals(listOf(request.clientMessageId to dto.id), w.state.rekeys)
-        assertEquals("hello there", String(w.openAsPeer(request)))
+        val opened = String(w.openAsPeer(request))
+        assertEquals(sealedWire, opened)
+        assertEquals("hello there", MessageTextPayload.parse(opened).body)
         assertEquals(1, w.host.refreshes)
         assertNull(w.state.shownError)
     }
@@ -90,7 +94,7 @@ class SendPipelineTest {
             w.pipeline().sendText("hi", w.peer, null, null)
             val envelope = String(MessageCryptoFromWire(w.server.lastRequest().ciphertext))
             assertTrue(envelope, envelope.contains(if (meFirst) "\"v\":3" else "\"v\":2"))
-            assertEquals("hi", String(w.openAsPeer(w.server.lastRequest())))
+            assertEquals("hi", MessageTextPayload.parse(w.openAsPeer(w.server.lastRequest())).body)
         }
     }
 
@@ -110,7 +114,7 @@ class SendPipelineTest {
         assertEquals(quoted, sent.replyTo)
         assertEquals(preview, sent.linkPreview)
         // The cache holds the same wire, so a reload rebuilds the same bubble.
-        assertEquals(MessageTextPayload.wire("look https://komoot.com/tour/1398273", quoted, preview), w.store.plaintextString(sent.id))
+        assertEquals(MessageTextPayload.wire("look https://komoot.com/tour/1398273", quoted, preview, w.peer), w.store.plaintextString(sent.id))
     }
 
     @Test
@@ -123,7 +127,7 @@ class SendPipelineTest {
         assertEquals(preview.withoutThumbnail(), MessageTextPayload.parse(w.openAsPeer(w.server.lastRequest())).linkPreview)
 
         w.pipeline().sendText("b".repeat(13 * 1024), w.peer, null, LinkPreviewAttachment(preview, null, null, null))
-        assertEquals("b".repeat(13 * 1024), String(w.openAsPeer(w.server.lastRequest())))
+        assertEquals("b".repeat(13 * 1024), MessageTextPayload.parse(w.openAsPeer(w.server.lastRequest())).body)
         assertNull(w.state.messages(w.peer)!!.last().linkPreview)
     }
 
@@ -323,9 +327,10 @@ class SendPipelineTest {
         assertEquals("remember the milk", note.text)
         // Never a second chat under our own id (MC:4799-4807).
         assertNull(w.state.messages(w.me))
-        assertEquals("remember the milk", w.store.plaintextString(dto.id))
+        // A note names us as its recipient (security audit M7).
+        assertEquals(MessageTextPayload.wire("remember the milk", null, null, w.me), w.store.plaintextString(dto.id))
         assertNull(w.store.plaintexts[request.clientMessageId])
-        assertEquals("remember the milk", String(w.openAsSender(request)))
+        assertEquals(MessageTextPayload.wire("remember the milk", null, null, w.me), String(w.openAsSender(request)))
     }
 
     @Test
@@ -359,12 +364,15 @@ class SendPipelineTest {
         val pipeline = w.pipeline()
         pipeline.sendTodo("  Buy milk ")
         val request = w.server.lastRequest()
-        assertEquals("[todo:0]Buy milk", String(w.openAsSender(request)))
+        // The marker rides as the body of an envelope naming us (security audit M7).
+        val sealedTodo = MessageTextPayload.wire("[todo:0]Buy milk", null, null, w.me)
+        assertEquals(sealedTodo, String(w.openAsSender(request)))
+        assertEquals("[todo:0]Buy milk", MessageTextPayload.parse(w.openAsSender(request)).body)
         val todo = w.state.messages(NOTES_PEER_ID)!!.single()
         assertEquals(ChatMessageKind.Todo, todo.kind)
         assertEquals("Buy milk", todo.text)
         assertEquals(false, todo.todoDone)
-        assertEquals("[todo:0]Buy milk", w.store.plaintextString(todo.id))
+        assertEquals(sealedTodo, w.store.plaintextString(todo.id))
 
         pipeline.toggleTodo(todo.id)
         assertEquals(true, w.state.messages(NOTES_PEER_ID)!!.single().todoDone)
@@ -828,8 +836,8 @@ class SendPipelineTest {
         w.online = true
         pipeline.flushOutbox()
         assertEquals(listOf(ContentType.TEXT, ContentType.MEDIA, ContentType.TEXT), w.server.requests.map { it.contentType })
-        assertEquals("first", String(w.openAsPeer(w.server.requests[0])))
-        assertEquals("third", String(w.openAsPeer(w.server.requests[2])))
+        assertEquals("first", MessageTextPayload.parse(w.openAsPeer(w.server.requests[0])).body)
+        assertEquals("third", MessageTextPayload.parse(w.openAsPeer(w.server.requests[2])).body)
         assertEquals(listOf("first", "second", "third"), w.state.messages(w.peer)!!.map { it.text })
         assertTrue(w.state.messages(w.peer)!!.none { it.pendingSync })
     }

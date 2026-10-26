@@ -10,6 +10,7 @@ import de.corespace.shroud.core.media.files.FileNames
 import de.corespace.shroud.core.model.Bytes
 import de.corespace.shroud.core.model.ChatMessage
 import de.corespace.shroud.core.model.ChatMessageKind
+import de.corespace.shroud.core.model.NOTES_PEER_ID
 import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.model.hasLargeLinkImage
 import de.corespace.shroud.core.net.ContentType
@@ -20,6 +21,7 @@ import de.corespace.shroud.core.net.wire.LinkPreview
 import de.corespace.shroud.core.net.wire.MediaMessagePayload
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.core.net.wire.MessageTextPayload
+import de.corespace.shroud.core.net.wire.SealedRecipient
 import de.corespace.shroud.core.net.wire.WireText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -97,97 +99,145 @@ class MessageDecoder(
      * the caches for it, and its sender's key is never fetched or pinned. Otherwise the server could
      * have account X seal a message and list it in the chat with Bob, where it would show as Bob's
      * (security audit M7).
+     *
+     * A plaintext that names its recipient ([SealedRecipient]) must name that chat's peer when it is
+     * ours (our own id in Notes) and us when it is theirs; otherwise it is our message to someone else
+     * re-filed under this chat (the `self` box does not say whom it was for) and shows the same way,
+     * opened but neither shown nor cached. Without [chatPeer] our own message is checked against the
+     * conversation's peer, and not at all when that is unknown too. One that names nobody (older
+     * builds) shows as before.
      */
-    suspend fun decode(dto: MessageDto, context: Context, forcePeer: UUID? = null, chatPeer: UUID? = null): ChatMessage {
-        val message = if (chatPeer != null && dto.senderUserId != context.me && dto.senderUserId != chatPeer) {
-            outsider(dto, forcePeer ?: chatPeer)
+    suspend fun decode(dto: MessageDto, context: Context, forcePeer: UUID? = null, chatPeer: UUID? = null): ChatMessage =
+        decodeChecked(dto, context, forcePeer, chatPeer).message
+
+    /** A decoded bubble, and whether it was refused: from outside the chat or misaddressed. Neither is delivered here. */
+    class Decoded(val message: ChatMessage, val refused: Boolean)
+
+    /** [decode], saying whether the message was refused (no delivery ack for it, security audit M7). */
+    suspend fun decodeChecked(dto: MessageDto, context: Context, forcePeer: UUID? = null, chatPeer: UUID? = null): Decoded {
+        val decoded = if (chatPeer != null && dto.senderUserId != context.me && dto.senderUserId != chatPeer) {
+            Decoded(outsider(dto, forcePeer ?: chatPeer), refused = true)
         } else {
-            decodeAsIs(dto, context)
+            decodeAsIs(dto, context, chatPeer)
         }
-        return if (forcePeer != null && message.peerUserId != forcePeer) message.copy(peerUserId = forcePeer) else message
+        val message = decoded.message
+        return if (forcePeer != null && message.peerUserId != forcePeer) Decoded(message.copy(peerUserId = forcePeer), decoded.refused) else decoded
     }
 
     /** A text bubble saying it cannot be read, with no media to fetch: the existing failed-decrypt state. */
     private fun outsider(dto: MessageDto, peer: UUID): ChatMessage =
         Base(dto, peer, isMine = false, receipt = ReceiptStatus.Sent).message(text = ThreadMessageMerge.UNABLE_TO_DECRYPT)
 
+    /** The plaintext names someone else than this chat's recipient; thrown by [open] before it caches. */
+    private class Misaddressed : Exception()
+
     /** `MessageDecoder.decode`, `MessageDecoder.swift:30-294`. */
-    private suspend fun decodeAsIs(dto: MessageDto, context: Context): ChatMessage {
+    private suspend fun decodeAsIs(dto: MessageDto, context: Context, chatPeer: UUID?): Decoded {
         val me = context.me
         val isMine = dto.senderUserId == me
         // `:36-39`: our own message belongs to the conversation's peer.
-        val peer = if (isMine) {
-            context.conversations.firstOrNull { it.id == dto.conversationId }?.peer?.id ?: dto.senderUserId
-        } else {
-            dto.senderUserId
-        }
+        val conversationPeer = if (isMine) context.conversations.firstOrNull { it.id == dto.conversationId }?.peer?.id else null
+        val peer = if (isMine) conversationPeer ?: dto.senderUserId else dto.senderUserId
         val receipt = if (isMine) receiptStatus(dto) else ReceiptStatus.Sent
         val isMedia = dto.contentType == ContentType.MEDIA
         val base = Base(dto, peer, isMine, receipt)
+        // Whom the plaintext must name, if it names anyone (security audit M7): the chat's peer for
+        // ours (us in Notes), us for theirs. Null: the chat of our own message is not known.
+        val recipient: UUID? = if (isMine) chatPeer ?: conversationPeer else me
+        val misfiled = { plain: ByteArray -> recipient != null && !SealedRecipient.accepts(plain, dto.contentType, recipient) }
+        // Like a message from outside the chat: unreadable, no media, nothing of its body kept.
+        val refused = { Decoded(base.message(text = ThreadMessageMerge.UNABLE_TO_DECRYPT), refused = true) }
 
         if (dto.deletedForEveryone) {
             // `:44-58`.
-            return base.message(
-                text = ThreadMessageMerge.MESSAGE_DELETED,
-                deleted = true,
-                kind = if (isMedia) ChatMessageKind.Image else ChatMessageKind.Text,
-                mediaObjectId = dto.mediaObjectId,
+            return Decoded(
+                base.message(
+                    text = ThreadMessageMerge.MESSAGE_DELETED,
+                    deleted = true,
+                    kind = if (isMedia) ChatMessageKind.Image else ChatMessageKind.Text,
+                    mediaObjectId = dto.mediaObjectId,
+                ),
+                refused = false,
             )
         }
 
         // A held copy skips the envelope and with it the sender check (invariant 12). Message ids
         // are chosen by the server, so a copy is reused only for the same sender — and for a peer's
-        // message, from that peer's chat: another chat's message re-served under this id is opened
-        // for real, and fails. iOS reuses by id alone (`MessageDecoder.swift:60-61`); review W2.
+        // message, from that peer's chat; for ours, from the chat of [recipient] (security audit M7):
+        // another chat's message re-served under this id is opened for real, and checked. iOS
+        // reuses by id alone (`MessageDecoder.swift:60-61`); review W2.
         val existing = (
             context.threads[peer]?.firstOrNull { it.id == dto.id }
                 ?: context.threads.values.asSequence().flatten().firstOrNull { it.id == dto.id }
-            )?.takeIf { it.senderUserId == dto.senderUserId && (isMine || it.peerUserId == dto.senderUserId) }
+            )?.takeIf {
+                it.senderUserId == dto.senderUserId &&
+                    (if (isMine) ownCopyInChat(it.peerUserId, recipient, me) else it.peerUserId == dto.senderUserId)
+            }
         if (existing != null && !existing.deleted && !ThreadMessageMerge.isFailedDecryptText(existing.text)) {
-            return fromHeld(existing, base, isMedia)
+            return Decoded(fromHeld(existing, base, isMedia, recipient), refused = false)
         }
 
-        // `:138-166`: an earlier open left the plaintext in the cache.
+        // `:138-166`: an earlier open left the plaintext in the cache — maybe in another chat.
         cachedPlaintext(dto.id, dto.senderUserId, isMedia)?.let { cached ->
-            return if (isMedia) decodeMedia(base, cached) else textMessage(base, cached)
+            if (misfiled(cached)) return refused()
+            return Decoded(if (isMedia) decodeMedia(base, cached) else textMessage(base, cached), refused = false)
         }
 
         // `:168-184`.
         val envelope = dto.ciphertext?.let(MessageCrypto::fromWire)
-            ?: return base.message(
-                text = if (isMedia) ChatListFormatting.PHOTO else ThreadMessageMerge.UNABLE_TO_DECRYPT,
-                kind = if (isMedia) ChatMessageKind.Image else ChatMessageKind.Text,
-                mediaObjectId = dto.mediaObjectId,
+            ?: return Decoded(
+                base.message(
+                    text = if (isMedia) ChatListFormatting.PHOTO else ThreadMessageMerge.UNABLE_TO_DECRYPT,
+                    kind = if (isMedia) ChatMessageKind.Image else ChatMessageKind.Text,
+                    mediaObjectId = dto.mediaObjectId,
+                ),
+                refused = false,
             )
 
         return try {
-            val plain = open(dto, envelope, peer, isMine, me, context)
-            if (isMedia) decodeMedia(base, plain) else textMessage(base, plain)
+            val plain = open(dto, envelope, peer, isMine, me, context, misfiled)
+            Decoded(if (isMedia) decodeMedia(base, plain) else textMessage(base, plain), refused = false)
         } catch (e: CancellationException) {
             throw e
+        } catch (_: Misaddressed) {
+            refused()
         } catch (_: Exception) {
             // `:246-293`: whatever this device still has, else the placeholder.
             val cached = withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
+            if (cached != null && misfiled(cached)) return refused()
             if (!isMedia && cached != null) {
-                LenientJson.utf8OrNull(cached)?.let { return textMessage(base, MessageTextPayload.parse(it)) }
+                LenientJson.utf8OrNull(cached)?.let { return Decoded(textMessage(base, MessageTextPayload.parse(it)), refused = false) }
             }
-            if (isMedia && cached != null) return decodeMedia(base, cached)
-            if (existing != null && !existing.deleted && !ThreadMessageMerge.isFailedDecryptText(existing.text)) return existing
-            base.message(
-                text = if (isMedia) ThreadMessageMerge.MEDIA_PLACEHOLDER else ThreadMessageMerge.UNABLE_TO_DECRYPT,
-                kind = if (isMedia) ChatMessageKind.Image else ChatMessageKind.Text,
-                mediaObjectId = dto.mediaObjectId,
-                hasFullMedia = hasMedia(dto.id),
+            if (isMedia && cached != null) return Decoded(decodeMedia(base, cached), refused = false)
+            if (existing != null && !existing.deleted && !ThreadMessageMerge.isFailedDecryptText(existing.text)) {
+                return Decoded(existing, refused = false)
+            }
+            Decoded(
+                base.message(
+                    text = if (isMedia) ThreadMessageMerge.MEDIA_PLACEHOLDER else ThreadMessageMerge.UNABLE_TO_DECRYPT,
+                    kind = if (isMedia) ChatMessageKind.Image else ChatMessageKind.Text,
+                    mediaObjectId = dto.mediaObjectId,
+                    hasFullMedia = hasMedia(dto.id),
+                ),
+                refused = false,
             )
         }
     }
 
     /**
+     * Whether our own copy held under thread [threadKey] is in the chat of [recipient]: that peer's
+     * thread, or Notes for us. Any thread when the chat is not known ([recipient] null).
+     */
+    private fun ownCopyInChat(threadKey: UUID, recipient: UUID?, me: UUID): Boolean =
+        recipient == null || threadKey == recipient || (recipient == me && threadKey == NOTES_PEER_ID)
+
+    /**
      * The thread already shows a readable copy (`MessageDecoder.swift:60-136`): keep it, raise our
      * receipt, re-cache a text body the cache lost, read back an envelope an old build stored as text,
      * note media that is on the device by now, and repair a media note an iOS bug stamped as a photo.
+     * [recipient] is the chat's recipient the copy was checked for (null: not known).
      */
-    private suspend fun fromHeld(existing: ChatMessage, base: Base, isMedia: Boolean): ChatMessage {
+    private suspend fun fromHeld(existing: ChatMessage, base: Base, isMedia: Boolean, recipient: UUID?): ChatMessage {
         val dto = base.dto
         var merged = existing
         if (base.isMine) {
@@ -196,12 +246,13 @@ class MessageDecoder(
         }
         if (!isMedia) {
             withContext(io) {
-                // `:75-86`: re-seal what the bubble carries, quote included.
+                // `:75-86`: re-seal what the bubble carries, quote included, and the recipient its
+                // chat stands for, so a later decode from the cache is checked like the envelope.
                 if (store.plaintext(dto.id, dto.senderUserId) == null) {
                     store.savePlaintext(
                         dto.id,
                         dto.senderUserId,
-                        MessageTextPayload.wire(existing.text, existing.replyTo, existing.linkPreview).toByteArray(Charsets.UTF_8),
+                        MessageTextPayload.wire(existing.text, existing.replyTo, existing.linkPreview, recipient).toByteArray(Charsets.UTF_8),
                     )
                 }
             }
@@ -221,7 +272,8 @@ class MessageDecoder(
         if (isMedia && existing.kind == ChatMessageKind.Image) {
             val plain = withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
             val payload = plain?.let(MediaMessagePayload::parse)
-            if (plain != null && payload != null && (payload.isFile || payload.isVoice || payload.isVideo || payload.isLink)) {
+            val addressed = plain != null && (recipient == null || SealedRecipient.accepts(plain, dto.contentType, recipient))
+            if (plain != null && payload != null && addressed && (payload.isFile || payload.isVoice || payload.isVideo || payload.isLink)) {
                 return decodeMedia(base, plain)
             }
         }
@@ -231,9 +283,18 @@ class MessageDecoder(
     /**
      * Opens [envelope] once (`MessageDecoder.swift:186-216`) and caches the plaintext. Our own
      * messages and notes to self open as [OpenAs.Sender] from our self box and never advance a
-     * peer's ratchet; a peer's message opens as [OpenAs.Recipient] with their pinned key.
+     * peer's ratchet; a peer's message opens as [OpenAs.Recipient] with their pinned key. A plaintext
+     * [misfiled] says is for someone else throws [Misaddressed] and is not cached.
      */
-    private suspend fun open(dto: MessageDto, envelope: ByteArray, peer: UUID, isMine: Boolean, me: UUID, context: Context): ByteArray {
+    private suspend fun open(
+        dto: MessageDto,
+        envelope: ByteArray,
+        peer: UUID,
+        isMine: Boolean,
+        me: UUID,
+        context: Context,
+        misfiled: (ByteArray) -> Boolean,
+    ): ByteArray {
         val isSelfNote = isMine && peer == me
         // Network on first use (TOFU pin), so outside the lock (messaging-core §23 item 2).
         val senderKey = if (isMine) null else context.resolveSenderKey(dto.senderUserId)
@@ -242,7 +303,10 @@ class MessageDecoder(
             // A concurrent decode of the same message may have opened it while we waited.
             withContext(io) { store.plaintext(dto.id, dto.senderUserId) }
                 ?.takeIf { dto.contentType != ContentType.MEDIA || MediaMessagePayload.parse(it) != null }
-                ?.let { return@withPeer it }
+                ?.let {
+                    if (misfiled(it)) throw Misaddressed()
+                    return@withPeer it
+                }
             val plain = withContext(compute) {
                 keys.withKeys { ourPrivate, ourPublic ->
                     if (isMine) {
@@ -252,6 +316,8 @@ class MessageDecoder(
                     }
                 } ?: throw CryptoError.Locked
             }
+            // Checked before it is cached (security audit M7).
+            if (misfiled(plain)) throw Misaddressed()
             withContext(io) { store.savePlaintext(dto.id, dto.senderUserId, plain) }
             plain
         }

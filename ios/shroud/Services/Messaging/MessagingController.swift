@@ -1240,7 +1240,7 @@ final class MessagingController {
         page.messages.reserveCapacity(response.messages.count)
         for dto in response.messages.reversed() {
             page.serverIDs.insert(dto.id)
-            var message = await decodeMessage(
+            let decoded = await decodeMessage(
                 dto,
                 me: me,
                 material: material,
@@ -1248,12 +1248,17 @@ final class MessagingController {
                 chatPeerUserID: apiPeerID,
                 forcePeerUserID: isNotes ? storePeerID : nil
             )
+            var message = decoded.message
+            // Delivery acks only for the peer's messages: one the server lists here under anyone
+            // else's name, or whose sealed recipient is someone else, was not delivered to this
+            // chat (security audit M7).
+            let inbound = !isNotes && dto.senderUserId == apiPeerID && !decoded.refused
             if dto.contentType == MessageAnnotation.contentType {
                 // Not a bubble: it attaches to a message; folded in after the merge.
                 if let shared = MessageAnnotation.parseTranscript(message.text) {
                     noteSharedTranscript(shared.text, for: shared.messageID)
                 }
-                if !isNotes, dto.senderUserId == apiPeerID {
+                if inbound {
                     page.inboundIDs.append(dto.id)
                 }
                 continue
@@ -1266,9 +1271,7 @@ final class MessagingController {
                 continue
             }
             page.messages.append(message)
-            // Delivery acks only for the peer's messages: one the server lists here under
-            // anyone else's name was not delivered to this chat (security audit M7).
-            if !isNotes, dto.senderUserId == apiPeerID {
+            if inbound {
                 page.inboundIDs.append(dto.id)
             }
             if let reactions = dto.reactions, !reactions.isEmpty, !message.deleted {
@@ -3434,6 +3437,8 @@ final class MessagingController {
         func encode(includePreview: Bool) throws -> Data {
             var copy = payload
             copy.th = includePreview ? safePreview?.base64EncodedString() : nil
+            // The recipient, sealed inside (security audit M7): the API peer, me in Notes.
+            copy.to = peerUserID
             return try copy.encoded()
         }
 
@@ -3737,7 +3742,8 @@ final class MessagingController {
         else { return }
 
         do {
-            let plaintext = try JSONEncoder().encode(MessageAnnotation.transcript(text, for: messageID))
+            // Names its recipient inside (security audit M7).
+            let plaintext = try JSONEncoder().encode(MessageAnnotation.transcript(text, for: messageID, to: peerUserID))
             let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
             let sealed = try MessageCrypto.seal(
                 plaintext: plaintext,
@@ -3798,7 +3804,9 @@ final class MessagingController {
             c: (transcript?.isEmpty == false) ? transcript : nil,
             d: durationMs,
             wf: waveform.flatMap(VoiceWaveform.encode),
-            re: replyTo
+            re: replyTo,
+            // The recipient, sealed inside (security audit M7).
+            to: peerUserID
         )
         var payloadData = try payload.encoded()
         if payloadData.count > Self.maxMediaPayloadPlaintextBytes, payload.c != nil {
@@ -4776,7 +4784,7 @@ final class MessagingController {
             thisAttemptPayload: payload,
             serverCiphertextBase64: dto.ciphertext
         ) { envelope in
-            try MessageCrypto.open(
+            let kept = try MessageCrypto.open(
                 envelopeData: envelope,
                 peerUserID: peerUserID,
                 with: material.agreementPrivateKey,
@@ -4784,6 +4792,12 @@ final class MessagingController {
                 senderIdentityPublicKey: material.identityPublicKeyData,
                 as: .sender
             )
+            // The kept row must be this chat's: one naming another recipient is not cached
+            // (security audit M7).
+            guard SealedRecipient.accepts(kept, contentType: "media", expected: peerUserID) else {
+                throw SealedRecipient.Misaddressed()
+            }
+            return kept
         }
         if let kept = decision.payload {
             local.saveSealedPlaintext(messageID: dto.id, senderUserID: dto.senderUserId, data: kept)
@@ -4798,10 +4812,19 @@ final class MessagingController {
         token: String,
         material: IdentityKeyMaterial
     ) async throws -> Data? {
+        // The payload must name this chat's recipient, if it names one (security audit M7): the
+        // chat's peer for mine (me in Notes), me for theirs. One for someone else is never used.
+        let me = material.userID
+        let recipient = message.isMine
+            ? (message.peerUserID == Self.notesPeerID ? me : message.peerUserID)
+            : me
+        func addressed(_ payload: Data) -> Bool {
+            SealedRecipient.accepts(payload, contentType: "media", expected: recipient)
+        }
         if let cached = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
            MessageDecoder.isMediaPayloadData(cached)
         {
-            return cached
+            return addressed(cached) ? cached : nil
         }
         // Cached text might be the display label if something wrote the wrong blob — ignore it.
         if message.isMine {
@@ -4822,7 +4845,7 @@ final class MessagingController {
                 senderIdentityPublicKey: material.identityPublicKeyData,
                 as: .sender
             )
-            if MessageDecoder.isMediaPayloadData(payloadData) {
+            if MessageDecoder.isMediaPayloadData(payloadData), addressed(payloadData) {
                 local.saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, data: payloadData)
                 return payloadData
             }
@@ -4849,7 +4872,7 @@ final class MessagingController {
         if let cached = local.sealedPlaintext(for: message.id, senderUserID: message.senderUserID),
            MessageDecoder.isMediaPayloadData(cached)
         {
-            return cached
+            return addressed(cached) ? cached : nil
         }
 
         let senderPub = try await resolvePeerIdentityPublicKey(
@@ -4869,7 +4892,7 @@ final class MessagingController {
             senderIdentityPublicKey: senderPub,
             as: .recipient
         )
-        guard MessageDecoder.isMediaPayloadData(payloadData) else { return nil }
+        guard MessageDecoder.isMediaPayloadData(payloadData), addressed(payloadData) else { return nil }
         local.saveSealedPlaintext(messageID: message.id, senderUserID: message.senderUserID, data: payloadData)
         return payloadData
     }
@@ -5164,11 +5187,21 @@ final class MessagingController {
 
         // Prefer peer from conversation list or sender.
         let resolvedPeer = peerID ?? dto.senderUserId
-        if dto.senderUserId != me {
+
+        // The chat it is filed under (below) is the one its sealed recipient must be (security
+        // audit M7); Notes is me.
+        let decoded = await decodeMessage(
+            dto,
+            me: me,
+            material: material,
+            token: token,
+            chatPeerUserID: resolvedPeer == Self.notesPeerID ? me : resolvedPeer
+        )
+        let chat = decoded.message
+        // Acked once decoded: one sealed for someone else was not delivered here.
+        if dto.senderUserId != me, !decoded.refused {
             try? await messagesService.markDelivered(messageID: dto.id, token: token)
         }
-
-        let chat = await decodeMessage(dto, me: me, material: material, token: token)
         // Attach to correct peer thread: if I sent from another device, peer is recipient.
         let threadPeer: UUID
         if dto.senderUserId == me {
@@ -5240,8 +5273,8 @@ final class MessagingController {
         token: String,
         chatPeerUserID: UUID? = nil,
         forcePeerUserID: UUID? = nil
-    ) async -> ChatMessage {
-        var message = await MessageDecoder.decode(
+    ) async -> MessageDecoder.Outcome {
+        let outcome = await MessageDecoder.decodeChecked(
             dto,
             context: MessageDecoder.Context(
                 me: me,
@@ -5262,6 +5295,7 @@ final class MessagingController {
                 chatPeerUserID: chatPeerUserID
             )
         )
+        var message = outcome.message
         if let forcePeerUserID, message.peerUserID != forcePeerUserID {
             message = ChatMessage(
                 id: message.id,
@@ -5297,7 +5331,7 @@ final class MessagingController {
                 fileArtist: message.fileArtist
             )
         }
-        return message
+        return MessageDecoder.Outcome(message: message, refused: outcome.refused)
     }
 
     /// Cached (TOFU) key for decrypt. Fetches in the background to detect identity rotation.
@@ -5659,8 +5693,11 @@ final class MessagingController {
         linkPreview: LinkPreview? = nil
     ) async throws -> ChatMessage {
         let peerPub = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
-        // A reply / preview seals body + extras together; a plain message stays raw UTF-8.
-        let (wireText, sealedPreview) = Self.textWire(body: text, replyTo: replyTo, linkPreview: linkPreview)
+        // A reply / preview seals body + extras together, and every message names its recipient
+        // (security audit M7): `peerUserID`, me in Notes. A Notes wire comes ready made (quote,
+        // preview or todo marker), so the recipient is added to it rather than wrapped around.
+        let (unboundWire, sealedPreview) = Self.textWire(body: text, replyTo: replyTo, linkPreview: linkPreview)
+        let wireText = MessageTextPayload.bound(unboundWire, to: peerUserID)
         let sealed = try MessageCrypto.seal(
             plaintext: Data(wireText.utf8),
             peerUserID: peerUserID,

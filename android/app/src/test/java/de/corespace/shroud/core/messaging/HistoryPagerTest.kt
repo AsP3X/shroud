@@ -11,6 +11,7 @@ import de.corespace.shroud.core.net.ListMessagesResponse
 import de.corespace.shroud.core.net.MessageDto
 import de.corespace.shroud.core.net.ReactionDto
 import de.corespace.shroud.core.net.wire.Icu4jTextUnitsRule
+import de.corespace.shroud.core.net.wire.MessageTextPayload
 import de.corespace.shroud.testing.FakeAppClock
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -277,6 +278,28 @@ class HistoryPagerTest {
         assertEquals(listOf(peer), presence)
         // An annotation is never a bubble.
         assertEquals(listOf(known.id, fresh.id, mine.id), ids())
+    }
+
+    /**
+     * Security audit M7: a message whose sealed recipient is someone else, and one from outside the
+     * chat, were not delivered to this chat — they show as unreadable and are not acked.
+     */
+    @Test
+    fun refusedMessagesAreNotAcked() = engineTest {
+        val pager = pager()
+        val elsewhere = UUID.randomUUID()
+        val misaddressed = theirs(1, text = MessageTextPayload.wire("meant for someone else", null, null, elsewhere))
+        val forUs = theirs(2, text = MessageTextPayload.wire("for you", null, null, me))
+        val stranger = Dtos.message(sender = elsewhere, conversation = conversation, createdAtWire = wire(3), ciphertext = Dtos.sealed("t3"))
+        val oursElsewhere = ours(4, text = MessageTextPayload.wire("to someone else", null, null, elsewhere))
+        responses += page(misaddressed, forUs, stranger, oursElsewhere)
+        pager.loadThread(peer, activate = false)
+
+        assertEquals(listOf(forUs.id), backend.delivered)
+        val texts = state.messages(peer).orEmpty().associate { it.id to it.text }
+        assertEquals("[Unable to decrypt]", texts[misaddressed.id])
+        assertEquals("for you", texts[forUs.id])
+        assertEquals("[Unable to decrypt]", texts[oursElsewhere.id])
     }
 
     @Test

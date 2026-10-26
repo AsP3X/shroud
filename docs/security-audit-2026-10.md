@@ -323,8 +323,8 @@ there; realtime `message.new` files someone else's message under its sender's ch
 shown as the peer's. The chat list's `hydratePreviews` skips the cache for such a row, and for
 shared transcripts from outside the chat. Search and notifications read the decoded rows. Cases in
 `messaging.sender.selftest.ts` (a cached and an uncached stranger's message, a stranger's tombstone,
-Notes, the chat list) fail on the code before. Sealing the recipient's id into the plaintext is
-still open.
+Notes, the chat list) fail on the code before. Sealing the recipient's id into the plaintext:
+see **Fixed (sealed recipient)** below.
 
 **Fixed (Android):** Android had the same gap. A history page (`HistoryPager.fetchHistoryPage`) and
 a push's preview (`MessagingController.notificationText`) opened each listed message with the
@@ -340,7 +340,7 @@ and makes our own media recovery check the listed sender. Tests: `MessageDecoder
 (`aMessageFromOutsideTheChatIsNeverOpened` and three more),
 `MediaHydratorTest.aRecoveredMessageFromAnotherSenderIsNeverOpened`,
 `MessagingControllerTest.notificationTextLooksOnlyInTheNamedChat`. **Not compiled or run** (no
-Android SDK reachable). **Open:** the `self` box still does not name the recipient.
+Android SDK reachable). The `self` box: see **Fixed (sealed recipient)** below.
 
 **Fixed (iOS):** iOS had the same gap in history pages: `fetchHistoryPage` filed every listed
 message under the open chat, and `MessageDecoder.decode` opened one not from me with the key of
@@ -352,7 +352,46 @@ any cache, open or key lookup, and gets no delivery ack. The media payload recov
 under their own sender, not the chat the server names; the notification extension opens no
 messages, and reactions were already limited to me and the peer (`fetchHistoryPage`).
 `SenderBoundPlaintextTests` covers it. Not compiled or run in this review (no Xcode here). The
-`self`-box part (no recipient in the plaintext) is still open.
+`self`-box part: see below.
+
+**Fixed (sealed recipient, all three clients):** every message now names its recipient inside
+the sealed plaintext, as `to` (the recipient's user id, lowercase UUID; my own id in Notes), so
+the server can neither read nor strip it:
+
+- text: the envelope `{"c":<body>,"t":"text","to":<id>}` (plus `re`/`lp` as before). Plain text
+  used to be sealed raw; every current parser (web `parseTextPayload`, iOS and Android
+  `MessageTextPayload.parse`) already shows `c` of an envelope without `re` or `lp` and ignores
+  unknown keys, so older builds still show new messages. A Notes todo keeps its `[todo:…]` marker
+  as `c`. iOS and Android add `to` where the wire is sealed (`MessageTextPayload.bound`), so a
+  ready-made Notes wire is not wrapped twice;
+- media: `to` in the media payload; annotations (shared transcripts): `to` in the annotation.
+  Every parser ignores unknown keys there. Reactions (the separate v2 path) are unchanged.
+
+Opening checks it (`recipientAccepted` in `web/src/sealedRecipient.ts`, iOS and Android
+`SealedRecipient`): a message I sent must name the chat's peer (me in Notes), one from the peer
+must name me. On a mismatch, or a `to` that is not a user id, the message is handled like one from
+outside the chat: "[Unable to decrypt]" ("Media" on web and iOS), nothing cached or shown from its
+body, and no delivery ack. The check runs on every plaintext source: a fresh open (before it is
+cached), the plaintext cache (it is keyed by id and sender, not chat), the chat list's cached
+preview (web), media payload recovery, the kept row of an idempotent media replay, and the
+shared-transcript lookup. My own bubble held in another chat's thread is no longer reused for the
+same id (iOS, Android). Realtime messages are checked against the chat they are filed under. A
+plaintext without `to` (every message from builds before this) opens as before: those stay
+unverifiable, like the replay case in the design notes. Re-caches written from a held bubble carry
+the recipient of the chat it was checked in; iOS's thread save no longer rewrites a cache that
+already decodes to the bubble (it would have dropped `to`). Android history pages now also skip the
+ack for a message from outside the chat, as iOS and web did.
+
+Tests: web `sealedRecipient.selftest.ts` (wire format, old parsers), `messaging.sender.selftest.ts`
+(cached bodies, Notes, media, annotation, chat list) and `messaging.recipient.selftest.ts` (real
+envelopes, no cache or ack for a misaddressed message); iOS `SealedRecipientTests`,
+`SenderBoundPlaintextTests` (`testMyMessageToSomeoneElseDoesNotOpenInThisChat` and five more),
+`MessagingLocalPersistTests.testThreadSaveKeepsACacheThatDecodesToTheBubble`; Android
+`SealedRecipientTest`, `MessageDecoderTest` (`ourMessageToSomeoneElseListedInThisChatIsRefused`
+and seven more), `HistoryPagerTest.refusedMessagesAreNotAcked`,
+`MediaHydratorTest.aRecoveredPayloadForSomeoneElseIsNotUsed`. iOS and Android not compiled or run
+(no Xcode or Android SDK here). A plain text near the 64 KiB cap grows by the envelope (about 60
+bytes, plus JSON escaping of quotes, backslashes and control characters).
 
 ### M8. A locked iPhone trusts any identity key the server sends (malicious server)
 

@@ -1,7 +1,7 @@
 /**
  * A message id is not a capability. Cached plaintext is reused only for the same sender,
- * a message from someone outside the chat never opens, and an idempotent media replay
- * remembers the row the server kept.
+ * a message from someone outside the chat never opens, a cached body that names another
+ * recipient is not shown, and an idempotent media replay remembers the row the server kept.
  * Run: `npx tsx src/messaging.sender.selftest.ts`.
  */
 import type { WireMessage } from "./api/client";
@@ -197,5 +197,80 @@ try {
   aborted = err instanceof Error && err.name === "AbortError";
 }
 check(aborted, "cancellation is not swallowed");
+
+/*
+ * Security audit M7, the `self` box: a body this browser holds names its recipient (`to`). The
+ * server re-files my message to Alice under my chat with Bob, or under Notes; it must not show
+ * there, from the cache or otherwise. A body without `to` (older builds) still shows.
+ */
+const { textPayload } = await import("./reply");
+const ALICE = "a11ce000-0000-4000-8000-000000000001";
+const TO_ALICE = "78787878-7878-4787-8787-787878787878";
+const TO_ME = "89898989-8989-4898-8989-898989898989";
+const NOTE = "9a9a9a9a-9a9a-49a9-89a9-9a9a9a9a9a9a";
+const MEDIA_TO_ALICE = "abababab-abab-4bab-8bab-abababababab";
+const ANNOTATION_TO_ALICE = "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc";
+savePlaintext(TO_ALICE, ME, textPayload("only for Alice", null, null, ALICE));
+savePlaintext(TO_ME, BOB, textPayload("for you", null, null, ME));
+savePlaintext(NOTE, ME, textPayload("a note", null, null, ME));
+savePlaintext(
+  MEDIA_TO_ALICE,
+  ME,
+  JSON.stringify({ t: "image", mime: "image/jpeg", w: 1, h: 1, k: "a2V5", c: "for Alice", to: ALICE }),
+);
+savePlaintext(
+  ANNOTATION_TO_ALICE,
+  ME,
+  JSON.stringify({ t: "transcript", r: ID, c: "Alice's transcript", to: ALICE }),
+);
+
+const refiled = await decodeIncoming(wire(ME, { id: TO_ALICE }), ME, BOB, TOKEN, material);
+check(refiled.failed === true && refiled.text === "[Unable to decrypt]", "my message to Alice does not show in Bob's chat");
+check(refiled.isMine && refiled.senderUserId === ME, "the refused row is still mine");
+const inNotes = await decodeIncoming(wire(ME, { id: TO_ALICE }), ME, ME, TOKEN, material);
+check(inNotes.failed === true, "my message to Alice does not show in Notes");
+const atHome = await decodeIncoming(wire(ME, { id: TO_ALICE }), ME, ALICE, TOKEN, material);
+check(atHome.failed === false && atHome.text === "only for Alice", "it still shows in Alice's chat");
+
+const fromBob = await decodeIncoming(wire(BOB, { id: TO_ME }), ME, BOB, TOKEN, material);
+check(fromBob.failed === false && fromBob.text === "for you", "Bob's message naming me opens");
+const bobsAsMine = await decodeIncoming(wire(ME, { id: TO_ME }), ME, BOB, TOKEN, material);
+check(bobsAsMine.failed === true, "a body is never reused for another sender");
+const note2 = await decodeIncoming(wire(ME, { id: NOTE }), ME, ME, TOKEN, material);
+check(note2.failed === false && note2.text === "a note", "a note naming me opens in Notes");
+const noteInBob = await decodeIncoming(wire(ME, { id: NOTE }), ME, BOB, TOKEN, material);
+check(noteInBob.failed === true, "a note does not show in Bob's chat");
+
+const mediaRefiled = await decodeIncoming(
+  wire(ME, { id: MEDIA_TO_ALICE, content_type: "media" }),
+  ME,
+  BOB,
+  TOKEN,
+  material,
+);
+check(mediaRefiled.failed === true && mediaRefiled.text === "Media", "a photo for Alice does not show in Bob's chat");
+check(mediaRefiled.caption == null && mediaRefiled.mediaKey == null, "nothing of the photo's payload is shown");
+const annotationRefiled = await decodeIncoming(
+  wire(ME, { id: ANNOTATION_TO_ALICE, content_type: "annotation" }),
+  ME,
+  BOB,
+  TOKEN,
+  material,
+);
+check(annotationRefiled.kind === "annotation" && annotationRefiled.annotation === null, "Alice's transcript is not read");
+
+// Legacy: a body cached without `to` shows in whichever chat lists it, as before.
+const LEGACY = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+savePlaintext(LEGACY, ME, "sent by an older build");
+const legacyMine = await decodeIncoming(wire(ME, { id: LEGACY }), ME, BOB, TOKEN, material);
+check(legacyMine.failed === false && legacyMine.text === "sent by an older build", "a body without `to` still opens");
+
+listed = [wire(ME, { id: TO_ALICE, created_at: "2026-10-04T12:00:00.000Z" })];
+await hydratePreviews(TOKEN, ME, [{ id: BOB, lastMessageAt: "2026-10-04T12:00:00.000Z" }], material);
+listed = null;
+const refiledPreview = loadPreview(ME, BOB);
+check(refiledPreview?.id === TO_ALICE && refiledPreview.failed === true, "the chat list does not show it either");
+check(refiledPreview?.text !== "only for Alice", "the body stays out of Bob's chat row");
+check(loadPlaintext(TO_ALICE, ME) !== null, "Alice's chat keeps its body");
 
 console.log("sender selftest ok");

@@ -254,6 +254,128 @@ class MessageDecoderTest {
         assertEquals(listOf(OpenAs.Recipient, OpenAs.Sender, OpenAs.Sender), opener.calls.map { it.role })
     }
 
+    // --- The sealed recipient (security audit M7, the `self` box) -----------------------------------
+
+    private val alice = UUID.randomUUID()
+
+    /**
+     * The server lists our message to Alice in the chat with the peer: our self box opens, but the
+     * plaintext names Alice, so it shows as unreadable there, is not cached and is refused (no ack).
+     */
+    @Test
+    fun ourMessageToSomeoneElseListedInThisChatIsRefused() = runTest {
+        val dto = Dtos.message(sender = me, ciphertext = Dtos.sealed(MessageTextPayload.wire("only for Alice", null, null, alice)))
+        val decoded = decoder().decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer)
+        assertTrue(decoded.refused)
+        assertEquals("[Unable to decrypt]", decoded.message.text)
+        assertTrue(decoded.message.isMine)
+        assertEquals(peer, decoded.message.peerUserId)
+        assertNull(decoded.message.replyTo)
+        assertNull(store.plaintexts[dto.id])
+        assertEquals(listOf(OpenAs.Sender), opener.calls.map { it.role })
+    }
+
+    @Test
+    fun ourMessageToSomeoneElseIsRefusedInNotesAndShownInTheirChat() = runTest {
+        val decoder = decoder()
+        val dto = Dtos.message(sender = me, ciphertext = Dtos.sealed(MessageTextPayload.wire("only for Alice", null, null, alice)))
+        val inNotes = decoder.decodeChecked(dto, context(), forcePeer = de.corespace.shroud.core.model.NOTES_PEER_ID, chatPeer = me)
+        assertTrue(inNotes.refused)
+        assertEquals("[Unable to decrypt]", inNotes.message.text)
+        assertNull(store.plaintexts[dto.id])
+        val atHome = decoder.decodeChecked(dto, context(), forcePeer = alice, chatPeer = alice)
+        assertFalse(atHome.refused)
+        assertEquals("only for Alice", atHome.message.text)
+        assertEquals(MessageTextPayload.wire("only for Alice", null, null, alice), String(store.plaintexts.getValue(dto.id)))
+    }
+
+    @Test
+    fun aNoteNamingUsOpensInNotesOnly() = runTest {
+        val decoder = decoder()
+        val dto = Dtos.message(sender = me, ciphertext = Dtos.sealed(MessageTextPayload.bound("[todo:0]Buy milk", me)))
+        assertTrue(decoder.decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer).refused)
+        val note = decoder.decodeChecked(dto, context(), forcePeer = de.corespace.shroud.core.model.NOTES_PEER_ID, chatPeer = me)
+        assertFalse(note.refused)
+        assertEquals("[todo:0]Buy milk", note.message.text)
+    }
+
+    @Test
+    fun thePeersMessageNamingSomeoneElseIsRefused() = runTest {
+        val dto = Dtos.message(sender = peer, ciphertext = Dtos.sealed(MessageTextPayload.wire("meant for Alice", null, null, alice)))
+        val decoded = decoder().decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer)
+        assertTrue(decoded.refused)
+        assertEquals("[Unable to decrypt]", decoded.message.text)
+        assertFalse(decoded.message.isMine)
+        assertNull(store.plaintexts[dto.id])
+
+        val forUs = Dtos.message(sender = peer, ciphertext = Dtos.sealed(MessageTextPayload.wire("for you", null, null, me)))
+        val opened = decoder().decodeChecked(forUs, context(), forcePeer = peer, chatPeer = peer)
+        assertFalse(opened.refused)
+        assertEquals("for you", opened.message.text)
+    }
+
+    /** A body cached for this id and sender in another chat is checked like an envelope. */
+    @Test
+    fun aCachedBodyNamingSomeoneElseIsNotShown() = runTest {
+        val dto = Dtos.message(sender = me, ciphertext = Dtos.sealed("FAIL"))
+        store.plaintexts[dto.id] = MessageTextPayload.wire("only for Alice", null, null, alice).toByteArray()
+        val decoded = decoder().decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer)
+        assertTrue(decoded.refused)
+        assertEquals("[Unable to decrypt]", decoded.message.text)
+        assertTrue(opener.calls.isEmpty())
+        // Alice's chat keeps its body.
+        assertTrue(store.plaintexts[dto.id] != null)
+    }
+
+    /** Our copy held in Alice's thread is not reused for the same id listed in the peer's chat. */
+    @Test
+    fun ourCopyHeldInAnotherChatIsNotReused() = runTest {
+        val dto = Dtos.message(sender = me, ciphertext = Dtos.sealed(MessageTextPayload.wire("only for Alice", null, null, alice)))
+        val alices = ChatMessage(dto.id, alice, me, "only for Alice", Instant.now(), isMine = true, receipt = ReceiptStatus.Sent)
+        val decoded = decoder().decodeChecked(dto, context(threads = mapOf(alice to listOf(alices))), forcePeer = peer, chatPeer = peer)
+        assertTrue(decoded.refused)
+        assertEquals("[Unable to decrypt]", decoded.message.text)
+        // Opened for real (the self box), and checked.
+        assertEquals(listOf(OpenAs.Sender), opener.calls.map { it.role })
+    }
+
+    @Test
+    fun mediaAndAnnotationsNamingSomeoneElseAreRefused() = runTest {
+        val payload = MediaMessagePayload(t = "image", mime = "image/jpeg", w = 4, h = 3, k = "a2V5", c = "for Alice", to = alice)
+        val photo = Dtos.message(sender = me, contentType = ContentType.MEDIA, ciphertext = media(payload), mediaObjectId = UUID.randomUUID())
+        mediaOnDevice += photo.id
+        val refusedPhoto = decoder().decodeChecked(photo, context(), forcePeer = peer, chatPeer = peer)
+        assertTrue(refusedPhoto.refused)
+        assertEquals("[Unable to decrypt]", refusedPhoto.message.text)
+        assertEquals(ChatMessageKind.Text, refusedPhoto.message.kind)
+        assertNull(refusedPhoto.message.mediaObjectId)
+        assertFalse(refusedPhoto.message.hasFullMedia)
+
+        val transcript = de.corespace.shroud.core.net.wire.MessageAnnotation.transcript("Alice's words", UUID.randomUUID(), to = alice)
+        val annotation = Dtos.message(sender = me, contentType = "annotation", ciphertext = B64.encode(transcript.encoded()))
+        val refusedAnnotation = decoder().decodeChecked(annotation, context(), forcePeer = peer, chatPeer = peer)
+        assertTrue(refusedAnnotation.refused)
+        assertNull(de.corespace.shroud.core.net.wire.MessageAnnotation.parseTranscript(refusedAnnotation.message.text))
+    }
+
+    /** Messages from builds before the recipient was sealed open wherever they are listed, as before. */
+    @Test
+    fun aPlaintextNamingNobodyStillOpens() = runTest {
+        val decoder = decoder()
+        val mine = decoder.decodeChecked(Dtos.message(sender = me, ciphertext = Dtos.sealed("older build")), context(), forcePeer = peer, chatPeer = peer)
+        assertFalse(mine.refused)
+        assertEquals("older build", mine.message.text)
+        val legacyPhoto = MediaMessagePayload(t = "image", mime = "image/jpeg", w = 4, h = 3, k = "a2V5", c = "At the lake")
+        val photo = decoder.decodeChecked(
+            Dtos.message(sender = peer, contentType = ContentType.MEDIA, ciphertext = media(legacyPhoto), mediaObjectId = UUID.randomUUID()),
+            context(),
+            forcePeer = peer,
+            chatPeer = peer,
+        )
+        assertFalse(photo.refused)
+        assertEquals("At the lake", photo.message.text)
+    }
+
     // --- A copy the thread already shows (`:60-136`) -------------------------------------------------
 
     private fun held(id: UUID, text: String, kind: ChatMessageKind = ChatMessageKind.Text, isMine: Boolean = false, receipt: ReceiptStatus = ReceiptStatus.Sent) =

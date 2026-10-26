@@ -55,6 +55,7 @@ import de.corespace.shroud.core.net.wire.MediaMessagePayload
 import de.corespace.shroud.core.net.wire.MessageAnnotation
 import de.corespace.shroud.core.net.wire.MessageReplyReference
 import de.corespace.shroud.core.net.wire.MessageTextPayload
+import de.corespace.shroud.core.net.wire.SealedRecipient
 import de.corespace.shroud.core.net.wire.WireText
 import de.corespace.shroud.core.notifications.MessageNotifier
 import de.corespace.shroud.core.storage.SensitiveTempFiles
@@ -520,9 +521,11 @@ class SendPipeline(
         linkPreview: LinkPreview?,
     ): PostedText {
         val peerPublic = deps.peerIdentities().publicKeyForSending(apiPeer)
-        // A reply / preview seals body + extras together; a plain message stays raw UTF-8 (MC:4832-4833).
+        // A reply / preview seals body + extras together (MC:4832-4833), and every message names its
+        // recipient (security audit M7): [apiPeer], our own id in Notes. A Notes wire comes ready made
+        // (quote, preview or todo marker), so the recipient is added to it rather than wrapped around.
         val wire = MessageTextPayload.textWire(body, replyTo, linkPreview)
-        val plaintext = wire.wire.toByteArray(Charsets.UTF_8)
+        val plaintext = MessageTextPayload.bound(wire.wire, apiPeer).toByteArray(Charsets.UTF_8)
         val sealed = deps.seal(plaintext, apiPeer, signed.me, peerPublic)
         val dto = deps.api.sendMessage(signed.token, SendMessageRequest(apiPeer, messageId, ContentType.TEXT, MessageCrypto.toWire(sealed)))
         // Cache what was sealed (quote included) so a later decode rebuilds the same bubble (MC:4851-4852).
@@ -1724,6 +1727,8 @@ class SendPipeline(
             d = durationMs,
             wf = wf,
             re = replyTo,
+            // The recipient, sealed inside (security audit M7).
+            to = apiPeer,
         ).encoded()
         var payloadData = payload(caption)
         if (payloadData.size > MessageCrypto.MAX_MEDIA_PAYLOAD_PLAINTEXT_BYTES && caption != null) {
@@ -2036,7 +2041,10 @@ class SendPipeline(
         } catch (_: Exception) {
             null
         }
-        if (kept != null && MediaMessagePayload.parse(kept) != null) savePlaintext(dto.id, dto.senderUserId, kept)
+        // The kept row must be this chat's: one naming another recipient is not cached (security audit M7).
+        if (kept != null && MediaMessagePayload.parse(kept) != null && SealedRecipient.accepts(kept, ContentType.MEDIA, apiPeer)) {
+            savePlaintext(dto.id, dto.senderUserId, kept)
+        }
         return stored
     }
 
@@ -2115,6 +2123,8 @@ class SendPipeline(
             pg = pageCount?.takeIf { it >= 1 },
             ti = audioTitle,
             ar = audioArtist,
+            // The recipient, sealed inside (security audit M7): [apiPeer], our own id in Notes.
+            to = apiPeer,
         ).encoded()
 
         var includePreview = safePreview != null

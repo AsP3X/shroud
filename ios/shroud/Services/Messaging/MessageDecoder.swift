@@ -15,9 +15,10 @@ enum MessageDecoder {
         let local: MessagingLocalRepository
         let mediaService: MediaService
         let resolvePeerIdentityPublicKey: (UUID, String) async throws -> Data
-        /// The other person in the chat a history page was listed for (me in Notes); nil for a
-        /// message filed by its own sender (realtime). A message neither from me nor from them
-        /// is never opened.
+        /// The other person in the chat a history page was listed for, or a realtime message is
+        /// filed under (me in Notes); nil when not known. A message neither from me nor from
+        /// them is never opened, and a plaintext naming another recipient is not shown
+        /// (`SealedRecipient`, security audit M7).
         var chatPeerUserID: UUID? = nil
     }
 
@@ -31,24 +32,80 @@ enum MessageDecoder {
         MediaMessagePayload.parse(data) != nil
     }
 
+    /// A decoded bubble, and whether it was refused: from outside the chat, or naming another
+    /// recipient (security audit M7). Neither was delivered to this chat, so neither is acked.
+    struct Outcome {
+        var message: MessagingController.ChatMessage
+        var refused: Bool
+    }
+
     static func decode(
         _ dto: MessageDTO,
         context: Context
     ) async -> MessagingController.ChatMessage {
+        await decodeChecked(dto, context: context).message
+    }
+
+    static func decodeChecked(
+        _ dto: MessageDTO,
+        context: Context
+    ) async -> Outcome {
+        var refused = false
+        let message = await decode(dto, context: context, refused: &refused)
+        return Outcome(message: message, refused: refused)
+    }
+
+    /// Whether our own copy held under `threadKey` is in the chat of `recipient`: that peer's
+    /// thread, or Notes for me. Any thread when the chat is not known (`recipient` nil).
+    private static func ownCopyInChat(_ threadKey: UUID, recipient: UUID?, me: UUID) -> Bool {
+        guard let recipient else { return true }
+        return threadKey == recipient || (recipient == me && threadKey == LocalMessageStore.notesPeerID)
+    }
+
+    private static func decode(
+        _ dto: MessageDTO,
+        context: Context,
+        refused: inout Bool
+    ) async -> MessagingController.ChatMessage {
         let me = context.me
         let isMine = dto.senderUserId == me
-        let peerUserID = isMine
-            ? (context.conversations.first(where: { $0.id == dto.conversationId })?.peer.id
-                ?? dto.senderUserId)
-            : dto.senderUserId
+        let conversationPeer = isMine
+            ? context.conversations.first(where: { $0.id == dto.conversationId })?.peer.id
+            : nil
+        let peerUserID = isMine ? (conversationPeer ?? dto.senderUserId) : dto.senderUserId
         let receipt = isMine ? receiptStatus(from: dto) : MessageReceiptStatus.sent
         let isMedia = dto.contentType == "media"
         let local = context.local
+        // Whom the plaintext must name, if it names anyone (security audit M7): the chat's peer
+        // for mine (me in Notes), me for theirs. Nil: the chat of my own message is not known.
+        // Another recipient is my message to someone else re-filed under this chat — the `self`
+        // box does not say whom it was for.
+        let recipient: UUID? = isMine ? (context.chatPeerUserID ?? conversationPeer) : me
+        func misfiled(_ plain: Data) -> Bool {
+            guard let recipient else { return false }
+            return !SealedRecipient.accepts(plain, contentType: dto.contentType, expected: recipient)
+        }
+        /// Like a message from outside the chat: unreadable, nothing of its body shown or kept.
+        func misaddressed() -> MessagingController.ChatMessage {
+            MessagingController.ChatMessage(
+                id: dto.id,
+                peerUserID: context.chatPeerUserID ?? peerUserID,
+                senderUserID: dto.senderUserId,
+                text: isMedia ? "Media" : "[Unable to decrypt]",
+                createdAt: dto.createdAt,
+                createdAtWire: dto.createdAtWire,
+                isMine: isMine,
+                deleted: false,
+                receipt: receipt,
+                kind: isMedia ? .image : .text
+            )
+        }
 
         // The server lists a chat's messages and names their senders. One from someone outside
         // this chat would open under that account's key and show as the peer's (security audit
         // M7): it stays undecrypted, and the stranger's key is never fetched or pinned.
         if !isMine, let chatPeer = context.chatPeerUserID, dto.senderUserId != chatPeer {
+            refused = true
             return MessagingController.ChatMessage(
                 id: dto.id,
                 peerUserID: chatPeer,
@@ -80,13 +137,16 @@ enum MessageDecoder {
         }
 
         // A held copy skips the envelope. Message ids are chosen by the server, so reuse one
-        // only for the same sender — and, for a peer's message, only from that peer's chat.
+        // only for the same sender — and, for a peer's message, only from that peer's chat; for
+        // mine, only from the chat of `recipient` (security audit M7): my message to Alice
+        // listed in Bob's chat is opened for real, and checked.
         let candidate = context.threads[peerUserID]?.first(where: { $0.id == dto.id })
             ?? context.threads.values.lazy.flatMap({ $0 }).first(where: { $0.id == dto.id })
         let existing: MessagingController.ChatMessage? = {
             guard let candidate else { return nil }
             guard candidate.senderUserID == dto.senderUserId else { return nil }
             guard isMine || candidate.peerUserID == dto.senderUserId else { return nil }
+            guard !isMine || Self.ownCopyInChat(candidate.peerUserID, recipient: recipient, me: me) else { return nil }
             return candidate
         }()
         if let existing {
@@ -104,14 +164,16 @@ enum MessageDecoder {
             {
                 if !isMedia, local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId) == nil {
                     // Re-seal what the bubble actually carries, quote included, so a later
-                    // decode from this cache rebuilds the same reply header.
+                    // decode from this cache rebuilds the same reply header — and the
+                    // recipient of the chat it was checked for, so that decode checks it too.
                     local.saveSealedPlaintext(
                         messageID: dto.id,
                         senderUserID: dto.senderUserId,
                         text: MessageTextPayload.wire(
                             body: existing.text,
                             replyTo: existing.replyTo,
-                            linkPreview: existing.linkPreview
+                            linkPreview: existing.linkPreview,
+                            to: recipient
                         )
                     )
                 }
@@ -153,6 +215,7 @@ enum MessageDecoder {
                 // bubble is restored without wiping the thread.
                 if isMedia, existing.kind == .image,
                    let plain = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId),
+                   !misfiled(plain),
                    let payload = MediaMessagePayload.parse(plain),
                    payload.isFile || payload.isVoice || payload.isVideo || payload.isLink
                 {
@@ -172,6 +235,11 @@ enum MessageDecoder {
         if let cachedData = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId),
            isMediaPayloadData(cachedData) || !isMedia
         {
+            // Cached for this id and sender, but maybe in another chat: checked like an envelope.
+            if misfiled(cachedData) {
+                refused = true
+                return misaddressed()
+            }
             if isMedia {
                 return await decodeMedia(
                     dto: dto,
@@ -245,6 +313,11 @@ enum MessageDecoder {
                 )
             }
 
+            // Checked before it is cached: a body sealed for someone else is never stored here.
+            if misfiled(plain) {
+                refused = true
+                return misaddressed()
+            }
             local.saveSealedPlaintext(messageID: dto.id, senderUserID: dto.senderUserId, data: plain)
 
             if isMedia {
@@ -276,6 +349,12 @@ enum MessageDecoder {
                 linkPreview: parsed.linkPreview
             )
         } catch {
+            if let cachedData = local.sealedPlaintext(for: dto.id, senderUserID: dto.senderUserId),
+               misfiled(cachedData)
+            {
+                refused = true
+                return misaddressed()
+            }
             if let cached = local.sealedPlaintextText(for: dto.id, senderUserID: dto.senderUserId), !isMedia {
                 let parsed = MessageTextPayload.parse(cached)
                 return MessagingController.ChatMessage(

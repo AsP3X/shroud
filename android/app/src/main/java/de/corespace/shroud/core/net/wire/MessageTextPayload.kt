@@ -3,16 +3,19 @@ package de.corespace.shroud.core.net.wire
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.util.UUID
 
 /**
  * Plaintext of a `content_type = text` message — iOS `MessageTextPayload`
  * (`ios/shroud/Services/API/MessageReplyReference.swift:121-189`), web `reply.ts` (`textPayload` /
  * `parseTextPayload` / `textWire`).
  *
- * An ordinary message is sealed as raw UTF-8, byte for byte what every build has sent since v1. A
- * reply has to carry its quote and a message with a link preview its preview, so those are sealed as
- * the envelope `{"c":<body>,"lp":{…},"re":{…},"t":"text"}` instead. Anything that does not parse as
- * that envelope reads back as raw text — which keeps old and new builds talking in both directions.
+ * A message sent to someone is sealed as the envelope `{"c":<body>,"lp":{…},"re":{…},"t":"text","to":<id>}`:
+ * `to` names the recipient ([SealedRecipient], security audit M7), `re` and `lp` are there when it
+ * quotes a message or carries a link preview. Builds from before `to` sealed a plain message as raw
+ * UTF-8, and every build since replies reads the envelope's `c` and ignores keys it does not know.
+ * Anything that does not parse as that envelope reads back as raw text — which keeps old and new
+ * builds talking in both directions.
  */
 object MessageTextPayload {
     /** Discriminator of the JSON envelope (`{"t":"text", …}`). */
@@ -27,16 +30,35 @@ object MessageTextPayload {
 
     /**
      * The plaintext to seal (`:135-154`): [body] itself when there is nothing to attach, else the
-     * envelope with keys sorted recursively (`c`, `lp`, `re`, `t`), so the same message always
-     * yields the same bytes — the local cache skips a rewrite only when they match.
+     * envelope with keys sorted recursively (`c`, `lp`, `re`, `t`, `to`), so the same message always
+     * yields the same bytes — the local cache skips a rewrite only when they match. [to] is the
+     * recipient ([SealedRecipient]).
      */
-    fun wire(body: String, replyTo: MessageReplyReference?, linkPreview: LinkPreview? = null): String {
-        if (replyTo == null && linkPreview == null) return body
+    fun wire(body: String, replyTo: MessageReplyReference?, linkPreview: LinkPreview? = null, to: UUID? = null): String {
+        if (replyTo == null && linkPreview == null && to == null) return body
         val fields = LinkedHashMap<String, JsonElement>()
         fields["c"] = JsonPrimitive(body)
         linkPreview?.let { fields["lp"] = it.wire() }
         replyTo?.let { fields["re"] = it.wireObject() }
         fields["t"] = JsonPrimitive(KIND)
+        to?.let { fields[SealedRecipient.KEY] = SealedRecipient.wire(it) }
+        return LenientJson.encode(LenientJson.sortedKeys(JsonObject(fields)))
+    }
+
+    /**
+     * [wire] naming [to] as its recipient (`MessageTextPayload.bound`, iOS): an envelope gets `to`
+     * added (or replaced) with everything else kept as it is; anything else — raw text, a Notes todo
+     * marker — becomes the envelope with that text as `c`. What a receiver shows is unchanged: the
+     * same [parse] body, quote and preview.
+     */
+    fun bound(plaintext: String, to: UUID): String {
+        val trimmed = WireText.trimWhitespacesAndNewlines(plaintext)
+        val envelope = if (trimmed.startsWith("{") && trimmed.endsWith("}")) LenientJson.parseObject(trimmed) else null
+        if (envelope == null || LenientJson.string(envelope["t"]) != KIND || LenientJson.string(envelope["c"]) == null) {
+            return wire(plaintext, null, null, to)
+        }
+        val fields = LinkedHashMap<String, JsonElement>(envelope)
+        fields[SealedRecipient.KEY] = SealedRecipient.wire(to)
         return LenientJson.encode(LenientJson.sortedKeys(JsonObject(fields)))
     }
 
