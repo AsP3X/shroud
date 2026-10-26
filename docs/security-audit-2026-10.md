@@ -195,6 +195,15 @@ link is opened: 204 before the fix, 401 after. The secret is still stored when t
 **Fix:** key on IP + name (pass a trusted `X-Real-IP` from nginx), evict expired entries globally,
 put a semaphore around Argon2, `limit_req` on `/api/admin/session` in nginx, and a memory limit.
 
+**Fixed:** failures count per client address and operator name (`limit.rs` `ClientAddr`: nginx's
+`X-Real-IP`, believed only from a proxy on a private or loopback address, held in memory, never
+logged). A full table drops finished windows, then the key that failed longest ago. A limited
+request is answered before Argon2 runs, and Argon2 runs two at a time (`auth.rs` `run_argon2`; a
+request that waits 5 s is told to retry). nginx limits sign-in POSTs under `/api/admin/session` to 20
+a minute per client, burst 10; the container has a 256 MiB memory limit. Checked: unit test
+`a_full_table_still_counts_a_new_key`; the admin suites against a fresh Postgres; behind nginx,
+GETs are never limited and the 12th POST of a burst gets 429.
+
 ### M3. Argon2 runs on Tokio worker threads
 
 `server/crates/shroud-server/src/auth/password.rs:74,85`, called from `routes/auth.rs:123,251,256,262,665,935`.
@@ -206,6 +215,12 @@ with H1/H2) blocks every worker: WebSockets, sends and health checks stall.
 **Fix:** run every Argon2 call in `spawn_blocking`, behind a semaphore that answers 503 when full.
 Compute the dummy hash once (`OnceLock`) and only verify against it; that also removes the timing
 difference that shows whether an account exists (a miss is ~2× a real wrong password today).
+
+**Fixed:** every Argon2 call runs on a blocking thread behind a semaphore with a slot per core
+(`auth/password.rs`); a request that waits 5 s for one gets `RATE_LIMITED` (429, which clients
+already retry) rather than a new 503. An unknown name verifies against a dummy hash made once, the
+same work as a wrong password. Unit tests `hash_and_verify_roundtrip`,
+`a_full_set_of_slots_answers_rate_limited`.
 
 ### M4. No media quota; scratch files leak
 
@@ -219,6 +234,14 @@ file, and `remove_stale_scratch` runs only at startup.
 
 **Fix:** a per-user byte quota (sum of live `size_bytes`) checked in `create_upload`; a per-user PUT
 concurrency cap; a request timeout on the content route; a periodic scratch sweep.
+
+**Fixed:** `create_upload` refuses with `413 MEDIA_QUOTA_EXCEEDED` once the account's media would
+pass `MEDIA_QUOTA_MIB` (default 20 GiB, 0 for none), under a per-account advisory lock. A media
+object takes one `PUT` at a time (`409 UPLOAD_IN_PROGRESS`), an account eight. A `PUT` idle for 60 s
+ends with its scratch file, and scratch files an hour old are swept with every orphan GC. Tests
+`media_quota_refuses_an_upload_past_it`, `a_second_put_to_an_upload_in_progress_is_refused`. An
+account already past the default keeps its media but can upload no more until the operator raises
+the quota.
 
 ### M5. WebSocket frames have no size or rate limit
 
@@ -234,6 +257,12 @@ their real `message.new` and `call.ring` events. `typing` does the same to one c
 **Fix:** `max_message_size`/`max_frame_size` of a few KiB on `/ws` and 64 KiB on the relay; a
 per-connection token bucket; at most one presence announcement per user every few seconds.
 
+**Fixed:** `/ws` takes 16 KiB frames and the relay 64 KiB. Each `/ws` socket may send 20 text frames
+per 10 s; past that it is closed with 1008 (its disconnect announces offline once). Presence is not
+debounced beyond that. Tests `frame_budget_refuses_past_the_window_and_resets`,
+`websocket_closes_a_socket_that_floods_frames`, `websocket_refuses_an_oversized_frame` (the last two
+fail before the change).
+
 ### M6. A link-relay pipe outlives its lifetime and idle limits
 
 `server/crates/shroud-server/src/routes/link_relay.rs:253-285`.
@@ -245,6 +274,10 @@ account's pipe slot stay. A client that reads slowly does the same through `sink
 allows 3600 s). With H1 and free accounts this leaks descriptors and memory without bound.
 
 **Fix:** put both writes under `timeout_at(idle_deadline, …)` and end the pipe on timeout.
+
+**Fixed:** both writes and the closing handshake run under deadlines. Test
+`relay_frees_the_slot_of_a_browser_that_stops_reading`: a site floods a browser that stopped
+reading; before the change the sixth pipe after it is refused, after it all six open.
 
 ### M7. History accepts messages from people outside the chat (malicious server)
 
@@ -269,7 +302,7 @@ shown as the peer's. The chat list's `hydratePreviews` skips the cache for such 
 shared transcripts from outside the chat. Search and notifications read the decoded rows. Cases in
 `messaging.sender.selftest.ts` (a cached and an uncached stranger's message, a stranger's tombstone,
 Notes, the chat list) fail on the code before. Sealing the recipient's id into the plaintext is
-still open, as are iOS and Android.
+still open.
 
 **Fixed (Android):** Android had the same gap. A history page (`HistoryPager.fetchHistoryPage`) and
 a push's preview (`MessagingController.notificationText`) opened each listed message with the
@@ -372,7 +405,7 @@ once it is written. Log Out's settings step deletes the file by name (the contai
 too). While the chats are locked a ringing call can no longer read a name from the book, so the
 placeholder no longer replaces the name the VoIP push brought (`CallController.applyCallerName`).
 `ContactNamesTests` and `DeviceDataWipeTests` cover the seal, the lock, the migration and the
-wipe. Not compiled or run in this review (no Xcode here). Web and Android are still open.
+wipe. Not compiled or run in this review (no Xcode here).
 
 ### M10. The operator console shares the messenger's origin
 
@@ -385,6 +418,16 @@ operator's E2EE vault in IndexedDB.
 
 **Fix:** serve the console on its own origin (`admin.<host>`). At minimum, `Path=/api/admin` on its
 cookies.
+
+**Fixed (opt-in):** a new `ADMIN_HOST` setting gives the console a host of its own. Set, nginx
+serves the console only on that host (its `/` goes to `/admin/`) and the messenger only on the
+others; the wrong host answers `404` (`nginx.conf.template`, server-level rules from `map`s on
+`$host` and `$uri`). The deploy scripts derive `ADMIN_PUBLIC_URL` from it (same scheme and port,
+lowercase host names only) and Compose passes it to the web container. Empty, nothing changes,
+because the operator must add the DNS record and TLS first: deployments stay exposed until they set
+it (`docs/admin.md`, "A host of its own"). Checked with nginx 1.24 behind this template, both empty
+and set, for the web and the console host and each kind of path. The cookie path was left as is:
+`__Host-` requires `Path=/`, and a path is no boundary within one origin.
 
 ## Low
 

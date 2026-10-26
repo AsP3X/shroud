@@ -10,11 +10,21 @@ The API and web client come up with `./deploy.sh`. The console is its own comman
 ./deploy.sh --admin
 ```
 
-That turns the console on and deploys it. A secret already in `.env` is kept. Open it at the Shroud site's address plus `/admin`. If the site is `https://shroud-app.com`, the console is `https://shroud-app.com/admin`. Local mode is the same rule: the web URL in `.env`, plus `/admin`. There is no separate admin host and no extra port to publish.
+That turns the console on and deploys it. A secret already in `.env` is kept. Open it at the Shroud site's address plus `/admin`. If the site is `https://shroud-app.com`, the console is `https://shroud-app.com/admin`. Local mode is the same rule: the web URL in `.env`, plus `/admin`. There is no extra port to publish.
 
 The web client proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer.
 
 The sign-in cookie is `__Host-admin`. Browsers require that name to use `Path=/` and to omit `Domain`, so it is sent to the whole site. It is `HttpOnly`. The messenger cannot read it, and the API ignores it.
+
+### A host of its own (recommended)
+
+On the web host, the console and the messenger share one origin: a script that ran in either one (a cross-site scripting bug) could use the operator's console session, or read the operator's messenger vault in the same browser. Give the console its own host name to separate them:
+
+1. Set `ADMIN_HOST` in `.env` to a lowercase host name, for example `admin.shroud-app.com`.
+2. Point its DNS record at the same machine as the web host, and give it TLS the same way: with `PROXY_MODE=npm`, add an NPM proxy host for it to `http://shroud-web:80`.
+3. Run `./deploy.sh --admin` (`.\deploy.ps1 -Admin`). `ADMIN_PUBLIC_URL` becomes `https://admin.shroud-app.com/admin`, with the web address's scheme and port.
+
+From then on the console answers only on that host (its `/` goes to `/admin/`), and the web host answers `404` on `/admin` and `/api/admin`. Setup links and the bootstrap link use the new address. Clearing `ADMIN_HOST` and deploying again puts the console back on the web host.
 
 Create the first operator after that. The link is shown once:
 

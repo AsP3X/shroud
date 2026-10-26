@@ -222,7 +222,8 @@ shroud_ensure_admin_secrets() {
   shroud_profile_enabled admin || return 0
   # Refuse a bad web address before writing a port or a secret.
   public="$(shroud_admin_public_url)" || {
-    echo "ERROR: WEB_PUBLIC_URL is not set. The console is served at that address plus /admin." >&2
+    echo "ERROR: WEB_PUBLIC_URL is not set, or ADMIN_HOST is not a host name. The console is served" >&2
+    echo "  at that address plus /admin, or at ADMIN_HOST plus /admin when it is set." >&2
     return 1
   }
   for key in ADMIN_DB_PASSWORD ADMIN_SECRET_KEY OPERATOR_TOKEN; do
@@ -240,17 +241,19 @@ shroud_ensure_admin_secrets() {
   [[ -n "$port" ]] || shroud_set_env_value ADMIN_PORT 8082
   value="$(shroud_env_value OPERATOR_PORT)"
   [[ -n "$value" ]] || shroud_set_env_value OPERATOR_PORT 8090
-  # The console is the web address plus /admin, in both proxy modes. An old separate
-  # host in .env is replaced so the two cannot drift.
+  # The console is the web address plus /admin (on ADMIN_HOST when that is set), in both proxy
+  # modes. ADMIN_PUBLIC_URL is always derived, so it cannot drift from the web address.
   if [[ "$(shroud_env_value ADMIN_PUBLIC_URL)" != "$public" ]]; then
     shroud_set_env_value ADMIN_PUBLIC_URL "$public"
   fi
 }
 
 # The console's public address: WEB_PUBLIC_URL, one or more trailing slashes removed, plus /admin.
-# Prints nothing and returns 1 when that address is not http(s).
+# With ADMIN_HOST set, that host takes the place of the web host (same scheme and port): the console
+# then has an origin of its own. Prints nothing and returns 1 when the web address is not http(s)
+# or ADMIN_HOST is not a lowercase host name.
 shroud_admin_public_url() {
-  local web
+  local web host authority port=""
   web="$(shroud_env_value WEB_PUBLIC_URL)"
   while [[ "$web" == */ ]]; do
     web="${web%/}"
@@ -261,7 +264,16 @@ shroud_admin_public_url() {
   case "$web" in
     *' '*|*'$*') return 1 ;;
   esac
-  printf '%s/admin\n' "$web"
+  host="$(shroud_env_value ADMIN_HOST)"
+  if [[ -z "$host" ]]; then
+    printf '%s/admin\n' "$web"
+    return 0
+  fi
+  [[ "$host" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || return 1
+  authority="${web#*://}"
+  authority="${authority%%/*}"
+  [[ "$authority" == *:* ]] && port=":${authority##*:}"
+  printf '%s://%s%s/admin\n' "${web%%://*}" "$host" "$port"
 }
 
 shroud_assert_env() {

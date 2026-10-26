@@ -39,7 +39,7 @@ Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the 
 
 ### Operator console
 
-The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`). Its container port stays on the Docker network. The web nginx proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer. Turn it on without re-running the setup wizard:
+The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`), or of its own host when `ADMIN_HOST` is set, which keeps it on a separate origin from the messenger ([docs/admin.md](docs/admin.md#a-host-of-its-own-recommended)). Its container port stays on the Docker network. The web nginx proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer. Turn it on without re-running the setup wizard:
 
 ```bash
 ./deploy.sh --admin                              # turn it on and deploy it

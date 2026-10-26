@@ -275,7 +275,7 @@ source scripts/compose-env.sh
 shroud_admin_set_public_url() {
   local url
   url="$(shroud_admin_public_url)" ||
-    die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin."
+    die "WEB_PUBLIC_URL is not set, or ADMIN_HOST is not a host name. The console is served at that address plus /admin, or at ADMIN_HOST plus /admin."
   shroud_set_env_value ADMIN_PUBLIC_URL "$url"
 }
 

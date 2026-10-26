@@ -248,6 +248,7 @@ services:
       API_UPSTREAM: http://api:8080
       ADMIN_UPSTREAM: http://admin:8082
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
+      ADMIN_HOST: ${ADMIN_HOST:-}
     networks:
       - shroud-internal
     healthcheck:

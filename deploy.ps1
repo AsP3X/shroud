@@ -178,19 +178,26 @@ function Add-AdminSecrets {
     if (-not (Get-EnvValue "OPERATOR_PORT")) { Set-EnvValue "OPERATOR_PORT" "8090" }
 }
 
-# The console's public address: WEB_PUBLIC_URL plus /admin. $null when that address is not http(s).
+# The console's public address: WEB_PUBLIC_URL plus /admin. With ADMIN_HOST set, that host takes
+# the place of the web host (same scheme and port), so the console has an origin of its own.
+# $null when the web address is not http(s) or ADMIN_HOST is not a lowercase host name.
 function Get-AdminPublicUrl {
     $web = Get-EnvValue "WEB_PUBLIC_URL"
     if ($web) { $web = $web.TrimEnd('/') }
     if (-not $web -or $web -notmatch '^https?://' -or $web -match '[\s$]') { return $null }
-    return "$web/admin"
+    $adminHost = Get-EnvValue "ADMIN_HOST"
+    if (-not $adminHost) { return "$web/admin" }
+    if ($adminHost -cnotmatch '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$') { return $null }
+    $uri = [System.Uri]$web
+    $port = if ($uri.IsDefaultPort) { "" } else { ":$($uri.Port)" }
+    return "$($uri.Scheme)://$adminHost$port/admin"
 }
 
 # Writes that address into .env. A refused address leaves the profile unchanged when called first.
 function Set-AdminPublicUrl {
     $url = Get-AdminPublicUrl
     if (-not $url) {
-        Write-Die "WEB_PUBLIC_URL is not set. The console is served at that address plus /admin."
+        Write-Die "WEB_PUBLIC_URL is not set, or ADMIN_HOST is not a host name. The console is served at that address plus /admin, or at ADMIN_HOST plus /admin."
     }
     Set-EnvValue "ADMIN_PUBLIC_URL" $url
 }

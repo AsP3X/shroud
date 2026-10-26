@@ -1,5 +1,33 @@
 # Rendered by the nginx image envsubst entrypoint.
-# Substitutes ${API_UPSTREAM}, ${ADMIN_UPSTREAM} and ${MAX_UPLOAD_BYTES} only (other $vars are nginx).
+# Substitutes ${API_UPSTREAM}, ${ADMIN_UPSTREAM}, ${MAX_UPLOAD_BYTES} and ${ADMIN_HOST} only (other
+# $vars are nginx).
+
+# ADMIN_HOST, when set, is the operator console's own host name: the console answers only there
+# and the messenger only on every other host, so a script running on one can never reach the
+# other's session or storage (security audit M10). Empty: the console is this host's /admin.
+map "${ADMIN_HOST}" $shroud_admin_split {
+    ""      0;
+    default 1;
+}
+map $host $shroud_on_admin_host {
+    hostnames;
+    "${ADMIN_HOST}" 1;
+    default         0;
+}
+map $uri $shroud_console_path {
+    ~^/(api/)?admin(/|$) 1;
+    default              0;
+}
+map $uri $shroud_root_path {
+    /       1;
+    default 0;
+}
+map "$shroud_admin_split$shroud_on_admin_host$shroud_console_path$shroud_root_path" $shroud_host_rule {
+    1101    root;
+    1100    refuse;
+    1010    refuse;
+    default "";
+}
 
 server {
     listen 80;
@@ -22,6 +50,14 @@ server {
     real_ip_recursive on;
 
     client_max_body_size ${MAX_UPLOAD_BYTES};
+
+    # With ADMIN_HOST set: the console's host serves only the console, the others never do.
+    if ($shroud_host_rule = root) {
+        return 308 /admin/;
+    }
+    if ($shroud_host_rule = refuse) {
+        return 404;
+    }
 
     include /etc/nginx/security-headers.conf;
 

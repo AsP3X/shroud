@@ -63,6 +63,8 @@ COPY admin-proxy.conf /etc/nginx/admin-proxy.conf
 ENV API_UPSTREAM=http://api:8080
 ENV ADMIN_UPSTREAM=http://admin:8082
 ENV MAX_UPLOAD_BYTES=2147483648
+# Empty: the operator console is this host's /admin (nginx.conf.template).
+ENV ADMIN_HOST=
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD wget -qO- http://127.0.0.1/ >/dev/null || exit 1
