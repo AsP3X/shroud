@@ -4,8 +4,9 @@
 //! reach the media store, and the store never sees a client's address or token. Blobs live in
 //! [`crate::media_store`].
 
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::{
     Json,
@@ -37,6 +38,62 @@ const PRESIGN_TTL_MINUTES: i64 = 15;
 pub const ORPHAN_TTL_MINUTES: i64 = 60;
 /// How often the background GC task runs.
 pub(crate) const ORPHAN_GC_INTERVAL_SECS: u64 = 15 * 60;
+/// Uploads one account may stream at once (an album of photos goes up a few at a time).
+pub const MAX_UPLOADS_PER_USER: usize = 8;
+/// An upload that sends nothing for this long is dropped, with its scratch file.
+const UPLOAD_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The uploads being streamed, per account. Each media object takes one at a time: parallel
+/// PUTs to one id would each spool their own copy of up to 2 GiB.
+#[derive(Default)]
+pub struct UploadSlots {
+    active: Mutex<HashMap<Uuid, HashSet<Uuid>>>,
+}
+
+impl UploadSlots {
+    /// Claims the slot of `media_id`, released when the guard drops however the upload ends.
+    fn acquire(self: &Arc<Self>, user_id: Uuid, media_id: Uuid) -> Result<UploadSlot, AppError> {
+        let mut active = self.active.lock().unwrap_or_else(PoisonError::into_inner);
+        let uploads = active.entry(user_id).or_default();
+        if uploads.contains(&media_id) {
+            return Err(AppError::conflict(
+                "UPLOAD_IN_PROGRESS",
+                "This media is already being uploaded.",
+            ));
+        }
+        if uploads.len() >= MAX_UPLOADS_PER_USER {
+            return Err(AppError::rate_limited_after(5));
+        }
+        uploads.insert(media_id);
+        Ok(UploadSlot {
+            slots: Arc::clone(self),
+            user_id,
+            media_id,
+        })
+    }
+}
+
+struct UploadSlot {
+    slots: Arc<UploadSlots>,
+    user_id: Uuid,
+    media_id: Uuid,
+}
+
+impl Drop for UploadSlot {
+    fn drop(&mut self) {
+        let mut active = self
+            .slots
+            .active
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(uploads) = active.get_mut(&self.user_id) {
+            uploads.remove(&self.media_id);
+            if uploads.is_empty() {
+                active.remove(&self.user_id);
+            }
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateUploadRequest {
@@ -91,6 +148,30 @@ pub async fn create_upload(
         )));
     }
 
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin media upload failed: {err}")))?;
+    if state.media_quota_bytes > 0 {
+        // One registration per account at a time weighs the quota, so parallel ones can't pass it.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(auth.user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("media quota lock failed: {err}")))?;
+        let used: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM media_objects WHERE uploader_user_id = $1",
+        )
+        .bind(auth.user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("media quota sum failed: {err}")))?;
+        if used.saturating_add(body.size_bytes) as u64 > state.media_quota_bytes {
+            return Err(AppError::media_quota_exceeded());
+        }
+    }
+
     let media_id = Uuid::new_v4();
     let object_key = MediaStore::object_key(media_id);
     let bucket = state.media.bucket().to_string();
@@ -116,9 +197,12 @@ pub async fn create_upload(
     .bind(&object_key)
     .bind(body.size_bytes)
     .bind(&content_type)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("insert media object failed: {err}")))?;
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit media upload failed: {err}")))?;
 
     // Client-relative path — iOS resolves against the configured API base URL.
     let upload_url = format!("media/{media_id}/content");
@@ -162,9 +246,26 @@ pub async fn put_content(
         ));
     }
 
-    let stream = body
-        .into_data_stream()
-        .map(|chunk| chunk.map_err(|err| std::io::Error::other(err.to_string())));
+    let _slot = state.uploads.acquire(auth.user_id, media_id)?;
+
+    // A body that stops arriving ends the upload, so a stalled client can't hold its slot and
+    // scratch file for good (nginx has its own body timeout; the API may be reached without it).
+    let stream = futures_util::stream::unfold(body.into_data_stream(), |mut body| async move {
+        match tokio::time::timeout(UPLOAD_IDLE_TIMEOUT, body.next()).await {
+            Ok(Some(chunk)) => Some((
+                chunk.map_err(|err| std::io::Error::other(err.to_string())),
+                body,
+            )),
+            Ok(None) => None,
+            Err(_) => Some((
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "upload stalled",
+                )),
+                body,
+            )),
+        }
+    });
     let len = match state
         .media
         .put_stream(
@@ -480,6 +581,7 @@ pub fn spawn_orphan_gc(pool: PgPool, media: Arc<MediaStore>, metrics: Arc<Metric
         interval.tick().await;
         loop {
             interval.tick().await;
+            media.sweep_scratch().await;
             match purge_orphan_media(&pool, &media, &metrics).await {
                 Ok(0) => {
                     tracing::debug!("media.orphan_gc: nothing to purge");

@@ -254,6 +254,15 @@ impl AppError {
         }
     }
 
+    /// The account's media would pass `MEDIA_QUOTA_MIB`.
+    pub fn media_quota_exceeded() -> Self {
+        Self::Api {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            code: "MEDIA_QUOTA_EXCEEDED",
+            message: "This account has no room for more media.".into(),
+        }
+    }
+
     /// The media store can't be reached right now; the upload or download can be retried.
     pub fn media_unavailable() -> Self {
         Self::Api {

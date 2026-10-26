@@ -13,6 +13,7 @@ use crate::push::PushService;
 use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
 use crate::routes::link_relay::LinkRelay;
+use crate::routes::media::UploadSlots;
 use crate::turn::TurnConfig;
 use crate::username_kdf::UsernameKdf;
 
@@ -44,6 +45,10 @@ pub struct AppState {
     pub link_relay: Arc<LinkRelay>,
     /// Most emoji one person may leave on one message; clients read it from `GET /config`.
     pub reactions_max_per_user: u32,
+    /// Most bytes of media one account may store; 0 is no limit.
+    pub media_quota_bytes: u64,
+    /// Uploads in progress, per account and media object.
+    pub uploads: Arc<UploadSlots>,
     /// Released app versions; clients read them from `GET /client-version`.
     pub client_versions: Arc<ClientVersions>,
     /// Username lookup hash. Clients read the salt from `GET /auth/username-kdf`.
@@ -72,6 +77,8 @@ impl AppState {
             ice_servers: vec![],
             turn: None,
             reactions_max_per_user: 5,
+            media_quota_bytes: 0,
+            uploads: Arc::new(UploadSlots::default()),
             client_versions: Arc::new(ClientVersions::default()),
             username_kdf: UsernameKdf::for_tests(),
             rate_limiter,

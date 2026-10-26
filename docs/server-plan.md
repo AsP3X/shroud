@@ -1151,7 +1151,8 @@ Marks `message_deliveries.delivered_at = now()` for **current device**. `404` if
 }
 ```
 
-`size_bytes` required, 1…2 GiB. Response:
+`size_bytes` required, 1…2 GiB. The account's media, this upload included, must fit
+`MEDIA_QUOTA_MIB` (default 20 GiB; `413 MEDIA_QUOTA_EXCEEDED` otherwise). Response:
 
 ```json
 {
@@ -1183,6 +1184,12 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 | `FORBIDDEN` | not allowed to download / not owner of media |
 | `NOT_FOUND` | media missing |
 | `ALREADY_EXISTS` | media already linked to a message |
+| `MEDIA_QUOTA_EXCEEDED` (413) | the account's media would pass `MEDIA_QUOTA_MIB` |
+| `UPLOAD_IN_PROGRESS` (409) | a `PUT` to this media object is still streaming |
+| `RATE_LIMITED` | more than 8 uploads of the account stream at once |
+
+A `PUT` whose body sends nothing for 60 s ends with its scratch file; abandoned scratch files are
+swept every 15 minutes once an hour old.
 
 ### Milestone 4b — WebSocket (locked)
 
@@ -1846,6 +1853,7 @@ clients go by the `UPDATE_REQUIRED` code.
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
 | `TRUST_FORWARDED_HEADERS` | Honor `X-Real-IP` / right-most `X-Forwarded-For` for rate-limit keys, from a peer on a loopback or private address only (default false: the peer address) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
+| `MEDIA_QUOTA_MIB` | Most encrypted media one account may store, in MiB (default 20480 = 20 GiB; 0 = no limit) |
 | `IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` | Newest released app version (`1.2.3`); older apps offer an update (`GET /client-version`) |
 | `IOS_MIN_VERSION` / `ANDROID_MIN_VERSION` | Oldest app version still served; older apps block until updated, and the API answers them (and any request without `X-Shroud-Client`) with `426 UPDATE_REQUIRED`. Must not be newer than the latest |
 | `IOS_UPDATE_URL` / `ANDROID_UPDATE_URL` | Link the update prompt opens (TestFlight / App Store, an APK page): https for iOS, http(s) for Android |

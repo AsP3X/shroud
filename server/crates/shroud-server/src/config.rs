@@ -16,6 +16,8 @@ use crate::username_kdf::UsernameKdf;
 pub const DEFAULT_DATABASE_POOL_MAX: u32 = 10;
 /// Telegram Premium allows 3; Shroud starts at 5 (see `docs/server-plan.md`).
 const DEFAULT_REACTIONS_MAX_PER_USER: u32 = 5;
+/// `MEDIA_QUOTA_MIB` when unset: 20 GiB of encrypted media per account.
+const DEFAULT_MEDIA_QUOTA_MIB: u32 = 20 * 1024;
 const MAX_REACTIONS_PER_USER: u32 = 20;
 const DEFAULT_MEDIA_DATA_DIR: &str = "/data/shroud-media";
 const DEFAULT_MEDIA_BUCKET: &str = "shroud-media";
@@ -90,6 +92,8 @@ pub struct Config {
     pub turn: Option<TurnConfig>,
     /// Most emoji one person may leave on one message (`REACTIONS_MAX_PER_USER`, 1–20).
     pub reactions_max_per_user: u32,
+    /// Most bytes of media one account may store (`MEDIA_QUOTA_MIB`); 0 is no limit.
+    pub media_quota_bytes: u64,
     /// Where Android (UnifiedPush) subscriptions may point (`UNIFIEDPUSH_*`).
     pub unifiedpush: UnifiedPushPolicy,
     /// Released app versions (`IOS_*`, `ANDROID_*`, `WEB_BUILD`).
@@ -181,6 +185,15 @@ impl Config {
         let reactions_max_per_user =
             parse_reactions_max_per_user(std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref())?;
 
+        // Human: Uploads are open to every account, and linked media is kept as long as its
+        // message, so without a quota one account could fill the store. 0 turns it off.
+        let media_quota_bytes = u64::from(parse_u32_env(
+            "MEDIA_QUOTA_MIB",
+            std::env::var("MEDIA_QUOTA_MIB").ok().as_deref(),
+            DEFAULT_MEDIA_QUOTA_MIB,
+        )?) * 1024
+            * 1024;
+
         let unifiedpush = unifiedpush_policy(&|name| std::env::var(name).ok())?;
         if unifiedpush.allow_local_http {
             tracing::warn!(
@@ -233,6 +246,7 @@ impl Config {
             ice_servers: ice.servers,
             turn: ice.turn,
             reactions_max_per_user,
+            media_quota_bytes,
             unifiedpush,
             client_versions,
             operator,

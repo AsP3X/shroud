@@ -677,3 +677,94 @@ async fn purge_media_ids_removes_blob_and_row() {
         0
     );
 }
+
+/// Uploads are open to every account and linked media stays as long as its message, so each
+/// account has a quota (`MEDIA_QUOTA_MIB`; security audit M4).
+#[tokio::test]
+async fn media_quota_refuses_an_upload_past_it() {
+    let Some((_, state)) = test_setup().await else {
+        eprintln!("skipping media_quota_refuses_an_upload_past_it: DATABASE_URL unavailable");
+        return;
+    };
+    let mut state = state;
+    state.media_quota_bytes = 1000;
+    let app = axum::Router::new()
+        .merge(routes::router())
+        .with_state(state);
+    let (token, _) = register(&app).await;
+
+    create_upload(&app, &token, 600).await;
+    let over = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/media/uploads")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "size_bytes": 600 }).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(over.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        json_body(over).await["error"]["code"],
+        "MEDIA_QUOTA_EXCEEDED"
+    );
+    create_upload(&app, &token, 400).await;
+}
+
+/// Parallel PUTs to one media object would each spool their own copy (security audit M4).
+#[tokio::test]
+async fn a_second_put_to_an_upload_in_progress_is_refused() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping a_second_put_to_an_upload_in_progress_is_refused: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, _) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+
+    let (chunks, receiver) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(1);
+    let body = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|chunk| (chunk, receiver))
+    });
+    let first = tokio::spawn({
+        let app = app.clone();
+        let token = token.clone();
+        let media_id = media_id.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/media/{media_id}/content"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/octet-stream")
+                    .body(Body::from_stream(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response")
+            .status()
+        }
+    });
+    chunks
+        .send(Ok(bytes[..32].to_vec()))
+        .await
+        .expect("first half");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    assert_eq!(
+        put_content(&app, &token, &media_id, &bytes).await,
+        StatusCode::CONFLICT
+    );
+    chunks
+        .send(Ok(bytes[32..].to_vec()))
+        .await
+        .expect("second half");
+    drop(chunks);
+    assert_eq!(first.await.expect("first put"), StatusCode::NO_CONTENT);
+}

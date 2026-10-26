@@ -242,8 +242,9 @@ impl MediaStore {
         }
     }
 
-    /// Startup housekeeping: scratch files a crash left in a local store.
-    pub async fn prepare(&self) {
+    /// Deletes scratch files older than an hour: writes a crash or a dropped upload left in a
+    /// local store. Runs at startup and with every orphan GC.
+    pub async fn sweep_scratch(&self) {
         let stores = [
             match &self.backend {
                 Backend::Local(store) => Some(store),

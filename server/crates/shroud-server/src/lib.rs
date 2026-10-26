@@ -149,7 +149,7 @@ pub async fn run() -> Result<(), AppError> {
     }
 
     let media = Arc::new(build_media_store(&config.media)?);
-    media.prepare().await;
+    media.sweep_scratch().await;
     // Compose starts the API only once Nebular is healthy; elsewhere a store that is still
     // starting is only worth a warning — uploads and downloads answer 503 until it is up.
     match media.check().await {
@@ -287,6 +287,8 @@ pub async fn run() -> Result<(), AppError> {
             crate::link_relay::RelayPolicy::production(),
         )),
         reactions_max_per_user: config.reactions_max_per_user,
+        media_quota_bytes: config.media_quota_bytes,
+        uploads: Arc::new(crate::routes::media::UploadSlots::default()),
         client_versions: Arc::new(config.client_versions.clone()),
         username_kdf: config.username_kdf.clone(),
     };
