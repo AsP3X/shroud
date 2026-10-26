@@ -43,7 +43,7 @@ nonisolated protocol LinkPreviewFetching: Sendable {
 /// - HTTPS only, default port, and never an IP literal, a local name (`.local`, `.internal`,
 ///   `localhost`), or a name that resolves to a private, loopback, or link-local address, so a
 ///   pasted link cannot probe the home network. Redirects are held to the same rules.
-/// - An ephemeral session: no cookies, no cache, no credentials, nothing kept afterwards.
+/// - An ephemeral session: no cookies, no cache, no credentials, no proxy, nothing kept afterwards.
 /// - Only the page head is read (≤ 512 KB) and images are capped at 5 MB and 40 MP and decoded
 ///   downsampled, so a hostile page cannot run the phone out of memory.
 /// Agent: HTTP GET to the link's host only; never to the Shroud server. No logging of URLs.
@@ -85,8 +85,20 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
 
     // MARK: - Pipeline
 
-    private static let session: URLSession = {
+    /// Human: The host is checked with `getaddrinfo` and then resolved again by URLSession, so a
+    /// name with a very short TTL could answer a public address to the check and a private one
+    /// to the connection (DNS rebinding). URLSession has no hook to connect to a checked address,
+    /// and the fetch is HTTPS on 443 with the certificate checked against the name, so what is
+    /// left is a TCP and TLS connection attempt to a private address on port 443, nothing read
+    /// back. Android closes it with its own resolver (`PublicAddressDns`); here it would take an
+    /// HTTP client written on Network.framework, so it stays open (security audit L17).
+    private static let session = URLSession(configuration: sessionConfiguration())
+
+    static func sessionConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
+        // No system or PAC proxy: a proxy resolves the name itself, past the address check, and
+        // would see every previewed link.
+        configuration.connectionProxyDictionary = [:]
         configuration.httpCookieAcceptPolicy = .never
         configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil
@@ -99,8 +111,8 @@ nonisolated struct LinkPreviewFetcher: LinkPreviewFetching {
             "User-Agent": userAgent,
             "Accept-Language": acceptLanguage,
         ]
-        return URLSession(configuration: configuration)
-    }()
+        return configuration
+    }
 
     /// `de-DE,de;q=0.9,en;q=0.8` — the page in the sender's language when it has one.
     private static var acceptLanguage: String {

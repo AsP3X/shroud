@@ -160,6 +160,14 @@ final class LinkPageMetadataParserTests: XCTestCase {
         XCTAssertTrue(LinkPreviewFetcher.resolvesOnlyToPublicAddresses("8.8.8.8"))
     }
 
+    func testFetchesBypassTheSystemProxy() {
+        // An empty dictionary, not nil: nil means "use the system proxy settings".
+        let configuration = LinkPreviewFetcher.sessionConfiguration()
+        XCTAssertEqual(configuration.connectionProxyDictionary?.isEmpty, true)
+        XCTAssertNil(configuration.urlCache)
+        XCTAssertEqual(configuration.httpCookieAcceptPolicy, .never)
+    }
+
     func testIPv6RangesThatReachIPv4OrLocalNetworksAreNotFetched() {
         func v6(_ text: String) -> [UInt8] {
             var address = in6_addr()

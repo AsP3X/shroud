@@ -521,6 +521,13 @@ and set, for the web and the console host and each kind of path. The cookie path
   `64:ff9b::` answers on IPv6-only carrier networks, so the range itself must stay allowed), and
   refuses the rest of `64:ff9b::/32` (local-use `64:ff9b:1::/48` included), site-local
   `fec0::/10` and all of `::/96`. Not compiled or run (no Xcode here).
+- **L17. Fixed in part (iOS):** the link-preview session sets `connectionProxyDictionary = [:]`,
+  so no system or PAC proxy resolves the name past the address check or sees the links. **Open:**
+  the rebinding window. URLSession resolves the name again after the `getaddrinfo` check and has
+  no way to connect to the checked address; closing it would take an HTTP client of our own on
+  Network.framework (TLS with SNI, redirects, chunked and compressed bodies), more than a Low fix
+  should carry. What remains is a TCP and TLS attempt to a private address on port 443 with the
+  certificate checked against the public name, so nothing is read back. Not compiled or run.
 
 ## Design notes (no change asked for here)
 
