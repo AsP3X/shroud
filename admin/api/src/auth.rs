@@ -838,12 +838,17 @@ fn limit_key(name: &str) -> String {
     }
 }
 
+/// Without a hash (no such operator, or one who opened a setup link and never set a password)
+/// the dummy hash still runs, so the answer takes as long, but it is always no: the dummy's
+/// password is in this source.
 async fn check_password(password: String, hash: Option<String>) -> Result<bool, ApiError> {
+    let has_password = hash.is_some();
     let hash = hash.unwrap_or_else(|| password::dummy_hash().to_owned());
-    tokio::task::spawn_blocking(move || password::verify(&password, &hash))
+    let opened = tokio::task::spawn_blocking(move || password::verify(&password, &hash))
         .await
         .map_err(|_| ApiError::internal())?
-        .map_err(|_| ApiError::internal())
+        .map_err(|_| ApiError::internal())?;
+    Ok(has_password && opened)
 }
 
 async fn hash_password(password: String) -> Result<String, ApiError> {

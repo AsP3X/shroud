@@ -65,6 +65,11 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     let secret = secret_from_uri(setup.body["totp_uri"].as_str().unwrap());
     let code = current_code(&secret);
 
+    // Opening the link stored the secret, and no password is set yet. The dummy hash that stands
+    // in for a missing one must never sign in (security audit M1).
+    let half_enrolled = sign_in(&app, "operator", "not-a-real-operator-password", &code).await;
+    assert_eq!(half_enrolled.status, StatusCode::UNAUTHORIZED);
+
     let short = send(
         &app,
         "POST",
