@@ -40,12 +40,19 @@ pub struct IceServer {
 const DEFAULT_OPERATOR_PORT: u16 = 8090;
 /// Longer than this is refused: the listener hashes the token on every request.
 const MAX_OPERATOR_TOKEN_LEN: usize = 256;
+/// Shorter than this is refused: the token is the only lock on account deletion and sign-outs,
+/// and the listener has no attempt limit. `./deploy.sh` writes 64 hex characters.
+const MIN_OPERATOR_TOKEN_LEN: usize = 32;
+/// `OPERATOR_HOST` when unset: this machine only. Compose binds all addresses of the API
+/// container, which only the internal Docker network reaches.
+const DEFAULT_OPERATOR_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 /// Internal listener the admin console calls.
 ///
 /// Absent from [`Config`] when `OPERATOR_TOKEN` is empty: the process does not bind the port.
 #[derive(Clone)]
 pub struct OperatorListener {
+    pub host: IpAddr,
     pub port: u16,
     token: String,
 }
@@ -53,6 +60,7 @@ pub struct OperatorListener {
 impl std::fmt::Debug for OperatorListener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OperatorListener")
+            .field("host", &self.host)
             .field("port", &self.port)
             .field("token", &"set")
             .finish()
@@ -218,6 +226,7 @@ impl Config {
         let operator = operator_listener(
             std::env::var("OPERATOR_TOKEN").ok().as_deref(),
             std::env::var("OPERATOR_PORT").ok().as_deref(),
+            std::env::var("OPERATOR_HOST").ok().as_deref(),
             port,
         )?;
 
@@ -263,22 +272,32 @@ impl Config {
 /// The operator listener, or `None` when `token` is unset or only whitespace.
 ///
 /// A blank token leaves the listener off and ignores `port`, so a half-filled environment
-/// still boots the public API. A real token is kept exactly as written. It must not contain
-/// a line break or be longer than 256 bytes. The port defaults to 8090 and must not be 0
-/// or the public `PORT`.
+/// still boots the public API. A real token is kept exactly as written. It must be 32 to 256
+/// bytes without a line break. The port defaults to 8090 and must not be 0 or the public
+/// `PORT`; the host (`OPERATOR_HOST`) defaults to 127.0.0.1.
 fn operator_listener(
     token: Option<&str>,
     port: Option<&str>,
+    host: Option<&str>,
     public_port: u16,
 ) -> Result<Option<OperatorListener>, AppError> {
     let Some(token) = token.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
-    if token.len() > MAX_OPERATOR_TOKEN_LEN || token.contains('\r') || token.contains('\n') {
+    if !(MIN_OPERATOR_TOKEN_LEN..=MAX_OPERATOR_TOKEN_LEN).contains(&token.len())
+        || token.contains('\r')
+        || token.contains('\n')
+    {
         return Err(AppError::Internal(
-            "OPERATOR_TOKEN must be at most 256 bytes and must not contain a line break".into(),
+            "OPERATOR_TOKEN must be 32 to 256 bytes and must not contain a line break".into(),
         ));
     }
+    let host = match host.map(str::trim).filter(|value| !value.is_empty()) {
+        None => DEFAULT_OPERATOR_HOST,
+        Some(raw) => raw
+            .parse::<IpAddr>()
+            .map_err(|_| AppError::Internal("OPERATOR_HOST must be an IP address".into()))?,
+    };
     let port = match port.map(str::trim).filter(|value| !value.is_empty()) {
         None => DEFAULT_OPERATOR_PORT,
         Some(raw) => raw
@@ -291,6 +310,7 @@ fn operator_listener(
         ));
     }
     Ok(Some(OperatorListener {
+        host,
         port,
         token: token.to_string(),
     }))
@@ -671,12 +691,12 @@ mod tests {
     #[test]
     fn operator_listener_stays_off_without_a_token() {
         assert!(
-            operator_listener(None, Some("nope"), 8080)
+            operator_listener(None, Some("nope"), None, 8080)
                 .unwrap()
                 .is_none()
         );
         assert!(
-            operator_listener(Some("  \n\t"), Some("0"), 8080)
+            operator_listener(Some("  \n\t"), Some("0"), None, 8080)
                 .unwrap()
                 .is_none()
         );
@@ -684,33 +704,50 @@ mod tests {
 
     #[test]
     fn operator_listener_keeps_the_token_and_rejects_a_bad_port() {
-        let listener = operator_listener(Some(" spaced "), None, 8080)
+        let token = format!(" {} ", "t".repeat(MIN_OPERATOR_TOKEN_LEN));
+        let listener = operator_listener(Some(&token), None, None, 8080)
             .unwrap()
             .expect("listener");
         assert_eq!(listener.port, DEFAULT_OPERATOR_PORT);
-        assert_eq!(listener.token(), " spaced ");
+        assert_eq!(listener.host, DEFAULT_OPERATOR_HOST);
+        assert_eq!(listener.token(), token);
         let debug = format!("{listener:?}");
         assert!(debug.contains("set"));
-        assert!(!debug.contains(" spaced "));
+        assert!(!debug.contains(&token));
 
+        let tok = "t".repeat(MIN_OPERATOR_TOKEN_LEN);
+        let tok = Some(tok.as_str());
         assert_eq!(
-            operator_listener(Some("tok"), Some(""), 8080)
+            operator_listener(tok, Some(""), Some(" "), 8080)
                 .unwrap()
                 .unwrap()
                 .port,
             DEFAULT_OPERATOR_PORT
         );
-        assert!(operator_listener(Some("tok"), Some("8080"), 8080).is_err());
-        assert!(operator_listener(Some("tok"), Some("0"), 8080).is_err());
-        assert!(operator_listener(Some("tok"), Some("nope"), 8080).is_err());
-        assert!(operator_listener(Some("tok\n"), None, 8080).is_err());
+        assert_eq!(
+            operator_listener(tok, None, Some("0.0.0.0"), 8080)
+                .unwrap()
+                .unwrap()
+                .host,
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+        );
+        assert!(operator_listener(tok, None, Some("localhost"), 8080).is_err());
+        assert!(operator_listener(tok, Some("8080"), None, 8080).is_err());
+        assert!(operator_listener(tok, Some("0"), None, 8080).is_err());
+        assert!(operator_listener(tok, Some("nope"), None, 8080).is_err());
+        let with_break = format!("{}\n", "t".repeat(MIN_OPERATOR_TOKEN_LEN));
+        assert!(operator_listener(Some(&with_break), None, None, 8080).is_err());
+        let short = "t".repeat(MIN_OPERATOR_TOKEN_LEN - 1);
+        assert!(operator_listener(Some(&short), None, None, 8080).is_err());
         assert!(
-            operator_listener(Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN + 1)), None, 8080).is_err()
+            operator_listener(Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN + 1)), None, None, 8080)
+                .is_err()
         );
         assert!(
             operator_listener(
                 Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN)),
                 Some("8090"),
+                None,
                 8080
             )
             .is_ok()

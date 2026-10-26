@@ -317,7 +317,7 @@ pub async fn run() -> Result<(), AppError> {
     // listener after SIGTERM/Ctrl-C. Either one exiting stops the other.
     // Agent: one watch fed by shutdown_signal; both serves use with_graceful_shutdown.
     if let Some(operator) = config.operator.clone() {
-        let operator_addr = SocketAddr::new(config.host, operator.port);
+        let operator_addr = SocketAddr::new(operator.host, operator.port);
         let operator_listener = tokio::net::TcpListener::bind(operator_addr)
             .await
             .map_err(|err| AppError::Internal(format!("operator bind failed: {err}")))?;
