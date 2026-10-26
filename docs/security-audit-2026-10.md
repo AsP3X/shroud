@@ -86,8 +86,10 @@ matched user id, including a legacy match. Cap the field length before parsing; 
 **Fixed:** register and login key `auth_user` on the decoded digest (`limit_account_attempts`), so
 the key has a fixed length; login also counts the legacy digest against its own budget. Tests:
 `login_budget_counts_one_account_however_its_digest_is_written` and
-`login_budget_counts_the_legacy_digest` (both fail before the fix). Redis `maxmemory` is not set
-(open, with the other denial-of-service items).
+`login_budget_counts_the_legacy_digest` (both fail before the fix). Compose now caps Redis at
+`REDIS_MAXMEMORY` (256 MB by default) with `noeviction` rather than `volatile-ttl`: every key the API
+writes has a TTL, and evicting would reset rate-limit counters; at the cap a write fails, and the
+limiter already falls back to its in-process windows on a Redis error.
 
 ### H3. Registering an unmigrated user's name locks them out for good
 

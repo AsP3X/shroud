@@ -63,6 +63,12 @@ services:
       - ""
       - --appendonly
       - "no"
+      # A memory cap, and no eviction at the cap: evicting would reset rate-limit counters.
+      # At the cap writes fail, and the API keeps its budgets in process instead.
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - noeviction
     environment:
       REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}
     networks:
