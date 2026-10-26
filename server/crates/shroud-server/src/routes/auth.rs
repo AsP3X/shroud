@@ -643,13 +643,12 @@ pub async fn delete_account(
         )
         .await?;
 
-    let row: Option<(Option<DateTime<Utc>>, Option<String>)> = sqlx::query_as(
-        r#"SELECT deleted_at, password_hash FROM users WHERE id = $1"#,
-    )
-    .bind(auth.user_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?;
+    let row: Option<(Option<DateTime<Utc>>, Option<String>)> =
+        sqlx::query_as(r#"SELECT deleted_at, password_hash FROM users WHERE id = $1"#)
+            .bind(auth.user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("load user for delete failed: {err}")))?;
     // Another device deleted the account a moment ago: this one is removed with it, and the
     // answer says the account is gone. A missing row is only a removed device.
     let Some((deleted_at, password_hash)) = row else {
@@ -836,10 +835,7 @@ pub(crate) async fn delete_user_account(
             .realtime
             .close_sessions(user_id, &revoked_sessions)
             .await;
-        state
-            .push
-            .wake_removed_devices(wakes, true)
-            .await;
+        state.push.wake_removed_devices(wakes, true).await;
 
         let media_purged = match crate::routes::media::purge_media_ids(&state, &media_ids).await {
             Ok(purged) => purged,
