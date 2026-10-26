@@ -126,11 +126,12 @@ struct PeerIdentityStore: Sendable {
     }
 
     /// `.notFound` only when the Keychain says the item is not there. Every other status,
-    /// `errSecInteractionNotAllowed` while the phone is locked among them, is `.unavailable`.
+    /// `errSecInteractionNotAllowed` while the phone is locked among them, is `.unavailable`, and
+    /// so is an item that exists but whose data can't be read as text: that is no proof of "no pin".
     static func keychainRead(status: OSStatus, data: Data?) -> KeychainRead {
         switch status {
         case errSecSuccess:
-            guard let data, let value = String(data: data, encoding: .utf8) else { return .notFound }
+            guard let data, let value = String(data: data, encoding: .utf8) else { return .unavailable }
             return .found(value)
         case errSecItemNotFound:
             return .notFound

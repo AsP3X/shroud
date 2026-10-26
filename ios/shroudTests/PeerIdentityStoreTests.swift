@@ -61,6 +61,9 @@ struct PeerIdentityStoreTests {
         #expect(PeerIdentityStore.keychainRead(status: errSecInteractionNotAllowed, data: nil) == .unavailable)
         #expect(PeerIdentityStore.keychainRead(status: errSecAuthFailed, data: nil) == .unavailable)
         #expect(PeerIdentityStore.keychainRead(status: errSecNotAvailable, data: nil) == .unavailable)
+        // An item that is there but unreadable is no proof of "no pin" either.
+        #expect(PeerIdentityStore.keychainRead(status: errSecSuccess, data: nil) == .unavailable)
+        #expect(PeerIdentityStore.keychainRead(status: errSecSuccess, data: Data([0xC3, 0x28])) == .unavailable)
     }
 
     @Test

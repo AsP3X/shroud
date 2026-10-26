@@ -38,6 +38,11 @@ nonisolated enum ContactNames {
     private static let stateLock = NSLock()
     private nonisolated(unsafe) static var unlocked: Unlocked?
 
+    /// False while the chats are locked: the book cannot be read, which says nothing about a name.
+    static var isOpen: Bool {
+        stateLock.withLock { unlocked != nil }
+    }
+
     static func isUsername(_ name: String) -> Bool {
         (3 ... 32).contains(name.unicodeScalars.count)
             && name.unicodeScalars.allSatisfy { nameScalars.contains($0) }

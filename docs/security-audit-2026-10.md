@@ -322,8 +322,8 @@ message under the open chat, and `MessageDecoder.decode` opened one not from me 
 whatever sender the server named (or reused a cached plaintext or held bubble of that sender's).
 `decode` now gets the chat's peer (`Context.chatPeerUserID`, me in Notes); a message not from me
 whose sender is not that peer returns the existing "[Unable to decrypt]" / "Media" bubble before
-any cache, open or key lookup. The media payload recovery (`mediaPayloadData`) opens only a
-message whose sender is the chat's peer. Realtime messages (`ingestIncoming`) were already filed
+any cache, open or key lookup, and gets no delivery ack. The media payload recovery
+(`mediaPayloadData`) opens only a message whose sender is the chat's peer. Realtime messages (`ingestIncoming`) were already filed
 under their own sender, not the chat the server names; the notification extension opens no
 messages, and reactions were already limited to me and the peer (`fetchHistoryPage`).
 `SenderBoundPlaintextTests` covers it. Not compiled or run in this review (no Xcode here). The
@@ -350,7 +350,8 @@ a key, have a message accepted as the contact's, and derive a call secret it kno
 skip `refreshCallSecrets` while `!isProtectedDataAvailable`.
 
 **Fixed (iOS):** `PeerIdentityStore.pin(for:)` answers `.pinned`, `.notPinned` (only on
-`errSecItemNotFound`) or `.unavailable` (every other status), as Android's `PinRead` does; the
+`errSecItemNotFound`) or `.unavailable` (every other status, and an item whose data is not
+readable text), as Android's `PinRead` does; the
 legacy `UserDefaults` copy is still migrated, and now deleted only once the Keychain holds it.
 `resolvePeerIdentityPublicKey` throws `PeerIdentityError.unavailable` on an unreadable pin, before
 and after the first-use fetch, so nothing is trusted or saved then. `verifyPeerIdentity` decides
@@ -399,7 +400,9 @@ written on.
 `Application Support/shroud/contacts/names.sealed`, sealed under the history key
 (`LocalHistoryCrypto` context `contactNames`) and marked `isExcludedFromBackup`, the way
 `TranscriptionLanguageMemory` keeps the voice language file. `SealedLocalState` opens it when the
-chats unlock and forgets it when they lock; locked, every name reads as unknown and writes drop.
+chats unlock and forgets it when they lock; locked, every name reads as unknown and writes drop,
+and a contacts or chats refresh that lands then keeps the names already shown
+(`MessagingController.contactName`) instead of turning them into "Contact".
 Unlocking folds the `shroud.contact-names.*` UserDefaults keys into the file and deletes them
 once it is written. Log Out's settings step deletes the file by name (the container sweep would
 too). While the chats are locked a ringing call can no longer read a name from the book, so the

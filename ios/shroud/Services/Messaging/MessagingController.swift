@@ -1181,7 +1181,7 @@ final class MessagingController {
     private struct HistoryPage {
         /// Chronological, annotations left out (they fold into their targets).
         var messages: [ChatMessage] = []
-        /// Inbound ids (annotations included) the server may still want a delivery ack for.
+        /// The peer's ids (annotations included) the server may still want a delivery ack for.
         var inboundIDs: [UUID] = []
         /// Cursor for the page before this one; nil once the start (or retention) is reached.
         var older: HistoryCursor?
@@ -1253,7 +1253,7 @@ final class MessagingController {
                 if let shared = MessageAnnotation.parseTranscript(message.text) {
                     noteSharedTranscript(shared.text, for: shared.messageID)
                 }
-                if !isNotes, dto.senderUserId != me {
+                if !isNotes, dto.senderUserId == apiPeerID {
                     page.inboundIDs.append(dto.id)
                 }
                 continue
@@ -1266,7 +1266,9 @@ final class MessagingController {
                 continue
             }
             page.messages.append(message)
-            if !isNotes, dto.senderUserId != me {
+            // Delivery acks only for the peer's messages: one the server lists here under
+            // anyone else's name was not delivered to this chat (security audit M7).
+            if !isNotes, dto.senderUserId == apiPeerID {
                 page.inboundIDs.append(dto.id)
             }
             if let reactions = dto.reactions, !reactions.isEmpty, !message.deleted {
@@ -6785,7 +6787,11 @@ extension MessagingController {
         let named = contacts.map { contact in
             ContactItemDTO(
                 userId: contact.userId,
-                username: ContactNames.display(peer: contact.userId, owner: owner),
+                username: contactName(
+                    peer: contact.userId,
+                    owner: owner,
+                    shown: self.contacts.first(where: { $0.userId == contact.userId })?.username
+                ),
                 createdAt: contact.createdAt,
                 sealedName: contact.sealedName
             )
@@ -6810,11 +6816,23 @@ extension MessagingController {
         )
     }
 
+    /// The book's name for `peer`. While the chats are locked the sealed book reads nothing, and
+    /// a poll that lands then keeps the name already shown instead of turning it into the
+    /// placeholder. `shown` is looked up only then.
+    private func contactName(peer: UUID, owner: UUID?, shown: @autoclosure () -> String?) -> String {
+        if !ContactNames.isOpen, let held = shown() { return held }
+        return ContactNames.display(peer: peer, owner: owner)
+    }
+
     private func namedConversation(_ item: ConversationItemDTO) -> ConversationItemDTO {
         let owner = sessionController?.userID
         let name = item.peer.deleted
             ? "Deleted account"
-            : ContactNames.display(peer: item.peer.id, owner: owner)
+            : contactName(
+                peer: item.peer.id,
+                owner: owner,
+                shown: conversations.first(where: { $0.peer.id == item.peer.id })?.peer.username
+            )
         return ConversationItemDTO(
             id: item.id,
             peer: ConversationPeerDTO(id: item.peer.id, username: name, deleted: item.peer.deleted),
