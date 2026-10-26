@@ -115,7 +115,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     assert_eq!(row.outcome, "refused");
     assert_eq!(row.detail.as_deref(), Some("View only"));
     assert_eq!(row.target_id, Some(device));
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
 
     set_reauth(&admin, writer, false).await;
     let stale = call(
@@ -149,7 +149,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     assert_eq!(row.outcome, "refused");
     assert_eq!(row.target_id, Some(revoked));
     assert!(hits.lock().unwrap().is_empty());
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
 
     status.store(204, Ordering::SeqCst);
     let removed = call(
@@ -173,7 +173,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     assert_eq!(row.target_id, Some(device));
     assert_eq!(row.outcome, "ok");
     assert!(row.detail.is_none());
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
     hits.lock().unwrap().clear();
 
     status.store(200, Ordering::SeqCst);
@@ -200,7 +200,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     assert_eq!(row.target_id, Some(live));
     assert_eq!(row.outcome, "ok");
     assert_eq!(row.detail.as_deref(), Some("4 sessions"));
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
     hits.lock().unwrap().clear();
 
     let bad_confirm = call(
@@ -222,7 +222,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     assert_eq!(row.action, "user.delete");
     assert_eq!(row.outcome, "refused");
     assert!(hits.lock().unwrap().is_empty());
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
 
     status.store(204, Ordering::SeqCst);
     let deleted = call(
@@ -242,7 +242,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     assert_eq!(row.action, "user.delete");
     assert_eq!(row.outcome, "ok");
     assert_eq!(row.target_id, Some(live));
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
     hits.lock().unwrap().clear();
 
     let gone_delete = call(
@@ -262,7 +262,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     );
     assert_eq!(only_audit(&admin, writer).await.outcome, "refused");
     assert!(hits.lock().unwrap().is_empty());
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
 
     status.store(500, Ordering::SeqCst);
     let refused = call(
@@ -279,7 +279,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
     let row = only_audit(&admin, writer).await;
     assert_eq!(row.outcome, "failed");
     assert_eq!(row.action, "user.sign_out_all");
-    clear_audits(&owner).await;
+    clear_audits(&owner, &[writer, reader]).await;
 
     unsafe { std::env::set_var("OPERATOR_PORT", "1") };
     let down = call(
@@ -411,8 +411,9 @@ async fn only_audit(pool: &PgPool, operator: Uuid) -> Audit {
 }
 
 /// Run with the table owner's pool: the console may not delete audit entries.
-async fn clear_audits(pool: &PgPool) {
-    sqlx::query("DELETE FROM admin.audit_log")
+async fn clear_audits(pool: &PgPool, operators: &[Uuid]) {
+    sqlx::query("DELETE FROM admin.audit_log WHERE operator_id = ANY($1)")
+        .bind(operators)
         .execute(pool)
         .await
         .unwrap();
@@ -480,7 +481,7 @@ async fn seed(admin: &PgPool, owner: &PgPool, ids: &Ids) {
          VALUES ($1, $2, 'secret-hash', 'WRITE0001', '2026-10-08 12:00:00+00')",
     )
     .bind(ids.live)
-    .bind(vec![11u8; 32])
+    .bind(vec![0xc2_u8; 32])
     .execute(owner)
     .await
     .unwrap();

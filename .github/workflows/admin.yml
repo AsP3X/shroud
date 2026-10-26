@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - "admin/api/**"
+      - "server/migrations/postgres/**"
+      - "server/docker/init-admin-role.sh"
       - ".github/workflows/admin.yml"
   pull_request:
     paths:
       - "admin/api/**"
+      - "server/migrations/postgres/**"
+      - "server/docker/init-admin-role.sh"
       - ".github/workflows/admin.yml"
 
 # The jobs only read the repository.
@@ -16,6 +20,14 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  POSTGRES_USER: shroud
+  POSTGRES_DB: shroud
+  ADMIN_DB_PASSWORD: shroud-admin
+  PGHOST: localhost
+  PGPASSWORD: shroud
+  GRANT_TEST_SUPER_URL: postgres://shroud:shroud@localhost:5432/shroud
+  GRANT_TEST_ADMIN_URL: postgres://shroud_admin:shroud-admin@localhost:5432/shroud
+  ADMIN_TEST_DATABASE_URL: postgres://shroud_admin:shroud-admin@localhost:5432/shroud
 
 jobs:
   test:
@@ -25,10 +37,23 @@ jobs:
       run:
         working-directory: admin/api
 
-    # The database suites need a shroud_admin role and the API's tables (docs/admin-plan.md); without
-    # ADMIN_TEST_DATABASE_URL they skip, so this job runs the unit tests and builds the rest.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: shroud
+          POSTGRES_PASSWORD: shroud
+          POSTGRES_DB: shroud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shroud -d shroud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -46,5 +71,17 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Create role shroud_admin
+        run: sh ../../server/docker/init-admin-role.sh
+
+      # The grant test runs the server migrations and grants.sql as the table owner; the other
+      # tests need that schema.
+      - name: Migrate and apply column grants
+        run: cargo test --test grants
+
       - name: cargo test
+        run: cargo test
+
+      # The tests share one database and must clean up after themselves.
+      - name: cargo test again on the same database
         run: cargo test

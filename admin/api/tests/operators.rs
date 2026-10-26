@@ -59,15 +59,23 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
     assert_schema("operators.schema.json", &listed.body);
     assert!(!listed.text.contains("do-not-leak-hash"));
-    assert_eq!(listed.body.as_array().unwrap().len(), 2);
-    assert_eq!(listed.body[0]["name"], "ops-admin");
-    assert_eq!(listed.body[0]["role"], "write");
-    assert_eq!(listed.body[0]["totp_enrolled"], true);
-    assert_eq!(listed.body[0]["last_sign_in_at"], "2026-10-08T14:02:11Z");
-    assert_eq!(listed.body[1]["name"], "ops-view");
-    assert_eq!(listed.body[1]["role"], "read");
-    assert_eq!(listed.body[1]["totp_enrolled"], false);
-    assert!(listed.body[1]["last_sign_in_at"].is_null());
+    // Other test files keep operators in the same table; check only the ones seeded here.
+    let ours: Vec<&Value> = listed
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| NAMES.contains(&row["name"].as_str().unwrap()))
+        .collect();
+    assert_eq!(ours.len(), 2);
+    assert_eq!(ours[0]["name"], "ops-admin");
+    assert_eq!(ours[0]["role"], "write");
+    assert_eq!(ours[0]["totp_enrolled"], true);
+    assert_eq!(ours[0]["last_sign_in_at"], "2026-10-08T14:02:11Z");
+    assert_eq!(ours[1]["name"], "ops-view");
+    assert_eq!(ours[1]["role"], "read");
+    assert_eq!(ours[1]["totp_enrolled"], false);
+    assert!(ours[1]["last_sign_in_at"].is_null());
 
     let forbidden = call(
         &app,
@@ -195,7 +203,7 @@ async fn operators_list_invites_and_end_sessions() {
     );
     clear_audits(&cleanup, &[writer]).await;
 
-    insert_session(&admin, ops2, &"e".repeat(64), "csrf-ops2").await;
+    insert_session(&admin, ops2, &"f".repeat(64), "csrf-ops2").await;
     let disabled = call(
         &app,
         "PATCH",

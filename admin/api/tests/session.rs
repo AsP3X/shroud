@@ -13,6 +13,7 @@ use serde_json::Value;
 use shroud_admin::auth::bootstrap;
 use shroud_admin::totp;
 use shroud_admin::{AppState, router_with};
+use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
@@ -40,12 +41,8 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
             .expect("owner connection"),
         None => pool.clone(),
     };
-    sqlx::query(
-        "TRUNCATE admin.audit_log, admin.operator_sessions, admin.recovery_codes, admin.setup_links, admin.operators",
-    )
-    .execute(&cleanup)
-    .await
-    .expect("truncate");
+    // Bootstrap needs an empty operators table, so this test empties it before and after.
+    truncate(&cleanup).await;
 
     let key = shroud_admin_key();
     let app = router_with(None, AppState::connected(pool.clone(), key));
@@ -359,6 +356,8 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     assert_eq!(renewed.status, StatusCode::OK);
     let old_password = sign_in(&app, "operator", PASSWORD, &current_code(&secret)).await;
     assert_eq!(old_password.status, StatusCode::UNAUTHORIZED);
+
+    truncate(&cleanup).await;
 }
 
 struct Reply {
@@ -373,6 +372,15 @@ struct Cookies {
     session_set: String,
     csrf_set: String,
     csrf: String,
+}
+
+async fn truncate(pool: &PgPool) {
+    sqlx::query(
+        "TRUNCATE admin.audit_log, admin.operator_sessions, admin.recovery_codes, admin.setup_links, admin.operators",
+    )
+    .execute(pool)
+    .await
+    .expect("truncate");
 }
 
 fn nonempty(name: &str) -> Option<String> {

@@ -619,7 +619,7 @@ async fn seed(admin: &PgPool, owner: &PgPool, operator: Uuid, user: Uuid) {
          VALUES ($1, $2, 'pages-secret-hash', 'PAGES0001', '2026-10-08 12:00:00+0000')",
     )
     .bind(user)
-    .bind(vec![11u8; 32])
+    .bind(vec![0xb1_u8; 32])
     .execute(owner)
     .await
     .unwrap();
