@@ -159,6 +159,9 @@ fn is_globally_routable_v6(ip: Ipv6Addr) -> bool {
         || ip.is_multicast()
         || ip.is_unique_local()
         || ip.is_unicast_link_local()
+        || [s0, s1, s2, s3, s4, s5] == [0; 6] // ::/96, IPv4-compatible (and :: and ::1)
+        || (s0 == 0x0064 && s1 == 0xff9b) // the rest of 64:ff9b::/32, local-use NAT64 among it
+        || (s0 & 0xffc0) == 0xfec0 // fec0::/10, site-local
         || (s0 == 0x2001 && s1 == 0x0db8) // documentation
         || (s0 == 0x2001 && s1 == 0x0000); // Teredo
     !reserved
@@ -265,6 +268,8 @@ mod tests {
             "8.8.8.8",
             "2606:4700:4700::1111",
             "64:ff9b::101:101",
+            "2002:0101:0101::1",
+            "fe00::1",
         ] {
             assert!(is_globally_routable(public.parse().unwrap()), "{public}");
         }
@@ -292,6 +297,12 @@ mod tests {
             "ff02::1",
             "2001:db8::1",
             "2001::1",
+            "::a9fe:a9fe",
+            "::7f00:1",
+            "64:ff9b:1::a00:1",
+            "64:ff9b:1::101:101",
+            "fec0::1",
+            "feff::1",
         ] {
             assert!(!is_globally_routable(private.parse().unwrap()), "{private}");
         }
