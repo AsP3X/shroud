@@ -2,36 +2,33 @@
 
 A read-only review of the whole repository at `d4134a4` (dev): server, admin console, deployment,
 web, iOS and Android. Each finding below was traced through the code from a real entry point to
-its effect. Nothing was changed in this pass. Where a finding could not be run end to end here (a
-browser, a locked iPhone), it says so.
+its effect. Where a finding could not be run end to end here (a browser, a locked iPhone), it says
+so. H1–H5 and M1 are fixed since; each says how under **Fixed**. The rest is open.
 
 Severity is what an attacker gains, weighted by what they need first. "Server" in a client finding
 means a malicious or compromised Shroud server, which the E2EE design is meant to withstand.
 
 ## Summary
 
-| # | Severity | Area | Finding |
-| - | -------- | ---- | ------- |
-| H1 | High | Server, nginx | Per-IP rate limits use a client-chosen IP, or one key shared by everyone |
-| H2 | High | Server | Per-account login budget is bypassed by whitespace or a legacy digest: unlimited password guessing |
-| H3 | High | Server | Registering an unmigrated user's name locks them out for good and takes the name |
-| H4 | High | Web | A contact chooses the MIME type of a received photo; `blob:` in `script-src` can turn it into script on Shroud's origin |
-| H5 | High | Deploy, admin | The console's DB role can create a schema that the superuser API then resolves first |
-| M1 | Medium | Admin | A half-enrolled operator signs in with a password that is in the source |
-| M2 | Medium | Admin | Anyone can lock every operator out; parallel sign-ins can exhaust host memory |
-| M3 | Medium | Server | Argon2 runs on Tokio worker threads: a login flood stalls the whole API |
-| M4 | Medium | Server | No media quota: one account stores ~120 GiB/min permanently; scratch files leak |
-| M5 | Medium | Server | WebSocket frames have no size or rate limit; focus toggles amplify into presence fan-out |
-| M6 | Medium | Server | A link-relay pipe outlives its lifetime and idle limits |
-| M7 | Medium | Web (check iOS/Android) | History accepts messages from people outside the chat (server) |
-| M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) |
-| M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) |
-| M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger |
-| L1–L18 | Low | various | See [Low](#low) |
-| — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain |
-
-**Fix first:** H1 and H2 together (they are what makes most of the denial-of-service findings
-cheap), then H4, H3, H5 and M1. Each of those is a small change.
+| # | Severity | Area | Finding | Status |
+| - | -------- | ---- | ------- | ------ |
+| H1 | High | Server, nginx | Per-IP rate limits use a client-chosen IP, or one key shared by everyone | Fixed |
+| H2 | High | Server | Per-account login budget is bypassed by whitespace or a legacy digest: unlimited password guessing | Fixed |
+| H3 | High | Server | Registering an unmigrated user's name locks them out for good and takes the name | Fixed (lockout) |
+| H4 | High | Web | A contact chooses the MIME type of a received photo; `blob:` in `script-src` can turn it into script on Shroud's origin | Fixed |
+| H5 | High | Deploy, admin | The console's DB role can create a schema that the superuser API then resolves first | Fixed (path pinned) |
+| M1 | Medium | Admin | A half-enrolled operator signs in with a password that is in the source | Fixed |
+| M2 | Medium | Admin | Anyone can lock every operator out; parallel sign-ins can exhaust host memory | Open |
+| M3 | Medium | Server | Argon2 runs on Tokio worker threads: a login flood stalls the whole API | Open |
+| M4 | Medium | Server | No media quota: one account stores ~120 GiB/min permanently; scratch files leak | Open |
+| M5 | Medium | Server | WebSocket frames have no size or rate limit; focus toggles amplify into presence fan-out | Open |
+| M6 | Medium | Server | A link-relay pipe outlives its lifetime and idle limits | Open |
+| M7 | Medium | Web (check iOS/Android) | History accepts messages from people outside the chat (server) | Open |
+| M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Open |
+| M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Open |
+| M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Open |
+| L1–L19 | Low | various | See [Low](#low) | Open |
+| — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Open |
 
 ## High
 
@@ -55,6 +52,13 @@ client). In the API, serve with `into_make_service_with_connect_info::<SocketAdd
 peer address when not trusted, and when trusted take `X-Real-IP` from our own nginx or the right-most
 untrusted hop. Tracked as open item 3.4 in `docs/anonymity-plan.md`; it is live today.
 
+**Fixed:** the API serves with connect info, and the `ClientIp` extractor (`rate_limit.rs`) keys IP
+budgets on the peer address. Forwarded headers count only with `TRUST_FORWARDED_HEADERS=true` and
+a peer on a loopback or private address (the proxy); from it, `X-Real-IP`, else the right-most
+`X-Forwarded-For` hop. `web/api-proxy.conf` sends `X-Forwarded-For $remote_addr`. Tests: unit tests
+`client_ip_*`; `forged_forwarded_hops_do_not_pick_the_ip_budget` (fails before the fix). A proxy on
+another public host is now treated as one client; deployments like that need a trusted-proxy list.
+
 ### H2. The per-account login budget is bypassed: unlimited online password guessing
 
 `server/crates/shroud-server/src/routes/auth.rs:118-121` (register), `:239-242` (login),
@@ -74,6 +78,12 @@ The same raw string becomes a Redis key (`rl:auth_user:{raw}`): ~2 MB of leading
 matched user id, including a legacy match. Cap the field length before parsing; set Redis
 `maxmemory` with `volatile-ttl`.
 
+**Fixed:** register and login key `auth_user` on the decoded digest (`limit_account_attempts`), so
+the key has a fixed length; login also counts the legacy digest against its own budget. Tests:
+`login_budget_counts_one_account_however_its_digest_is_written` and
+`login_budget_counts_the_legacy_digest` (both fail before the fix). Redis `maxmemory` is not set
+(open, with the other denial-of-service items).
+
 ### H3. Registering an unmigrated user's name locks them out for good
 
 `server/crates/shroud-server/src/routes/auth.rs:244-260` (login), register's uniqueness check
@@ -87,6 +97,15 @@ the password fails, and the legacy row is never tried. The account is unusable a
 
 **Fix:** when the password fails on the primary row and a legacy digest was sent, try the legacy row
 too. Have register also send the SHA-256 digest and refuse it while an unmigrated row holds it.
+
+**Fixed (the lockout):** login tries the new digest's row, then the legacy row when the password
+does not open the first. The move to the new digest is skipped while another row holds it (checked
+in the `UPDATE`, since a unique violation would abort the transaction), so the owner keeps signing
+in through the legacy digest. Test:
+`registering_the_new_digest_of_an_unmigrated_name_does_not_lock_its_owner_out` (fails before the
+fix). **Open:** the squatter keeps the new digest. Usernames are not looked up by hash (contacts
+are found by share code), so it gains no one's messages, but the owner's account never migrates.
+Register cannot refuse it server-side: the server cannot tell that two digests name the same user.
 
 ### H4. A contact chooses the MIME type of a received photo
 
@@ -108,6 +127,15 @@ cheap either way.
 and for link-preview pictures. Drop `blob:` from `script-src` unless something needs it
 (`worker-src` already covers blob workers). Block the context menu in the viewer as well.
 
+**Fixed:** received photos and link pictures keep only a raster image type (`receivedPictureMime`,
+else `image/jpeg`); voice notes and videos only `audio/…`/`video/…` in printable ASCII
+(`receivedPlayableMime`), in `web/src/crypto/mediaPayload.ts`; cases in `file.selftest.ts`. Pages
+no longer allow `blob:` scripts. The Whisper worker still needs them (transformers.js imports the
+ONNX runtime's factory from a `blob:` URL), and a worker applies the CSP of its own script, so
+`nginx-http-map.conf` keeps `blob:` for `/assets/*.js|mjs` only. Checked in Chromium behind this
+nginx config: with the old CSP the polyglot ran script in its tab; with the new one it does not,
+and a worker under `/assets/` still imports a `blob:` module. The context menu is not blocked.
+
 ### H5. The console's DB role can create a schema that the superuser API resolves first
 
 `server/docker/init-admin-role.sh:24`, `scripts/compose-env.sh:671`, `docker-compose.yml:36,153`.
@@ -125,6 +153,15 @@ console (README).
 database. Run the API as a non-superuser owner role. Pin `ALTER ROLE <api role> SET search_path =
 public`.
 
+**Fixed (the path):** the API connects with `search_path=public` (`lib.rs`), and the three role
+scripts (`init-admin-role.sh`, `compose-env.sh`, `deploy.ps1`) run `ALTER ROLE CURRENT_USER SET
+search_path = public`, which also covers `grants.sql` and manual `psql` as that role. Reproduced on
+Postgres 16: a `shroud.probe` table made by `shroud_admin` shadowed `public.probe` for a new
+superuser session before, and not after. `shroud_admin` keeps `CREATE` on the database: Postgres
+checks it before `IF NOT EXISTS`, so the console's migration 001 (`CREATE SCHEMA IF NOT EXISTS
+admin`, checksummed) would fail without it. Trusted extensions need `CREATE` on the target schema,
+so they stay in schemas it owns. **Open:** the API still runs as a superuser.
+
 ## Medium
 
 ### M1. A half-enrolled operator signs in with a password that is in the source
@@ -139,6 +176,10 @@ whoever saw the link, the person who scanned) signs in with the public password 
 
 **Fix:** `password_ok = hash.is_some() && verify(..)` (still run the dummy verify for timing). Store
 the secret on setup completion, or clear it when the link expires.
+
+**Fixed:** `check_password` still runs the dummy hash for timing, but never answers yes without a
+stored hash. `tests/session.rs` signs in with the dummy password and a valid code after the setup
+link is opened: 204 before the fix, 401 after. The secret is still stored when the link is opened.
 
 ### M2. Anyone can lock operators out, and sign-in can exhaust memory
 
@@ -286,6 +327,7 @@ cookies.
 | L16 | iOS | The Whisper model is fetched from the repo's default branch without a revision or hash (`WhisperKitEngine.swift:27-33`); Android pins both | Pin a revision and check file hashes |
 | L17 | iOS | The link-preview fetcher resolves twice (rebinding window) and honours the system proxy (`LinkPreviewFetcher.swift:88-103,251-275`); HTTPS:443 only, so a connect probe at most | `connectionProxyDictionary = [:]`; connect to the checked address |
 | L18 | Deploy, CI | API container has no `read_only`/`cap_drop` (admin and nebular do); `POSTGRES_PASSWORD`/`REDIS_PASSWORD` fall back to `shroud` without `.env`; CI pins third-party actions by tag, has no `permissions:` block, and does not test `admin/` or `web/` | Harden like the admin service; fail without `.env`; pin by SHA; `permissions: contents: read` |
+| L19 | Deploy | `SELECT set_config('shroud.admin_password', :'pwd', false)` prints the console's database password to stdout in `init-admin-role.sh` (Postgres init logs), `compose-env.sh` and `deploy.ps1` | Send that row nowhere (`\g /dev/null`), or pass the password without a query that returns it |
 
 ## Design notes (no change asked for here)
 
