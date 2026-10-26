@@ -11,15 +11,15 @@ enum EncryptionPhrasePasteboard {
     // Human: Copy phrase so the user can paste into Notes / a password manager (or Login paste).
     // Agent: WRITES UIPasteboard plain text (+ custom type); never logs phrase; RETURNS success flag.
     //
-    // Important: do **not** use `.localOnly: true` — that confines the payload to this app only,
-    // so “Copy” on Sign Up silently fails for external paste (the usual save-my-phrase flow).
+    // `.localOnly` keeps the phrase off Universal Clipboard (the user's other Apple devices). It
+    // does not confine it to this app: other apps on this iPhone still paste it.
     @MainActor
     static func copy(_ phrase: String) -> Bool {
         let trimmed = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
         let pasteboard = UIPasteboard.general
-        let expiration = Date().addingTimeInterval(expirationInterval)
+        let options = copyOptions(now: Date())
 
         // Prefer the multi-representation write with expiry. Include both plain-text UTIs so
         // UIPasteboard.string and other apps resolve the payload reliably (esp. Simulator).
@@ -29,18 +29,25 @@ enum EncryptionPhrasePasteboard {
                 UTType.plainText.identifier: trimmed,
                 customType: trimmed,
             ]],
-            options: [
-                .expirationDate: expiration,
-            ]
+            options: options
         )
 
         if payloadMatches(trimmed, on: pasteboard) {
             return true
         }
 
-        // Fallback: direct string assignment (still expires when we re-set with options fails).
-        pasteboard.string = trimmed
+        // Fallback: plain text alone, with the same options. Never `pasteboard.string = …`,
+        // which would sync the phrase to other devices and never expire.
+        pasteboard.setItems([[UTType.utf8PlainText.identifier: trimmed]], options: options)
         return payloadMatches(trimmed, on: pasteboard)
+    }
+
+    /// Options for every phrase write: this device only, cleared after `expirationInterval`.
+    static func copyOptions(now: Date) -> [UIPasteboard.OptionsKey: Any] {
+        [
+            .localOnly: true,
+            .expirationDate: now.addingTimeInterval(expirationInterval),
+        ]
     }
 
     // Human: Reads a phrase copied from Shroud or any plain-text source on the pasteboard.

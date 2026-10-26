@@ -24,6 +24,16 @@ struct EncryptionPhrasePasteboardTests {
 
     @Test
     @MainActor
+    func copyStaysOnThisDeviceAndExpires() {
+        // Human: Universal Clipboard would otherwise hand the phrase to the user's Mac and iPad.
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let options = EncryptionPhrasePasteboard.copyOptions(now: now)
+        #expect(options[.localOnly] as? Bool == true)
+        #expect(options[.expirationDate] as? Date == now.addingTimeInterval(60))
+    }
+
+    @Test
+    @MainActor
     func copyRejectsEmptyPhrase() {
         #expect(EncryptionPhrasePasteboard.copy("") == false)
         #expect(EncryptionPhrasePasteboard.copy("   ") == false)

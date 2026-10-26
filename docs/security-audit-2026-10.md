@@ -511,6 +511,12 @@ and set, for the web and the console host and each kind of path. The cookie path
   line breaks and terminal escapes as `\n`, `\u{1b}`). The VAPID token cache drops tokens due
   for renewal whenever it signs one and holds at most 256, evicting the soonest to expire.
 
+- **L15. Fixed (iOS):** `EncryptionPhrasePasteboard.copy` writes the phrase with
+  `setItems(_:options:)` and `[.localOnly: true, .expirationDate: now + 60 s]`, so Universal
+  Clipboard no longer hands it to the user's other devices; other apps on the iPhone still paste
+  it, and it still clears after 60 s. The fallback write uses the same options instead of
+  `pasteboard.string = …`, which synced and never expired. Not compiled or run (no Xcode here).
+
 ## Design notes (no change asked for here)
 
 - **Forward secrecy.** Every v3 message also carries a `peer` identity box, and a failed ratchet
