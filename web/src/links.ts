@@ -247,6 +247,25 @@ export function parseLinkPreview(value: unknown): LinkPreview | null {
   };
 }
 
+/**
+ * `preview` when its URL is one of the links in `text`, else null. Every client builds a preview
+ * for a link it found in the message, so one for any other address is the sender's invention: a
+ * card that names one site and opens another (security audit L14).
+ */
+export function previewOfText(preview: LinkPreview | null, text: string): LinkPreview | null {
+  if (!preview) return null;
+  const href = (url: string): string | null => {
+    try {
+      return new URL(url).href;
+    } catch {
+      return null;
+    }
+  };
+  const target = href(preview.url);
+  const inText = detectLinks(text).some((link) => !link.isEmail && href(link.url) === target);
+  return target !== null && inText ? preview : null;
+}
+
 /** The `lp` object to seal (matches iOS `LinkPreview.wireObject`). */
 export function linkPreviewWire(preview: LinkPreview): Record<string, unknown> {
   const wire: Record<string, unknown> = { u: preview.url };

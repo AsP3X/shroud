@@ -412,7 +412,7 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   check(received({ t: "image", mime: "image/svg+xml" }).mime === "image/jpeg", "an svg photo is drawn as JPEG");
   check(received({ t: "image", mime: " Image/HEIC " }).mime === "image/heic", "a raster type is kept");
   const lp = { u: "https://example.com/", ti: "Example" };
-  const link = received({ t: "link", mime: "text/html", lp });
+  const link = received({ t: "link", mime: "text/html", c: "https://example.com/", lp });
   check(link.kind === "text" && link.mime === "image/jpeg", "an html link picture is drawn as JPEG");
   check(received({ t: "voice", mime: "text/html" }).mime === "audio/mp4", "an html voice note plays as audio/mp4");
   check(

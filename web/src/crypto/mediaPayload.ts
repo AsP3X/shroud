@@ -1,5 +1,5 @@
 /** Sealed JSON inside a `content_type = media` message (matches iOS `MediaMessagePayload`). */
-import { parseLinkPreview, type LinkPreview } from "../links";
+import { parseLinkPreview, previewOfText, type LinkPreview } from "../links";
 import { parseReplyRef, replyRefWire, type ReplyRef } from "../reply";
 
 export type MediaPayload = {
@@ -130,7 +130,7 @@ export function isVideoPayload(payload: MediaPayload): boolean {
 
 /** The preview of a `t: "link"` payload; null for photos, videos, voice notes and files. */
 export function payloadLinkPreview(payload: MediaPayload): LinkPreview | null {
-  return payload.t === "link" ? parseLinkPreview(payload.lp) : null;
+  return payload.t === "link" ? previewOfText(parseLinkPreview(payload.lp), payload.c ?? "") : null;
 }
 
 /**

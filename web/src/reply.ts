@@ -11,7 +11,7 @@
  * is read back verbatim, which is what lets old and new builds talk to each other.
  */
 
-import { linkPreviewWire, parseLinkPreview, type LinkPreview } from "./links";
+import { linkPreviewWire, parseLinkPreview, previewOfText, type LinkPreview } from "./links";
 
 /**
  * `file` quotes carry the file name as `x`, `audio` quotes (an audio file) its display title
@@ -131,7 +131,7 @@ export function parseTextPayload(raw: string): {
     return {
       text: parsed.c,
       replyTo: parseReplyRef(parsed.re),
-      linkPreview: parseLinkPreview(parsed.lp),
+      linkPreview: previewOfText(parseLinkPreview(parsed.lp), parsed.c),
     };
   } catch {
     return plain;

@@ -321,7 +321,7 @@ const preview: LinkPreview = {
   showsAboveText: false,
 };
 {
-  const { wire, sealedPreview } = textWire("Look at this", null, preview);
+  const { wire, sealedPreview } = textWire("Look at this https://example.com/a", null, preview);
   expect(sealedPreview?.thumbnail === "A".repeat(8000), "budget: thumbnail fits");
   expect(parseTextPayload(wire).linkPreview?.title === "A page", "budget: round trip");
 }

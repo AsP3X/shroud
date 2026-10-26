@@ -129,14 +129,27 @@ if (broken.text !== "still readable" || broken.linkPreview !== null) {
   fail("parseTextPayload: a broken preview keeps the message");
 }
 if (parseTextPayload("just text").linkPreview !== null) fail("parseTextPayload: plain text");
+// A preview counts only for a link in the text: no card that names one site and opens another (L14).
+const elsewhere = parseTextPayload(
+  '{"t":"text","c":"Route: komoot.com/tour/1398273","lp":{"u":"https://evil.example/login","n":"komoot"}}',
+);
+if (elsewhere.text !== "Route: komoot.com/tour/1398273" || elsewhere.linkPreview !== null) {
+  fail("parseTextPayload: a preview for a link not in the text is dropped");
+}
+if (parseTextPayload('{"t":"text","c":"see www.example.com","lp":{"u":"https://www.example.com/"}}').linkPreview === null) {
+  fail("parseTextPayload: the same link written differently still matches");
+}
 
 /* --- media envelope (large image) ------------------------------------------ */
 
 const linkMedia = parseMediaPayload(
-  JSON.stringify({ t: "link", mime: "image/jpeg", w: 1200, h: 630, k: "a2V5", c: "Route", s: 48000, lp: { u: "https://komoot.com" } }),
+  JSON.stringify({ t: "link", mime: "image/jpeg", w: 1200, h: 630, k: "a2V5", c: "Route komoot.com", s: 48000, lp: { u: "https://komoot.com" } }),
 );
 if (!linkMedia || !payloadLinkPreview(linkMedia) || isVoicePayload(linkMedia) || isVideoPayload(linkMedia)) {
   fail("parseMediaPayload: t=link is a link, not a photo, voice note or video");
+}
+if (payloadLinkPreview({ ...linkMedia, lp: { u: "https://evil.example" } }) !== null) {
+  fail("payloadLinkPreview: a preview for a link not in the text is dropped");
 }
 const photo = parseMediaPayload('{"t":"image","mime":"image/jpeg","w":4,"h":3,"k":"a2V5","c":"caption"}');
 if (!photo || payloadLinkPreview(photo) !== null) fail("payloadLinkPreview: photos have none");
