@@ -669,7 +669,8 @@ shroud_apply_admin_db() {
   }
   shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
     -v pwd="$pass" -v dbname="$db" <<'SQL'
-SELECT set_config('shroud.admin_password', :'pwd', false);
+-- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
+SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shroud_admin') THEN

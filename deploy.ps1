@@ -212,7 +212,8 @@ function Apply-AdminDb {
     if (-not $pass) { Write-Die "the admin profile is on and ADMIN_DB_PASSWORD is empty." }
     $files = Get-ComposeArgs
     $roleSql = @'
-SELECT set_config('shroud.admin_password', :'pwd', false);
+-- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
+SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shroud_admin') THEN
