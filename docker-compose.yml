@@ -202,6 +202,7 @@ services:
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
       REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
       MEDIA_QUOTA_MIB: ${MEDIA_QUOTA_MIB:-20480}
+      SESSION_IDLE_DAYS: ${SESSION_IDLE_DAYS:-90}
       # Update prompts (GET /client-version). Below *_LATEST_VERSION an app offers an update the
       # user may dismiss; below *_MIN_VERSION it blocks until updated, and once either minimum is
       # set the API answers 426 UPDATE_REQUIRED to older apps and to apps that don't name their
@@ -325,6 +326,7 @@ services:
       ICE_SERVERS_JSON: ${ICE_SERVERS_JSON:-}
       REACTIONS_MAX_PER_USER: ${REACTIONS_MAX_PER_USER:-5}
       MEDIA_QUOTA_MIB: ${MEDIA_QUOTA_MIB:-20480}
+      SESSION_IDLE_DAYS: ${SESSION_IDLE_DAYS:-90}
       IOS_LATEST_VERSION: ${IOS_LATEST_VERSION:-}
       IOS_MIN_VERSION: ${IOS_MIN_VERSION:-}
       IOS_UPDATE_URL: ${IOS_UPDATE_URL:-}

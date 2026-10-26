@@ -270,7 +270,7 @@ pub async fn run() -> Result<(), AppError> {
     // Human: Blobs earlier releases kept on the local volume move into Nebular.
     media.spawn_legacy_migration(pool.clone(), metrics.clone());
     // Human: Drop revoked session rows after the 30-day retention window.
-    crate::auth::session::spawn_revoked_session_purge(pool.clone());
+    crate::auth::session::spawn_revoked_session_purge(pool.clone(), config.session_idle_days);
 
     let state = AppState {
         pool,

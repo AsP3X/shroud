@@ -1864,6 +1864,7 @@ clients go by the `UPDATE_REQUIRED` code.
 | `TRUST_FORWARDED_HEADERS` | Honor `X-Real-IP` / right-most `X-Forwarded-For` for rate-limit keys, from a peer on a loopback or private address only (default false: the peer address) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `MEDIA_QUOTA_MIB` | Most encrypted media one account may store, in MiB (default 20480 = 20 GiB; 0 = no limit) |
+| `SESSION_IDLE_DAYS` | Days a session may go unused before the hourly job revokes it (default 90; 0 = never). A revoked session answers like a sign-out (`UNAUTHORIZED`); the device signs in again, and the iPhone and web clients clear their local data as they do on any sign-out |
 | `IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` | Newest released app version (`1.2.3`); older apps offer an update (`GET /client-version`) |
 | `IOS_MIN_VERSION` / `ANDROID_MIN_VERSION` | Oldest app version still served; older apps block until updated, and the API answers them (and any request without `X-Shroud-Client`) with `426 UPDATE_REQUIRED`. Must not be newer than the latest |
 | `IOS_UPDATE_URL` / `ANDROID_UPDATE_URL` | Link the update prompt opens (TestFlight / App Store, an APK page): https for iOS, http(s) for Android |

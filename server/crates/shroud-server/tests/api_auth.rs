@@ -2262,3 +2262,66 @@ async fn wait_until_blocked_by(pool: &sqlx::PgPool, pid: i32, what: &str) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
+
+/// A session nobody used for `SESSION_IDLE_DAYS` is revoked and answers like a sign-out, so a
+/// token copied out of a profile or a backup stops working (security audit L4).
+#[tokio::test]
+async fn idle_sessions_are_revoked() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!("skipping idle_sessions_are_revoked: DATABASE_URL unavailable");
+        return;
+    };
+    let register = |name: String| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/register")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "username_hash": shroud_server::auth::username_hash_b64(name),
+                    "password": "correct-horse-battery"
+                })
+                .to_string(),
+            ))
+            .expect("request")
+    };
+    let me = |token: &str| {
+        Request::builder()
+            .uri("/api/v1/auth/me")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .expect("request")
+    };
+    let mut tokens = Vec::new();
+    for _ in 0..2 {
+        let response = app.clone().oneshot(register(unique_user().0)).await;
+        let body = json_body(response.expect("register")).await;
+        tokens.push(body["token"].as_str().expect("token").to_string());
+    }
+    let (stale, fresh) = (&tokens[0], &tokens[1]);
+    sqlx::query(
+        "UPDATE sessions SET last_used_at = now() - interval '91 days', created_at = now() - interval '91 days'
+         WHERE token_hash = $1",
+    )
+    .bind(shroud_server::auth::hash_token(stale).as_slice())
+    .execute(&state.pool)
+    .await
+    .expect("backdate");
+
+    assert_eq!(
+        shroud_server::auth::session::revoke_idle_sessions(&state.pool, 0)
+            .await
+            .unwrap(),
+        0,
+        "0 days keeps every session"
+    );
+    shroud_server::auth::session::revoke_idle_sessions(&state.pool, 90)
+        .await
+        .unwrap();
+
+    let stale_me = app.clone().oneshot(me(stale)).await.unwrap();
+    assert_eq!(stale_me.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(stale_me).await["error"]["code"], "UNAUTHORIZED");
+    let fresh_me = app.oneshot(me(fresh)).await.unwrap();
+    assert_eq!(fresh_me.status(), StatusCode::OK);
+}

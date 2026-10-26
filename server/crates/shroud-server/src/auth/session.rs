@@ -325,8 +325,34 @@ pub async fn purge_revoked_sessions(pool: &sqlx::PgPool) -> Result<u64, AppError
     Ok(result.rows_affected())
 }
 
-/// Background loop: purge old revoked sessions hourly.
-pub fn spawn_revoked_session_purge(pool: sqlx::PgPool) {
+/// Revokes live sessions unused for `idle_days` (security audit L4); 0 revokes none.
+///
+/// Human: A token copied out of a browser profile or a backup otherwise works until someone signs
+/// out. Revoked here, it answers as a sign-out does: a plain `UNAUTHORIZED`, and the open socket is
+/// closed at its next session check. The device is not removed; the person signs in again.
+/// Agent: UPDATE sessions SET revoked_at WHERE live AND COALESCE(last_used_at, created_at) is older.
+pub async fn revoke_idle_sessions(pool: &sqlx::PgPool, idle_days: u32) -> Result<u64, AppError> {
+    if idle_days == 0 {
+        return Ok(0);
+    }
+    let result = sqlx::query(
+        r#"
+        UPDATE sessions
+        SET revoked_at = now()
+        WHERE revoked_at IS NULL
+          AND COALESCE(last_used_at, created_at) < now() - make_interval(days => $1)
+        "#,
+    )
+    .bind(i32::try_from(idle_days).unwrap_or(i32::MAX))
+    .execute(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("revoke idle sessions failed: {err}")))?;
+
+    Ok(result.rows_affected())
+}
+
+/// Background loop, hourly: revoke sessions idle for `idle_days`, then purge old revoked ones.
+pub fn spawn_revoked_session_purge(pool: sqlx::PgPool, idle_days: u32) {
     tokio::spawn(async move {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_secs(SESSION_PURGE_INTERVAL_SECS));
@@ -334,6 +360,11 @@ pub fn spawn_revoked_session_purge(pool: sqlx::PgPool) {
         interval.tick().await;
         loop {
             interval.tick().await;
+            match revoke_idle_sessions(&pool, idle_days).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(revoked = n, "sessions.idle_revoke ok"),
+                Err(err) => tracing::warn!(error = %err, "sessions.idle_revoke failed"),
+            }
             match purge_revoked_sessions(&pool).await {
                 Ok(0) => {
                     tracing::debug!("sessions.revoked_purge: nothing to purge");

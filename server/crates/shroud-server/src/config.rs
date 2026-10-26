@@ -16,6 +16,8 @@ use crate::username_kdf::UsernameKdf;
 pub const DEFAULT_DATABASE_POOL_MAX: u32 = 10;
 /// Telegram Premium allows 3; Shroud starts at 5 (see `docs/server-plan.md`).
 const DEFAULT_REACTIONS_MAX_PER_USER: u32 = 5;
+/// `SESSION_IDLE_DAYS` when unset: a session unused this long is revoked.
+const DEFAULT_SESSION_IDLE_DAYS: u32 = 90;
 /// `MEDIA_QUOTA_MIB` when unset: 20 GiB of encrypted media per account.
 const DEFAULT_MEDIA_QUOTA_MIB: u32 = 20 * 1024;
 const MAX_REACTIONS_PER_USER: u32 = 20;
@@ -102,6 +104,8 @@ pub struct Config {
     pub reactions_max_per_user: u32,
     /// Most bytes of media one account may store (`MEDIA_QUOTA_MIB`); 0 is no limit.
     pub media_quota_bytes: u64,
+    /// Days a session may go unused before it is revoked (`SESSION_IDLE_DAYS`); 0 is never.
+    pub session_idle_days: u32,
     /// Where Android (UnifiedPush) subscriptions may point (`UNIFIEDPUSH_*`).
     pub unifiedpush: UnifiedPushPolicy,
     /// Released app versions (`IOS_*`, `ANDROID_*`, `WEB_BUILD`).
@@ -193,6 +197,14 @@ impl Config {
         let reactions_max_per_user =
             parse_reactions_max_per_user(std::env::var("REACTIONS_MAX_PER_USER").ok().as_deref())?;
 
+        // Human: A leaked token stops working this long after its device last used it. The
+        // device signs in again; clients treat it like a sign-out. 0 keeps sessions forever.
+        let session_idle_days = parse_u32_env(
+            "SESSION_IDLE_DAYS",
+            std::env::var("SESSION_IDLE_DAYS").ok().as_deref(),
+            DEFAULT_SESSION_IDLE_DAYS,
+        )?;
+
         // Human: Uploads are open to every account, and linked media is kept as long as its
         // message, so without a quota one account could fill the store. 0 turns it off.
         let media_quota_bytes = u64::from(parse_u32_env(
@@ -256,6 +268,7 @@ impl Config {
             turn: ice.turn,
             reactions_max_per_user,
             media_quota_bytes,
+            session_idle_days,
             unifiedpush,
             client_versions,
             operator,
