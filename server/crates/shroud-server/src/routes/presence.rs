@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
-use crate::routes::contacts::{are_contacts, list_contact_user_ids};
+use crate::routes::contacts::{are_contacts, is_blocked_either_way, list_contact_user_ids};
 use crate::routes::privacy::{Visibility, allowing, both_allow};
 use crate::state::AppState;
 
@@ -39,7 +39,9 @@ pub async fn get_presence(
         }));
     }
 
-    if !are_contacts(&state.pool, auth.user_id, user_id).await? {
+    if !are_contacts(&state.pool, auth.user_id, user_id).await?
+        || is_blocked_either_way(&state.pool, auth.user_id, user_id).await?
+    {
         return Err(AppError::forbidden(
             "Presence is only visible to accepted contacts.",
         ));

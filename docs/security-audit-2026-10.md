@@ -464,6 +464,17 @@ and set, for the web and the console host and each kind of path. The cookie path
 | L18 | Deploy, CI | API container has no `read_only`/`cap_drop` (admin and nebular do); `POSTGRES_PASSWORD`/`REDIS_PASSWORD` fall back to `shroud` without `.env`; CI pins third-party actions by tag, has no `permissions:` block, and does not test `admin/` or `web/` | Harden like the admin service; fail without `.env`; pin by SHA; `permissions: contents: read` |
 | L19 | Deploy | `SELECT set_config('shroud.admin_password', :'pwd', false)` prints the console's database password to stdout in `init-admin-role.sh` (Postgres init logs), `compose-env.sh` and `deploy.ps1` | Send that row nowhere (`\g /dev/null`), or pass the password without a query that returns it |
 
+### Low: fixed
+
+- **L6:** a block, an accept and a contact request (the mutual auto-accept included) now take
+  one transaction-scoped advisory lock per pair (`contacts.rs` `lock_pair`) before any row
+  lock, so a block either deletes the contact rows an accept wrote or the accept sees the
+  block; the request path also re-checks the block under the lock. `GET /presence`, the
+  `presence.update` fan-out (`list_contact_user_ids`) and the typing/recording relay now also
+  skip a pair with a block either way. Tests `a_block_racing_an_accept_leaves_no_contact`,
+  `a_block_racing_a_mutual_request_leaves_no_contact` (`api_contacts.rs`) and
+  `a_block_stops_presence_and_typing_even_with_contact_rows_left` (`api_ws.rs`).
+
 ## Design notes (no change asked for here)
 
 - **Forward secrecy.** Every v3 message also carries a `peer` identity box, and a failed ratchet

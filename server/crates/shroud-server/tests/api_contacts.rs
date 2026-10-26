@@ -14,6 +14,11 @@ fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
 }
 
 async fn test_app() -> Option<axum::Router> {
+    Some(test_app_and_pool().await?.0)
+}
+
+/// [`test_app`] and its pool, for a test that looks at or holds rows itself.
+async fn test_app_and_pool() -> Option<(axum::Router, sqlx::PgPool)> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -24,11 +29,12 @@ async fn test_app() -> Option<axum::Router> {
         .run(&pool)
         .await
         .ok()?;
-    Some(
+    Some((
         axum::Router::new()
             .merge(routes::router())
-            .with_state(test_state(pool)),
-    )
+            .with_state(test_state(pool.clone())),
+        pool,
+    ))
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
@@ -476,6 +482,171 @@ async fn block_removes_contact_and_blocks_request() {
         .await
         .expect("response");
     assert_eq!(request_after.status(), StatusCode::FORBIDDEN);
+}
+
+/// `POST uri` with a JSON body as `token`: (status, body or null).
+async fn post(app: &axum::Router, uri: &str, token: &str, body: Value) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("json")
+    };
+    (status, value)
+}
+
+/// A backend that waits on a lock `pid` holds; panics after 5 s.
+async fn blocked_by(pool: &sqlx::PgPool, pid: i32) -> i32 {
+    for _ in 0..100 {
+        let waiting: Option<i32> = sqlx::query_scalar(
+            "SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1",
+        )
+        .bind(pid)
+        .fetch_optional(pool)
+        .await
+        .expect("pg_stat_activity");
+        if let Some(waiting) = waiting {
+            return waiting;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("nothing waits on backend {pid}");
+}
+
+/// Human: Two people become contacts (`accept`) while the first blocks the second, in the
+/// order READ COMMITTED got wrong (security audit L6): the accept is held just before it
+/// writes the contact rows (this test's transaction holds those rows unwritten), the block
+/// runs meanwhile and waits on the accept, then the accept goes on. The block must still end
+/// with no contact rows.
+/// Agent: `accept(request id, a's user id)` is the (uri, body) b posts to become contacts.
+async fn block_racing_an_accept(name: &str, accept: fn(&str, &str) -> (String, Value)) {
+    let Some((app, pool)) = test_app_and_pool().await else {
+        eprintln!("skipping {name}: no DATABASE_URL");
+        return;
+    };
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    let (status, request) = post(
+        &app,
+        "/api/v1/contacts/requests",
+        &token_a,
+        json!({ "user_id": user_b }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (a, b) = (
+        user_a.parse::<Uuid>().unwrap(),
+        user_b.parse::<Uuid>().unwrap(),
+    );
+
+    let mut holder = pool.begin().await.expect("begin");
+    let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *holder)
+        .await
+        .expect("pid");
+    sqlx::query(
+        "INSERT INTO contacts (user_id, contact_user_id, created_at) \
+         VALUES ($1, $2, now()), ($2, $1, now())",
+    )
+    .bind(a)
+    .bind(b)
+    .execute(&mut *holder)
+    .await
+    .expect("hold the contact rows");
+
+    let (uri, body) = accept(request["id"].as_str().unwrap(), &user_a);
+    let accepting = tokio::spawn({
+        let app = app.clone();
+        let token_b = token_b.clone();
+        async move { post(&app, &uri, &token_b, body).await }
+    });
+    let accept_pid = blocked_by(&pool, holder_pid).await;
+    let blocking = tokio::spawn({
+        let app = app.clone();
+        let token_a = token_a.clone();
+        async move {
+            post(
+                &app,
+                "/api/v1/blocks",
+                &token_a,
+                json!({ "user_id": user_b }),
+            )
+            .await
+        }
+    });
+    blocked_by(&pool, accept_pid).await;
+    holder.rollback().await.expect("rollback");
+
+    let (accepted, body) = accepting.await.expect("accept task");
+    assert!(accepted.is_success(), "{accepted}: {body}");
+    let (blocked, _) = blocking.await.expect("block task");
+    assert_eq!(blocked, StatusCode::NO_CONTENT);
+
+    let contact_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM contacts \
+         WHERE (user_id = $1 AND contact_user_id = $2) OR (user_id = $2 AND contact_user_id = $1)",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&pool)
+    .await
+    .expect("count contacts");
+    assert_eq!(contact_rows, 0, "a block left the pair's contact rows");
+    let block_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM blocks WHERE blocker_id = $1 AND blocked_id = $2")
+            .bind(a)
+            .bind(b)
+            .fetch_one(&pool)
+            .await
+            .expect("count blocks");
+    assert_eq!(block_rows, 1);
+}
+
+#[tokio::test]
+async fn a_block_racing_an_accept_leaves_no_contact() {
+    block_racing_an_accept(
+        "a_block_racing_an_accept_leaves_no_contact",
+        |request_id, _| {
+            (
+                format!("/api/v1/contacts/requests/{request_id}/accept"),
+                json!({}),
+            )
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_block_racing_a_mutual_request_leaves_no_contact() {
+    block_racing_an_accept(
+        "a_block_racing_a_mutual_request_leaves_no_contact",
+        |_, user_a| {
+            (
+                "/api/v1/contacts/requests".to_string(),
+                json!({ "user_id": user_a }),
+            )
+        },
+    )
+    .await;
 }
 
 async fn contact_names_call(

@@ -25,7 +25,7 @@ use crate::auth::session::{AuthIds, SessionState, ids_for_token, session_state};
 use crate::error::AppError;
 use crate::rate_limit::{ClientIp, budgets};
 use crate::realtime::{OnlineChange, SocketMode, Subscription};
-use crate::routes::contacts::are_contacts;
+use crate::routes::contacts::{are_contacts, is_blocked_either_way};
 use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
 use crate::routes::privacy::{Visibility, both_allow};
 use crate::state::AppState;
@@ -483,8 +483,8 @@ async fn handle_client_text(
 }
 
 /// Relays an ephemeral activity frame (typing, recording) to the peer's devices only.
-/// Contacts required, and both must allow typing indicators (`users.send_typing`); never
-/// echoed to the sender; never stored.
+/// Contacts nobody blocked required, and both must allow typing indicators
+/// (`users.send_typing`); never echoed to the sender; never stored.
 async fn relay_contact_activity(
     state: &AppState,
     user_id: Uuid,
@@ -505,6 +505,17 @@ async fn relay_contact_activity(
         }
         Err(err) => {
             tracing::warn!(error = %err, kind, "ws.activity contacts check failed");
+            return;
+        }
+    }
+    match is_blocked_either_way(&state.pool, user_id, peer_user_id).await {
+        Ok(false) => {}
+        Ok(true) => {
+            tracing::debug!(%user_id, %peer_user_id, kind, "ws.activity blocked");
+            return;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, kind, "ws.activity block check failed");
             return;
         }
     }

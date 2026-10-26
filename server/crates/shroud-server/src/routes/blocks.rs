@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::routes::contacts::lock_pair;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +58,9 @@ pub async fn create_block(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    // Waits for an accept of the pair in progress, so the delete below sees its contact rows.
+    lock_pair(&mut tx, auth.user_id, body.user_id).await?;
 
     let now = Utc::now();
 

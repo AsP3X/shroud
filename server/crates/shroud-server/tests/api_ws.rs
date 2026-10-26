@@ -1430,3 +1430,77 @@ async fn websocket_refuses_an_oversized_frame() {
     let _ = shutdown.send(());
     let _ = server.await;
 }
+
+/// Human: A block that raced a contact accept could leave the pair's contact rows behind
+/// (security audit L6). Even then, neither hears of the other: no presence update when one
+/// comes online, no typing or recording, and `GET /presence` refuses.
+#[tokio::test]
+async fn a_block_stops_presence_and_typing_even_with_contact_rows_left() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping a_block_stops_presence_and_typing_even_with_contact_rows_left: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool.clone()).await;
+    let client = reqwest::Client::new();
+    let (alice_token, alice_id) = register(&client, addr).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    become_contacts(
+        &client,
+        addr,
+        (&alice_token, &alice_id),
+        (&bob_token, &bob_id),
+    )
+    .await;
+    // What the race left: Alice blocked Bob, and the contact rows are still there.
+    sqlx::query("INSERT INTO blocks (blocker_id, blocked_id, created_at) VALUES ($1, $2, now())")
+        .bind(alice_id.parse::<Uuid>().unwrap())
+        .bind(bob_id.parse::<Uuid>().unwrap())
+        .execute(&pool)
+        .await
+        .expect("insert block");
+
+    let mut bob = connect_authed(addr, &bob_token).await;
+    let mut alice = connect_authed(addr, &alice_token).await;
+    let short = Duration::from_millis(500);
+    assert!(
+        presence_update(&mut bob, &alice_id, short).await.is_none(),
+        "the blocker's presence reached the blocked"
+    );
+
+    send_frame(
+        &mut alice,
+        json!({ "type": "typing", "peer_user_id": bob_id, "is_typing": true }),
+    )
+    .await;
+    send_frame(
+        &mut alice,
+        json!({ "type": "recording", "peer_user_id": bob_id, "is_recording": true }),
+    )
+    .await;
+    send_frame(
+        &mut bob,
+        json!({ "type": "typing", "peer_user_id": alice_id, "is_typing": true }),
+    )
+    .await;
+    assert!(next_of_type(&mut bob, "typing", short).await.is_none());
+    assert!(next_of_type(&mut bob, "recording", short).await.is_none());
+    assert!(next_of_type(&mut alice, "typing", short).await.is_none());
+
+    for (viewer, user) in [(&bob_token, &alice_id), (&alice_token, &bob_id)] {
+        let response = client
+            .get(format!("http://{addr}/api/v1/presence/{user}"))
+            .bearer_auth(viewer)
+            .send()
+            .await
+            .expect("presence");
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+
+    for mut socket in [alice, bob] {
+        let _ = socket.close(None).await;
+    }
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}

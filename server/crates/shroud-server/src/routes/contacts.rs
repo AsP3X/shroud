@@ -129,6 +129,14 @@ pub async fn create_request(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
+    // A block that committed since the check above is seen here; one that comes later waits.
+    lock_pair(&mut tx, auth.user_id, body.user_id).await?;
+    if is_blocked_either_way_tx(&mut tx, auth.user_id, body.user_id).await? {
+        return Err(AppError::forbidden(
+            "Cannot send a contact request while blocked.",
+        ));
+    }
+
     // Mutual: reverse pending → accept both ways.
     let reverse: Option<Uuid> = sqlx::query_scalar(
         r#"
@@ -376,6 +384,19 @@ pub async fn accept_request(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    // The pair lock comes before the row lock, as in a block. A request never changes its
+    // pair, so reading the pair unlocked is enough to pick the lock.
+    let pair: Option<(Uuid, Uuid)> =
+        sqlx::query_as(r#"SELECT from_user_id, to_user_id FROM contact_requests WHERE id = $1"#)
+            .bind(request_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("load request pair failed: {err}")))?;
+    let Some((from_user_id, to_user_id)) = pair else {
+        return Err(AppError::not_found("Contact request not found."));
+    };
+    lock_pair(&mut tx, from_user_id, to_user_id).await?;
 
     let row = sqlx::query_as::<_, RequestRow>(
         r#"
@@ -807,6 +828,24 @@ async fn insert_contact_pair(
     Ok(())
 }
 
+/// Holds the pair's lock until `tx` ends. Whatever makes two people contacts (an accept, the
+/// mutual auto-accept) and a block take it before anything else, so a block either deletes
+/// the contact rows an accept wrote or the accept sees the block; under READ COMMITTED they
+/// could otherwise interleave and leave both.
+pub(crate) async fn lock_pair(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    a: Uuid,
+    b: Uuid,
+) -> Result<(), AppError> {
+    let (low, high) = if a < b { (a, b) } else { (b, a) };
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(format!("contact-pair:{low}:{high}"))
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("contact pair lock failed: {err}")))?;
+    Ok(())
+}
+
 pub(crate) async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
@@ -822,14 +861,21 @@ pub(crate) async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Resul
     .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
 }
 
-/// Returns user IDs of accepted contacts for `user_id` (directed edges owned by user).
+/// Returns user IDs of accepted contacts for `user_id` (directed edges owned by user), leaving
+/// out anyone blocked either way.
 pub(crate) async fn list_contact_user_ids(
     pool: &sqlx::PgPool,
     user_id: Uuid,
 ) -> Result<Vec<Uuid>, AppError> {
     sqlx::query_scalar(
         r#"
-        SELECT contact_user_id FROM contacts WHERE user_id = $1
+        SELECT c.contact_user_id FROM contacts c
+        WHERE c.user_id = $1
+          AND NOT EXISTS (
+            SELECT 1 FROM blocks b
+            WHERE (b.blocker_id = $1 AND b.blocked_id = c.contact_user_id)
+               OR (b.blocker_id = c.contact_user_id AND b.blocked_id = $1)
+          )
         "#,
     )
     .bind(user_id)
