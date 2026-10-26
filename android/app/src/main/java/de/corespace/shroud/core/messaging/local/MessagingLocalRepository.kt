@@ -171,7 +171,7 @@ class MessagingLocalRepository(
                 rowsRead[peer] = rewritten
             }
             threads[peer] = messages
-            recachePlaintext(messages)
+            recachePlaintext(messages, userId)
         }
         if (scrubbed.isNotEmpty()) removeCachesLocked(scrubbed)
 
@@ -226,7 +226,7 @@ class MessagingLocalRepository(
             writeSnapshot(pruned, userId)
             prunedIds.toHashSet()
         }
-        for (messages in snapshot.threads.values) recachePlaintext(messages, skip = dropped)
+        for (messages in snapshot.threads.values) recachePlaintext(messages, userId, skip = dropped)
         return dropped
     }
 
@@ -248,7 +248,7 @@ class MessagingLocalRepository(
             writeRoster(rosterOnDisk(roster), userId)
             prunedIds.toHashSet()
         }
-        recachePlaintext(messages, skip = dropped)
+        recachePlaintext(messages, userId, skip = dropped)
         return dropped
     }
 
@@ -489,14 +489,24 @@ class MessagingLocalRepository(
      * Keeps each text message's cached plaintext equal to the wire it decodes from, quote and
      * preview included (`recachePlaintext`, `:281-300`). A link message whose picture is a media
      * blob keeps its media payload (it holds the blob key); failed decrypts and tombstones are left
-     * alone. An entry that already holds these bytes is not rewritten.
+     * alone. An entry that already decodes to this bubble is not rewritten, so it keeps the
+     * recipient it names (security audit M7); a rewritten one names the recipient of the chat the
+     * bubble is in: its peer for mine ([userId] in Notes), [userId] for theirs. Without `to`, a
+     * cached message of mine would open in any chat the server lists it in.
      */
-    private fun recachePlaintext(messages: List<ChatMessage>, skip: Set<UUID> = emptySet()) {
+    private fun recachePlaintext(messages: List<ChatMessage>, userId: UUID, skip: Set<UUID> = emptySet()) {
         for (message in messages) {
             if (message.deleted || message.kind != ChatMessageKind.Text || message.mediaObjectId != null) continue
             if (LocalTombstones.isFailedDecryptText(message.text) || message.id in skip) continue
-            val wire = MessageTextPayload.wire(message.text, message.replyTo, message.linkPreview)
-            if (plaintextCache.text(message.id, message.senderUserId) != wire) plaintextCache.save(message.id, message.senderUserId, wire)
+            val recipient = when {
+                !message.isMine -> userId
+                message.peerUserId == NOTES_PEER_ID -> userId
+                else -> message.peerUserId
+            }
+            val wire = MessageTextPayload.wire(message.text, message.replyTo, message.linkPreview, recipient)
+            val cached = plaintextCache.text(message.id, message.senderUserId)
+            if (cached != null && (cached == wire || MessageTextPayload.parse(cached) == MessageTextPayload.parse(wire))) continue
+            plaintextCache.save(message.id, message.senderUserId, wire)
         }
     }
 

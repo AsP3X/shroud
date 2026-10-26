@@ -120,11 +120,12 @@ object MessageTextPayload {
      * first whose wire is at most [MAX_TEXT_PLAINTEXT_BYTES] UTF-8 bytes wins. When none fits the body
      * goes alone: a preview is never the reason a message can't be sent.
      */
-    fun textWire(body: String, replyTo: MessageReplyReference?, linkPreview: LinkPreview?): TextWire {
+    fun textWire(body: String, replyTo: MessageReplyReference?, linkPreview: LinkPreview?, to: UUID? = null): TextWire {
         if (linkPreview == null) return TextWire(wire(body, replyTo), null)
         val withoutThumbnail = linkPreview.withoutThumbnail()
+        // Measured with the recipient that is sealed along (security audit M7), when it is known.
         for (candidate in listOf(linkPreview, withoutThumbnail, withoutThumbnail.withoutSummary())) {
-            val wire = wire(body, replyTo, candidate)
+            val wire = wire(body, replyTo, candidate, to)
             if (WireText.utf8Count(wire) <= MAX_TEXT_PLAINTEXT_BYTES) return TextWire(wire, candidate)
         }
         return TextWire(wire(body, replyTo), null)

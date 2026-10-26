@@ -524,7 +524,7 @@ class SendPipeline(
         // A reply / preview seals body + extras together (MC:4832-4833), and every message names its
         // recipient (security audit M7): [apiPeer], our own id in Notes. A Notes wire comes ready made
         // (quote, preview or todo marker), so the recipient is added to it rather than wrapped around.
-        val wire = MessageTextPayload.textWire(body, replyTo, linkPreview)
+        val wire = MessageTextPayload.textWire(body, replyTo, linkPreview, apiPeer)
         val plaintext = MessageTextPayload.bound(wire.wire, apiPeer).toByteArray(Charsets.UTF_8)
         val sealed = deps.seal(plaintext, apiPeer, signed.me, peerPublic)
         val dto = deps.api.sendMessage(signed.token, SendMessageRequest(apiPeer, messageId, ContentType.TEXT, MessageCrypto.toWire(sealed)))

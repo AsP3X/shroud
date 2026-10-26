@@ -868,16 +868,19 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         if (!keys.isUnlocked) return
         val generation = state.lockGeneration
         val fromPeer = dto.senderUserId != me
-        val threadPeer = if (fromPeer) {
+        // The chat the message belongs to, when this device knows it.
+        val knownPeer = if (fromPeer) {
             dto.senderUserId
         } else {
             state.conversations.firstOrNull { it.id == dto.conversationId }?.peer?.id
                 ?: state.peerFor(dto.id)
-                ?: dto.senderUserId
         }
+        val threadPeer = knownPeer ?: dto.senderUserId
         val isNotes = state.isNotes(threadPeer)
         // The chat it is filed under is the one its sealed recipient must be (security audit M7).
-        val checked = decoder.decodeChecked(dto, decodeContext(me), forcePeer = threadPeer, chatPeer = state.apiPeer(threadPeer))
+        // Our own message from another device to a chat this device does not know yet has none to
+        // check against: it opens, and the chat's history checks it once the chat is listed.
+        val checked = decoder.decodeChecked(dto, decodeContext(me), forcePeer = threadPeer, chatPeer = knownPeer?.let(state::apiPeer))
         val decoded = checked.message
         // Annotations included (`:4378-4380`); acked once decoded: one sealed for someone else was
         // not delivered here.

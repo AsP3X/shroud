@@ -665,7 +665,11 @@ run (no Xcode or Android SDK where they were written).
   goes through the same client). The parsing is pure (`LinkPreviewHTTP`) and covered by
   `LinkPreviewHTTPTests`; `LinkPageMetadataParserTests` checks the proxy setting and the address
   conversion. Not compiled or run (no Xcode here); needs a build and a device check that
-  previews still load, over IPv4 and IPv6.
+  previews still load, over IPv4, IPv6 and NAT64, and for a link on an internationalized domain
+  (`https://bücher.de`): the request takes the host from `URLComponents.encodedHost` and refuses
+  anything but ASCII, so if Foundation hands it over percent-encoded rather than as `xn--…`, such
+  links get no preview (a safe failure; the fix would be a punycode conversion). A server that
+  sends a compressed body despite `Accept-Encoding: identity` now gets no preview either.
 - **L18 (Compose, CI):** the API container runs read-only with a tmpfs `/tmp`,
   `no-new-privileges`, and only CHOWN, FOWNER, SETUID and SETGID (for its entrypoint); Compose
   stops without `POSTGRES_PASSWORD`/`REDIS_PASSWORD` instead of using "shroud". CI: read-only

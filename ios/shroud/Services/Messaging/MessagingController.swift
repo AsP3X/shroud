@@ -5189,13 +5189,15 @@ final class MessagingController {
         let resolvedPeer = peerID ?? dto.senderUserId
 
         // The chat it is filed under (below) is the one its sealed recipient must be (security
-        // audit M7); Notes is me.
+        // audit M7); Notes is me. My own message from another device to a chat this device does
+        // not know yet has none to check against: it opens, and the chat's history checks it
+        // once the chat is listed.
         let decoded = await decodeMessage(
             dto,
             me: me,
             material: material,
             token: token,
-            chatPeerUserID: resolvedPeer == Self.notesPeerID ? me : resolvedPeer
+            chatPeerUserID: peerID.map { $0 == Self.notesPeerID ? me : $0 }
         )
         let chat = decoded.message
         // Acked once decoded: one sealed for someone else was not delivered here.
@@ -5696,7 +5698,12 @@ final class MessagingController {
         // A reply / preview seals body + extras together, and every message names its recipient
         // (security audit M7): `peerUserID`, me in Notes. A Notes wire comes ready made (quote,
         // preview or todo marker), so the recipient is added to it rather than wrapped around.
-        let (unboundWire, sealedPreview) = Self.textWire(body: text, replyTo: replyTo, linkPreview: linkPreview)
+        let (unboundWire, sealedPreview) = Self.textWire(
+            body: text,
+            replyTo: replyTo,
+            linkPreview: linkPreview,
+            to: peerUserID
+        )
         let wireText = MessageTextPayload.bound(unboundWire, to: peerUserID)
         let sealed = try MessageCrypto.seal(
             plaintext: Data(wireText.utf8),
@@ -5756,7 +5763,8 @@ final class MessagingController {
     static func textWire(
         body: String,
         replyTo: MessageReplyReference?,
-        linkPreview: LinkPreview?
+        linkPreview: LinkPreview?,
+        to recipient: UUID? = nil
     ) -> (wire: String, sealedPreview: LinkPreview?) {
         guard var preview = linkPreview else {
             return (MessageTextPayload.wire(body: body, replyTo: replyTo), nil)
@@ -5766,8 +5774,9 @@ final class MessagingController {
         candidates.append(preview)
         preview.summary = nil
         candidates.append(preview)
+        // Measured with the recipient that is sealed along (security audit M7), when it is known.
         for candidate in candidates {
-            let wire = MessageTextPayload.wire(body: body, replyTo: replyTo, linkPreview: candidate)
+            let wire = MessageTextPayload.wire(body: body, replyTo: replyTo, linkPreview: candidate, to: recipient)
             if wire.utf8.count <= maxMediaPayloadPlaintextBytes {
                 return (wire, candidate)
             }

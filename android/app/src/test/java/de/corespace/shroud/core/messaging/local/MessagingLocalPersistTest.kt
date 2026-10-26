@@ -107,19 +107,56 @@ class MessagingLocalPersistTest {
         assertArrayEquals(payload, repository.plaintext(link.id, link.senderUserId))
     }
 
-    /** `testThreadSaveCachesTheReplyQuote` (`:90-101`): a reply's cache holds its quote, as the full save writes it. */
+    /**
+     * `testThreadSaveCachesTheReplyQuote`: a reply's cache holds its quote, as the full save writes
+     * it — and the recipient of its chat, which for the peer's message is us (security audit M7).
+     */
     @Test
     fun threadSaveCachesTheReplyQuote() {
         val repository = fixture.repository()
         val reply = message(peerA, "yes").copy(
             replyTo = MessageReplyReference(messageId = UUID.randomUUID(), senderUserId = peerA, kind = MessageReplyReference.Kind.Text, snippet = "ok?"),
         )
-        val wire = MessageTextPayload.wire(reply.text, reply.replyTo, null)
+        val wire = MessageTextPayload.wire(reply.text, reply.replyTo, null, fixture.userId)
         assertNotEquals(reply.text, wire)
 
         fixture.persistThread(repository, peerA, listOf(reply))
 
         assertEquals(wire, repository.plaintext(reply.id, reply.senderUserId)?.toString(Charsets.UTF_8))
+    }
+
+    /**
+     * `testThreadSaveKeepsACacheThatDecodesToTheBubble`: a cache that already makes the bubble is
+     * left as it is — a legacy body without `to` is not rewritten, and one naming its recipient
+     * keeps it (security audit M7).
+     */
+    @Test
+    fun threadSaveKeepsACacheThatDecodesToTheBubble() {
+        val repository = fixture.repository()
+        val legacy = message(peerA, "from an older build")
+        repository.savePlaintext(legacy.id, peerA, "from an older build".toByteArray())
+        val bound = message(peerA, "for you")
+        val boundWire = "{\"t\":\"text\",\"c\":\"for you\",\"to\":\"${fixture.userId.toString().lowercase()}\"}"
+        repository.savePlaintext(bound.id, peerA, boundWire.toByteArray())
+
+        fixture.persistThread(repository, peerA, listOf(legacy, bound))
+
+        assertEquals("from an older build", repository.plaintext(legacy.id, peerA)?.toString(Charsets.UTF_8))
+        assertEquals(boundWire, repository.plaintext(bound.id, peerA)?.toString(Charsets.UTF_8))
+    }
+
+    /** A message of mine with no cache yet is cached naming the chat's peer (security audit M7). */
+    @Test
+    fun threadSaveNamesThePeerOnMyOwnMessage() {
+        val repository = fixture.repository()
+        val mine = message(peerA, "hi").copy(senderUserId = fixture.userId, isMine = true)
+
+        fixture.persistThread(repository, peerA, listOf(mine))
+
+        assertEquals(
+            MessageTextPayload.wire("hi", null, null, peerA),
+            repository.plaintext(mine.id, fixture.userId)?.toString(Charsets.UTF_8),
+        )
     }
 
     /**

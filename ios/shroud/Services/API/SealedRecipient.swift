@@ -22,7 +22,7 @@ nonisolated enum SealedRecipient {
     static let key = "to"
 
     /// What a plaintext says about its recipient.
-    enum Named: Equatable, Sendable {
+    nonisolated enum Named: Equatable, Sendable {
         /// No `to` (or `null`): a payload from before it, or not a payload of this content type.
         case nobody
         /// `to` is this user.
@@ -32,7 +32,7 @@ nonisolated enum SealedRecipient {
     }
 
     /// A plaintext that names someone else than the chat it was listed in.
-    struct Misaddressed: Error {}
+    nonisolated struct Misaddressed: Error {}
 
     /// `to` as sealed: the lowercase wire form.
     static func wire(_ userID: UUID) -> String {
