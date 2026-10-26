@@ -34,7 +34,7 @@ services:
     container_name: shroud-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shroud}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shroud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run ./deploy.sh, which writes .env}
       POSTGRES_DB: ${POSTGRES_DB:-shroud}
       ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
     volumes:
@@ -58,13 +58,13 @@ services:
     command:
       - redis-server
       - --requirepass
-      - ${REDIS_PASSWORD:-shroud}
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}
       - --save
       - ""
       - --appendonly
       - "no"
     environment:
-      REDISCLI_AUTH: ${REDIS_PASSWORD:-shroud}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}
     networks:
       - shroud-internal
     healthcheck:
@@ -150,11 +150,11 @@ services:
         condition: service_healthy
     environment:
       <<: *shroud-logging
-      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run ./deploy.sh, which writes .env}@postgres:5432/${POSTGRES_DB:-shroud}"
       DATABASE_POOL_MAX: "10"
       RUN_MIGRATIONS: "true"
       TRUST_FORWARDED_HEADERS: "true"
-      REDIS_URL: redis://:${REDIS_PASSWORD:-shroud}@redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}@redis:6379
       # Public salt for username lookup hashes. Clients fetch it. Empty refuses to boot.
       # Generate once (32 hex characters) and do not rotate it.
       USERNAME_KDF_SALT: ${USERNAME_KDF_SALT:-}
@@ -222,6 +222,21 @@ services:
       - ./.shroud-run:/run/shroud:ro
     networks:
       - shroud-internal
+    # Writes go to the media volume only (uploads spool into it). The entrypoint starts as root to
+    # hand that volume to nobody, then drops to it with gosu: CHOWN and FOWNER for the volume,
+    # SETUID and SETGID for the drop, nothing else.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
     healthcheck:
       test:
         [

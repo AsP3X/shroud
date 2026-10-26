@@ -1,0 +1,50 @@
+name: Admin
+
+on:
+  push:
+    paths:
+      - "admin/api/**"
+      - ".github/workflows/admin.yml"
+  pull_request:
+    paths:
+      - "admin/api/**"
+      - ".github/workflows/admin.yml"
+
+# The jobs only read the repository.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin/api
+
+    # The database suites need a shroud_admin role and the API's tables (docs/admin-plan.md); without
+    # ADMIN_TEST_DATABASE_URL they skip, so this job runs the unit tests and builds the rest.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: admin/api
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test

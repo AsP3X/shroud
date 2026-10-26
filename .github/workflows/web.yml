@@ -1,0 +1,51 @@
+name: Web
+
+on:
+  push:
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+
+# The jobs only read the repository.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: type-check / self-tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Type-check
+        run: npx tsc -b
+
+      # Every self-test that runs in Node. boxAuth, ratchet and reactionsCrypto need a browser's
+      # localStorage and are run in one by hand.
+      - name: Self-tests
+        run: |
+          for test in $(find src -name '*.selftest.ts' | sort); do
+            case "$test" in
+              */crypto/boxAuth.selftest.ts | */crypto/ratchet.selftest.ts | */crypto/reactionsCrypto.selftest.ts) continue ;;
+            esac
+            echo "::group::$test"
+            npx --yes tsx@4.23.15 "$test"
+            echo "::endgroup::"
+          done
