@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::auth::{
     MAX_DEVICES_PER_USER, decode_username_hash, generate_share_code, hash_password,
-    issue_session_token, parse_username_hash, verify_password,
+    issue_session_token, parse_username_hash, verify_password, verify_unknown_user,
 };
 use crate::error::{AppError, LimitDevice};
 use crate::rate_limit::{ClientIp, budgets};
@@ -112,7 +112,7 @@ pub async fn register(
         .map_err(|err| AppError::Internal(format!("reserved username check failed: {err}")))??;
     limit_account_attempts(&state, &username_hash).await?;
 
-    let password_hash = hash_password(&body.password)?;
+    let password_hash = hash_password(&body.password).await?;
 
     let mut tx = state
         .pool
@@ -245,12 +245,12 @@ pub async fn login(
         candidates.push((row, Some(legacy)));
     }
     if candidates.is_empty() {
-        delay_unknown_user(&body.password);
+        verify_unknown_user(&body.password).await?;
         return Err(AppError::invalid_credentials());
     }
     let mut signed_in = None;
     for (row, migrate_from) in candidates {
-        if verify_password(&body.password, &row.password_hash)? {
+        if verify_password(&body.password, &row.password_hash).await? {
             signed_in = Some((row, migrate_from));
             break;
         }
@@ -409,12 +409,6 @@ async fn limit_account_attempts(
             budgets::AUTH_USERNAME,
         )
         .await
-}
-
-/// Same password work as a real miss, so a wrong name is not obviously faster.
-fn delay_unknown_user(password: &str) {
-    let dummy = hash_password("invalid-login-padding-xx").unwrap_or_default();
-    let _ = verify_password(password, &dummy);
 }
 
 /// `POST /auth/logout` — revoke the current session and forget how this device is pushed to.
@@ -679,7 +673,7 @@ pub async fn delete_account(
         return Err(AppError::device_removed());
     };
 
-    if !verify_password(&body.password, &password_hash)? {
+    if !verify_password(&body.password, &password_hash).await? {
         return Err(AppError::invalid_credentials());
     }
 
@@ -945,11 +939,11 @@ pub async fn change_password(
             .await
             .map_err(|err| AppError::Internal(format!("password change load failed: {err}")))?;
 
-    if !verify_password(&body.current_password, &password_hash)? {
+    if !verify_password(&body.current_password, &password_hash).await? {
         return Err(AppError::invalid_credentials());
     }
 
-    let new_hash = hash_password(&body.new_password)?;
+    let new_hash = hash_password(&body.new_password).await?;
 
     let mut tx = state
         .pool
