@@ -566,8 +566,8 @@ export const api = {
   devices: (token: string) => request<{ devices: Device[] }>("/devices", { token }),
   /**
    * Removes one of the account's devices. Body is `{ password }` and is not logged (security
-   * audit L4). As on `deleteAccount`, a wrong password keeps the session; `429` is the budget
-   * shared with password change and account deletion; `404` means it is already gone.
+   * audit L4). As on `deleteAccount`, a wrong password keeps the session; `429` is the
+   * removal budget (10 an hour); `404` means it is already gone.
    */
   revokeDevice: (token: string, deviceId: string, password: string) =>
     withPassword(
