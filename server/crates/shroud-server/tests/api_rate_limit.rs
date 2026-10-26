@@ -1,7 +1,7 @@
 //! Integration tests for enabled in-process rate limiter.
 //!
 //! Human: Uses unique X-Forwarded-For / user keys so parallel suites do not share windows.
-//! Agent: AppState with RateLimiter::new(); trust_forwarded_headers=true via test helper; every
+//! Agent: AppState with RateLimiter::new(); forwarded_trust enabled via test helper; every
 //! request arrives from a Docker-network proxy (`MockConnectInfo`), so forwarded headers count.
 
 use std::net::SocketAddr;
@@ -239,7 +239,7 @@ async fn untrusted_forwarded_headers_share_unknown_ip_bucket() {
         pool,
         RateLimiter::new(),
     );
-    state.trust_forwarded_headers = false;
+    state.forwarded_trust.enabled = false;
     let app = axum::Router::new()
         .merge(routes::router())
         .with_state(state);

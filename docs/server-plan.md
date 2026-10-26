@@ -581,7 +581,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Session status (`POST /auth/session-status`) | 60/min per IP |
 | PIN-guard unlock | 20/min per IP |
 
-`Retry-After` mirrors the budget window (seconds). An IP budget is keyed on the connection's peer address. With `TRUST_FORWARDED_HEADERS=true` and a peer on a loopback or private address (the proxy), it is keyed on `X-Real-IP` instead, else on the right-most `X-Forwarded-For` hop; a public peer's headers never count. The web nginx overwrites both headers with the client it resolved. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). An IP budget is keyed on the connection's peer address. With `TRUST_FORWARDED_HEADERS=true` and a peer on a loopback or private address or in `TRUSTED_PROXIES` (the proxy), it is keyed on `X-Real-IP` instead, else on the right-most `X-Forwarded-For` hop; a public peer's headers never count. The web nginx overwrites both headers with the client it resolved. Key pattern: `rl:{scope}:{id}`.
 
 ### Link-preview relay
 
@@ -1863,7 +1863,8 @@ clients go by the `UPDATE_REQUIRED` code.
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
-| `TRUST_FORWARDED_HEADERS` | Honor `X-Real-IP` / right-most `X-Forwarded-For` for rate-limit keys, from a peer on a loopback or private address only (default false: the peer address) |
+| `TRUST_FORWARDED_HEADERS` | Honor `X-Real-IP` / right-most `X-Forwarded-For` for rate-limit keys, from a peer on a loopback or private address or in `TRUSTED_PROXIES` only (default false: the peer address) |
+| `TRUSTED_PROXIES` | Proxies on public addresses (a CDN, a proxy on another host) trusted for those headers besides loopback and private ones: addresses or CIDR ranges, comma- or space-separated (default none). Ignored while `TRUST_FORWARDED_HEADERS` is off |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `MEDIA_QUOTA_MIB` | Most encrypted media one account may store, in MiB (default 20480 = 20 GiB; 0 = no limit) |
 | `SESSION_IDLE_DAYS` | Days a session may go unused before the hourly job revokes it (default 90; 0 = never). A revoked session answers like a sign-out (`UNAUTHORIZED`); the device signs in again, and the iPhone and web clients clear their local data as they do on any sign-out |

@@ -60,7 +60,9 @@ budgets on the peer address. Forwarded headers count only with `TRUST_FORWARDED_
 a peer on a loopback or private address (the proxy); from it, `X-Real-IP`, else the right-most
 `X-Forwarded-For` hop. `web/api-proxy.conf` sends `X-Forwarded-For $remote_addr`. Tests: unit tests
 `client_ip_*`; `forged_forwarded_hops_do_not_pick_the_ip_budget` (fails before the fix). A proxy on
-another public host is now treated as one client; deployments like that need a trusted-proxy list.
+another public host (a CDN, say) is trusted only when listed in `TRUSTED_PROXIES` (addresses or CIDR
+ranges); unlisted, it counts as one client. Unit tests `client_ip_trusts_a_listed_public_proxy`,
+`ip_ranges_parse_and_match`.
 
 ### H2. The per-account login budget is bypassed: unlimited online password guessing
 

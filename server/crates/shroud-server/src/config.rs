@@ -9,6 +9,7 @@ use crate::client_version::ClientVersions;
 use crate::error::AppError;
 use crate::media_store::NebularConfig;
 use crate::push::UnifiedPushPolicy;
+use crate::rate_limit::{ForwardedTrust, IpRange};
 use crate::turn::TurnConfig;
 use crate::username_kdf::UsernameKdf;
 
@@ -91,8 +92,9 @@ pub struct Config {
     pub media: MediaConfig,
     /// Optional Redis URL for multi-replica WebSocket fan-out and shared rate limits.
     pub redis_url: Option<String>,
-    /// When true, honor `X-Forwarded-For` / `X-Real-IP` for rate-limit keys (trusted proxy only).
-    pub trust_forwarded_headers: bool,
+    /// Whether, and from which proxies, `X-Forwarded-For` / `X-Real-IP` name the client for
+    /// rate-limit keys (`TRUST_FORWARDED_HEADERS`, `TRUSTED_PROXIES`).
+    pub forwarded_trust: ForwardedTrust,
     /// Browser origins allowed to call the API directly (empty = same-origin / no CORS).
     /// Set from `CORS_ALLOWED_ORIGINS` and/or `WEB_PUBLIC_URL` by the deploy wizard.
     pub cors_allowed_origins: Vec<String>,
@@ -183,6 +185,14 @@ impl Config {
             std::env::var("TRUST_FORWARDED_HEADERS").ok().as_deref(),
             false,
         )?;
+        // Human: A proxy on a private or loopback address is trusted already; a CDN or a proxy on
+        // another public host has to be listed, else it is one client for every IP budget.
+        // Agent: READS TRUSTED_PROXIES (comma- or space-separated addresses and CIDR ranges).
+        let trusted_proxies =
+            parse_trusted_proxies(std::env::var("TRUSTED_PROXIES").ok().as_deref())?;
+        if !trusted_proxies.is_empty() && !trust_forwarded_headers {
+            tracing::warn!("TRUSTED_PROXIES is ignored while TRUST_FORWARDED_HEADERS is off");
+        }
 
         let ice = crate::turn::ice_config(&|name| std::env::var(name).ok())?;
         if ice.servers.is_empty() && ice.turn.is_none() {
@@ -262,7 +272,10 @@ impl Config {
             port,
             media,
             redis_url,
-            trust_forwarded_headers,
+            forwarded_trust: ForwardedTrust {
+                enabled: trust_forwarded_headers,
+                proxies: trusted_proxies,
+            },
             cors_allowed_origins,
             ice_servers: ice.servers,
             turn: ice.turn,
@@ -510,6 +523,20 @@ fn is_valid_bucket_name(name: &str) -> bool {
         && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
 }
 
+fn parse_trusted_proxies(raw: Option<&str>) -> Result<Vec<IpRange>, AppError> {
+    raw.unwrap_or_default()
+        .split([',', ' ', '\n', '\t'])
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            IpRange::parse(item).ok_or_else(|| {
+                AppError::Internal(format!(
+                    "TRUSTED_PROXIES entries must be addresses or CIDR ranges, got {item:?}"
+                ))
+            })
+        })
+        .collect()
+}
+
 fn parse_bool_env(name: &str, raw: Option<&str>, default: bool) -> Result<bool, AppError> {
     let Some(raw) = raw else {
         return Ok(default);
@@ -530,6 +557,16 @@ fn parse_bool_env(name: &str, raw: Option<&str>, default: bool) -> Result<bool, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trusted_proxies_parse_lists_and_refuse_junk() {
+        assert!(parse_trusted_proxies(None).unwrap().is_empty());
+        assert!(parse_trusted_proxies(Some(" ")).unwrap().is_empty());
+        let proxies =
+            parse_trusted_proxies(Some("203.0.113.0/24, 2001:db8::/32 192.0.2.1")).unwrap();
+        assert_eq!(proxies.len(), 3);
+        assert!(parse_trusted_proxies(Some("203.0.113.0/24,proxy.example")).is_err());
+    }
 
     #[test]
     fn parse_bool_env_accepts_common_forms() {

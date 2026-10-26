@@ -373,15 +373,16 @@ async fn memory_check(
 
 /// Best-effort client IP for limit keys (proxy-aware when trusted).
 ///
-/// Human: The forwarded headers count only when `trust_forwarded` is on and the connection
-/// itself comes from a proxy on a loopback or private address, so a port published straight
+/// Human: The forwarded headers count only when `trust.enabled` is on and the connection
+/// itself comes from a proxy: a loopback or private address, or one listed in
+/// `TRUSTED_PROXIES` (a CDN or a proxy on another public host). So a port published straight
 /// to the internet never lets a client name its own key. From such a proxy, `X-Real-IP` wins
 /// (our nginx and NPM overwrite it), then the right-most `X-Forwarded-For` hop: the one the
 /// proxy appended. Every hop left of it is whatever the client sent.
 /// Agent: else the peer address; `"unknown"` only when the server runs without connect info.
-pub fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust_forwarded: bool) -> String {
+pub fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust: &ForwardedTrust) -> String {
     let peer = peer.map(|ip| ip.to_canonical());
-    let forwarded = if trust_forwarded && peer.is_some_and(is_proxy_address) {
+    let forwarded = if peer.is_some_and(|ip| trust.trusts(ip)) {
         forwarded_client(headers)
     } else {
         None
@@ -389,6 +390,61 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust_forwarded: boo
     forwarded
         .or(peer)
         .map_or_else(|| "unknown".into(), |ip| ip.to_string())
+}
+
+/// Which peers may name the client in `X-Real-IP` / `X-Forwarded-For` (see [`client_ip`]).
+#[derive(Clone, Debug, Default)]
+pub struct ForwardedTrust {
+    /// `TRUST_FORWARDED_HEADERS`. Off, no peer is a proxy.
+    pub enabled: bool,
+    /// `TRUSTED_PROXIES`: proxies on public addresses, trusted besides loopback and private
+    /// ones (security audit H1).
+    pub proxies: Vec<IpRange>,
+}
+
+impl ForwardedTrust {
+    fn trusts(&self, peer: IpAddr) -> bool {
+        self.enabled
+            && (is_proxy_address(peer) || self.proxies.iter().any(|range| range.contains(peer)))
+    }
+}
+
+/// An address range in CIDR form (`203.0.113.0/24`, `2001:db8::/32`) or a single address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IpRange {
+    network: IpAddr,
+    prefix: u8,
+}
+
+impl IpRange {
+    pub fn parse(value: &str) -> Option<Self> {
+        let (address, prefix) = match value.trim().split_once('/') {
+            Some((address, prefix)) => (address, Some(prefix.parse::<u8>().ok()?)),
+            None => (value.trim(), None),
+        };
+        let network = address.parse::<IpAddr>().ok()?.to_canonical();
+        let bits = if network.is_ipv4() { 32 } else { 128 };
+        let prefix = prefix.unwrap_or(bits);
+        (prefix <= bits).then_some(Self { network, prefix })
+    }
+
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        match (self.network, ip.to_canonical()) {
+            (IpAddr::V4(network), IpAddr::V4(ip)) => {
+                let mask = u32::MAX
+                    .checked_shl(32 - u32::from(self.prefix))
+                    .unwrap_or(0);
+                u32::from(network) & mask == u32::from(ip) & mask
+            }
+            (IpAddr::V6(network), IpAddr::V6(ip)) => {
+                let mask = u128::MAX
+                    .checked_shl(128 - u32::from(self.prefix))
+                    .unwrap_or(0);
+                u128::from(network) & mask == u128::from(ip) & mask
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The client address a trusted proxy put in the request headers.
@@ -435,7 +491,7 @@ impl FromRequestParts<AppState> for ClientIp {
         Ok(Self(client_ip(
             &parts.headers,
             peer,
-            state.trust_forwarded_headers,
+            &state.forwarded_trust,
         )))
     }
 }
@@ -657,13 +713,17 @@ mod tests {
 
     const DOCKER_PROXY: Option<IpAddr> = Some(IpAddr::V4(std::net::Ipv4Addr::new(172, 18, 0, 5)));
     const PUBLIC_PEER: Option<IpAddr> = Some(IpAddr::V4(std::net::Ipv4Addr::new(198, 51, 100, 7)));
+    const TRUSTED: ForwardedTrust = ForwardedTrust {
+        enabled: true,
+        proxies: Vec::new(),
+    };
 
     #[test]
     fn client_ip_prefers_real_ip_from_a_trusted_proxy() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 10.0.0.1".parse().unwrap());
         headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, true), "9.9.9.9");
+        assert_eq!(client_ip(&headers, DOCKER_PROXY, &TRUSTED), "9.9.9.9");
     }
 
     #[test]
@@ -671,7 +731,7 @@ mod tests {
         // The client sent `1.2.3.4`; the proxy appended the address it saw.
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, true), "8.8.8.8");
+        assert_eq!(client_ip(&headers, DOCKER_PROXY, &TRUSTED), "8.8.8.8");
     }
 
     #[test]
@@ -679,7 +739,10 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
         headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, false), "172.18.0.5");
+        assert_eq!(
+            client_ip(&headers, DOCKER_PROXY, &ForwardedTrust::default()),
+            "172.18.0.5"
+        );
     }
 
     #[test]
@@ -687,7 +750,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
         headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
-        assert_eq!(client_ip(&headers, PUBLIC_PEER, true), "198.51.100.7");
+        assert_eq!(client_ip(&headers, PUBLIC_PEER, &TRUSTED), "198.51.100.7");
     }
 
     #[test]
@@ -695,7 +758,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "not-an-ip".parse().unwrap());
         headers.insert("x-forwarded-for", "8.8.8.8, junk".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, true), "172.18.0.5");
+        assert_eq!(client_ip(&headers, DOCKER_PROXY, &TRUSTED), "172.18.0.5");
     }
 
     #[test]
@@ -703,14 +766,61 @@ mod tests {
         let mapped = "::ffff:10.1.2.3".parse::<IpAddr>().ok();
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers, mapped, true), "8.8.8.8");
-        assert_eq!(client_ip(&HeaderMap::new(), mapped, true), "10.1.2.3");
+        assert_eq!(client_ip(&headers, mapped, &TRUSTED), "8.8.8.8");
+        assert_eq!(client_ip(&HeaderMap::new(), mapped, &TRUSTED), "10.1.2.3");
     }
 
     #[test]
     fn client_ip_unknown_without_a_peer() {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers, None, true), "unknown");
+        assert_eq!(client_ip(&headers, None, &TRUSTED), "unknown");
+    }
+
+    #[test]
+    fn client_ip_trusts_a_listed_public_proxy() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4, 8.8.8.8".parse().unwrap());
+        let listed = ForwardedTrust {
+            enabled: true,
+            proxies: vec![IpRange::parse("198.51.100.0/24").unwrap()],
+        };
+        assert_eq!(client_ip(&headers, PUBLIC_PEER, &listed), "8.8.8.8");
+        let other = ForwardedTrust {
+            enabled: true,
+            proxies: vec![IpRange::parse("198.51.101.0/24").unwrap()],
+        };
+        assert_eq!(client_ip(&headers, PUBLIC_PEER, &other), "198.51.100.7");
+        let off = ForwardedTrust {
+            enabled: false,
+            ..listed
+        };
+        assert_eq!(client_ip(&headers, PUBLIC_PEER, &off), "198.51.100.7");
+    }
+
+    #[test]
+    fn ip_ranges_parse_and_match() {
+        let ip = |value: &str| value.parse::<IpAddr>().unwrap();
+        let v4 = IpRange::parse("203.0.113.0/24").unwrap();
+        assert!(v4.contains(ip("203.0.113.200")));
+        assert!(v4.contains(ip("::ffff:203.0.113.9")));
+        assert!(!v4.contains(ip("203.0.114.1")));
+        assert!(!v4.contains(ip("2001:db8::1")));
+        let one = IpRange::parse(" 192.0.2.7 ").unwrap();
+        assert!(one.contains(ip("192.0.2.7")));
+        assert!(!one.contains(ip("192.0.2.8")));
+        let v6 = IpRange::parse("2001:db8::/32").unwrap();
+        assert!(v6.contains(ip("2001:db8:ffff::1")));
+        assert!(!v6.contains(ip("2001:db9::1")));
+        assert!(IpRange::parse("0.0.0.0/0").unwrap().contains(ip("8.8.8.8")));
+        for bad in [
+            "",
+            "203.0.113.0/33",
+            "2001:db8::/129",
+            "example.com",
+            "10.0.0.0/x",
+        ] {
+            assert_eq!(IpRange::parse(bad), None, "{bad}");
+        }
     }
 }

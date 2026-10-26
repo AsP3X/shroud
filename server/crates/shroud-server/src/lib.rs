@@ -108,7 +108,8 @@ pub async fn run() -> Result<(), AppError> {
         database_pool_max = config.database_pool_max,
         run_migrations = config.run_migrations,
         redis = config.redis_url.is_some(),
-        trust_forwarded_headers = config.trust_forwarded_headers,
+        trust_forwarded_headers = config.forwarded_trust.enabled,
+        trusted_proxies = config.forwarded_trust.proxies.len(),
         media_store = if config.media.nebular.is_some() { "nebular" } else { "local" },
         media_bucket = %config.media.bucket,
         operator = config.operator.is_some(),
@@ -281,7 +282,7 @@ pub async fn run() -> Result<(), AppError> {
         turn: config.turn.clone(),
         rate_limiter,
         redis_required,
-        trust_forwarded_headers: config.trust_forwarded_headers,
+        forwarded_trust: config.forwarded_trust.clone(),
         metrics,
         link_relay: Arc::new(crate::routes::link_relay::LinkRelay::new(
             crate::link_relay::RelayPolicy::production(),

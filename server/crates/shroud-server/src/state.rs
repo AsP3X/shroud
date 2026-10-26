@@ -36,9 +36,9 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// When true, readiness requires a live Redis connection (`REDIS_URL` was set).
     pub redis_required: bool,
-    /// Honor `X-Real-IP` / `X-Forwarded-For` from a proxy on a private address
+    /// Which proxies may name the client in `X-Real-IP` / `X-Forwarded-For`
     /// ([`crate::rate_limit::ClientIp`]).
-    pub trust_forwarded_headers: bool,
+    pub forwarded_trust: crate::rate_limit::ForwardedTrust,
     /// Process metrics for `/operator/metrics`.
     pub metrics: Arc<Metrics>,
     /// Link-preview relay: target policy and each account's open pipes.
@@ -59,7 +59,7 @@ impl AppState {
     /// Builds state for integration tests (rate limits off, trust forwarded headers for XFF tests).
     ///
     /// Human: Keeps test setup identical across suites so new fields are not forgotten.
-    /// Agent: CALLS RateLimiter::disabled; trust_forwarded_headers=true for proxy-header tests.
+    /// Agent: CALLS RateLimiter::disabled; forwarded_trust enabled for proxy-header tests.
     pub fn for_integration_tests(pool: PgPool) -> Self {
         Self::for_integration_tests_with_limiter(pool, RateLimiter::disabled())
     }
@@ -83,7 +83,10 @@ impl AppState {
             username_kdf: UsernameKdf::for_tests(),
             rate_limiter,
             redis_required: false,
-            trust_forwarded_headers: true,
+            forwarded_trust: crate::rate_limit::ForwardedTrust {
+                enabled: true,
+                proxies: Vec::new(),
+            },
             metrics: Arc::new(Metrics::new()),
             link_relay: Arc::new(LinkRelay::new(RelayPolicy::production())),
         }
