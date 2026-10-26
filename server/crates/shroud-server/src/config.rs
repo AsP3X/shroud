@@ -740,8 +740,13 @@ mod tests {
         let short = "t".repeat(MIN_OPERATOR_TOKEN_LEN - 1);
         assert!(operator_listener(Some(&short), None, None, 8080).is_err());
         assert!(
-            operator_listener(Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN + 1)), None, None, 8080)
-                .is_err()
+            operator_listener(
+                Some(&"x".repeat(MAX_OPERATOR_TOKEN_LEN + 1)),
+                None,
+                None,
+                8080
+            )
+            .is_err()
         );
         assert!(
             operator_listener(
