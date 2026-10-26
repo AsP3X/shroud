@@ -896,3 +896,129 @@ async fn history_lists_both_directions_newest_first() {
     let (_, body) = call(&app, "GET", "/api/v1/calls?limit=1", &b.token, None).await;
     assert_eq!(body["calls"].as_array().unwrap().len(), 1);
 }
+
+async fn accept(app: &axum::Router, who: &Account, call_id: &str) -> (StatusCode, Value) {
+    call(
+        app,
+        "POST",
+        &format!("/api/v1/calls/{call_id}/accept"),
+        &who.token,
+        Some(json!({})),
+    )
+    .await
+}
+
+async fn block(app: &axum::Router, blocker: &Account, blocked: &Account) {
+    let (status, body) = call(
+        app,
+        "POST",
+        "/api/v1/blocks",
+        &blocker.token,
+        Some(json!({ "user_id": blocked.user_id })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+/// Human: A block ends the pair's calls the way the blocker's hangup would (security audit
+/// L8): an answered call ends, a ringing one stops, and every device of both hears
+/// `call.ended`, the blocker's own included, since none of them hung up.
+#[tokio::test]
+async fn a_block_ends_the_pairs_calls() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_block_ends_the_pairs_calls: no DATABASE_URL");
+        return;
+    };
+
+    // Answered, then the callee blocks the caller.
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut a_events = socket(&state, &a).await;
+    let mut b_events = socket(&state, &b).await;
+    let placed = place_call(&app, &a, &b, "voice").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    let (status, _) = accept(&app, &b, &id).await;
+    assert_eq!(status, StatusCode::OK);
+
+    block(&app, &b, &a).await;
+    assert_eq!(
+        status_of(&state, &id).await,
+        ("ended".into(), Some("hangup".into()))
+    );
+    for events in [&mut a_events, &mut b_events] {
+        let ended = next_event(events, "call.ended").await;
+        assert_eq!(ended["call"]["id"], id.as_str());
+        assert_eq!(ended["call"]["status"], "ended");
+    }
+    let (status, body) = signal(&app, &a, &id, "ice_candidate", "c1.x").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "CALL_ENDED");
+
+    // Still ringing, and the caller blocks the callee: the caller gave up.
+    let c = register(&app).await;
+    let d = register(&app).await;
+    become_contacts(&app, &c, &d).await;
+    let mut d_events = socket(&state, &d).await;
+    let placed = place_call(&app, &c, &d, "video").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    next_event(&mut d_events, "call.ring").await;
+
+    block(&app, &c, &d).await;
+    assert_eq!(
+        status_of(&state, &id).await,
+        ("cancelled".into(), Some("cancelled".into()))
+    );
+    let ended = next_event(&mut d_events, "call.ended").await;
+    assert_eq!(ended["call"]["status"], "cancelled");
+    let (status, _) = accept(&app, &d, &id).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Human: A call can start before a block lands (`POST /calls` checked first). Answering it
+/// and signalling in it are refused while either blocks the other.
+#[tokio::test]
+async fn accept_and_signal_are_refused_across_a_block() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping accept_and_signal_are_refused_across_a_block: no DATABASE_URL");
+        return;
+    };
+    let insert_block = |blocker: Uuid, blocked: Uuid| {
+        let pool = state.pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO blocks (blocker_id, blocked_id, created_at) VALUES ($1, $2, now())",
+            )
+            .bind(blocker)
+            .bind(blocked)
+            .execute(&pool)
+            .await
+            .expect("insert block");
+        }
+    };
+
+    // Ringing when the caller's block lands: the callee cannot answer.
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let placed = place_call(&app, &a, &b, "voice").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    insert_block(a.uid(), b.uid()).await;
+    let (status, _) = accept(&app, &b, &id).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status_of(&state, &id).await, ("ringing".into(), None));
+
+    // Answered when the callee's block lands: neither device can signal the other.
+    let c = register(&app).await;
+    let d = register(&app).await;
+    become_contacts(&app, &c, &d).await;
+    let placed = place_call(&app, &c, &d, "voice").await;
+    let id = placed["id"].as_str().unwrap().to_string();
+    let (status, _) = accept(&app, &d, &id).await;
+    assert_eq!(status, StatusCode::OK);
+    insert_block(d.uid(), c.uid()).await;
+    let (status, _) = signal(&app, &c, &id, "sdp_offer", "c1.offer").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = signal(&app, &d, &id, "sdp_answer", "c1.answer").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

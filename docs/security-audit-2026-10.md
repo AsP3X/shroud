@@ -480,6 +480,12 @@ and set, for the web and the console host and each kind of path. The cookie path
   they answer as before (204, or `marked: 0`) and only move the reader's own unread marker.
   Notes is unchanged: one's own messages were never marked read. Test
   `read_receipts_need_a_contact_nobody_blocked` (`api_presence.rs`).
+- **L8:** `POST /blocks` ends the pair's ringing and active calls in its transaction, as the
+  blocker's hangup would (`calls.rs` `end_calls_between`), and after commit sends `call.ended`
+  to every device of both people. `accept_call` and `signal_call` answer 403 while either
+  blocks the other, for a call that rang before the block or slipped past it. Tests
+  `a_block_ends_the_pairs_calls` and `accept_and_signal_are_refused_across_a_block`
+  (`api_calls.rs`).
 
 ## Design notes (no change asked for here)
 

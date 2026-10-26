@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
+use crate::routes::calls::{announce_ended_calls, end_calls_between};
 use crate::routes::contacts::lock_pair;
 use crate::state::AppState;
 
@@ -111,9 +112,14 @@ pub async fn create_block(
     .await
     .map_err(|err| AppError::Internal(format!("insert block failed: {err}")))?;
 
+    // A ringing or active call between them ends, as the blocker's hangup would end it.
+    let ended_calls = end_calls_between(&mut tx, auth.user_id, body.user_id).await?;
+
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit block failed: {err}")))?;
+
+    announce_ended_calls(&state, &ended_calls).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

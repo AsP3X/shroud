@@ -142,7 +142,7 @@ pub struct IceServersResponse {
 }
 
 #[derive(Debug, Clone, FromRow)]
-struct CallRow {
+pub(crate) struct CallRow {
     id: Uuid,
     caller_user_id: Uuid,
     caller_device_id: Uuid,
@@ -260,7 +260,7 @@ pub async fn create_call(
     if peer_is_on_another_call(&mut tx, body.peer_user_id, auth.user_id).await? {
         return Err(AppError::call_busy());
     }
-    let replaced = end_live_calls_of(&mut tx, auth.user_id).await?;
+    let replaced = end_live_calls_of(&mut tx, auth.user_id, None).await?;
     sqlx::query(
         r#"
         INSERT INTO calls (
@@ -427,6 +427,10 @@ pub async fn accept_call(
         ensure_participant(&call, auth.user_id)?;
         return Err(AppError::forbidden("Only the callee can accept this call."));
     }
+    // A block ends the pair's calls; this one rang before it, or slipped past it.
+    if is_blocked_either_way(&state.pool, call.caller_user_id, call.callee_user_id).await? {
+        return Err(AppError::forbidden("Cannot call this user."));
+    }
 
     let updated = sqlx::query_as::<_, CallRow>(&format!(
         r#"
@@ -549,6 +553,9 @@ pub async fn signal_call(
             "The call has not been answered yet.",
         ));
     };
+    if is_blocked_either_way(&state.pool, call.caller_user_id, call.callee_user_id).await? {
+        return Err(AppError::forbidden("Cannot call this user."));
+    }
 
     // The two devices in the call talk to each other; nothing else of either person does.
     let (to_user, to_device) = if auth.user_id == call.caller_user_id {
@@ -853,11 +860,13 @@ async fn peer_is_on_another_call(
     .map_err(|err| AppError::Internal(format!("peer call check failed: {err}")))
 }
 
-/// Ends every live call `user_id` is in, so placing a new call cannot be stuck behind one
-/// that already finished on the devices. Returns the rows as they stand after the update.
+/// Ends every live call `user_id` is in (only those with `with`, when given) as their hangup
+/// would, so placing a new call cannot be stuck behind one that already finished on the
+/// devices. Returns the rows as they stand after the update.
 async fn end_live_calls_of(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
+    with: Option<Uuid>,
 ) -> Result<Vec<CallRow>, AppError> {
     sqlx::query_as::<_, CallRow>(&format!(
         r#"
@@ -877,15 +886,34 @@ async fn end_live_calls_of(
                 {CLEAR_MEDIA_STATES}
             WHERE status IN ('ringing', 'active')
               AND (caller_user_id = $1 OR callee_user_id = $1)
+              AND ($2::uuid IS NULL OR caller_user_id = $2 OR callee_user_id = $2)
             RETURNING *
         )
         SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
         "#
     ))
     .bind(user_id)
+    .bind(with)
     .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("end live calls failed: {err}")))
+}
+
+/// Ends every live call between `blocker` and `blocked` as the blocker's hangup would, for
+/// `POST /blocks`. Announce the rows with [`announce_ended_calls`] once `tx` commits.
+pub(crate) async fn end_calls_between(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    blocker: Uuid,
+    blocked: Uuid,
+) -> Result<Vec<CallRow>, AppError> {
+    end_live_calls_of(tx, blocker, Some(blocked)).await
+}
+
+/// Tells every device of both people in each call that it ended.
+pub(crate) async fn announce_ended_calls(state: &AppState, calls: &[CallRow]) {
+    for call in calls {
+        announce_end(state, call, None).await;
+    }
 }
 
 async fn load_call(pool: &sqlx::PgPool, call_id: Uuid) -> Result<Option<CallRow>, AppError> {

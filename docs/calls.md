@@ -36,7 +36,9 @@ then only between the two devices in the call.
 4. **Talk.** While the call rings (caller) or runs (both), each device in it sends
    `POST /calls/{id}/heartbeat` every 10 s.
 5. **End.** `POST /calls/{id}/reject` (callee, while ringing) or `/hangup` (anyone, any time)
-   ends it; `call.ended` goes to every device of both people.
+   ends it; `call.ended` goes to every device of both people. `POST /blocks` ends the pair's
+   calls the same way, as the blocker's hangup, and accept and signal answer `FORBIDDEN` while
+   either blocks the other.
 
 The caller is always the offerer, also for ICE restarts, so offers never collide.
 
