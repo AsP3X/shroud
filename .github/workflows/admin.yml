@@ -1,0 +1,83 @@
+name: Admin
+
+on:
+  push:
+    paths:
+      - "admin/api/**"
+      - "server/migrations/postgres/**"
+      - "server/docker/init-admin-role.sh"
+      - ".github/workflows/admin.yml"
+  pull_request:
+    paths:
+      - "admin/api/**"
+      - "server/migrations/postgres/**"
+      - "server/docker/init-admin-role.sh"
+      - ".github/workflows/admin.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+  POSTGRES_USER: shroud
+  POSTGRES_DB: shroud
+  ADMIN_DB_PASSWORD: shroud-admin
+  PGHOST: localhost
+  PGPASSWORD: shroud
+  GRANT_TEST_SUPER_URL: postgres://shroud:shroud@localhost:5432/shroud
+  GRANT_TEST_ADMIN_URL: postgres://shroud_admin:shroud-admin@localhost:5432/shroud
+  ADMIN_TEST_DATABASE_URL: postgres://shroud_admin:shroud-admin@localhost:5432/shroud
+
+jobs:
+  test:
+    name: fmt / clippy / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin/api
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: shroud
+          POSTGRES_PASSWORD: shroud
+          POSTGRES_DB: shroud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shroud -d shroud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: admin/api
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Create role shroud_admin
+        run: sh ../../server/docker/init-admin-role.sh
+
+      # The grant test runs the server migrations and grants.sql as the table owner; the other
+      # tests need that schema.
+      - name: Migrate and apply column grants
+        run: cargo test --test grants
+
+      - name: cargo test
+        run: cargo test
+
+      # The tests share one database and must clean up after themselves.
+      - name: cargo test again on the same database
+        run: cargo test
