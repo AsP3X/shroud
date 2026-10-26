@@ -31,15 +31,27 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         .await
         .expect("connect");
     shroud_admin::db::migrate(&pool).await.expect("migrate");
+    // The audit log belongs to the table owner once grants.sql has run (security audit L3).
+    let cleanup = match nonempty("GRANT_TEST_SUPER_URL") {
+        Some(owner) => PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&owner)
+            .await
+            .expect("owner connection"),
+        None => pool.clone(),
+    };
     sqlx::query(
         "TRUNCATE admin.audit_log, admin.operator_sessions, admin.recovery_codes, admin.setup_links, admin.operators",
     )
-    .execute(&pool)
+    .execute(&cleanup)
     .await
     .expect("truncate");
 
     let key = shroud_admin_key();
     let app = router_with(None, AppState::connected(pool.clone(), key));
+    // Each code works once (security audit L1): setup, sign-in and step-up use three consecutive
+    // time steps, all accepted within one step of skew while the flow stays in this window.
+    let base = fresh_time_step().await;
 
     let link = bootstrap(&pool, "http://127.0.0.1:8082", None, false)
         .await
@@ -63,7 +75,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     assert_eq!(setup.status, StatusCode::OK);
     assert!(setup.body["qr_svg"].as_str().unwrap().contains("<svg"));
     let secret = secret_from_uri(setup.body["totp_uri"].as_str().unwrap());
-    let code = current_code(&secret);
+    let code = code_at(&secret, base - 1);
 
     // Opening the link stored the secret, and no password is set yet. The dummy hash that stands
     // in for a missing one must never sign in (security audit M1).
@@ -177,7 +189,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     let still = sign_in(&locked_app, "operator", PASSWORD, &current_code(&secret)).await;
     assert_eq!(still.status, StatusCode::TOO_MANY_REQUESTS);
 
-    let signed_in = sign_in(&app, "operator", PASSWORD, &current_code(&secret)).await;
+    let signed_in = sign_in(&app, "operator", PASSWORD, &code_at(&secret, base)).await;
     assert_eq!(signed_in.status, StatusCode::NO_CONTENT);
     assert!(signed_in.text.is_empty());
     let cookies = session_cookies(&signed_in.headers);
@@ -205,6 +217,21 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     let left = expires.signed_duration_since(Utc::now());
     assert!(left.num_minutes() >= 29 && left.num_minutes() <= 30);
 
+    let replayed = send(
+        &app,
+        "POST",
+        "/api/admin/session/reauth",
+        Some(&format!(r#"{{"totp":"{}"}}"#, code_at(&secret, base))),
+        Some(&cookies.header),
+        Some(&cookies.csrf),
+    )
+    .await;
+    assert_eq!(
+        replayed.status,
+        StatusCode::UNAUTHORIZED,
+        "the code that signed in can't also pass the step-up"
+    );
+
     let bad_reauth = send(
         &app,
         "POST",
@@ -220,7 +247,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         &app,
         "POST",
         "/api/admin/session/reauth",
-        Some(&format!(r#"{{"totp":"{}"}}"#, current_code(&secret))),
+        Some(&format!(r#"{{"totp":"{}"}}"#, code_at(&secret, base + 1))),
         Some(&cookies.header),
         Some(&cookies.csrf),
     )
@@ -372,8 +399,20 @@ fn secret_from_uri(uri: &str) -> Vec<u8> {
 }
 
 fn current_code(secret: &[u8]) -> String {
-    let counter = (Utc::now().timestamp() / 30) as u64;
-    format!("{:06}", totp::hotp(secret, counter).unwrap())
+    code_at(secret, Utc::now().timestamp() / 30)
+}
+
+fn code_at(secret: &[u8], step: i64) -> String {
+    format!("{:06}", totp::hotp(secret, step as u64).unwrap())
+}
+
+/// The current time step, once at least 20 s of it remain, so a flow started now ends in it.
+async fn fresh_time_step() -> i64 {
+    let into_step = Utc::now().timestamp() % 30;
+    if into_step > 10 {
+        tokio::time::sleep(std::time::Duration::from_secs((30 - into_step) as u64)).await;
+    }
+    Utc::now().timestamp() / 30
 }
 
 async fn sign_in(app: &axum::Router, operator: &str, password: &str, code: &str) -> Reply {

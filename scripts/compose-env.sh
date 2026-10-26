@@ -688,6 +688,19 @@ GRANT USAGE ON SCHEMA public TO shroud_admin;
 -- psql) searches public only, so such a schema can never shadow the API's tables.
 ALTER ROLE CURRENT_USER SET search_path = public;
 SQL
+  # grants.sql gives the audit log to this role once the console has made its schema, which it
+  # does as it starts. Wait for it, so a first deploy does not leave the log with the console.
+  local tries=0
+  until [[ "$(shroud_compose exec -T postgres psql -q -t -A -U "$user" -d "$db" \
+    -c "SELECT to_regclass('admin.audit_log') IS NOT NULL" 2>/dev/null | tr -d '[:space:]')" == "t" ]]; do
+    tries=$((tries + 1))
+    if ((tries > 60)); then
+      echo "WARNING: the console has not made its tables after 60 s; its audit log stays with" >&2
+      echo "  the console's role until ./deploy.sh --admin runs again." >&2
+      break
+    fi
+    sleep 1
+  done
   shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
     -f - < "${SHROUD_REPO_ROOT}/admin/api/grants.sql"
 }

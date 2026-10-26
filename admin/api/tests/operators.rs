@@ -36,7 +36,8 @@ async fn operators_list_invites_and_end_sessions() {
     shroud_admin::db::migrate(&admin)
         .await
         .expect("admin migrations");
-    clear(&admin).await;
+    let cleanup = cleanup_pool(&admin).await;
+    clear(&cleanup).await;
     let writer = Uuid::parse_str(WRITER).unwrap();
     let reader = Uuid::parse_str(READER).unwrap();
     seed(&admin, writer, reader).await;
@@ -80,7 +81,7 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
     assert_eq!(forbidden.body, fixture("error.forbidden.json"));
     assert_eq!(only_audit(&admin, reader).await.outcome, "refused");
-    clear_audits(&admin, &[reader]).await;
+    clear_audits(&cleanup, &[reader]).await;
 
     set_reauth(&admin, writer, false).await;
     let stale = call(
@@ -109,7 +110,7 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(bad_name.status, StatusCode::BAD_REQUEST);
     assert_eq!(bad_name.body["code"], "VALIDATION_ERROR");
     assert_eq!(only_audit(&admin, writer).await.outcome, "refused");
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     let created = call(
         &app,
@@ -143,7 +144,7 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(row.action, "operator.create");
     assert_eq!(row.outcome, "ok");
     assert_eq!(row.target_kind.as_deref(), Some("operator"));
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     let again = call(
         &app,
@@ -156,7 +157,7 @@ async fn operators_list_invites_and_end_sessions() {
     .await;
     assert_eq!(again.status, StatusCode::BAD_REQUEST);
     assert_eq!(again.body["message"], "An operator already has that name.");
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     let ops2 = operator_id(&admin, "ops2").await;
     let promoted = call(
@@ -174,7 +175,7 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(row.action, "operator.update");
     assert_eq!(row.detail.as_deref(), Some("role write"));
     assert_eq!(row.target_id, Some(ops2));
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     let demote = call(
         &app,
@@ -192,7 +193,7 @@ async fn operators_list_invites_and_end_sessions() {
         only_audit(&admin, writer).await.detail.as_deref(),
         Some("Not yourself")
     );
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     insert_session(&admin, ops2, &"e".repeat(64), "csrf-ops2").await;
     let disabled = call(
@@ -212,7 +213,7 @@ async fn operators_list_invites_and_end_sessions() {
         only_audit(&admin, writer).await.detail.as_deref(),
         Some("disabled")
     );
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     let self_disable = call(
         &app,
@@ -226,7 +227,7 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(self_disable.status, StatusCode::FORBIDDEN);
     assert!(enabled(&admin, writer).await);
     assert_eq!(session_count(&admin, writer).await, 1);
-    clear_audits(&admin, &[writer]).await;
+    clear_audits(&cleanup, &[writer]).await;
 
     sqlx::query("UPDATE admin.operators SET password_hash = 'do-not-leak-hash' WHERE id = $1")
         .bind(ops2)
@@ -295,7 +296,7 @@ async fn operators_list_invites_and_end_sessions() {
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
     assert_eq!(missing.body["message"], "No operator has that id.");
 
-    clear(&admin).await;
+    clear(&cleanup).await;
 }
 
 async fn within_fifteen_minutes(pool: &PgPool, name: &str) -> bool {
@@ -543,6 +544,19 @@ fn assert_schema(name: &str, body: &Value) {
         .map(|err| err.to_string())
         .collect();
     assert!(errors.is_empty(), "{errors:?}\n{body}");
+}
+
+/// The pool that may clear audit entries: the table owner's once grants.sql has run (security
+/// audit L3), so `GRANT_TEST_SUPER_URL` when it is set, else the console's own.
+async fn cleanup_pool(admin: &PgPool) -> PgPool {
+    match nonempty("GRANT_TEST_SUPER_URL") {
+        Some(url) => PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .expect("owner connection"),
+        None => admin.clone(),
+    }
 }
 
 fn nonempty(name: &str) -> Option<String> {

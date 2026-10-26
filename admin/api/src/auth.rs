@@ -414,14 +414,24 @@ async fn sign_in(
     let secret = operator
         .as_ref()
         .and_then(|op| open_secret(&key, op.totp_secret_enc.as_deref()));
-    let totp_ok = secret
+    let step = secret
         .as_deref()
-        .is_some_and(|secret| totp::accept(secret, body.totp.trim(), Utc::now().timestamp()));
-    let allowed = operator.as_ref().is_some_and(|op| op.enabled) & password_ok & totp_ok;
+        .and_then(|secret| totp::accepted_step(secret, body.totp.trim(), Utc::now().timestamp()));
+    let fresh_code = match (&operator, step) {
+        (Some(op), Some(step)) if op.enabled && password_ok => {
+            spend_totp_step(&pool, op.id, step).await?
+        }
+        _ => false,
+    };
+    let allowed = operator.as_ref().is_some_and(|op| op.enabled) & password_ok & fresh_code;
     if !allowed {
         state.limiter().record_failure(&limit_key);
         if let Some(op) = &operator {
-            let detail = failure_detail(op.enabled, password_ok);
+            let detail = if op.enabled && password_ok && step.is_some() {
+                Some("Code already used")
+            } else {
+                failure_detail(op.enabled, password_ok)
+            };
             write_audit(&pool, op.id, "session.sign_in", "refused", detail).await?;
         }
         tracing::debug!(
@@ -565,17 +575,26 @@ async fn reauth(
         return Err(ApiError::rate_limited(secs));
     }
     let secret = operator_secret(&pool, &key, session.operator_id).await?;
-    let ok = secret
+    let step = secret
         .as_deref()
-        .is_some_and(|secret| totp::accept(secret, body.totp.trim(), Utc::now().timestamp()));
+        .and_then(|secret| totp::accepted_step(secret, body.totp.trim(), Utc::now().timestamp()));
+    let ok = match step {
+        Some(step) => spend_totp_step(&pool, session.operator_id, step).await?,
+        None => false,
+    };
     if !ok {
         state.limiter().record_failure(&limit_key);
+        let detail = if step.is_some() {
+            "Code already used"
+        } else {
+            "Wrong code"
+        };
         write_audit(
             &pool,
             session.operator_id,
             "session.sign_in",
             "refused",
-            Some("Wrong code"),
+            Some(detail),
         )
         .await?;
         return Err(ApiError::bad_credentials());
@@ -634,7 +653,12 @@ async fn setup_post(
             "Open the setup link before choosing a password.",
         ));
     };
-    if !totp::accept(&secret, body.totp.trim(), Utc::now().timestamp()) {
+    let step = totp::accepted_step(&secret, body.totp.trim(), Utc::now().timestamp());
+    let fresh_code = match step {
+        Some(step) => spend_totp_step(&pool, link.operator_id, step).await?,
+        None => false,
+    };
+    if !fresh_code {
         state.limiter().record_failure(&limit_key);
         write_audit(
             &pool,
@@ -810,6 +834,21 @@ fn unique_codes() -> Vec<String> {
 
 fn open_secret(key: &[u8; 32], blob: Option<&[u8]>) -> Option<Vec<u8>> {
     crypto::open(key, blob?).ok()
+}
+
+/// Spends a TOTP time step for the operator: true only when no equal or later step was spent
+/// before, so each code works once and the one that signed in can't also pass a step-up.
+async fn spend_totp_step(pool: &PgPool, operator_id: Uuid, step: i64) -> Result<bool, ApiError> {
+    let spent = sqlx::query(
+        "UPDATE admin.operators SET last_totp_step = $2
+         WHERE id = $1 AND (last_totp_step IS NULL OR last_totp_step < $2)",
+    )
+    .bind(operator_id)
+    .bind(step)
+    .execute(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(spent.rows_affected() == 1)
 }
 
 fn failure_detail(enabled: bool, password_ok: bool) -> Option<&'static str> {

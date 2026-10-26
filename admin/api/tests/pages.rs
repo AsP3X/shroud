@@ -572,9 +572,10 @@ async fn push_sql(pool: &PgPool) -> (i64, i64, i64, i64, i64) {
 }
 
 async fn clear(admin: &PgPool, owner: &PgPool, operator: Uuid, user: Uuid) {
+    // The audit log belongs to the table owner once grants.sql has run (security audit L3).
     sqlx::query("DELETE FROM admin.audit_log WHERE operator_id = $1")
         .bind(operator)
-        .execute(admin)
+        .execute(owner)
         .await
         .unwrap();
     sqlx::query("DELETE FROM admin.operator_sessions WHERE operator_id = $1")

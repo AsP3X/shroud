@@ -26,14 +26,18 @@ pub fn hotp(secret: &[u8], counter: u64) -> Option<u32> {
 }
 
 pub fn accept(secret: &[u8], digits: &str, now_unix: i64) -> bool {
+    accepted_step(secret, digits, now_unix).is_some()
+}
+
+/// The time step `digits` is the code of, within one step either way. Callers spend it so a code
+/// works once (`auth::spend_totp_step`).
+pub fn accepted_step(secret: &[u8], digits: &str, now_unix: i64) -> Option<i64> {
     if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return false;
+        return None;
     }
-    let Ok(given) = digits.parse::<u32>() else {
-        return false;
-    };
+    let given = digits.parse::<u32>().ok()?;
     let step = now_unix.div_euclid(30);
-    let mut ok = subtle::Choice::from(0);
+    let mut matched = None;
     for delta in -1i64..=1 {
         let counter = step + delta;
         if counter < 0 {
@@ -42,9 +46,11 @@ pub fn accept(secret: &[u8], digits: &str, now_unix: i64) -> bool {
         let Some(code) = hotp(secret, counter as u64) else {
             continue;
         };
-        ok |= code.to_ne_bytes().ct_eq(&given.to_ne_bytes());
+        if bool::from(code.to_ne_bytes().ct_eq(&given.to_ne_bytes())) {
+            matched = Some(counter);
+        }
     }
-    bool::from(ok)
+    matched
 }
 
 pub fn secret() -> [u8; 20] {
@@ -121,6 +127,7 @@ mod tests {
         assert!(accept(secret, &code, 59 + 30));
         assert!(!accept(secret, &code, 59 + 90));
         assert!(!accept(secret, "12", 59));
+        assert_eq!(accepted_step(secret, &code, 59 + 30), Some(1));
     }
 
     #[test]

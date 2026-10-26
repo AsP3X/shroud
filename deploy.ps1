@@ -235,6 +235,19 @@ ALTER ROLE CURRENT_USER SET search_path = public;
         $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "pwd=$pass" -v "dbname=$db" | Out-Null
     }
     if ($LASTEXITCODE -ne 0) { throw "could not create the shroud_admin role" }
+    # grants.sql gives the audit log to this role once the console has made its schema, which it
+    # does as it starts. Wait for it, so a first deploy does not leave the log with the console.
+    $ready = $false
+    for ($try = 0; $try -lt 60 -and -not $ready; $try++) {
+        $answer = Invoke-WithDataDirEnv {
+            & docker compose @files exec -T postgres psql -q -t -A -U $user -d $db -c "SELECT to_regclass('admin.audit_log') IS NOT NULL" 2>$null
+        }
+        $ready = ("$answer".Trim() -eq "t")
+        if (-not $ready) { Start-Sleep -Seconds 1 }
+    }
+    if (-not $ready) {
+        Write-Line "The console has not made its tables after 60 s; its audit log stays with the console's role until .\deploy.ps1 -Admin runs again." "Yellow"
+    }
     $grants = Join-Path $repoRoot "admin\api\grants.sql"
     Invoke-WithDataDirEnv {
         Get-Content -Raw -LiteralPath $grants | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -f - | Out-Null

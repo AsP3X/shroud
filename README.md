@@ -51,7 +51,7 @@ The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, 
 
 Windows uses `.\deploy.ps1 -Admin` with the same words. Backup, a lost `ADMIN_SECRET_KEY`, and what the cookie does are in [docs/admin.md](docs/admin.md).
 
-Sign in with a password and an authenticator app. A recovery code stands in for the app. Two roles: **Admin** can change things, **View only** can read the pages. A change asks for a fresh authenticator code, and that code stays valid for five minutes. Every sign-in and change is kept in the audit log.
+Sign in with a password and an authenticator app. A recovery code stands in for the app. Two roles: **Admin** can change things, **View only** can read the pages. A change asks for a fresh authenticator code, and that code stays valid for five minutes. Each code works once, so the code that signed in can't also approve a change. Every sign-in and change is kept in the audit log.
 
 | Page | What it shows |
 | --- | --- |
@@ -67,7 +67,7 @@ Sign in with a password and an authenticator app. A recovery code stands in for 
 | Client versions | The latest and minimum versions for iOS, Android and the web build, and what the API tells each band |
 | Configuration | The environment the console started with. A secret is shown only as set or unset |
 | Rate limits | The fixed windows built into the server |
-| Audit log | Operator sign-ins and actions. Entries cannot be edited or removed here |
+| Audit log | Operator sign-ins and actions. Entries cannot be edited or removed, not even with the console's own database login |
 
 Message text, photos, voice, device names, username hashes and password hashes are not granted to the console. Contact, block, conversation and message counts are not shown on an account. The console also cannot tell which username hashes are still the old SHA-256: those rows move the next time that account signs in.
 

@@ -55,7 +55,7 @@ While the profile is off, the API still binds its internal operator port when `O
 
 ## What the console shows
 
-Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Sign-ins and changes are kept in the audit log.
+Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Each code works once: the code that signed in can't also approve a change, so wait for the next one. Sign-ins and changes are kept in the audit log. The log and schema `admin` belong to the API's database role once `grants.sql` has run (deploy waits for the console to create them): `shroud_admin` can add and read entries, never change, remove or drop one. Its integration tests then need `GRANT_TEST_SUPER_URL` to clear entries.
 
 | Page | What it shows |
 | --- | --- |
@@ -71,7 +71,7 @@ Sign in with a password and an authenticator app. A recovery code stands in for 
 | Client versions | The latest and minimum versions for iOS, Android and the web build, and what the API tells each band |
 | Configuration | The environment the console started with. A secret is shown only as set or unset |
 | Rate limits | The fixed windows built into the server |
-| Audit log | Operator sign-ins and actions. Entries cannot be edited or removed here |
+| Audit log | Operator sign-ins and actions. Entries cannot be edited or removed, not even with the console's own database login |
 
 Message text, photos, voice, device names, username hashes and password hashes are not granted to the console. Contact, block, conversation and message counts are not shown on an account. The console also cannot tell which username hashes are still the old SHA-256: those rows move the next time that account signs in.
 
