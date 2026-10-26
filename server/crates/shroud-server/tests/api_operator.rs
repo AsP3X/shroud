@@ -734,10 +734,7 @@ async fn delete_account(client: &reqwest::Client, servers: &Servers, state: &App
         base64::engine::general_purpose::STANDARD.encode([9u8; 32])
     };
     let registered = client
-        .put(format!(
-            "http://{}/api/v1/push/token",
-            servers.public
-        ))
+        .put(format!("http://{}/api/v1/push/token", servers.public))
         .bearer_auth(&account.token)
         .json(&json!({
             "token": format!("{:064x}", Uuid::new_v4().as_u128()),

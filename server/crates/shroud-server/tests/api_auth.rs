@@ -1078,7 +1078,10 @@ async fn login_at_device_cap_signs_out_the_oldest_device_once_agreed() {
     assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
     let me = json_body(me).await;
     assert_eq!(me["error"]["code"], "DEVICE_REMOVED");
-    assert_eq!(me["error"]["message"], "This device was removed from your account.");
+    assert_eq!(
+        me["error"]["message"],
+        "This device was removed from your account."
+    );
     assert!(me["error"].get("reason").is_none(), "{me}");
 
     let list = authed(&app, "GET", "/api/v1/devices", &new_token, None).await;
@@ -1319,10 +1322,7 @@ async fn a_wrong_password_does_not_delete_and_a_deleted_account_says_why() {
     )
     .await;
     assert_eq!(again.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        json_body(again).await["error"]["reason"],
-        "account_deleted"
-    );
+    assert_eq!(json_body(again).await["error"]["reason"], "account_deleted");
 
     let hash = BASE64.encode(ring::digest::digest(
         &ring::digest::SHA256,

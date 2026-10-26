@@ -231,7 +231,10 @@ impl Removal {
 ///
 /// Agent: DB SELECT deleted, device-revoked FROM sessions ⋈ devices ⋈ users WHERE token_hash
 /// AND (device revoked OR user deleted).
-pub async fn token_hash_removed(pool: &sqlx::PgPool, token_hash: &[u8]) -> Result<Removal, AppError> {
+pub async fn token_hash_removed(
+    pool: &sqlx::PgPool,
+    token_hash: &[u8],
+) -> Result<Removal, AppError> {
     let found: Option<(bool, bool)> = sqlx::query_as(
         r#"
         SELECT u.deleted_at IS NOT NULL, d.revoked_at IS NOT NULL

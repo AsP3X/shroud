@@ -739,7 +739,9 @@ async fn deleting_the_account_closes_its_sockets() {
         .expect("ws connect");
     again
         .send(Message::Text(
-            json!({ "type": "auth", "token": two.laptop_token }).to_string().into(),
+            json!({ "type": "auth", "token": two.laptop_token })
+                .to_string()
+                .into(),
         ))
         .await
         .expect("send auth");
