@@ -430,6 +430,9 @@ export function ImageViewer({
               height: box?.height,
               transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.scale})`,
             }}
+            // No "Open image in new tab": the photo is a blob of a contact's bytes on this origin
+            // (security audit H4). Save covers keeping it.
+            onContextMenu={(event) => event.preventDefault()}
           >
             {thumb && !painted ? <img className="viewer-thumb" src={thumb} alt="" draggable={false} /> : null}
             {image ? (
