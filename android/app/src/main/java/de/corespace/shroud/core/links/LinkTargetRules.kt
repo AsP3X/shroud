@@ -110,19 +110,27 @@ object LinkTargetRules {
     }
 
     /**
-     * `LinkPreviewFetcher.swift:311-327`: `::`, `::1`, link-local `fe80::/10`, unique-local
-     * `fc00::/7`, multicast `ff00::/8` and documentation `2001:db8::/32` are blocked; an IPv4-mapped
-     * address (`::ffff:a.b.c.d`) is only as public as the IPv4 address inside it.
+     * `LinkPreviewFetcher.swift:311-327`, plus security audit L12: IPv4-compatible `::/96` (with
+     * `::` and `::1`), local-use NAT64 `64:ff9b:1::/48`, link-local `fe80::/10`, site-local
+     * `fec0::/10`, unique-local `fc00::/7`, multicast `ff00::/8` and documentation `2001:db8::/32`
+     * are blocked. An IPv4-mapped address (`::ffff:a.b.c.d`), a well-known-prefix NAT64 address
+     * (`64:ff9b::a.b.c.d`, what DNS64 hands out for every IPv4-only name on an IPv6-only network)
+     * and a 6to4 address (`2002:aabb:ccdd::/48`) are only as public as the IPv4 address inside them.
      */
     fun isGloballyRoutableIPv6(bytes: ByteArray): Boolean {
         if (bytes.size != 16) return false
         val u = IntArray(16) { bytes[it].toInt() and 0xFF }
-        if (u.all { it == 0 }) return false
-        if ((0 until 15).all { u[it] == 0 } && u[15] == 1) return false
+        if ((0 until 12).all { u[it] == 0 }) return false
         if ((0 until 10).all { u[it] == 0 } && u[10] == 0xFF && u[11] == 0xFF) {
             return isGloballyRoutableIPv4(bytes.copyOfRange(12, 16).toIPv4())
         }
+        if (u[0] == 0x00 && u[1] == 0x64 && u[2] == 0xFF && u[3] == 0x9B) {
+            if ((4 until 12).all { u[it] == 0 }) return isGloballyRoutableIPv4(bytes.copyOfRange(12, 16).toIPv4())
+            if (u[4] == 0x00 && u[5] == 0x01) return false
+        }
+        if (u[0] == 0x20 && u[1] == 0x02) return isGloballyRoutableIPv4(bytes.copyOfRange(2, 6).toIPv4())
         if (u[0] == 0xFE && (u[1] and 0xC0) == 0x80) return false
+        if (u[0] == 0xFE && (u[1] and 0xC0) == 0xC0) return false
         if ((u[0] and 0xFE) == 0xFC) return false
         if (u[0] == 0xFF) return false
         if (u[0] == 0x20 && u[1] == 0x01 && u[2] == 0x0D && u[3] == 0xB8) return false

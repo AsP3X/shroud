@@ -543,6 +543,12 @@ and set, for the web and the console host and each kind of path. The cookie path
   URLs, size and hash checked before the file is moved into place, a failed check deletes it),
   and hand the folders to `WhisperKitConfig(modelFolder:tokenizerFolder:…, download: false)`.
 
+- **L12, Fixed (Android):** the link-preview address check (`LinkTargetRules.isGloballyRoutableIPv6`)
+  now refuses IPv4-compatible `::/96`, local-use NAT64 `64:ff9b:1::/48` and site-local `fec0::/10`,
+  and holds well-known NAT64 `64:ff9b::/96` and 6to4 `2002::/16` addresses to the IPv4 rules for
+  the address inside them, so DNS64 answers for public hosts still work. New cases in
+  `LinkTargetRulesTest`. Not compiled or run: the Android SDK cannot be downloaded here.
+
 ## Design notes (no change asked for here)
 
 - **Forward secrecy.** Every v3 message also carries a `peer` identity box, and a failed ratchet

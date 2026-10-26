@@ -120,11 +120,42 @@ class LinkTargetRulesTest {
         assertFalse(routable("2001:db8::1"))
         assertTrue(routable("2606:4700:4700::1111"))
         assertTrue(routable("2001:4860:4860::8888"))
-        assertTrue(routable("fec0::1"))
         // IPv4-mapped: only as public as the IPv4 inside (the JVM hands mapped literals back as v4).
         assertFalse(routable("::ffff:127.0.0.1"))
         assertTrue(routable("::ffff:1.1.1.1"))
         assertFalse(LinkTargetRules.isGloballyRoutableIPv6(ByteArray(4)))
+    }
+
+    @Test
+    fun ipv6RangesFromTheAudit() { // security audit L12; none of these come back as IPv4 from the JVM
+        fun routable(literal: String) = LinkTargetRules.isGloballyRoutableIPv6(InetAddress.getByName(literal).address)
+        // Site-local fec0::/10, next to link-local fe80::/10.
+        assertFalse(routable("fec0::1"))
+        assertFalse(routable("feff:ffff::1"))
+        // IPv4-compatible ::/96 is refused whatever the IPv4 inside.
+        assertFalse(routable("::1.1.1.1"))
+        assertFalse(routable("::127.0.0.1"))
+        assertFalse(routable("::ffff:ffff"))
+        // Well-known NAT64 64:ff9b::/96 (what DNS64 answers): as public as the IPv4 inside.
+        assertTrue(routable("64:ff9b::1.1.1.1"))
+        assertTrue(routable("64:ff9b::808:808"))
+        assertFalse(routable("64:ff9b::127.0.0.1"))
+        assertFalse(routable("64:ff9b::10.0.0.1"))
+        assertFalse(routable("64:ff9b::192.168.1.1"))
+        assertFalse(routable("64:ff9b::169.254.169.254"))
+        assertFalse(routable("64:ff9b::0.0.0.0"))
+        // Local-use NAT64 64:ff9b:1::/48 is refused outright: its prefix length and mapping are the
+        // network operator's.
+        assertFalse(routable("64:ff9b:1::1.1.1.1"))
+        assertFalse(routable("64:ff9b:1:ffff:ffff:ffff:ffff:ffff"))
+        assertTrue(routable("64:ff9b:2::1"))
+        // 6to4 2002::/16: as public as the IPv4 in the next 32 bits.
+        assertTrue(routable("2002:101:101::1")) // 1.1.1.1
+        assertFalse(routable("2002:7f00:1::1")) // 127.0.0.1
+        assertFalse(routable("2002:a00:1::1")) // 10.0.0.1
+        assertFalse(routable("2002:c0a8:101::1")) // 192.168.1.1
+        assertFalse(routable("2002::1")) // 0.0.0.0
+        assertTrue(routable("2003::1"))
     }
 
     @Test
@@ -147,12 +178,18 @@ class LinkTargetRulesTest {
                 "rebind.example" to listOf("1.1.1.1", "192.168.1.1"),
                 "empty.example" to listOf(),
                 "mapped.example" to listOf("::ffff:10.0.0.1"),
+                "nat64.example" to listOf("64:ff9b::1.1.1.1", "64:ff9b::10.0.0.1"),
+                "sixtofour.example" to listOf("2002:c0a8:101::1"),
+                "dns64.example" to listOf("64:ff9b::1.1.1.1", "64:ff9b::808:808"),
             ),
         )
         val dns = PublicAddressDns(names)
         assertThrows(UnknownHostException::class.java) { dns.lookup("rebind.example") }
         assertThrows(UnknownHostException::class.java) { dns.lookup("empty.example") }
         assertThrows(UnknownHostException::class.java) { dns.lookup("mapped.example") }
+        assertThrows(UnknownHostException::class.java) { dns.lookup("nat64.example") }
+        assertThrows(UnknownHostException::class.java) { dns.lookup("sixtofour.example") }
+        assertEquals(2, dns.lookup("dns64.example").size)
         assertFalse(LinkTargetRules.resolvesOnlyToPublicAddresses("rebind.example", dns))
     }
 
