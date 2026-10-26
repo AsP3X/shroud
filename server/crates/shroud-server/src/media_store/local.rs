@@ -57,6 +57,27 @@ impl LocalStore {
         S: Stream<Item = Result<Bytes, E>> + Send,
         E: std::fmt::Display,
     {
+        self.put_stream_checked(key, body, max_bytes, expected, || async { Ok(()) })
+            .await
+            .map(|(count, ())| count)
+    }
+
+    /// [`Self::put_stream`] with a last check right before the rename publishes the blob (see
+    /// `MediaStore::put_stream`).
+    pub async fn put_stream_checked<S, E, F, Fut, G>(
+        &self,
+        key: &str,
+        body: S,
+        max_bytes: u64,
+        expected: Option<u64>,
+        before_publish: F,
+    ) -> Result<(u64, G), MediaStoreError>
+    where
+        S: Stream<Item = Result<Bytes, E>> + Send,
+        E: std::fmt::Display,
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<G, MediaStoreError>>,
+    {
         let path = self.path_for(key)?;
         let parent = path.parent().ok_or(MediaStoreError::InvalidKey)?;
         let scratch_dir = self.root.join(SCRATCH_DIR);
@@ -88,6 +109,13 @@ impl LocalStore {
                 expected,
             });
         }
+        let guard = match before_publish().await {
+            Ok(guard) => guard,
+            Err(err) => {
+                let _ = tokio::fs::remove_file(&scratch).await;
+                return Err(err);
+            }
+        };
         if let Err(err) = async {
             let file = tokio::fs::File::open(&scratch).await?;
             file.sync_all().await?;
@@ -100,7 +128,7 @@ impl LocalStore {
             let _ = tokio::fs::remove_file(&scratch).await;
             return Err(io_error(err));
         }
-        Ok(byte_count)
+        Ok((byte_count, guard))
     }
 
     pub async fn get(&self, key: &str) -> Result<MediaBlob, MediaStoreError> {

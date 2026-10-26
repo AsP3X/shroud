@@ -768,3 +768,56 @@ async fn a_second_put_to_an_upload_in_progress_is_refused() {
     drop(chunks);
     assert_eq!(first.await.expect("first put"), StatusCode::NO_CONTENT);
 }
+
+/// An upload checks the row again right before it publishes: one linked to a message while its
+/// bytes were still arriving must not replace the blob the message names (security audit L10).
+#[tokio::test]
+async fn an_upload_linked_before_it_finishes_does_not_publish() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping an_upload_linked_before_it_finishes_does_not_publish: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, me) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+
+    let (chunks, receiver) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(1);
+    let body = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|chunk| (chunk, receiver))
+    });
+    let upload = tokio::spawn({
+        let app = app.clone();
+        let token = token.clone();
+        let media_id = media_id.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/v1/media/{media_id}/content"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/octet-stream")
+                    .body(Body::from_stream(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response")
+            .status()
+        }
+    });
+    chunks
+        .send(Ok(bytes[..32].to_vec()))
+        .await
+        .expect("first half");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Notes to self link it while the upload is still going.
+    send_media(&app, &token, &me, &media_id).await;
+    chunks
+        .send(Ok(bytes[32..].to_vec()))
+        .await
+        .expect("second half");
+    drop(chunks);
+    assert_eq!(upload.await.expect("upload"), StatusCode::CONFLICT);
+}

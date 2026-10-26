@@ -266,7 +266,29 @@ pub async fn put_content(
             )),
         }
     });
-    let len = match state
+    // Human: The check above ran when the upload started, which can be hours before its end.
+    // Right before the blob is published the row is checked again and locked until the publish is
+    // done, so a send that links it, or a delete, waits for the blob instead of racing it: a linked
+    // blob can't be replaced, and a deleted row can't get a blob nobody will collect.
+    let pool = state.pool.clone();
+    let publish_check = || async move {
+        let mut tx = pool.begin().await.map_err(|err| {
+            MediaStoreError::Unavailable(format!("begin media publish check: {err}"))
+        })?;
+        let row: Option<Option<Uuid>> =
+            sqlx::query_scalar("SELECT message_id FROM media_objects WHERE id = $1 FOR UPDATE")
+                .bind(media_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|err| {
+                    MediaStoreError::Unavailable(format!("media publish check: {err}"))
+                })?;
+        match row {
+            Some(None) => Ok(tx),
+            _ => Err(MediaStoreError::Withdrawn),
+        }
+    };
+    let (len, publish_lock) = match state
         .media
         .put_stream(
             &media.bucket,
@@ -274,15 +296,23 @@ pub async fn put_content(
             stream,
             MAX_MEDIA_BYTES as u64,
             media.size_bytes.map(|n| n as u64),
+            publish_check,
         )
         .await
     {
-        Ok(0) => {
+        Ok((0, _)) => {
             return Err(AppError::validation(format!(
                 "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
             )));
         }
-        Ok(len) => len,
+        Ok(published) => published,
+        Err(MediaStoreError::Withdrawn) => {
+            // Linked or deleted while the bytes arrived: answer as the check up front would have.
+            load_media(&state, media_id).await?;
+            return Err(AppError::already_exists(
+                "Media is already linked to a message and cannot be overwritten.",
+            ));
+        }
         Err(err) => {
             return Err(match err {
                 MediaStoreError::TooLarge => AppError::validation(format!(
@@ -295,6 +325,10 @@ pub async fn put_content(
             });
         }
     };
+    publish_lock
+        .commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("end media publish check: {err}")))?;
     state
         .metrics
         .media_puts_total
@@ -630,6 +664,9 @@ fn store_error(
         MediaStoreError::SizeMismatch { actual, expected } => AppError::validation(format!(
             "body size {actual} does not match declared size_bytes {expected}."
         )),
+        MediaStoreError::Withdrawn => AppError::already_exists(
+            "Media is already linked to a message and cannot be overwritten.",
+        ),
         MediaStoreError::InvalidKey => {
             tracing::error!(
                 media_object_id = %media_id,

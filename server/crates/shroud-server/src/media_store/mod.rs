@@ -58,6 +58,10 @@ pub enum MediaStoreError {
     /// The store couldn't be reached or refused the request. The detail is for logs only.
     #[error("{0}")]
     Unavailable(String),
+    /// The caller's check right before publishing said no (the media row was linked or removed
+    /// during the upload). Nothing was published.
+    #[error("media upload withdrawn before publishing")]
+    Withdrawn,
 }
 
 enum Backend {
@@ -165,21 +169,33 @@ impl MediaStore {
 
     /// Streams an upload to the store. `expected`, when set, must match the bytes received.
     /// A body over `max_bytes` is refused and not published.
-    pub async fn put_stream<S, E>(
+    ///
+    /// Human: `before_publish` runs once the body is spooled and checked, right before it is
+    /// published; its value (a row lock, say) is held while the blob is published and handed back
+    /// with the size, and an error stops the publish. An upload can take hours, so whatever the
+    /// caller checked when it started may no longer hold by the end.
+    pub async fn put_stream<S, E, F, Fut, G>(
         &self,
         bucket: &str,
         key: &str,
         body: S,
         max_bytes: u64,
         expected: Option<u64>,
-    ) -> Result<u64, MediaStoreError>
+        before_publish: F,
+    ) -> Result<(u64, G), MediaStoreError>
     where
         S: futures_util::Stream<Item = Result<Bytes, E>> + Send,
         E: std::fmt::Display,
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<G, MediaStoreError>>,
     {
         local::validate_key(key)?;
         match &self.backend {
-            Backend::Local(store) => store.put_stream(key, body, max_bytes, expected).await,
+            Backend::Local(store) => {
+                store
+                    .put_stream_checked(key, body, max_bytes, expected, before_publish)
+                    .await
+            }
             Backend::Nebular(store) => {
                 let spooled = spool_upload(&self.spool_dir(), body, max_bytes, expected).await?;
                 // An empty body is not an object. Refuse it before Nebular publishes it.
@@ -187,11 +203,18 @@ impl MediaStore {
                     let _ = tokio::fs::remove_file(&spooled.path).await;
                     return Err(MediaStoreError::TooLarge);
                 }
+                let guard = match before_publish().await {
+                    Ok(guard) => guard,
+                    Err(err) => {
+                        let _ = tokio::fs::remove_file(&spooled.path).await;
+                        return Err(err);
+                    }
+                };
                 let result = store
                     .put_file(bucket, key, &spooled.path, spooled.len, &spooled.hash)
                     .await;
                 let _ = tokio::fs::remove_file(&spooled.path).await;
-                result.map(|()| spooled.len)
+                result.map(|()| (spooled.len, guard))
             }
         }
     }
