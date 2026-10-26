@@ -474,6 +474,12 @@ and set, for the web and the console host and each kind of path. The cookie path
   skip a pair with a block either way. Tests `a_block_racing_an_accept_leaves_no_contact`,
   `a_block_racing_a_mutual_request_leaves_no_contact` (`api_contacts.rs`) and
   `a_block_stops_presence_and_typing_even_with_contact_rows_left` (`api_ws.rs`).
+- **L7:** `POST /messages/{id}/read` and `POST /messages/read` record and send a read receipt
+  only when `send_read_receipts` would: the peer is a contact, nobody blocked either way, and
+  both allow receipts (`messages.rs` `receipts_allowed`, now shared by all three). Otherwise
+  they answer as before (204, or `marked: 0`) and only move the reader's own unread marker.
+  Notes is unchanged: one's own messages were never marked read. Test
+  `read_receipts_need_a_contact_nobody_blocked` (`api_presence.rs`).
 
 ## Design notes (no change asked for here)
 

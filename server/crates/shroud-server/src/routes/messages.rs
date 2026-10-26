@@ -596,15 +596,9 @@ pub async fn mark_read(
 ) -> Result<StatusCode, AppError> {
     let meta = load_readable_message(&state.pool, message_id, auth.user_id).await?;
     // With receipts off on either side nothing is recorded, so turning them on later doesn't
-    // reveal when this message was read. The unread marker below moves either way.
-    if both_allow(
-        &state.pool,
-        auth.user_id,
-        meta.sender_user_id,
-        Visibility::ReadReceipts,
-    )
-    .await?
-    {
+    // reveal when this message was read; nor for a sender who is no longer a contact or is
+    // blocked either way. The unread marker below moves either way.
+    if receipts_allowed(&state.pool, auth.user_id, meta.sender_user_id).await? {
         let read_at = insert_read(&state.pool, message_id, auth.user_id).await?;
         fanout_message_read(
             &state,
@@ -664,14 +658,7 @@ pub async fn mark_read_bulk(
     }
 
     let now = Utc::now();
-    let marked = if both_allow(
-        &state.pool,
-        auth.user_id,
-        body.peer_user_id,
-        Visibility::ReadReceipts,
-    )
-    .await?
-    {
+    let marked = if receipts_allowed(&state.pool, auth.user_id, body.peer_user_id).await? {
         insert_reads_up_to(
             &state,
             &auth,
@@ -729,6 +716,14 @@ pub async fn mark_read_bulk(
     }))
 }
 
+/// Whether `reader` sends `peer` read receipts: the peer is still a contact nobody blocked,
+/// and both allow receipts. Every path that records a receipt asks this.
+async fn receipts_allowed(pool: &sqlx::PgPool, reader: Uuid, peer: Uuid) -> Result<bool, AppError> {
+    Ok(are_contacts(pool, reader, peer).await?
+        && !is_blocked_either_way(pool, reader, peer).await?
+        && both_allow(pool, reader, peer, Visibility::ReadReceipts).await?)
+}
+
 /// Read receipts for the peer's messages in a chat up to `(created_at, id)`, when the peer is
 /// still a contact nobody blocked and both allow receipts. Returns how many messages got one.
 pub(crate) async fn send_read_receipts(
@@ -739,16 +734,7 @@ pub(crate) async fn send_read_receipts(
     up_to_created_at: DateTime<Utc>,
     up_to_id: Uuid,
 ) -> Result<u64, AppError> {
-    if !are_contacts(&state.pool, auth.user_id, peer_user_id).await?
-        || is_blocked_either_way(&state.pool, auth.user_id, peer_user_id).await?
-        || !both_allow(
-            &state.pool,
-            auth.user_id,
-            peer_user_id,
-            Visibility::ReadReceipts,
-        )
-        .await?
-    {
+    if !receipts_allowed(&state.pool, auth.user_id, peer_user_id).await? {
         return Ok(0);
     }
     // The peer's newest message the receipt covers: their app finds it in the thread.

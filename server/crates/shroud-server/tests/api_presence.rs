@@ -15,6 +15,11 @@ fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
 }
 
 async fn test_app() -> Option<axum::Router> {
+    Some(test_app_and_pool().await?.0)
+}
+
+/// [`test_app`] and its pool, for a test that looks at rows itself.
+async fn test_app_and_pool() -> Option<(axum::Router, sqlx::PgPool)> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -25,11 +30,12 @@ async fn test_app() -> Option<axum::Router> {
         .run(&pool)
         .await
         .ok()?;
-    Some(
+    Some((
         axum::Router::new()
             .merge(routes::router())
-            .with_state(test_state(pool)),
-    )
+            .with_state(test_state(pool.clone())),
+        pool,
+    ))
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
@@ -427,4 +433,135 @@ async fn read_requires_participant() {
         .await
         .expect("response");
     assert_eq!(outsider.status(), StatusCode::NOT_FOUND);
+}
+
+/// `POST uri` as `token`, with `body` as JSON when there is one: (status, body or null).
+async fn post(
+    app: &axum::Router,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    let body = match body {
+        Some(body) => {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+            Body::from(body.to_string())
+        }
+        None => Body::empty(),
+    };
+    let response = app
+        .clone()
+        .oneshot(request.body(body).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("json")
+    };
+    (status, value)
+}
+
+/// Human: A read receipt goes only to a contact nobody blocked (security audit L7), as
+/// `POST /conversations/{peer}/read` already did: `POST /messages/{id}/read` once sent one to
+/// anybody in the chat, and `POST /messages/read` across a block. The reader's own unread
+/// marker still moves.
+#[tokio::test]
+async fn read_receipts_need_a_contact_nobody_blocked() {
+    let Some((app, pool)) = test_app_and_pool().await else {
+        eprintln!("skipping read_receipts_need_a_contact_nobody_blocked: no DATABASE_URL");
+        return;
+    };
+    let receipts = |message_id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM message_reads WHERE message_id = $1")
+                .bind(message_id.parse::<Uuid>().unwrap())
+                .fetch_one(&pool)
+                .await
+                .expect("count receipts")
+        }
+    };
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    let msg1 = send_message(&app, &token_a, &user_b, Uuid::new_v4()).await;
+    let msg2 = send_message(&app, &token_a, &user_b, Uuid::new_v4()).await;
+
+    // B blocks A, which ends the contact: reading A's message sends no receipt.
+    let (status, _) = post(
+        &app,
+        "/api/v1/blocks",
+        &token_b,
+        Some(json!({ "user_id": user_a })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = post(
+        &app,
+        &format!("/api/v1/messages/{msg1}/read"),
+        &token_b,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        receipts(msg1.clone()).await,
+        0,
+        "a receipt to a non-contact"
+    );
+    let marker: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT r.read_at FROM conversation_reads r \
+         JOIN messages m ON m.conversation_id = r.conversation_id \
+         WHERE m.id = $1 AND r.user_id = $2",
+    )
+    .bind(msg1.parse::<Uuid>().unwrap())
+    .bind(user_b.parse::<Uuid>().unwrap())
+    .fetch_optional(&pool)
+    .await
+    .expect("read marker");
+    assert!(marker.is_some(), "the reader's own marker moves");
+
+    // Contact rows left beside the block (what a block racing an accept could leave): still
+    // no receipt, one at a time or in bulk.
+    sqlx::query(
+        "INSERT INTO contacts (user_id, contact_user_id, created_at) \
+         VALUES ($1, $2, now()), ($2, $1, now())",
+    )
+    .bind(user_a.parse::<Uuid>().unwrap())
+    .bind(user_b.parse::<Uuid>().unwrap())
+    .execute(&pool)
+    .await
+    .expect("insert contacts");
+    let (status, _) = post(
+        &app,
+        &format!("/api/v1/messages/{msg1}/read"),
+        &token_b,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(receipts(msg1.clone()).await, 0, "a receipt across a block");
+    let (status, bulk) = post(
+        &app,
+        "/api/v1/messages/read",
+        &token_b,
+        Some(json!({ "peer_user_id": user_a, "up_to_message_id": msg2 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{bulk}");
+    assert_eq!(bulk["marked"], 0);
+    assert_eq!(receipts(msg2).await, 0, "a bulk receipt across a block");
 }
