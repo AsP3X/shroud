@@ -36,9 +36,12 @@ enum IdentitySafetyNumber {
     }
 }
 
-/// A contact's identity public key no longer matches the first-seen (TOFU) key.
 enum PeerIdentityError: Error, Equatable {
+    /// A contact's identity public key no longer matches the first-seen (TOFU) key.
     case changed
+    /// The pinned key cannot be read now (the phone is locked): nothing is trusted, opened or
+    /// sealed with a key the server sends until it can.
+    case unavailable
 }
 
 /// Recorded when a later fetch disagrees with the cached identity key.

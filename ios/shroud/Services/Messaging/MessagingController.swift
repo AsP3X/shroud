@@ -5292,17 +5292,34 @@ final class MessagingController {
     }
 
     /// Cached (TOFU) key for decrypt. Fetches in the background to detect identity rotation.
+    ///
+    /// Throws `PeerIdentityError.unavailable` while the pin cannot be read (the phone is
+    /// locked): an unreadable pin is not "no pin", so the server's key is neither trusted nor
+    /// saved then (security audit M8).
     private func resolvePeerIdentityPublicKey(peerUserID: UUID, token: String) async throws -> Data {
-        if let cached = peerKeys.publicKeyData(for: peerUserID) {
+        switch peerKeys.pin(for: peerUserID) {
+        case let .pinned(cached):
             if !verifiedPeerIDs.contains(peerUserID) {
                 verifiedPeerIDs.insert(peerUserID)
                 Task { await self.verifyPeerIdentity(peerUserID, token: token) }
             }
             return cached
+        case .unavailable:
+            throw PeerIdentityError.unavailable
+        case .notPinned:
+            break
         }
         let fetched = try await fetchPeerIdentityKey(peerUserID: peerUserID, token: token)
-        peerKeys.save(userID: peerUserID, publicKeyBase64: fetched.base64EncodedString())
-        return fetched
+        // The phone may have locked, or another first use pinned a key, during the fetch.
+        switch peerKeys.pin(for: peerUserID) {
+        case let .pinned(pinned):
+            return pinned
+        case .unavailable:
+            throw PeerIdentityError.unavailable
+        case .notPinned:
+            peerKeys.save(userID: peerUserID, publicKeyBase64: fetched.base64EncodedString())
+            return fetched
+        }
     }
 
     /// Sending must not use a superseded key, and must not silently switch to a new one.
@@ -5324,7 +5341,7 @@ final class MessagingController {
 
     /// The safety number on the call screen, or on the contact, was compared.
     func confirmPeerSafety(_ peerUserID: UUID) {
-        guard peerKeys.publicKeyData(for: peerUserID) != nil else { return }
+        guard peerKeys.pin(for: peerUserID).key != nil else { return }
         peerKeys.setVerified(peerUserID, true)
         verifiedPeers.insert(peerUserID)
     }
@@ -5339,7 +5356,7 @@ final class MessagingController {
     func safetyNumber(for peerUserID: UUID) -> String? {
         guard let local = cryptoController?.material?.identityPublicKeyData,
               let peer = Self.safetyNumberKey(
-                  pinned: peerKeys.publicKeyData(for: peerUserID),
+                  pinned: peerKeys.pin(for: peerUserID).key,
                   change: identityChanges[peerUserID]
               )
         else { return nil }
@@ -5354,7 +5371,7 @@ final class MessagingController {
     func refreshPeerIdentity(_ peerUserID: UUID) async {
         guard let token = sessionController?.bearerToken else { return }
         await verifyPeerIdentity(peerUserID, token: token)
-        if peerKeys.publicKeyData(for: peerUserID) == nil {
+        if peerKeys.pin(for: peerUserID) == .notPinned {
             _ = try? await resolvePeerIdentityPublicKey(peerUserID: peerUserID, token: token)
         }
     }
@@ -5374,12 +5391,19 @@ final class MessagingController {
     // MARK: - Calls
 
     /// `peerUserID`'s call secret (docs/calls.md), from the pinned identity key; kept for the
-    /// lock screen too. Throws `PeerIdentityError.changed` while their key change is unverified.
+    /// lock screen too. Throws `PeerIdentityError.changed` while their key change is unverified,
+    /// and `CallSecretError.chatsLocked` while the pin cannot be read.
     func callSecret(for peerUserID: UUID) async throws -> SymmetricKey {
         guard let token = sessionController?.bearerToken,
               let material = cryptoController?.material
         else { throw CallSecretError.chatsLocked }
-        let peerKey = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        let peerKey: Data
+        do {
+            peerKey = try await peerIdentityForSending(peerUserID: peerUserID, token: token)
+        } catch PeerIdentityError.unavailable {
+            // Never from a key the server sends while the pin is out of reach (security audit M8).
+            throw CallSecretError.chatsLocked
+        }
         let secret = try CallCrypto.callSecret(
             ourPrivateKey: material.agreementPrivateKey,
             ourPublicKey: material.identityPublicKeyData,
@@ -5391,9 +5415,11 @@ final class MessagingController {
 
     /// Derives each contact's call secret while the chats are unlocked, so a call from any of
     /// them can be answered on a locked phone. A contact whose key changed gets none until the
-    /// new key is accepted.
+    /// new key is accepted. Nothing is derived while the phone is locked: the pins cannot be read
+    /// then, and a key the server sends must not stand in for them (security audit M8).
     func refreshCallSecrets() async {
-        guard let token = sessionController?.bearerToken,
+        guard UIApplication.shared.isProtectedDataAvailable,
+              let token = sessionController?.bearerToken,
               let material = cryptoController?.material
         else { return }
         for peer in contacts.map(\.userId) {
@@ -5416,12 +5442,20 @@ final class MessagingController {
     private func verifyPeerIdentity(_ peerUserID: UUID, token: String) async {
         do {
             let fetched = try await fetchPeerIdentityKey(peerUserID: peerUserID, token: token)
-            verifiedPeerIDs.insert(peerUserID)
-            if let cached = peerKeys.publicKeyData(for: peerUserID), cached != fetched {
+            switch peerKeys.pin(for: peerUserID) {
+            case .unavailable:
+                // Locked phone: nothing to compare with, which is not "no pin". Decide nothing
+                // and compare again on the next use.
+                verifiedPeerIDs.remove(peerUserID)
+                return
+            case let .pinned(cached) where cached != fetched:
                 identityChanges[peerUserID] = PeerIdentityChange(previousKey: cached, currentKey: fetched)
                 // Calls wait for the safety number, like messages.
                 CallSecretStore.delete(for: peerUserID)
+            case .pinned, .notPinned:
+                break
             }
+            verifiedPeerIDs.insert(peerUserID)
         } catch {
             // Unreachable server: keep the cached key; do not invent a change.
         }
@@ -6249,6 +6283,8 @@ extension MessagingController {
     private static func isTransient(_ error: Error) -> Bool {
         if error is CancellationError || error is URLError { return true }
         if (error as? APIError)?.isUpdateRequired == true { return true }
+        // The sender's pin can't be read on a locked phone: no verdict on the record.
+        if error as? PeerIdentityError == .unavailable { return true }
         switch error as? APIError {
         case .transport: return true
         case let .server(_, _, statusCode, _): return statusCode >= 500 || statusCode == 429

@@ -304,6 +304,18 @@ a key, have a message accepted as the contact's, and derive a call secret it kno
 "locked" error instead of trusting on first use; use `SecItemUpdate` rather than delete-then-add;
 skip `refreshCallSecrets` while `!isProtectedDataAvailable`.
 
+**Fixed (iOS):** `PeerIdentityStore.pin(for:)` answers `.pinned`, `.notPinned` (only on
+`errSecItemNotFound`) or `.unavailable` (every other status), as Android's `PinRead` does; the
+legacy `UserDefaults` copy is still migrated, and now deleted only once the Keychain holds it.
+`resolvePeerIdentityPublicKey` throws `PeerIdentityError.unavailable` on an unreadable pin, before
+and after the first-use fetch, so nothing is trusted or saved then. `verifyPeerIdentity` decides
+nothing on an unreadable pin and checks again on the next use. Writes update the item in place
+(`SecItemUpdate`, `SecItemAdd` only on `errSecItemNotFound`). `refreshCallSecrets` returns while
+`isProtectedDataAvailable` is false, and `callSecret(for:)` reports an unreadable pin as
+`CallSecretError.chatsLocked`; reactions treat it as transient, so catch-up comes back for them.
+`PeerIdentityStoreTests` covers the status mapping, the update and the migration. Not compiled,
+run or tried on a locked device in this review (no Xcode here).
+
 ### M9. The contact username book is stored unsealed
 
 `web/src/contactNames.ts:15-37` (localStorage), `ios/shroud/Services/Contacts/ContactNames.swift:74-83`
