@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ use uuid::Uuid;
 use crate::auth::session::ids_for_token;
 use crate::error::{AppError, ErrorBody};
 use crate::link_relay::{self, RelayPolicy, RelayRejection};
-use crate::rate_limit::budgets;
+use crate::rate_limit::{ClientIp, budgets};
 use crate::state::AppState;
 
 /// Time allowed for the `connect` frame.
@@ -113,9 +113,8 @@ struct ConnectFrame {
 pub async fn link_relay_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
 ) -> Result<impl IntoResponse, AppError> {
-    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("link_relay_ip", &ip, budgets::LINK_RELAY_IP)

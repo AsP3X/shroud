@@ -3,7 +3,6 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -12,14 +11,13 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::auth::{generate_share_code, is_valid_share_code_format, normalize_share_code};
 use crate::error::AppError;
-use crate::rate_limit::budgets;
+use crate::rate_limit::{ClientIp, budgets};
 use crate::state::AppState;
 
-async fn limit_user_lookup(state: &AppState, headers: &HeaderMap) -> Result<(), AppError> {
-    let ip = state.client_ip(headers);
+async fn limit_user_lookup(state: &AppState, ip: &str) -> Result<(), AppError> {
     state
         .rate_limiter
-        .check_budget("user_lookup_ip", &ip, budgets::USER_LOOKUP_IP)
+        .check_budget("user_lookup_ip", ip, budgets::USER_LOOKUP_IP)
         .await
 }
 
@@ -32,11 +30,11 @@ pub struct UserCard {
 /// `GET /users/:user_id` — minimal public profile by UUID.
 pub async fn get_user(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     _auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<UserCard>, AppError> {
-    limit_user_lookup(&state, &headers).await?;
+    limit_user_lookup(&state, &ip).await?;
 
     // A deleted account keeps its row (migration 021) but has no card to show.
     let row = sqlx::query_as::<_, UserCard>(
@@ -109,11 +107,11 @@ pub async fn rotate_share_code(
 /// `GET /users/by-code/:code` — lookup by short share code (QR / deep link).
 pub async fn get_user_by_share_code(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     _auth: AuthContext,
     Path(code): Path<String>,
 ) -> Result<Json<UserCard>, AppError> {
-    limit_user_lookup(&state, &headers).await?;
+    limit_user_lookup(&state, &ip).await?;
 
     let code = normalize_share_code(&code);
     if !is_valid_share_code_format(&code) {

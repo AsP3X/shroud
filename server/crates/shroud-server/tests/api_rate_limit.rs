@@ -1,9 +1,13 @@
 //! Integration tests for enabled in-process rate limiter.
 //!
 //! Human: Uses unique X-Forwarded-For / user keys so parallel suites do not share windows.
-//! Agent: AppState with RateLimiter::new(); trust_forwarded_headers=true via test helper.
+//! Agent: AppState with RateLimiter::new(); trust_forwarded_headers=true via test helper; every
+//! request arrives from a Docker-network proxy (`MockConnectInfo`), so forwarded headers count.
+
+use std::net::SocketAddr;
 
 use axum::body::Body;
+use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
@@ -31,7 +35,8 @@ async fn test_app(rate_limiter: RateLimiter) -> Option<axum::Router> {
     Some(
         axum::Router::new()
             .merge(routes::router())
-            .with_state(test_state(pool, rate_limiter)),
+            .with_state(test_state(pool, rate_limiter))
+            .layer(MockConnectInfo(SocketAddr::from(([172, 18, 0, 5], 40000)))),
     )
 }
 
@@ -102,6 +107,109 @@ async fn auth_login_rate_limited_by_ip_sets_retry_after() {
     assert!(
         saw_limited,
         "expected RATE_LIMITED within 15 login attempts"
+    );
+}
+
+/// One `POST /auth/login` from `ip`; returns the status.
+async fn login_status(app: &axum::Router, ip: &str, body: Value) -> StatusCode {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-forwarded-for", ip)
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("oneshot")
+        .status()
+}
+
+/// A fresh address in 203.0.113.0/24 or 198.51.100.0/24 per call, so the IP budget never trips.
+fn fresh_ip() -> String {
+    let n = Uuid::new_v4().as_u128();
+    format!(
+        "{}.{}",
+        ["203.0.113", "198.51.100"][(n % 2) as usize],
+        n % 250 + 1
+    )
+}
+
+#[tokio::test]
+async fn forged_forwarded_hops_do_not_pick_the_ip_budget() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!(
+            "skipping forged_forwarded_hops_do_not_pick_the_ip_budget: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    // The client writes the left hop; the proxy appends the one it saw, which never changes.
+    let seen = fresh_ip();
+    let mut limited = false;
+    for _ in 0..15 {
+        let forged = format!("{}, {seen}", fresh_ip());
+        let body = json!({
+            "username_hash": shroud_server::auth::username_hash_b64(Uuid::new_v4().to_string()),
+            "password": "wrong-password-here"
+        });
+        if login_status(&app, &forged, body).await == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+            break;
+        }
+    }
+    assert!(limited, "a forged left hop must not open a fresh IP budget");
+}
+
+#[tokio::test]
+async fn login_budget_counts_one_account_however_its_digest_is_written() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!(
+            "skipping login_budget_counts_one_account_however_its_digest_is_written: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let digest = shroud_server::auth::username_hash_b64(Uuid::new_v4().to_string());
+    let mut limited = false;
+    for padding in 0..8 {
+        let body = json!({
+            "username_hash": format!("{}{digest}", " ".repeat(padding)),
+            "password": "wrong-password-here"
+        });
+        if login_status(&app, &fresh_ip(), body).await == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+            break;
+        }
+    }
+    assert!(
+        limited,
+        "leading spaces must not open a fresh account budget"
+    );
+}
+
+#[tokio::test]
+async fn login_budget_counts_the_legacy_digest() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!("skipping login_budget_counts_the_legacy_digest: DATABASE_URL unavailable");
+        return;
+    };
+    let legacy = shroud_server::auth::username_hash_b64(Uuid::new_v4().to_string());
+    let mut limited = false;
+    for _ in 0..8 {
+        let body = json!({
+            "username_hash": shroud_server::auth::username_hash_b64(Uuid::new_v4().to_string()),
+            "legacy_username_hash": legacy,
+            "password": "wrong-password-here"
+        });
+        if login_status(&app, &fresh_ip(), body).await == StatusCode::TOO_MANY_REQUESTS {
+            limited = true;
+            break;
+        }
+    }
+    assert!(
+        limited,
+        "a made-up new digest must not lift the legacy account's budget"
     );
 }
 

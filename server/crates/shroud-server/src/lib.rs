@@ -300,7 +300,9 @@ pub async fn run() -> Result<(), AppError> {
     // never leaves anyone busy; both sides hear `call.ended`.
     crate::routes::calls::spawn_call_gc(state.clone());
 
-    let public_app = app(state.clone(), &config.cors_allowed_origins);
+    // The peer address keys IP budgets, and decides whether forwarded headers count.
+    let public_app = app(state.clone(), &config.cors_allowed_origins)
+        .into_make_service_with_connect_info::<SocketAddr>();
     let (shutdown_tx, shutdown_rx) = listen_shutdown();
 
     let addr = config.socket_addr()?;

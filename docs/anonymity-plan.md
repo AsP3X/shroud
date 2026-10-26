@@ -261,11 +261,16 @@ files still show that switch until a design pass.
   - Change: keep the pepper server-only (an HMAC the server computes on unlock) so the online
     attempt limit always applies.
   - Done when: a DB dump plus a browser profile can't verify a PIN guess offline.
-- [ ] **3.4 Trust `X-Forwarded-For` only from known proxies.** `rate_limit.rs` (`client_ip`)
+- [x] **3.4 Trust `X-Forwarded-For` only from known proxies.** `rate_limit.rs` (`client_ip`)
   uses the first entry, which the client controls, so IP limits can be dodged. With
   `TRUST_FORWARDED_HEADERS=false` every client shares the key `"unknown"`.
   - Change: take the right-most untrusted entry, given a list of trusted proxy addresses.
   - Done when: a forged `X-Forwarded-For` header doesn't change which budget a request uses.
+  - Done 2026-10-26 ([security audit](./security-audit-2026-10.md) H1): the API serves with
+    connect info and keys on the peer address. Forwarded headers count only with the flag on
+    and a peer on a loopback or private address, which stands in for the proxy list; from it,
+    `X-Real-IP`, else the right-most `X-Forwarded-For` hop. The web nginx sends
+    `X-Forwarded-For $remote_addr`. Unit tests `client_ip_*` in `rate_limit.rs`.
 - [x] **3.5 Let the in-memory rate limiter forget.** Without Redis, `memory_check` resets counts
   but never removes keys, so every IP and id seen stays in RAM until restart.
   - Done when: a key is gone from memory one window after its last use.

@@ -3,7 +3,7 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ use crate::keys::{
     OTPK_BATCH_MAX, OTPK_POOL_MAX, decode_public_key, decode_signature, encode_b64,
     validate_key_id, validate_registration_id,
 };
-use crate::rate_limit::budgets;
+use crate::rate_limit::{ClientIp, budgets};
 use crate::routes::contacts::are_contacts;
 use crate::state::AppState;
 
@@ -293,11 +293,11 @@ pub async fn keys_status(
 /// Agent: READS preferred device identity; never DELETE from device_one_time_prekeys.
 pub async fn get_identity(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<IdentityResponse>, AppError> {
-    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    apply_keys_fetch_limits(&state, &ip, auth.user_id).await?;
     authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
     let row = sqlx::query_as::<_, IdentityDeviceRow>(
@@ -345,13 +345,12 @@ struct IdentityDeviceRow {
 
 async fn apply_keys_fetch_limits(
     state: &AppState,
-    headers: &HeaderMap,
+    ip: &str,
     requester_user_id: Uuid,
 ) -> Result<(), AppError> {
-    let ip = state.client_ip(headers);
     state
         .rate_limiter
-        .check_budget("keys_ip", &ip, budgets::KEYS_IP)
+        .check_budget("keys_ip", ip, budgets::KEYS_IP)
         .await?;
     state
         .rate_limiter
@@ -431,11 +430,11 @@ async fn load_device_bundle(
 /// `GET /keys/bundle/:user_id` — best (most recently seen) device + optional OTPK.
 pub async fn get_bundle(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<BundleResponse>, AppError> {
-    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    apply_keys_fetch_limits(&state, &ip, auth.user_id).await?;
     authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
     // Human: Unknown user and “no keys” share KEYS_REQUIRED to avoid account enumeration.
@@ -495,11 +494,11 @@ pub async fn get_bundle(
 /// Agent: SELECT all publishable devices; consume ≤1 OTPK per device in one transaction.
 pub async fn get_bundles(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<BundlesListResponse>, AppError> {
-    apply_keys_fetch_limits(&state, &headers, auth.user_id).await?;
+    apply_keys_fetch_limits(&state, &ip, auth.user_id).await?;
     authorize_key_fetch(&state, auth.user_id, user_id).await?;
 
     let mut tx = state

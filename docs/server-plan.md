@@ -580,7 +580,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Session status (`POST /auth/session-status`) | 60/min per IP |
 | PIN-guard unlock | 20/min per IP |
 
-`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). An IP budget is keyed on the connection's peer address. With `TRUST_FORWARDED_HEADERS=true` and a peer on a loopback or private address (the proxy), it is keyed on `X-Real-IP` instead, else on the right-most `X-Forwarded-For` hop; a public peer's headers never count. The web nginx overwrites both headers with the client it resolved. Key pattern: `rl:{scope}:{id}`.
 
 ### Link-preview relay
 
@@ -1844,7 +1844,7 @@ clients go by the `UPDATE_REQUIRED` code.
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
-| `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
+| `TRUST_FORWARDED_HEADERS` | Honor `X-Real-IP` / right-most `X-Forwarded-For` for rate-limit keys, from a peer on a loopback or private address only (default false: the peer address) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` | Newest released app version (`1.2.3`); older apps offer an update (`GET /client-version`) |
 | `IOS_MIN_VERSION` / `ANDROID_MIN_VERSION` | Oldest app version still served; older apps block until updated, and the API answers them (and any request without `X-Shroud-Client`) with `426 UPDATE_REQUIRED`. Must not be newer than the latest |

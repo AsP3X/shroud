@@ -1,10 +1,6 @@
 //! Registration, login, logout, me, password change, and account deletion.
 
-use axum::{
-    Json,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-};
+use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,7 +13,7 @@ use crate::auth::{
     issue_session_token, parse_username_hash, verify_password,
 };
 use crate::error::{AppError, LimitDevice};
-use crate::rate_limit::budgets;
+use crate::rate_limit::{ClientIp, budgets};
 use crate::state::AppState;
 use crate::username_kdf::UsernameKdfParams;
 
@@ -99,10 +95,9 @@ pub async fn username_kdf(State(state): State<AppState>) -> Json<UsernameKdfPara
 /// `POST /auth/register` — create user, first device, session.
 pub async fn register(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<AuthSessionResponse>), AppError> {
-    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("auth_ip", &ip, budgets::AUTH_IP)
@@ -115,10 +110,7 @@ pub async fn register(
     tokio::task::spawn_blocking(move || kdf.reject_reserved(&username_hash))
         .await
         .map_err(|err| AppError::Internal(format!("reserved username check failed: {err}")))??;
-    state
-        .rate_limiter
-        .check_budget("auth_user", &body.username_hash, budgets::AUTH_USERNAME)
-        .await?;
+    limit_account_attempts(&state, &username_hash).await?;
 
     let password_hash = hash_password(&body.password)?;
 
@@ -217,10 +209,9 @@ pub async fn register(
 /// `POST /auth/login` — verify password, reuse or create device, issue session.
 pub async fn login(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<AuthSessionResponse>, AppError> {
-    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("auth_ip", &ip, budgets::AUTH_IP)
@@ -228,40 +219,45 @@ pub async fn login(
 
     let username_hash =
         parse_username_hash(&body.username_hash).map_err(|_| AppError::invalid_credentials())?;
-    // A missing or unreadable legacy digest is not a second guess. The budget key is the
-    // digest the client claims now, never the old SHA-256.
+    // A missing or unreadable legacy digest is not a second guess.
     let legacy_hash = body
         .legacy_username_hash
         .as_deref()
         .and_then(|raw| parse_username_hash(raw).ok())
         .filter(|hash| hash != &username_hash);
-    // Count failed and successful attempts so password guessing burns the budget.
-    state
-        .rate_limiter
-        .check_budget("auth_user", &body.username_hash, budgets::AUTH_USERNAME)
-        .await?;
+    // Count failed and successful attempts so password guessing burns the budget. The legacy
+    // digest has a budget of its own: beside a made-up `username_hash` it would guess unmetered.
+    limit_account_attempts(&state, &username_hash).await?;
+    if let Some(legacy) = &legacy_hash {
+        limit_account_attempts(&state, legacy).await?;
+    }
 
-    let primary = user_by_username_hash(&state.pool, username_hash.as_slice()).await?;
-    let (user, migrate_from) = match primary {
-        Some(row) => (row, None),
-        None => match legacy_hash {
-            Some(legacy) => match user_by_username_hash(&state.pool, legacy.as_slice()).await? {
-                Some(row) => (row, Some(legacy)),
-                None => {
-                    delay_unknown_user(&body.password);
-                    return Err(AppError::invalid_credentials());
-                }
-            },
-            None => {
-                delay_unknown_user(&body.password);
-                return Err(AppError::invalid_credentials());
-            }
-        },
-    };
-
-    if !verify_password(&body.password, &user.password_hash)? {
+    // Human: The new digest's account first, then the legacy one when the password does not
+    // open it. Someone may have registered the new digest of a name whose owner has not signed
+    // in since the move; that must not lock the owner out (security audit H3).
+    let mut candidates = Vec::with_capacity(2);
+    if let Some(row) = user_by_username_hash(&state.pool, username_hash.as_slice()).await? {
+        candidates.push((row, None));
+    }
+    if let Some(legacy) = legacy_hash
+        && let Some(row) = user_by_username_hash(&state.pool, legacy.as_slice()).await?
+    {
+        candidates.push((row, Some(legacy)));
+    }
+    if candidates.is_empty() {
+        delay_unknown_user(&body.password);
         return Err(AppError::invalid_credentials());
     }
+    let mut signed_in = None;
+    for (row, migrate_from) in candidates {
+        if verify_password(&body.password, &row.password_hash)? {
+            signed_in = Some((row, migrate_from));
+            break;
+        }
+    }
+    let Some((user, migrate_from)) = signed_in else {
+        return Err(AppError::invalid_credentials());
+    };
 
     let mut tx = state
         .pool
@@ -270,12 +266,16 @@ pub async fn login(
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
     // Move a SHA-256 row onto the slow digest only after the password checks out, and inside
-    // this transaction, so a device-limit refusal rolls the move back.
+    // this transaction, so a device-limit refusal rolls the move back. When another account
+    // already holds the slow digest, the row keeps the legacy one and signs in through it; the
+    // check is in the statement, since a unique violation would abort the transaction.
     let mut migrated = false;
     if let Some(legacy) = migrate_from {
         let updated = sqlx::query(
             r#"
-            UPDATE users SET username_hash = $1 WHERE id = $2 AND username_hash = $3
+            UPDATE users SET username_hash = $1
+            WHERE id = $2 AND username_hash = $3
+              AND NOT EXISTS (SELECT 1 FROM users WHERE username_hash = $1)
             "#,
         )
         .bind(username_hash.as_slice())
@@ -391,6 +391,24 @@ async fn user_by_username_hash(
     .fetch_optional(pool)
     .await
     .map_err(|err| AppError::Internal(format!("login user lookup failed: {err}")))
+}
+
+/// Counts a sign-in or sign-up attempt against one account.
+///
+/// Keyed on the decoded digest: the strings a client may send for one account differ by
+/// surrounding whitespace, and a raw key would reset the budget and let the client size the key.
+async fn limit_account_attempts(
+    state: &AppState,
+    username_hash: &[u8; 32],
+) -> Result<(), AppError> {
+    state
+        .rate_limiter
+        .check_budget(
+            "auth_user",
+            &BASE64.encode(username_hash),
+            budgets::AUTH_USERNAME,
+        )
+        .await
 }
 
 /// Same password work as a real miss, so a wrong name is not obviously faster.
@@ -575,10 +593,9 @@ pub struct SessionStatusResponse {
 /// Agent: UNAUTHENTICATED; RATE LIMITED per IP (`SESSION_STATUS_IP`); CALLS token_hash_removed.
 pub async fn session_status(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     Json(body): Json<SessionStatusRequest>,
 ) -> Result<Json<SessionStatusResponse>, AppError> {
-    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("session_status_ip", &ip, budgets::SESSION_STATUS_IP)

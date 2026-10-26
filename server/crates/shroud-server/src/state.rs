@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use axum::http::HeaderMap;
 use sqlx::PgPool;
 
 use crate::client_version::ClientVersions;
@@ -11,7 +10,7 @@ use crate::link_relay::RelayPolicy;
 use crate::media_store::MediaStore;
 use crate::metrics::Metrics;
 use crate::push::PushService;
-use crate::rate_limit::{self, RateLimiter};
+use crate::rate_limit::RateLimiter;
 use crate::realtime::RealtimeHub;
 use crate::routes::link_relay::LinkRelay;
 use crate::turn::TurnConfig;
@@ -36,7 +35,8 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// When true, readiness requires a live Redis connection (`REDIS_URL` was set).
     pub redis_required: bool,
-    /// Honor `X-Forwarded-For` / `X-Real-IP` only when behind a trusted proxy.
+    /// Honor `X-Real-IP` / `X-Forwarded-For` from a proxy on a private address
+    /// ([`crate::rate_limit::ClientIp`]).
     pub trust_forwarded_headers: bool,
     /// Process metrics for `/operator/metrics`.
     pub metrics: Arc<Metrics>,
@@ -51,11 +51,6 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Client IP for rate-limit keys (respects [`Self::trust_forwarded_headers`]).
-    pub fn client_ip(&self, headers: &HeaderMap) -> String {
-        rate_limit::client_ip(headers, self.trust_forwarded_headers)
-    }
-
     /// Builds state for integration tests (rate limits off, trust forwarded headers for XFF tests).
     ///
     /// Human: Keeps test setup identical across suites so new fields are not forgotten.

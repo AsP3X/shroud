@@ -410,6 +410,105 @@ async fn login_migrates_a_sha256_username_and_a_device_limit_rolls_it_back() {
 }
 
 #[tokio::test]
+async fn registering_the_new_digest_of_an_unmigrated_name_does_not_lock_its_owner_out() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!(
+            "skipping registering_the_new_digest_of_an_unmigrated_name_does_not_lock_its_owner_out: DATABASE_URL unavailable"
+        );
+        return;
+    };
+
+    let (username, password) = unique_user();
+    let squatter_password = "another-horse-battery";
+    let legacy = shroud_server::auth::username_hash_b64(&username);
+    let slow = tokio::task::spawn_blocking({
+        let username = username.clone();
+        move || {
+            shroud_server::auth::UsernameKdf::for_tests()
+                .hash_b64(&username)
+                .expect("hash")
+        }
+    })
+    .await
+    .expect("join");
+
+    let post = |uri: &str, body: serde_json::Value| {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    };
+    let user_id_of =
+        |body: &Value| Uuid::parse_str(body["user"]["id"].as_str().expect("id")).unwrap();
+
+    // The owner's row still holds the SHA-256 digest; someone else registers the slow one.
+    let owner = app
+        .clone()
+        .oneshot(post(
+            "/api/v1/auth/register",
+            json!({ "username_hash": legacy, "password": password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(owner.status(), StatusCode::CREATED);
+    let owner_id = user_id_of(&json_body(owner).await);
+    let squatter = app
+        .clone()
+        .oneshot(post(
+            "/api/v1/auth/register",
+            json!({ "username_hash": slow, "password": squatter_password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(squatter.status(), StatusCode::CREATED);
+    let squatter_id = user_id_of(&json_body(squatter).await);
+
+    let owner_login = app
+        .clone()
+        .oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "username_hash": slow, "legacy_username_hash": legacy, "password": password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(owner_login.status(), StatusCode::OK);
+    assert_eq!(user_id_of(&json_body(owner_login).await), owner_id);
+    let stored: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT username_hash FROM users WHERE id = $1")
+            .bind(owner_id)
+            .fetch_one(&state.pool)
+            .await
+            .expect("row");
+    assert_eq!(
+        stored,
+        Some(BASE64.decode(&legacy).unwrap()),
+        "the owner keeps the legacy digest while the slow one is taken"
+    );
+
+    let squatter_login = app
+        .clone()
+        .oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "username_hash": slow, "password": squatter_password }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(squatter_login.status(), StatusCode::OK);
+    assert_eq!(user_id_of(&json_body(squatter_login).await), squatter_id);
+
+    let wrong = app
+        .oneshot(post(
+            "/api/v1/auth/login",
+            json!({ "username_hash": slow, "legacy_username_hash": legacy, "password": "wrong-horse-battery" }),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn purge_revoked_sessions_deletes_old_rows() {
     let Some(app) = test_app().await else {
         eprintln!("skipping purge_revoked_sessions_deletes_old_rows: DATABASE_URL unavailable");

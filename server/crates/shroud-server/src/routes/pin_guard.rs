@@ -13,11 +13,7 @@
 //! read the token, and it has to delete the guard so a copied profile cannot still unlock.
 //! `DELETE /pin-guard` (session) drops it. Never log auth keys, verifiers or peppers.
 
-use axum::{
-    Json,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-};
+use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -26,7 +22,7 @@ use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
-use crate::rate_limit::budgets;
+use crate::rate_limit::{ClientIp, budgets};
 use crate::state::AppState;
 
 /// Wrong auth keys a guard survives. The next one deletes it.
@@ -135,10 +131,9 @@ pub async fn create_guard(
 /// deletes the guard, and it and every later call get 410 `PIN_GUARD_GONE`.
 pub async fn unlock(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     Json(body): Json<UnlockRequest>,
 ) -> Result<Json<UnlockResponse>, AppError> {
-    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("pin_guard_ip", &ip, budgets::PIN_GUARD_IP)
@@ -226,10 +221,9 @@ pub struct AbandonRequest {
 /// Agent: RATE LIMITS per IP; DELETES device_pin_guards by id; 204 when it is already gone.
 pub async fn abandon(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    ClientIp(ip): ClientIp,
     Json(body): Json<AbandonRequest>,
 ) -> Result<StatusCode, AppError> {
-    let ip = state.client_ip(&headers);
     state
         .rate_limiter
         .check_budget("pin_guard_abandon_ip", &ip, budgets::PIN_GUARD_IP)
