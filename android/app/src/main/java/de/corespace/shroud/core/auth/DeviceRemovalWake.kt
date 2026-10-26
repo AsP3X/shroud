@@ -144,6 +144,7 @@ class RemovalWake(
         }
         runCatching { hooks.clearCalls() }
         runCatching { hooks.forgetNotifications() }
+        runCatching { hooks.forgetContactNames() }
         runCatching { hooks.lockCrypto(wipeStore = true) }
         // The next UI start finishes through the marker, not with a second (overlay) wipe.
         session.consumePendingFullLocalWipe()

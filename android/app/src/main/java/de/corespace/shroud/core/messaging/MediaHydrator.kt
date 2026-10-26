@@ -302,6 +302,7 @@ class MediaHydrator(
         if (message.isMine) {
             val response = deps.api.messages(token, apiPeer, OWN_RECOVERY_PAGE)
             val dto = response.messages.firstOrNull { it.id == message.id } ?: return null
+            if (dto.senderUserId != message.senderUserId) return null
             val envelope = dto.ciphertext?.let(MessageCrypto::fromWire) ?: return null
             // Our own message: the self box, no ratchet (MC:4032-4040).
             val payload = deps.open(envelope, apiPeer, null, OpenAs.Sender) ?: return null

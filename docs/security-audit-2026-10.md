@@ -315,8 +315,11 @@ becomes the existing `[Unable to decrypt]` text bubble with no media: it is not 
 copy or cached plaintext is used, and its sender's key is never fetched. The media recovery returns
 nothing for a listed message whose sender is not the chat's peer and the bubble's sender. A live
 `message.new` was already safe: a peer's message is filed under its own sender, never under another
-chat. Tests: `MessageDecoderTest` (`aMessageFromOutsideTheChatIsNeverOpened` and three more),
-`MediaHydratorTest.aRecoveredMessageFromAnotherSenderIsNeverOpened`. **Not compiled or run** (no
+chat. A review follow-up also limits a push preview's held-copy lookup to the named chat's thread
+and makes our own media recovery check the listed sender. Tests: `MessageDecoderTest`
+(`aMessageFromOutsideTheChatIsNeverOpened` and three more),
+`MediaHydratorTest.aRecoveredMessageFromAnotherSenderIsNeverOpened`,
+`MessagingControllerTest.notificationTextLooksOnlyInTheNamedChat`. **Not compiled or run** (no
 Android SDK reachable). **Open:** the `self` box still does not name the recipient.
 
 **Fixed (iOS):** iOS had the same gap in history pages: `fetchHistoryPage` filed every listed
@@ -394,7 +397,10 @@ once the record holding them is written. A record that cannot be read now (phone
 first unlock, a Keystore error) is never written over: names learnt meanwhile stay in memory and
 are merged once it reads. Log Out and removal delete the file and the key (the wipe's sweep of
 sealed records and aliases), and `ContactsController.stop(wipe = true)` also drops the copy in
-memory. Tests: `ContactNameBookTest`, `ContactsControllerTest.onlyAWipeForgetsTheNameBook`.
+memory. A review follow-up runs that forget on every wipe path (`WipeHooks.forgetContactNames`, also
+when the wipe finishes at launch), drops changes while the wipe has sealed storage, keeps an older
+build's names from overwriting the record, and coalesces writes off the caller's thread. Tests:
+`ContactNameBookTest`, `ContactsControllerTest.onlyAWipeForgetsTheNameBook`.
 **Not compiled or run:** no Android SDK or Google Maven could be reached from the machine this was
 written on.
 

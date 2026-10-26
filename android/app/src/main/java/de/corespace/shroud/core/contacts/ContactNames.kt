@@ -32,20 +32,24 @@ const val CONTACT_PLACEHOLDER = "Contact"
  * `{"<owner id>": {"names": {"<peer id>": "<username>"}, "published": {"<peer id>": "<fingerprint>"}}}`
  * sealed by the Keystore key `shroud.contact-names.v1` **without** `unlockedDeviceRequired` (AFU), as
  * `NotificationNameCache` is: the roster also refreshes while the phone is locked. The Log Out /
- * removal wipe deletes the file and the key with every other sealed record and alias; [forget] also
- * drops the copy in memory (`ContactsController.stop(wipe = true)`), so no later write puts the
- * account's names back.
+ * removal wipe deletes the file and the key with every other sealed record and alias, and calls
+ * [forget] on every path (`WipeHooks.forgetContactNames`, and `ContactsController.stop(wipe = true)`),
+ * which also drops the copy in memory, so no later write puts the account's names back. While the
+ * wipe has sealed storage, changes are dropped before they reach memory, as
+ * `NotificationNameCache.rememberAll` drops them: a refresh still in flight cannot refill the book.
  *
  * Older builds kept the two maps as JSON strings in [legacy] (`contact.names.<owner>`,
- * `contact.names.published.<owner>`). The first read of the record takes them over, and the keys
- * are deleted once a record holding them is written.
+ * `contact.names.published.<owner>`). The first read of the record takes them over where the record
+ * has nothing, and the keys are deleted once a record holding them is written.
  *
  * Reads come from memory after the first load ([preload] at process start, else on the calling
- * thread — a file read and one Keystore open). Changes land in memory at once; the record is
- * written on [writer] (one thread), and never while [seal] is set (a wipe is running). A record
- * that cannot be read right now (phone locked before its first unlock, a transient Keystore error)
- * is never written over: what this process learns meanwhile stays in memory only, and is merged
- * into the record once it reads. Never logs names or ids. Thread-safe.
+ * thread — a file read and one Keystore open). Changes land in memory at once. One write at a time
+ * is queued on [writer] (one thread): it takes a snapshot under the lock and seals and writes it
+ * outside, so a caller never waits for a write. A record that cannot be read right now (phone locked
+ * before its first unlock, a transient Keystore error) is never written over, and is tried again at
+ * most every [RETRY_MS]: meanwhile the older build's names show, with this process's changes on
+ * top, and only those changes are replayed onto the record once it reads. Never logs names or ids.
+ * Thread-safe.
  */
 class ContactNameBook(
     private val file: SealedFile,
@@ -53,6 +57,8 @@ class ContactNameBook(
     private val seal: StorageSeal,
     private val legacy: SharedPreferences? = null,
     private val writer: Executor = Executors.newSingleThreadExecutor { Thread(it, "shroud-contact-names").apply { isDaemon = true } },
+    /** Monotonic milliseconds, for spacing the reads of a record that could not be read. */
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private class Entry(
         val names: MutableMap<UUID, String> = LinkedHashMap(),
@@ -61,14 +67,29 @@ class ContactNameBook(
 
     private val lock = Any()
 
-    /** By owner: the record once it was read, plus every change of this process. Guarded by [lock]. */
+    /**
+     * By owner. Once [loaded]: the record and every change since. Before: what shows meanwhile, the
+     * older build's names with [pending] on top. Guarded by [lock], like every field below.
+     */
     private var entries = LinkedHashMap<UUID, Entry>()
+
+    /** This process's changes made before the record could be read, replayed onto it once it reads. */
+    private val pending = ArrayList<(MutableMap<UUID, Entry>) -> Boolean>()
 
     /** The record was read (or there is none), so [entries] may be written over it. */
     private var loaded = false
 
+    /** When a read last found the record unreadable ([nowMs]); null when none did since the last success. */
+    private var unreadableAt: Long? = null
+
     /** [entries] holds something the record does not. */
     private var dirty = false
+
+    /** A write is queued on [writer] and has not taken its snapshot yet. */
+    private var writeQueued = false
+
+    /** Bumped by [forget]: a write whose snapshot is older removes what it wrote. */
+    private var generation = 0L
 
     /** [legacy] keys to delete once a record holding their names is written. */
     private var legacyKeys = emptySet<String>()
@@ -80,10 +101,7 @@ class ContactNameBook(
 
     fun remember(owner: UUID, peer: UUID, name: String) {
         if (!NAME.matches(name)) return
-        synchronized(lock) {
-            load()
-            if (entries.getOrPut(owner) { Entry() }.names.put(peer, name) != name) changed()
-        }
+        change { it.getOrPut(owner) { Entry() }.names.put(peer, name) != name }
     }
 
     /** Every name this phone has, by lowercase peer id (for the shared [ContactNameBookSeal]). */
@@ -94,12 +112,11 @@ class ContactNameBook(
 
     fun retain(owner: UUID, peers: Collection<UUID>) {
         val keep = peers.toSet()
-        synchronized(lock) {
-            load()
-            val entry = entries[owner] ?: return
+        change(replayAlways = true) { map ->
+            val entry = map[owner] ?: return@change false
             val namesDropped = entry.names.keys.retainAll(keep)
             val publishedDropped = entry.published.keys.retainAll(keep)
-            if (namesDropped || publishedDropped) changed()
+            namesDropped || publishedDropped
         }
     }
 
@@ -110,10 +127,7 @@ class ContactNameBook(
 
     fun rememberPublished(owner: UUID, peer: UUID, fingerprint: String) {
         if (fingerprint.isEmpty()) return
-        synchronized(lock) {
-            load()
-            if (entries.getOrPut(owner) { Entry() }.published.put(peer, fingerprint) != fingerprint) changed()
-        }
+        change { it.getOrPut(owner) { Entry() }.published.put(peer, fingerprint) != fingerprint }
     }
 
     /** Reads the record now (and takes over an older build's names), off the calling thread. */
@@ -123,13 +137,16 @@ class ContactNameBook(
 
     /**
      * Forgets every name: memory, the record, its Keystore key and an older build's keys (Log Out /
-     * removal). Runs at once, on the calling thread, after a write in flight finished.
+     * removal). Runs at once, on the calling thread. A write in flight removes what it wrote.
      */
     fun forget() {
         synchronized(lock) {
             entries = LinkedHashMap()
+            pending.clear()
             loaded = false
+            unreadableAt = null
             dirty = false
+            generation++
             legacyKeys = emptySet()
             runCatching { file.delete() }
             runCatching { deleteKey() }
@@ -145,12 +162,34 @@ class ContactNameBook(
     }
 
     /**
+     * Applies [edit] (true when it changed something) to memory and queues the write. Dropped while
+     * [seal] is set (a wipe is running). Before the record could be read, an [edit] that changed what
+     * shows is kept to be replayed onto it; a retain always is, since the record may hold peers that
+     * do not show.
+     */
+    private fun change(replayAlways: Boolean = false, edit: (MutableMap<UUID, Entry>) -> Boolean) {
+        if (seal.isSealed) return
+        synchronized(lock) {
+            if (seal.isSealed) return
+            load()
+            val edited = edit(entries)
+            if (!loaded) {
+                if (edited || replayAlways) pending += edit
+            } else if (edited) {
+                queueWrite()
+            }
+        }
+    }
+
+    /**
      * Under [lock]. Reads the record once: what it holds, then an older build's names where it has
-     * none, then this process's changes on top. Until the record can be read, every call tries
-     * again, and the older build's names fill in for display.
+     * none, then this process's [pending] changes. A record that cannot be read is tried again after
+     * [RETRY_MS] at the earliest.
      */
     private fun load() {
         if (loaded) return
+        val lastTry = unreadableAt
+        if (lastTry != null && nowMs() - lastTry < RETRY_MS) return
         val stored: LinkedHashMap<UUID, Entry> = when (val record = file.readClassified()) {
             is RecordRead.Found -> try {
                 decode(record.bytes)
@@ -159,24 +198,28 @@ class ContactNameBook(
             }
             RecordRead.NotFound -> LinkedHashMap()
             RecordRead.DeviceLocked, RecordRead.Failed -> {
-                for ((owner, old) in readLegacy()) fill(entries.getOrPut(owner) { Entry() }, old)
+                // Shown meanwhile, never written: the older build's names, this process's changes on top.
+                val shown = LinkedHashMap(readLegacy())
+                for (edit in pending) edit(shown)
+                entries = shown
+                unreadableAt = nowMs()
                 return
             }
         }
+        unreadableAt = null
         val keys = legacyKeyNames()
         var added = false
         for ((owner, old) in readLegacy()) {
             if (fill(stored.getOrPut(owner) { Entry() }, old)) added = true
         }
-        for ((owner, mine) in entries) {
-            val entry = stored.getOrPut(owner) { Entry() }
-            for ((peer, name) in mine.names) if (entry.names.put(peer, name) != name) added = true
-            for ((peer, fingerprint) in mine.published) if (entry.published.put(peer, fingerprint) != fingerprint) added = true
+        for (edit in pending) {
+            if (edit(stored)) added = true
         }
+        pending.clear()
         entries = stored
         loaded = true
         legacyKeys = keys
-        if (added || keys.isNotEmpty()) changed()
+        if (added || keys.isNotEmpty()) queueWrite()
     }
 
     /** Puts [old]'s pairs into [entry] where it has none; true when that added something. */
@@ -187,25 +230,45 @@ class ContactNameBook(
         return added
     }
 
-    /** Under [lock]. Writes [entries] on [writer] once the record has been read; dropped during a wipe. */
-    private fun changed() {
+    /** Under [lock]. Marks [entries] unwritten and queues one write, unless one is queued already. */
+    private fun queueWrite() {
         dirty = true
-        if (!loaded || seal.isSealed) return
-        writer.execute {
-            // The write happens under the lock too, so [forget] never races a write in flight
-            // (which would put the names back on disk under a fresh key).
-            synchronized(lock) {
-                if (!dirty || !loaded || seal.isSealed) return@execute
-                try {
-                    file.write(encode(entries))
-                } catch (_: Exception) {
-                    return@execute // The old record stays; the next change tries again.
-                }
-                dirty = false
-                if (legacyKeys.isNotEmpty()) {
-                    runCatching { removeLegacy(legacyKeys) }
-                    legacyKeys = emptySet()
-                }
+        if (!loaded || seal.isSealed || writeQueued) return
+        writeQueued = true
+        writer.execute { flush() }
+    }
+
+    /**
+     * On [writer]. Takes a snapshot under [lock] and seals and writes it outside, so readers never
+     * wait for the Keystore or the disk. When [forget] ran meanwhile, what was written (and a key the
+     * write may have made) is removed again.
+     */
+    private fun flush() {
+        val (snapshot, written, keys) = synchronized(lock) {
+            writeQueued = false
+            if (!dirty || !loaded || seal.isSealed) return
+            dirty = false
+            Triple(encode(entries), generation, legacyKeys)
+        }
+        val ok = try {
+            file.write(snapshot)
+            true
+        } catch (_: Exception) {
+            false
+        }
+        synchronized(lock) {
+            if (generation != written) {
+                runCatching { file.delete() }
+                runCatching { deleteKey() }
+                return
+            }
+            if (!ok) {
+                dirty = true // The old record stays; the next change writes again.
+                return
+            }
+            if (keys.isNotEmpty()) {
+                runCatching { removeLegacy(keys) }
+                legacyKeys = legacyKeys - keys
             }
         }
     }
@@ -250,6 +313,9 @@ class ContactNameBook(
 
         /** The AFU Keystore alias (`KeystoreSealer` without `unlockedDeviceRequired`). */
         const val KEY_ALIAS = "shroud.contact-names.v1"
+
+        /** The earliest a record that could not be read is read again. */
+        private const val RETRY_MS = 10_000L
 
         private const val LEGACY_PREFIX = "contact.names."
         private const val LEGACY_PUBLISHED_PREFIX = "contact.names.published."

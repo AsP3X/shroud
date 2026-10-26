@@ -169,7 +169,7 @@ class DeviceWipeControllerTest {
         assertEquals(
             listOf(
                 "haltWriters", "haltWriters", "lockCrypto(true)", "stopMessaging(true)", "clearCalls",
-                "forgetPush", "forgetNotifications", "forgetAppearance", "router",
+                "forgetPush", "forgetNotifications", "forgetContactNames", "forgetAppearance", "router",
             ),
             h.hooks.calls,
         )
@@ -476,7 +476,7 @@ class DeviceWipeControllerTest {
         assertNull(h.session.session.value)
         for (gone in WipeFixture.ACCOUNT_PATHS) assertFalse("$gone survived", h.fixture.exists(gone))
         assertFalse(h.fixture.wipe.isPending)
-        assertEquals(listOf("clearCalls", "forgetNotifications", "forgetAppearance", "lockCrypto(true)"), h.hooks.calls)
+        assertEquals(listOf("clearCalls", "forgetNotifications", "forgetContactNames", "forgetAppearance", "lockCrypto(true)"), h.hooks.calls)
         assertFalse(h.seal.isSealed)
     }
 
@@ -490,7 +490,7 @@ class DeviceWipeControllerTest {
         assertTrue(h.serverCalls.isEmpty())
         for (gone in WipeFixture.ACCOUNT_PATHS) assertFalse("$gone survived", h.fixture.exists(gone))
         for (kept in WipeFixture.KEPT_PATHS) assertTrue("$kept was not kept", h.fixture.exists(kept))
-        assertEquals(listOf("clearCalls", "forgetNotifications", "forgetAppearance"), h.hooks.calls)
+        assertEquals(listOf("clearCalls", "forgetNotifications", "forgetContactNames", "forgetAppearance"), h.hooks.calls)
     }
 
     @Test

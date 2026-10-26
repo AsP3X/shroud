@@ -25,6 +25,12 @@ interface WipeHooks {
     /** `NotificationsController.forgetAccount()`. */
     fun forgetNotifications()
 
+    /**
+     * `ContactNameBook.forget()`: the usernames this phone opened, in memory as well as on disk. Runs
+     * on every wipe path, also when no contacts controller was built (a wipe finished at launch).
+     */
+    fun forgetContactNames()
+
     /** `ColorThemePreference.forget()`. */
     fun forgetAppearance()
 

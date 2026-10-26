@@ -32,14 +32,20 @@ class ContactNameBookTest {
     private val seal = StorageSeal()
     private val prefs = FakeSharedPreferences()
     private var keyDeletes = 0
+    private var now = 0L
     private val file: File get() = File(temp.noBackupFilesDir, ContactNameBook.FILE_NAME)
 
-    private fun book(sealer: Sealer = XorSealer(), legacy: FakeSharedPreferences? = prefs) = ContactNameBook(
+    private fun book(
+        sealer: Sealer = XorSealer(),
+        legacy: FakeSharedPreferences? = prefs,
+        writer: Executor = Direct,
+    ) = ContactNameBook(
         file = SealedFile(file, sealer),
         deleteKey = { keyDeletes++ },
         seal = seal,
         legacy = legacy,
-        writer = Direct,
+        writer = writer,
+        nowMs = { now },
     )
 
     @Test
@@ -149,6 +155,130 @@ class ContactNameBookTest {
         seal.seal()
         book.remember(owner, alice, "alice")
         assertFalse(file.exists())
+        assertNull(book.name(owner, alice))
+    }
+
+    /**
+     * A refresh still in flight during a wipe changes nothing, not even in memory, so the next
+     * account's first write cannot carry this account's names.
+     */
+    @Test
+    fun changesDuringAWipeNeverReachTheNextAccountsRecord() {
+        val book = book()
+        book.remember(owner, alice, "alice")
+        seal.seal()
+        book.forget()
+        book.remember(owner, bob, "bob")
+        book.rememberPublished(owner, bob, "fp")
+        book.retain(owner, emptyList())
+        assertNull(book.name(owner, bob))
+        seal.unseal()
+        val next = UUID.randomUUID()
+        book.remember(next, alice, "alice_next")
+        val restarted = book()
+        assertNull(restarted.name(owner, alice))
+        assertNull(restarted.name(owner, bob))
+        assertNull(restarted.published(owner, bob))
+        assertEquals("alice_next", restarted.name(next, alice))
+    }
+
+    /** A process start's preload, then a wipe that never built the contacts controller: the hook's forget clears memory. */
+    @Test
+    fun forgetAfterAPreloadLeavesNothingForTheNextWrite() {
+        book(legacy = null).remember(owner, alice, "alice")
+        val book = book()
+        book.preload()
+        // The wipe's sweep deletes the record; WipeHooks.forgetContactNames runs forget.
+        file.delete()
+        book.forget()
+        book.remember(UUID.randomUUID(), bob, "bob")
+        assertNull(book().name(owner, alice))
+    }
+
+    /** Learning many names queues one write, which runs off the caller's thread. */
+    @Test
+    fun changesShareOneQueuedWrite() {
+        val queue = QueuedExecutor()
+        val book = book(writer = queue)
+        book.remember(owner, alice, "alice")
+        book.remember(owner, bob, "bob")
+        book.rememberPublished(owner, bob, "fp")
+        assertFalse(file.exists())
+        assertEquals(1, queue.size)
+        queue.runAll()
+        val restarted = book()
+        assertEquals("alice", restarted.name(owner, alice))
+        assertEquals("bob", restarted.name(owner, bob))
+        assertEquals("fp", restarted.published(owner, bob))
+        book.remember(owner, alice, "alice")
+        assertEquals(0, queue.size)
+    }
+
+    /** A forget while a write is sealing removes what that write puts on disk. */
+    @Test
+    fun aWriteThatOverlapsAForgetIsRemoved() {
+        val queue = QueuedExecutor()
+        lateinit var book: ContactNameBook
+        val sealer = object : Sealer {
+            private val xor = XorSealer()
+
+            override fun seal(plaintext: ByteArray): ByteArray {
+                book.forget()
+                return xor.seal(plaintext)
+            }
+
+            override fun open(sealed: ByteArray): ByteArray = xor.open(sealed)
+        }
+        book = book(sealer, writer = queue)
+        book.remember(owner, alice, "alice")
+        queue.runAll()
+        assertFalse(file.exists())
+        assertEquals(2, keyDeletes)
+        assertNull(book.name(owner, alice))
+    }
+
+    /** An unreadable record is not read again on every call, only after a pause. */
+    @Test
+    fun anUnreadableRecordIsTriedAgainOnlyAfterAPause() {
+        book(legacy = null).remember(owner, alice, "alice")
+        val sealer = LockableSealer()
+        val book = book(sealer)
+        assertNull(book.name(owner, alice))
+        assertNull(book.name(owner, alice))
+        book.remember(owner, bob, "bob")
+        assertEquals(1, sealer.opens)
+        sealer.locked = false
+        now += 9_999
+        assertNull(book.name(owner, alice))
+        assertEquals(1, sealer.opens)
+        now += 1
+        assertEquals("alice", book.name(owner, alice))
+        assertEquals(2, sealer.opens)
+    }
+
+    /**
+     * While the record cannot be read, an older build's names show, but they never overwrite the
+     * record once it reads; a retain made meanwhile also drops the record's peers.
+     */
+    @Test
+    fun theRecordBeatsAnOlderBuildAndRetainsAreReplayed() {
+        val carol = UUID.randomUUID()
+        val seeded = book(legacy = null)
+        seeded.remember(owner, bob, "bobby")
+        seeded.remember(owner, carol, "carol")
+        prefs.edit().putString("contact.names.$owner", """{"$bob":"bob_old"}""").apply()
+        val sealer = LockableSealer()
+        val book = book(sealer)
+        assertEquals("bob_old", book.name(owner, bob))
+        book.retain(owner, listOf(bob))
+
+        sealer.locked = false
+        now += 10_000
+        assertEquals("bobby", book.name(owner, bob))
+        assertNull(book.name(owner, carol))
+        val restarted = book(legacy = null)
+        assertEquals("bobby", restarted.name(owner, bob))
+        assertNull(restarted.name(owner, carol))
     }
 
     /**
@@ -169,6 +299,7 @@ class ContactNameBookTest {
         assertEquals(1, prefs.keys.size)
 
         sealer.locked = false
+        now += 10_000
         assertEquals("alice", book.name(owner, alice))
         assertEquals("bob", book.name(owner, bob))
         assertTrue(prefs.keys.isEmpty())
@@ -198,6 +329,7 @@ class ContactNameBookTest {
 
     private class LockableSealer : Sealer {
         var locked = true
+        var opens = 0
         private val xor = XorSealer()
 
         override fun seal(plaintext: ByteArray): ByteArray = xor.seal(plaintext)
@@ -207,8 +339,25 @@ class ContactNameBookTest {
             return xor.open(sealed)
         }
 
-        override fun openClassified(sealed: ByteArray): SealResult =
-            if (locked) SealResult.DeviceLocked else SealResult.Opened(xor.open(sealed))
+        override fun openClassified(sealed: ByteArray): SealResult {
+            opens++
+            return if (locked) SealResult.DeviceLocked else SealResult.Opened(xor.open(sealed))
+        }
+    }
+
+    /** Runs queued work only when the test says so. */
+    private class QueuedExecutor : Executor {
+        private val jobs = ArrayDeque<Runnable>()
+
+        val size: Int get() = jobs.size
+
+        override fun execute(command: Runnable) {
+            jobs.addLast(command)
+        }
+
+        fun runAll() {
+            while (jobs.isNotEmpty()) jobs.removeFirst().run()
+        }
     }
 
     private object Direct : Executor {

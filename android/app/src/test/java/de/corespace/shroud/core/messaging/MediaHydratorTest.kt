@@ -149,6 +149,20 @@ class MediaHydratorTest {
         assertTrue(w.identities.resolved.isEmpty())
     }
 
+    /** Our own photo re-listed under another sender is not recovered through the self box. */
+    @Test
+    fun ourOwnPhotoReListedUnderAnotherSenderIsNotRecovered() = runTest(main.dispatcher) {
+        val w = world()
+        w.pipeline().sendImage(MediaImageSource.FileBytes(image), w.peer, "", MediaComposeQuality.Original, MediaEdits.Identity, null)
+        val sent = w.state.messages(w.peer)!!.single()
+        w.store.plaintexts.clear()
+        w.media.files.clear()
+        val listed = w.server.messages.indexOfFirst { it.id == sent.id }
+        w.server.messages[listed] = w.server.messages[listed].copy(senderUserId = w.peer)
+        assertNull(MediaHydrator(w.state, w.deps).payloadData(sent))
+        assertNull(w.store.plaintexts[sent.id])
+    }
+
     @Test
     fun aMessageDeletedWhileDownloadingKeepsNothing() = runTest(main.dispatcher) {
         val w = world()

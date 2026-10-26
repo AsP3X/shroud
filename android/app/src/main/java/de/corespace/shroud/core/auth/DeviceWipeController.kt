@@ -294,6 +294,7 @@ class DeviceWipeController(
         step { hooks.clearCalls() }
         step { withTimeoutOrNull(HOOK_TIMEOUT_MS) { hooks.forgetPush() } }
         step { hooks.forgetNotifications() }
+        step { hooks.forgetContactNames() }
         step { hooks.forgetAppearance() }
         step { router?.onLocalSessionEnded() }
     }
@@ -400,6 +401,8 @@ class DeviceWipeController(
         // The call secrets' in-memory map, or a later save would write them back (review W2).
         step { hooks.clearCalls() }
         step { hooks.forgetNotifications() }
+        // The names the process start read before this wipe ran, or the next account's write keeps them.
+        step { hooks.forgetContactNames() }
         step { hooks.forgetAppearance() }
         if (checkLeftovers().isEmpty()) onIo { dataWipe.clearPending() }
         if (!pending) return false

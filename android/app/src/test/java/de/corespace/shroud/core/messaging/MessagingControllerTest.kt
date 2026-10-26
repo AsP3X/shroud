@@ -176,6 +176,25 @@ class MessagingControllerTest {
         controller.stop(wipeDisk = false)
     }
 
+    /** A push that names one chat never shows a message held in another (security audit M7). */
+    @Test
+    fun notificationTextLooksOnlyInTheNamedChat() = engineTest {
+        val alice = UUID.fromString("33333333-3333-4333-8333-333333333333")
+        val id = UUID.fromString("44444444-4444-4444-8444-444444444444")
+        val alices = ChatMessage(id, alice, alice, "for alice's eyes", Instant.parse("2026-09-20T10:00:00Z"), isMine = false)
+        val aliceChat = CachedConversation(UUID.randomUUID(), alice, "alice", Instant.parse("2026-09-01T10:00:00Z"), null, null, null)
+        hydrateWith(mapOf(alice to listOf(alices)), listOf(cachedConversation(), aliceChat))
+        val controller = controller()
+        controller.start()
+        runCurrent()
+        assertEquals("for alice's eyes", controller.notificationText(alice, id))
+        assertTrue(backend.pageRequests.isEmpty())
+        // Named as Bob's: the held copy is not used, and the page fetched for Bob does not hold it.
+        assertNull(controller.notificationText(peer, id))
+        assertEquals(1, backend.pageRequests.size)
+        controller.stop(wipeDisk = false)
+    }
+
     /** Locked chats cannot open a push. A page that does not decrypt stays off the notification. */
     @Test
     fun notificationTextStaysEmptyWhenLockedOrUnreadable() = engineTest {

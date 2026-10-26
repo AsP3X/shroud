@@ -274,12 +274,14 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
      * The text of one message, decrypted on this phone, for a notification. Null when the chats
      * are locked, the message is gone, or it cannot be opened. Nothing here leaves the phone.
      *
-     * A copy already in a thread is used as it is. Otherwise one newest page is fetched and opened
+     * A copy already in that chat's thread is used as it is. Otherwise one newest page is fetched and opened
      * through the same decoder as the socket, so the ratchet key is spent once and the later
      * history sync reads the cache.
      */
     suspend fun notificationText(peerUserId: UUID, messageId: UUID): String? {
-        val held = state.threads.value.values.asSequence().flatten().firstOrNull { it.id == messageId }
+        // Only the named chat's thread: a push that names Bob with an id from Alice's chat must not
+        // show her message under his name (security audit M7).
+        val held = state.threads.value[peerUserId]?.firstOrNull { it.id == messageId }
         if (held != null) {
             if (held.deleted || ThreadMessageMerge.isFailedDecryptText(held.text)) return null
             return held.previewText

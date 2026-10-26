@@ -71,6 +71,10 @@ class RecordingWipeHooks : WipeHooks {
         calls += "forgetNotifications"
     }
 
+    override fun forgetContactNames() {
+        calls += "forgetContactNames"
+    }
+
     override fun forgetAppearance() {
         calls += "forgetAppearance"
     }

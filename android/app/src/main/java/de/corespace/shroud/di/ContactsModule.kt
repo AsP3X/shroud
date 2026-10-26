@@ -47,13 +47,22 @@ class ContactsModule(container: AppContainer) : AppModule(container) {
      * `contact-names.sealed` in no-backup storage (security audit M9). Older builds kept the names
      * in `shroud.preferences`; the book moves them into the record and deletes those keys.
      */
-    private val nameBook: ContactNameBook by lazy {
+    private val nameBookLazy = lazy {
         ContactNameBook(
             file = SealedFile(File(container.appContext.noBackupFilesDir, ContactNameBook.FILE_NAME), nameSealer),
             deleteKey = { nameSealer.deleteKey() },
             seal = container.storageSeal,
             legacy = container.appContext.getSharedPreferences(PrefsFiles.PREFERENCES, Context.MODE_PRIVATE),
         )
+    }
+    private val nameBook: ContactNameBook by nameBookLazy
+
+    /**
+     * `WipeHooks.forgetContactNames()`: the book's memory, record and key. A book never built holds
+     * nothing in memory, and the wipe's sweep removes its file and key.
+     */
+    fun forgetNamesIfBuilt() {
+        if (nameBookLazy.isInitialized()) nameBook.forget()
     }
 
     private val contactsController: ContactsController by lazy {

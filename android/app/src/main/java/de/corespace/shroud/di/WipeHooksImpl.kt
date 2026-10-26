@@ -60,6 +60,11 @@ class WipeHooksImpl(private val container: AppContainer) : WipeHooks {
         container.notifications.controller.forgetAccount()
     }
 
+    /** The contact name book, only when it was built (preloaded at process start, so usually). */
+    override fun forgetContactNames() {
+        container.contacts.forgetNamesIfBuilt()
+    }
+
     /** Settings › Appearance back to System (`ColorThemePreference.forget()`). */
     override fun forgetAppearance() {
         container.auth.colorTheme.forget()
