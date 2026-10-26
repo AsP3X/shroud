@@ -2,9 +2,11 @@
 //! and the Android app through UnifiedPush), and a test notification.
 //!
 //! Human: One device, one relay: an iPhone registers APNs tokens, a browser or an Android
-//! phone a Web Push subscription. A token or endpoint that moves to another device (a
-//! reinstall, a second account in the same browser) is taken away from the device that had
-//! it, so one person's notifications never ring on someone else's screen.
+//! phone a Web Push subscription. A token or endpoint that moves to another device of the
+//! same account (a reinstall) is taken away from the device that had it, so one person's
+//! notifications never ring on someone else's screen. Another account's signed-in device
+//! keeps it, and the registration is refused (`409 PUSH_TOKEN_IN_USE`): knowing a token must
+//! not be enough to take someone's notifications. Signing out frees it.
 //! Agent: DB push_tokens (PK device_id + kind), web_push_subscriptions (+ `client`); CALLS
 //! PushService.
 
@@ -88,16 +90,48 @@ pub async fn put_token(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
-    // The same token on another device means the phone changed hands (or accounts).
+    // Human: The same token on another device means a reinstall, or a phone that changed
+    // accounts. It moves from this account's other devices, and from a device nothing is
+    // pushed to any more (signed out by a password change). Another account's signed-in
+    // device keeps it: whoever learned the token would otherwise take that person's
+    // notifications and calls for an account of their own (security audit L11). Signing out
+    // forgets the device's registration, so switching accounts on one phone never meets this.
+    // Agent: one transaction per token, serialized by an advisory lock on it.
+    lock_push_address(&mut tx, token).await?;
     sqlx::query(
-        r#"DELETE FROM push_tokens WHERE apns_token = $1 AND kind = $2 AND device_id <> $3"#,
+        r#"
+        DELETE FROM push_tokens pt USING devices d
+        WHERE pt.device_id = d.id
+          AND pt.apns_token = $1 AND pt.kind = $2 AND pt.device_id <> $3
+          AND (d.user_id = $4 OR NOT EXISTS (
+              SELECT 1 FROM sessions s WHERE s.device_id = d.id AND s.revoked_at IS NULL
+          ))
+        "#,
     )
     .bind(token)
     .bind(&kind)
     .bind(auth.device_id)
+    .bind(auth.user_id)
     .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("release push token failed: {err}")))?;
+    let held: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM push_tokens WHERE apns_token = $1 AND kind = $2 AND device_id <> $3
+        )
+        "#,
+    )
+    .bind(token)
+    .bind(&kind)
+    .bind(auth.device_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("check push token holder failed: {err}")))?;
+    if held {
+        tracing::debug!(device_id = %auth.device_id, %kind, "push.token held by another account");
+        return Err(AppError::push_token_in_use());
+    }
     sqlx::query(
         r#"
         INSERT INTO push_tokens (device_id, kind, apns_token, environment, payload_key, updated_at)
@@ -123,6 +157,20 @@ pub async fn put_token(
 
     tracing::debug!(device_id = %auth.device_id, %kind, %environment, "push.token registered");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Holds `address` (an APNs token or a Web Push endpoint) until the transaction ends, so two
+/// accounts registering it at once cannot both keep it.
+async fn lock_push_address(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    address: &str,
+) -> Result<(), AppError> {
+    sqlx::query(r#"SELECT pg_advisory_xact_lock(hashtextextended($1, 0))"#)
+        .bind(address)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("lock push address failed: {err}")))?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,12 +285,41 @@ pub async fn put_web_subscription(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
-    sqlx::query(r#"DELETE FROM web_push_subscriptions WHERE endpoint = $1 AND device_id <> $2"#)
-        .bind(endpoint)
-        .bind(auth.device_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| AppError::Internal(format!("release web push endpoint failed: {err}")))?;
+    // As for APNs tokens (`put_token`): a browser's or distributor's endpoint moves within
+    // the account, never away from another account's signed-in device.
+    lock_push_address(&mut tx, endpoint).await?;
+    sqlx::query(
+        r#"
+        DELETE FROM web_push_subscriptions w USING devices d
+        WHERE w.device_id = d.id
+          AND w.endpoint = $1 AND w.device_id <> $2
+          AND (d.user_id = $3 OR NOT EXISTS (
+              SELECT 1 FROM sessions s WHERE s.device_id = d.id AND s.revoked_at IS NULL
+          ))
+        "#,
+    )
+    .bind(endpoint)
+    .bind(auth.device_id)
+    .bind(auth.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("release web push endpoint failed: {err}")))?;
+    let held: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM web_push_subscriptions WHERE endpoint = $1 AND device_id <> $2
+        )
+        "#,
+    )
+    .bind(endpoint)
+    .bind(auth.device_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("check web push endpoint holder failed: {err}")))?;
+    if held {
+        tracing::debug!(device_id = %auth.device_id, "push.web endpoint held by another account");
+        return Err(AppError::push_token_in_use());
+    }
     sqlx::query(
         r#"
         INSERT INTO web_push_subscriptions (device_id, endpoint, p256dh, auth, client, updated_at)

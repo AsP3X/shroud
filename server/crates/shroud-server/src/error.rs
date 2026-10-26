@@ -246,6 +246,17 @@ impl AppError {
         }
     }
 
+    /// The APNs token or Web Push endpoint is registered to another account's signed-in
+    /// device: one that was not signed out before this one signed in. Signing that device out,
+    /// or removing it from its account, frees it.
+    pub fn push_token_in_use() -> Self {
+        Self::conflict(
+            "PUSH_TOKEN_IN_USE",
+            "Another account still gets this device's notifications. Remove this device from \
+             that account, then try again.",
+        )
+    }
+
     pub fn conflict(code: &'static str, message: impl Into<String>) -> Self {
         Self::Api {
             status: StatusCode::CONFLICT,

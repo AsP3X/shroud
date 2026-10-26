@@ -494,6 +494,15 @@ and set, for the web and the console host and each kind of path. The cookie path
   `TURN_USER_QUOTA`, `TURN_TOTAL_QUOTA` and `TURN_MAX_BPS`. `docs/calls.md` gives the random
   login name. The 12 h lifetime stays, not tied to a call: the caller asks before the call
   exists, and coturn checks the expiry on every refresh, so a shorter one would end long calls.
+- **Fixed (L11):** an APNs token or Web Push/UnifiedPush endpoint moves only from devices of the
+  same account, or from a device nothing is pushed to any more (no live session). Held by
+  another account's signed-in device, the registration fails `409 PUSH_TOKEN_IN_USE` and
+  nothing changes; an advisory lock on the token keeps two accounts from both taking it. Logout
+  already forgets the device's registrations, so signing out of one account and into another
+  on a phone still works. The one case left out: a sign-out the server never heard (offline)
+  leaves the old account's device holding the token until that device is removed from it.
+  iOS ignores the failure, Android shows push as unavailable, and the web drops that browser
+  subscription and makes a new one (a new endpoint, so it works) at the next unlock.
 
 ## Design notes (no change asked for here)
 

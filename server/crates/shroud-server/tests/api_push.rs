@@ -89,7 +89,8 @@ async fn register_push_token() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
-                        "token": "abcdef0123456789",
+                        // Unique: a token another account's device holds is refused.
+                        "token": format!("{:032x}", Uuid::new_v4().as_u128()),
                         "environment": "sandbox"
                     })
                     .to_string(),
@@ -150,7 +151,8 @@ async fn logout_forgets_the_devices_push_token() {
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({ "token": "abcdef0123456789", "environment": "sandbox" }).to_string(),
+                    json!({ "token": format!("{:032x}", Uuid::new_v4().as_u128()), "environment": "sandbox" })
+                        .to_string(),
                 ))
                 .expect("request"),
         )
@@ -191,6 +193,170 @@ async fn logout_forgets_the_devices_push_token() {
     assert_eq!(devices, 1);
 }
 
+/// `POST /auth/login` as `username` on a new device; returns (token, device id).
+async fn sign_in(app: &axum::Router, username: &str) -> (String, Uuid) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "username_hash": shroud_server::auth::username_hash_b64(username), "password": "correct-horse-battery" })
+                        .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    (
+        body["token"].as_str().unwrap().to_string(),
+        body["device"]["id"].as_str().unwrap().parse().unwrap(),
+    )
+}
+
+/// `PUT /push/token` for an alert token.
+async fn put_apns(app: &axum::Router, token: &str, apns: &str) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/push/token")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "token": apns, "environment": "sandbox" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// The devices holding `apns` as their alert token.
+async fn apns_holders(state: &AppState, apns: &str) -> Vec<Uuid> {
+    sqlx::query_scalar(
+        "SELECT device_id FROM push_tokens WHERE apns_token = $1 AND kind = 'alert' \
+         ORDER BY device_id",
+    )
+    .bind(apns)
+    .fetch_all(&state.pool)
+    .await
+    .expect("read push tokens")
+}
+
+/// Ends every session of `device`, as a password change on another device does: it keeps its
+/// registration but gets no pushes.
+async fn sign_out_elsewhere(state: &AppState, device: Uuid) {
+    sqlx::query("UPDATE sessions SET revoked_at = now() WHERE device_id = $1")
+        .bind(device)
+        .execute(&state.pool)
+        .await
+        .expect("revoke sessions");
+}
+
+/// The refusal for a token or endpoint another account's device holds.
+fn assert_in_use((status, body): &(StatusCode, Value)) {
+    assert_eq!(*status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "PUSH_TOKEN_IN_USE", "{body}");
+}
+
+#[tokio::test]
+async fn an_apns_token_moves_only_between_one_accounts_devices() {
+    let Some((app, state)) = android_state(UnifiedPushPolicy::default()).await else {
+        eprintln!(
+            "skipping an_apns_token_moves_only_between_one_accounts_devices: no DATABASE_URL"
+        );
+        return;
+    };
+    let alice = format!("up_{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let (alice_token, alice_phone) = sign_up_as(&app, &alice).await;
+    let (mallory_token, mallory_phone) = sign_up(&app).await;
+    let apns = Uuid::new_v4().simple().to_string();
+
+    let (status, body) = put_apns(&app, &alice_token, &apns).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    // Someone who learned the token cannot take Alice's pushes away to their own account.
+    assert_in_use(&put_apns(&app, &mallory_token, &apns).await);
+    assert_eq!(apns_holders(&state, &apns).await, vec![alice_phone]);
+
+    // Alice's own new phone (a reinstall) takes it from her old one.
+    let (alice_new_token, alice_new_phone) = sign_in(&app, &alice).await;
+    let (status, body) = put_apns(&app, &alice_new_token, &apns).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(apns_holders(&state, &apns).await, vec![alice_new_phone]);
+
+    // A device that can no longer be pushed to (signed out by a password change elsewhere)
+    // does not keep it from the account now signed in on the phone.
+    sign_out_elsewhere(&state, alice_new_phone).await;
+    let (status, body) = put_apns(&app, &mallory_token, &apns).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(apns_holders(&state, &apns).await, vec![mallory_phone]);
+}
+
+#[tokio::test]
+async fn a_web_push_endpoint_moves_only_between_one_accounts_devices() {
+    let Some((app, state)) = android_state(UnifiedPushPolicy::default()).await else {
+        eprintln!(
+            "skipping a_web_push_endpoint_moves_only_between_one_accounts_devices: no DATABASE_URL"
+        );
+        return;
+    };
+    let alice = format!("up_{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let (alice_token, alice_phone) = sign_up_as(&app, &alice).await;
+    let mallory = format!("up_{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let (mallory_token, mallory_phone) = sign_up_as(&app, &mallory).await;
+    let endpoint = format!("https://ntfy.sh/up{}?up=1", Uuid::new_v4().simple());
+
+    let (status, body) = subscribe(&app, &alice_token, &endpoint, Some("android")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    assert_in_use(&subscribe(&app, &mallory_token, &endpoint, Some("android")).await);
+    assert_eq!(stored(&state, alice_phone).await.unwrap().0, endpoint);
+    assert_eq!(stored(&state, mallory_phone).await, None);
+
+    // After Alice signs out, the phone's endpoint is free for whoever signs in next.
+    let logout = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/logout")
+                .header(header::AUTHORIZATION, format!("Bearer {alice_token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    let (status, body) = subscribe(&app, &mallory_token, &endpoint, Some("android")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(stored(&state, mallory_phone).await.unwrap().0, endpoint);
+
+    // Within one account it moves as before.
+    let (mallory_laptop_token, mallory_laptop) = sign_in(&app, &mallory).await;
+    let (status, body) = subscribe(&app, &mallory_laptop_token, &endpoint, Some("android")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(stored(&state, mallory_laptop).await.unwrap().0, endpoint);
+    assert_eq!(stored(&state, mallory_phone).await, None);
+}
+
 // MARK: Android (UnifiedPush) subscriptions
 
 /// The refusal an Android app shows as "this server refuses your distributor".
@@ -220,6 +386,11 @@ async fn android_state(policy: UnifiedPushPolicy) -> Option<(axum::Router, AppSt
 /// Registers a fresh account; returns (token, device id).
 async fn sign_up(app: &axum::Router) -> (String, Uuid) {
     let username = format!("up_{}", &Uuid::new_v4().simple().to_string()[..12]);
+    sign_up_as(app, &username).await
+}
+
+/// Registers `username`; returns (token, device id).
+async fn sign_up_as(app: &axum::Router, username: &str) -> (String, Uuid) {
     let reg = app
         .clone()
         .oneshot(
@@ -483,13 +654,14 @@ async fn an_operator_adds_its_own_distributor() {
         return;
     };
     let (token, device) = sign_up(&app).await;
+    let id = Uuid::new_v4().simple().to_string();
     for allowed in [
-        "https://push.example.org/up1?up=1",
-        "https://eu.push.example.org/up1?up=1",
-        "https://ntfy.example.net/up1",
-        "https://ntfy.sh/up1?up=1",
+        format!("https://push.example.org/up{id}?up=1"),
+        format!("https://eu.push.example.org/up{id}?up=1"),
+        format!("https://ntfy.example.net/up{id}"),
+        format!("https://ntfy.sh/up{id}?up=1"),
     ] {
-        let (status, body) = subscribe(&app, &token, allowed, Some("android")).await;
+        let (status, body) = subscribe(&app, &token, &allowed, Some("android")).await;
         assert_eq!(status, StatusCode::NO_CONTENT, "{allowed}: {body}");
         assert_eq!(stored(&state, device).await.unwrap().0, allowed);
     }
@@ -556,19 +728,14 @@ async fn public_host_mode_takes_only_names_whose_every_address_is_public() {
         return;
     };
     let (token, device) = sign_up(&app).await;
-
-    let (status, body) = subscribe(
-        &app,
-        &token,
-        "https://push.selfhosted.example/up1?up=1",
-        Some("android"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-    assert_eq!(
-        stored(&state, device).await.unwrap().0,
-        "https://push.selfhosted.example/up1?up=1"
+    let selfhosted = format!(
+        "https://push.selfhosted.example/up{}?up=1",
+        Uuid::new_v4().simple()
     );
+
+    let (status, body) = subscribe(&app, &token, &selfhosted, Some("android")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(stored(&state, device).await.unwrap().0, selfhosted);
 
     for refused in [
         // A private, a partly private, a mapped-private and an unresolvable name.
@@ -597,13 +764,7 @@ async fn public_host_mode_takes_only_names_whose_every_address_is_public() {
         assert_refused_distributor(refused, &outcome);
     }
     // Public-host mode is for Android subscriptions only.
-    let (status, _) = subscribe(
-        &app,
-        &token,
-        "https://push.selfhosted.example/up1?up=1",
-        None,
-    )
-    .await;
+    let (status, _) = subscribe(&app, &token, &selfhosted, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -618,12 +779,15 @@ async fn local_http_is_for_end_to_end_runs_only() {
         return;
     };
     let (token, device) = sign_up(&app).await;
-    let local = "http://localhost:2586/upE2E?up=1";
-    let (status, body) = subscribe(&app, &token, local, Some("android")).await;
+    let local = format!(
+        "http://localhost:2586/upE2E{}?up=1",
+        Uuid::new_v4().simple()
+    );
+    let (status, body) = subscribe(&app, &token, &local, Some("android")).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     assert_eq!(
         stored(&state, device).await,
-        Some((local.to_string(), "android".into()))
+        Some((local.clone(), "android".into()))
     );
     for refused in [
         "http://10.0.2.2:2586/upE2E?up=1",
@@ -635,7 +799,7 @@ async fn local_http_is_for_end_to_end_runs_only() {
         assert_refused_distributor(refused, &outcome);
     }
     // Never for a browser.
-    let (status, _) = subscribe(&app, &token, local, None).await;
+    let (status, _) = subscribe(&app, &token, &local, None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 

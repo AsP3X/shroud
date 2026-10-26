@@ -916,8 +916,10 @@ async fn tokens_and_endpoints_move_with_their_device() {
         eprintln!("skipping tokens_and_endpoints_move_with_their_device: no DATABASE_URL");
         return;
     };
+    // A reinstall: the account's new device takes over the old one's token and endpoint.
+    // (Another account's device keeps them: `api_push.rs`.)
     let a = register(&app).await;
-    let b = register(&app).await;
+    let b = login_again(&app, &a).await;
     let token = format!("{:064x}", Uuid::new_v4().as_u128());
     register_apns(&app, &a, &token).await;
     register_apns(&app, &b, &token).await;
@@ -1037,7 +1039,12 @@ async fn a_test_push_reaches_the_calling_device() {
             .len(),
         65
     );
-    register_web(&app, &a, "https://fcm.googleapis.com/fcm/send/test-device").await;
+    register_web(
+        &app,
+        &a,
+        &format!("https://fcm.googleapis.com/fcm/send/{}", Uuid::new_v4()),
+    )
+    .await;
     // Sent even though the app is open: the point is to see one.
     let _socket = state
         .realtime
@@ -1126,7 +1133,7 @@ async fn a_call_rings_by_pushkit_and_notifies_closed_devices() {
     register_web(
         &app,
         &b_web,
-        "https://fcm.googleapis.com/fcm/send/call-test",
+        &format!("https://fcm.googleapis.com/fcm/send/{}", Uuid::new_v4()),
     )
     .await;
     // A current iPhone: alerts and PushKit, and its app is open right now.

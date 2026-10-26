@@ -1399,7 +1399,11 @@ Errors: `CALL_BUSY` (409) when peer or self already in ringing/active call; `FOR
 
 - `environment`: `sandbox` | `production` (selects APNs host at send time).
 - `kind`: `alert` (default) | `voip` (PushKit). One token per device and kind; a token another
-  device held moves to this one. A `voip:` token prefix (older builds) still means `kind: voip`.
+  device of this account held moves to this one, as does one held by a device nothing is pushed
+  to any more (all its sessions ended). Another account's signed-in device keeps it, and this
+  call fails `409 PUSH_TOKEN_IN_USE`: knowing a token must not move someone's notifications.
+  Logout forgets the device's tokens, so switching accounts on one phone frees it. A `voip:`
+  token prefix (older builds) still means `kind: voip`.
 - `payload_key` (alerts, optional): the key the notification extension opens each push's ids
   and sender name with. Without one (an older build) the server sends the ids readable and leaves
   names out.
@@ -1719,8 +1723,9 @@ The browser's `PushSubscription.toJSON()`. The endpoint must be `https` on a kno
 (Google, Mozilla, Apple, Microsoft, plus `WEB_PUSH_ALLOWED_HOSTS`), never an IP address, a port
 or credentials, else `400` — the server must not POST wherever a client points it. It is checked
 and stored as the HTTP client parses it (a `\` ends a host there, as in browsers). `404` when
-Web Push is unavailable. One per device; an endpoint another device held moves here.
-`DELETE /push/web/subscription` → `204`.
+Web Push is unavailable. One per device; an endpoint another device held moves here under the
+same rule as an APNs token (`409 PUSH_TOKEN_IN_USE` while another account's signed-in device
+holds it). `DELETE /push/web/subscription` → `204`.
 
 The Android app sends the endpoint its UnifiedPush distributor (ntfy, Sunup, …) handed it, its
 own RFC 8291 keys, and `"client": "android"` (absent = `"browser"`, so browsers and older clients
