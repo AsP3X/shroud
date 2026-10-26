@@ -174,7 +174,11 @@ nonisolated struct MediaMessagePayload: Codable, Equatable, Sendable {
             th: string(object["th"]),
             s: int(object["s"]),
             re: (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:)),
-            lp: (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:)),
+            // Only a preview of one of the caption's own links counts (security audit L14).
+            lp: LinkPreview.ofText(
+                (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:)),
+                in: string(object["c"]) ?? ""
+            ),
             n: rawString(object["n"]),
             pg: int(object["pg"]).flatMap { $0 >= 1 ? $0 : nil },
             ti: rawString(object["ti"]),

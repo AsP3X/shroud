@@ -156,6 +156,9 @@ struct LocalMessageStore: Sendable {
             historyKey: SymmetricKey
         ) -> MessagingController.ChatMessage {
             let kind = MessagingController.ChatMessageKind(storageKey: kind) ?? .text
+            // A thread file written before the text-link rule may still hold a preview for a
+            // link the text doesn't have; it is dropped like a newly received one (audit L14).
+            let linkPreview = LinkPreview.ofText(self.linkPreview, in: text)
             var imageData: Data?
             var voiceData: Data?
             var videoData: Data?

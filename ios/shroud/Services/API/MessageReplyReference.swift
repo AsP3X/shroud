@@ -174,7 +174,11 @@ nonisolated enum MessageTextPayload {
               let body = object["c"] as? String
         else { return (plaintext, nil, nil) }
         let replyTo = (object["re"] as? [String: Any]).flatMap(MessageReplyReference.parse(wireObject:))
-        let linkPreview = (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:))
+        // Only a preview of one of the body's own links counts (security audit L14).
+        let linkPreview = LinkPreview.ofText(
+            (object["lp"] as? [String: Any]).flatMap(LinkPreview.parse(wireObject:)),
+            in: body
+        )
         return (body, replyTo, linkPreview)
     }
 

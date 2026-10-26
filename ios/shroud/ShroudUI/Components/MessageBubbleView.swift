@@ -823,7 +823,7 @@ struct MessageBubbleView: View {
         }
         parts.append(displayText)
         if let linkPreview, !isDeleted {
-            parts.append("Link preview: " + ([linkPreview.displaySiteName, linkPreview.title].compactMap { $0 }.joined(separator: ", ")))
+            parts.append("Link preview: " + ([linkPreview.displayHost, linkPreview.title].compactMap { $0 }.joined(separator: ", ")))
         }
         if !isDeleted, let reactionsSummary = reactions.spokenSummary {
             parts.append(reactionsSummary)

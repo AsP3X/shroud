@@ -3,7 +3,7 @@ import UIKit
 
 /// Where a link preview block is drawn — decides its palette.
 enum LinkPreviewStyle {
-    /// Inside an incoming (white / dark-grey) bubble: accent stripe, accent site name.
+    /// Inside an incoming (white / dark-grey) bubble: accent stripe, accent host.
     case incoming
     /// Inside an outgoing (accent) bubble: everything white.
     case outgoing
@@ -24,7 +24,7 @@ enum LinkPreviewImage {
     }
 }
 
-/// Telegram's link preview block: accent stripe, tinted card, site name, title, description,
+/// Telegram's link preview block: accent stripe, tinted card, the link's host, title, description,
 /// and a small thumbnail or a large picture. Maps to `Link Preview / In`, `Link Preview / Out`
 /// and `Link Preview / In · Thumb` in `iOS-App.pen`.
 ///
@@ -167,7 +167,7 @@ struct LinkPreviewView: View {
     }
 
     private var accessibilityText: String {
-        var parts = ["Link preview", preview.displaySiteName]
+        var parts = ["Link preview", preview.displayHost]
         if let title = preview.title { parts.append(title) }
         if let summary = preview.summary { parts.append(summary) }
         return parts.joined(separator: ", ")
@@ -216,11 +216,11 @@ struct LinkPreviewTextView: UIViewRepresentable {
         return uiView.fittingSize(forWidth: proposal.width)
     }
 
-    /// The block's text in Telegram's type: 14 pt semibold site name and title, 14 pt body.
+    /// The block's text in Telegram's type: 14 pt semibold host and title, 14 pt body.
     static func attributedText(for preview: LinkPreview, style: LinkPreviewStyle) -> NSAttributedString {
         let accent = style == .outgoing ? UIColor.white : (UIColor(named: "AccentText") ?? .systemIndigo)
         // The description is plain white on outgoing too: dimmed white misses 4.5:1 there, and
-        // the semibold site name and title keep the order.
+        // the semibold host and title keep the order.
         let primary = style == .outgoing ? UIColor.white : (UIColor(named: "TextPrimary") ?? .label)
         let semibold = UIFont.systemFont(ofSize: LinkPreviewView.fontSize, weight: .semibold)
         let regular = UIFont.systemFont(ofSize: LinkPreviewView.fontSize, weight: .regular)
@@ -241,7 +241,7 @@ struct LinkPreviewTextView: UIViewRepresentable {
                 .paragraphStyle: paragraph,
             ]))
         }
-        append(preview.displaySiteName, font: semibold, color: accent)
+        append(preview.displayHost, font: semibold, color: accent)
         if let title = preview.title { append(title, font: semibold, color: primary) }
         if let summary = preview.summary { append(summary, font: regular, color: primary) }
         return result

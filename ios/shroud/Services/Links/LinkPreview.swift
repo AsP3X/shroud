@@ -14,7 +14,8 @@ import Foundation
 nonisolated struct LinkPreview: Codable, Equatable, Hashable, Sendable {
     /// The page the preview describes (`http`/`https` only).
     var url: String
-    /// "komoot", "YouTube" — the accent-coloured first line.
+    /// "komoot", "YouTube" as the sender's page claimed it. Sealed and kept for the wire, but
+    /// never drawn: the sender chooses it, so the card's first line is `displayHost` instead.
     var siteName: String?
     var title: String?
     var summary: String?
@@ -96,15 +97,58 @@ nonisolated struct LinkPreview: Codable, Equatable, Hashable, Sendable {
         return url
     }
 
-    /// Host without `www.`, the fallback site name ("komoot.com").
+    /// Host without `www.` ("komoot.com"): the accent-coloured first line of the block.
+    ///
+    /// Human: Always the host the card opens, never the sealed `siteName`, so a sender can't
+    /// make a card read "paypal.com" for a link to another site (security audit L14; the web
+    /// card does the same).
     var displayHost: String {
         guard let host = URL(string: url)?.host?.lowercased() else { return url }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
-    /// First line of the block: the site's own name, else its host (Telegram Web does the same).
-    var displaySiteName: String {
-        siteName ?? displayHost
+    // MARK: - Belongs to the text
+
+    /// `preview` when its URL is one of `text`'s own links, else nil.
+    ///
+    /// Human: Every client builds a preview for a link it found in the message and seals that
+    /// link as typed, so a received preview for any other URL is a card that names one site
+    /// and opens another. It is dropped and the message shows without a card (security audit
+    /// L14; `previewOfText` in `web/src/links.ts` is the same rule).
+    /// Agent: Compares `comparisonKey`s, so `www.example.com` in the text matches
+    /// `https://www.example.com/`. E-mail addresses never match.
+    static func ofText(_ preview: LinkPreview?, in text: String) -> LinkPreview? {
+        guard let preview, let target = URL(string: preview.url).flatMap(comparisonKey) else { return nil }
+        let inText = LinkDetector.links(in: text).contains { link in
+            !link.isEmail && comparisonKey(link.url) == target
+        }
+        return inText ? preview : nil
+    }
+
+    /// The URL in one canonical spelling, for telling whether two links are the same: scheme and
+    /// host lowercased, the default port dropped, an empty path written `/` (as a browser's
+    /// `URL.href` does). Nil unless it is an `http`/`https` URL with a host.
+    static func comparisonKey(_ url: URL) -> String? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              let host = components.encodedHost?.lowercased(),
+              !host.isEmpty
+        else { return nil }
+        var key = scheme + "://"
+        if let user = components.percentEncodedUser {
+            key += user
+            if let password = components.percentEncodedPassword { key += ":" + password }
+            key += "@"
+        }
+        key += host
+        if let port = components.port, port != (scheme == "https" ? 443 : 80) {
+            key += ":\(port)"
+        }
+        key += components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+        if let query = components.percentEncodedQuery { key += "?" + query }
+        if let fragment = components.percentEncodedFragment { key += "#" + fragment }
+        return key
     }
 
     /// Image aspect (width / height) when the sender knew it.

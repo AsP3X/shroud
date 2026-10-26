@@ -64,9 +64,16 @@ final class LinkPreviewPayloadTests: XCTestCase {
         XCTAssertEqual(preview.title?.hasSuffix("…"), true)
     }
 
-    func testDisplaySiteNameFallsBackToHost() {
+    func testSiteLineIsTheHost() {
         let preview = LinkPreview(url: "https://www.example.com/a", title: "A page")
-        XCTAssertEqual(preview.displaySiteName, "example.com")
+        XCTAssertEqual(preview.displayHost, "example.com")
+        // The sender's site name is never the site line: the card names the host it opens (L14).
+        let claimed = LinkPreview(url: "https://evil.example/login", siteName: "paypal.com", title: "PayPal")
+        XCTAssertEqual(claimed.displayHost, "evil.example")
+        XCTAssertEqual(
+            LinkPreviewTextView.attributedText(for: claimed, style: .incoming).string,
+            "evil.example\nPayPal"
+        )
     }
 
     // MARK: - Text envelope
@@ -90,7 +97,7 @@ final class LinkPreviewPayloadTests: XCTestCase {
             kind: .text,
             snippet: "Which trail?"
         )
-        let wire = MessageTextPayload.wire(body: "This one", replyTo: quote, linkPreview: sample())
+        let wire = MessageTextPayload.wire(body: "This one: komoot.com/tour/1398273", replyTo: quote, linkPreview: sample())
         let parsed = MessageTextPayload.parse(wire)
         XCTAssertEqual(parsed.replyTo, quote)
         XCTAssertEqual(parsed.linkPreview, sample())
@@ -116,9 +123,9 @@ final class LinkPreviewPayloadTests: XCTestCase {
     /// browser builds previews of its own: a quote and a preview sealed together, byte for byte
     /// what it sends. If either side's wire format drifts, this stops compiling into sense.
     func testParsesWhatTheWebClientSeals() throws {
-        let fromWeb = #"{"t":"text","c":"Route for Saturday","re":{"id":"11111111-1111-1111-1111-111111111111","u":"22222222-2222-2222-2222-222222222222","k":"text","x":"Which route?"},"lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","th":"/9j/4AAQSkZJRg==","w":1200,"h":630,"ab":true}}"#
+        let fromWeb = #"{"t":"text","c":"Route for Saturday: www.komoot.com/tour/1398273","re":{"id":"11111111-1111-1111-1111-111111111111","u":"22222222-2222-2222-2222-222222222222","k":"text","x":"Which route?"},"lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","th":"/9j/4AAQSkZJRg==","w":1200,"h":630,"ab":true}}"#
         let parsed = MessageTextPayload.parse(fromWeb)
-        XCTAssertEqual(parsed.body, "Route for Saturday")
+        XCTAssertEqual(parsed.body, "Route for Saturday: www.komoot.com/tour/1398273")
         XCTAssertEqual(
             parsed.replyTo?.messageID,
             UUID(uuidString: "11111111-1111-1111-1111-111111111111")
@@ -136,11 +143,11 @@ final class LinkPreviewPayloadTests: XCTestCase {
 
     /// The same for a web-sent preview whose picture rides as the media blob.
     func testParsesTheLinkMediaTheWebClientSeals() throws {
-        let fromWeb = #"{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","s":48000,"c":"Route for Saturday","th":"/9j/4AAQ","lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","w":1200,"h":630,"ab":true}}"#
+        let fromWeb = #"{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","s":48000,"c":"Route for Saturday: www.komoot.com/tour/1398273","th":"/9j/4AAQ","lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","w":1200,"h":630,"ab":true}}"#
         let payload = try XCTUnwrap(MediaMessagePayload.parse(Data(fromWeb.utf8)))
         XCTAssertTrue(payload.isLink)
         XCTAssertFalse(payload.isImage)
-        XCTAssertEqual(payload.c, "Route for Saturday")
+        XCTAssertEqual(payload.c, "Route for Saturday: www.komoot.com/tour/1398273")
         XCTAssertEqual(payload.w, 1200)
         XCTAssertEqual(payload.lp?.title, "Herzogstand – Heimgarten ridge walk")
         XCTAssertNil(payload.lp?.thumbnail, "the blob is the picture")
@@ -152,6 +159,65 @@ final class LinkPreviewPayloadTests: XCTestCase {
         let parsed = MessageTextPayload.parse(wire)
         XCTAssertEqual(parsed.body, "still readable")
         XCTAssertNil(parsed.linkPreview)
+    }
+
+    // MARK: - A preview belongs to the text (security audit L14)
+
+    /// The same cases as `links.selftest.ts`: no card that names one site and opens another.
+    func testPreviewForALinkNotInTheTextIsDropped() {
+        let elsewhere = #"{"t":"text","c":"Route: komoot.com/tour/1398273","lp":{"u":"https://evil.example/login","n":"komoot"}}"#
+        let parsed = MessageTextPayload.parse(elsewhere)
+        XCTAssertEqual(parsed.body, "Route: komoot.com/tour/1398273")
+        XCTAssertNil(parsed.linkPreview)
+        XCTAssertFalse(MessageTextPayload.isEnvelope(elsewhere))
+
+        let noLink = #"{"t":"text","c":"No link here","lp":{"u":"https://komoot.com/tour/1398273"}}"#
+        XCTAssertNil(MessageTextPayload.parse(noLink).linkPreview)
+
+        // An e-mail address is a link in the text, but never one a preview is for.
+        let mail = #"{"t":"text","c":"mail me@example.com","lp":{"u":"https://example.com"}}"#
+        XCTAssertNil(MessageTextPayload.parse(mail).linkPreview)
+    }
+
+    func testTheSameLinkWrittenDifferentlyStillMatches() {
+        let wire = #"{"t":"text","c":"see www.example.com","lp":{"u":"https://www.example.com/"}}"#
+        XCTAssertNotNil(MessageTextPayload.parse(wire).linkPreview)
+        let caseAndPort = #"{"t":"text","c":"see https://Example.COM:443/a?b=1#c","lp":{"u":"https://example.com/a?b=1#c"}}"#
+        XCTAssertNotNil(MessageTextPayload.parse(caseAndPort).linkPreview)
+        // The path is part of the link: another page on the same host does not match.
+        let otherPage = #"{"t":"text","c":"see example.com/a","lp":{"u":"https://example.com/b"}}"#
+        XCTAssertNil(MessageTextPayload.parse(otherPage).linkPreview)
+        // Any of the text's links counts, not only the first.
+        let second = #"{"t":"text","c":"a.com/x or komoot.com/tour/1","lp":{"u":"https://komoot.com/tour/1"}}"#
+        XCTAssertNotNil(MessageTextPayload.parse(second).linkPreview)
+    }
+
+    func testLinkMediaPreviewForALinkNotInTheCaptionIsDropped() throws {
+        let raw = #"{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","c":"Route komoot.com","s":48000,"lp":{"u":"https://evil.example"}}"#
+        let payload = try XCTUnwrap(MediaMessagePayload.parse(Data(raw.utf8)))
+        XCTAssertNil(payload.lp)
+        XCTAssertFalse(payload.isLink)
+        let kept = #"{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","c":"Route komoot.com","s":48000,"lp":{"u":"https://komoot.com"}}"#
+        XCTAssertTrue(try XCTUnwrap(MediaMessagePayload.parse(Data(kept.utf8))).isLink)
+    }
+
+    /// A thread file saved before the rule may hold such a preview; it is dropped on load too.
+    func testStoredPreviewForALinkNotInTheTextIsDropped() {
+        let message = MessagingController.ChatMessage(
+            id: UUID(),
+            peerUserID: UUID(),
+            senderUserID: UUID(),
+            text: "Route: komoot.com/tour/1398273",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            isMine: false,
+            deleted: false,
+            linkPreview: LinkPreview(url: "https://evil.example/login", siteName: "komoot", title: "Komoot")
+        )
+        let stored = LocalMessageStore.StoredMessage.from(message)
+        XCTAssertNotNil(stored.linkPreview)
+        let loaded = stored.toChatMessage(media: LocalMediaCache(), historyKey: SealedTestKey.historyKey)
+        XCTAssertNil(loaded.linkPreview)
+        XCTAssertEqual(loaded.text, "Route: komoot.com/tour/1398273")
     }
 
     // MARK: - Media envelope (large image)
