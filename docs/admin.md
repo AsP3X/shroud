@@ -55,7 +55,7 @@ While the profile is off, the API still binds its internal operator port when `O
 
 ## What the console shows
 
-Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Each code works once: the code that signed in can't also approve a change, so wait for the next one. Sign-ins and changes are kept in the audit log. The log and schema `admin` belong to the API's database role once `grants.sql` has run (deploy waits for the console to create them): `shroud_admin` can add and read entries, never change, remove or drop one. Its integration tests then need `GRANT_TEST_SUPER_URL` to clear entries.
+Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Each code works once: the code that signed in can't also approve a change, so wait for the next one. Sign-ins and changes are kept in the audit log. The log and schema `admin` belong to the database superuser once `grants.sql` has run (deploy waits for the console to create them): `shroud_admin` can add and read entries, never change, remove or drop one. Its integration tests then need `GRANT_TEST_SUPER_URL` to clear entries.
 
 | Page | What it shows |
 | --- | --- |
@@ -89,7 +89,7 @@ Back up schema `admin` with the database. That schema holds:
 
 `ADMIN_SECRET_KEY` is not in the database. Keep it with the backup. A restored schema `admin` cannot decrypt authenticator secrets without the same key.
 
-Column grants on the API tables are `admin/api/grants.sql`, applied by the table owner. They are not rows in schema `admin`. Apply that file again, as the table owner, if you restore onto a database that does not already have them.
+Column grants on the API tables are `admin/api/grants.sql`, applied by the superuser (it makes them as the tables' owner, `shroud_api`). They are not rows in schema `admin`. Apply that file again, as the superuser, if you restore onto a database that does not already have them.
 
 ## A lost ADMIN_SECRET_KEY
 

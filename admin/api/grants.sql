@@ -1,9 +1,23 @@
--- Column grants for the shroud_admin role, and one view. Applied by the table owner (the API's
--- role), not by shroud_admin, which cannot grant on tables it does not own. Re-running is safe.
+-- Column grants for the shroud_admin role, and one view. Applied by the superuser or the table
+-- owner, never by shroud_admin, which cannot grant on tables it does not own. Re-running is safe.
+-- Where the API's tables belong to a role of its own (shroud_api, server/docker/api-role.sql), the
+-- grants and the view are made as that role, so the view belongs to the API like its tables do and
+-- a migration of its own can drop it.
 --
 -- Deliberately absent: users.username_hash, users.password_hash, devices.sealed_name,
 -- messages.body, media_objects.bucket, media_objects.object_key, push_tokens.apns_token,
 -- web_push_subscriptions.endpoint, and every key, verifier and pepper column.
+
+DO $body$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner
+    WHERE c.oid = to_regclass('public.users') AND r.rolname = 'shroud_api'
+  ) THEN
+    SET ROLE shroud_api;
+  END IF;
+END
+$body$;
 
 GRANT SELECT (id, created_at, deleted_at) ON users TO shroud_admin;
 GRANT SELECT (id, user_id, created_at, last_seen_at, revoked_at) ON devices TO shroud_admin;
@@ -29,12 +43,15 @@ CREATE OR REPLACE VIEW admin_unsealed_push_devices AS
     );
 GRANT SELECT ON admin_unsealed_push_devices TO shroud_admin;
 
--- The audit log, and schema admin around it, belong to this role, not the console's: the console
--- adds and reads entries, and even with its own login stolen it cannot change, remove or drop one
--- (a schema's owner may drop anything in it, so the schema moves too; the console keeps USAGE and
--- CREATE for its own tables and migrations). Skipped until the console has created its schema
--- (deploy waits for it first). A later console migration that alters the audit log has to be
--- applied by this role.
+RESET ROLE;
+
+-- The audit log, and schema admin around it, belong to the role applying this file (the superuser
+-- in a Compose deploy), neither to the console's role nor to the API's: the console adds and reads
+-- entries, and even with its own login stolen it cannot change, remove or drop one (a schema's
+-- owner may drop anything in it, so the schema moves too; the console keeps USAGE and CREATE for
+-- its own tables and migrations). Skipped until the console has created its schema (deploy waits
+-- for it first). A later console migration that alters the audit log has to be applied by this
+-- role.
 DO $body$
 BEGIN
   IF to_regclass('admin.audit_log') IS NOT NULL THEN

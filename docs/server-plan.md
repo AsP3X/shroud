@@ -1860,7 +1860,7 @@ clients go by the `UPDATE_REQUIRED` code.
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Postgres |
+| `DATABASE_URL` | Postgres. Compose connects as `shroud_api`, a role that owns the API's tables and nothing more (`server/docker/api-role.sql`), never as the superuser |
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
 | `TRUST_FORWARDED_HEADERS` | Honor `X-Real-IP` / right-most `X-Forwarded-For` for rate-limit keys, from a peer on a loopback or private address or in `TRUSTED_PROXIES` only (default false: the peer address) |

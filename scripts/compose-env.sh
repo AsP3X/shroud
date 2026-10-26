@@ -127,11 +127,12 @@ shroud_set_env_value() {
 }
 
 # Credentials an older .env lacks, generated once and never replaced: Nebular's own secret, the
-# API's access key (id + secret), the /metrics token, and the Redis password.
+# API's access key (id + secret), the /metrics token, the Redis password and the password of the
+# API's database role.
 shroud_ensure_nebular_secrets() {
   local file="${SHROUD_REPO_ROOT}/.env" key value added=""
   [[ -f "$file" ]] || return 0
-  for key in NOS_JWT_SECRET NEBULAR_ACCESS_KEY_ID NEBULAR_SECRET_ACCESS_KEY NOS_METRICS_TOKEN REDIS_PASSWORD; do
+  for key in NOS_JWT_SECRET NEBULAR_ACCESS_KEY_ID NEBULAR_SECRET_ACCESS_KEY NOS_METRICS_TOKEN REDIS_PASSWORD API_DB_PASSWORD; do
     value="$(shroud_env_value "$key")"
     [[ -n "$value" && "$value" != "GENERATE_ME" ]] && continue
     if [[ "$key" == NEBULAR_ACCESS_KEY_ID ]]; then
@@ -535,16 +536,6 @@ shroud_prepare_storage_switch() {
   fi
 }
 
-# Where Postgres keeps its data, for messages.
-shroud_pg_data_location() {
-  shroud_load_data_dir
-  if [[ -n "${SHROUD_DATA_DIR:-}" ]]; then
-    printf '%s/database\n' "$SHROUD_DATA_DIR"
-  else
-    printf 'the volume %s_shroud_pg_data\n' "$(shroud_project_name)"
-  fi
-}
-
 shroud_diagnose_up() {
   local logs=""
   logs="$(docker logs shroud-api 2>&1 | tail -n 80 || true)"
@@ -552,18 +543,9 @@ shroud_diagnose_up() {
     printf '\n'
     echo "ERROR: Postgres rejected the API password."
     echo ""
-    echo "  The official Postgres image applies POSTGRES_PASSWORD only the first"
-    echo "  time it sets up its data. This host already has that data"
-    echo "  ($(shroud_pg_data_location)), so a new password in .env is ignored by Postgres."
-    echo ""
-    echo "  Keep existing chat data:"
-    echo "    Put the original password in .env as POSTGRES_PASSWORD"
-    echo "    (the previous compose default was: shroud)"
-    echo "    then:  ./deploy.sh"
-    echo ""
-    echo "  Wipe the database and use the current .env password:"
-    echo "    ./deploy.sh --down --volumes"
-    echo "    ./deploy.sh"
+    echo "  The API logs in as shroud_api with API_DB_PASSWORD, which ./deploy.sh sets on"
+    echo "  that role before it starts the API. Started some other way (docker compose up),"
+    echo "  the role may be missing or have another password. Run:  ./deploy.sh"
     echo ""
   elif printf '%s' "$logs" | grep -q 'database connection failed'; then
     printf '\n'
@@ -645,12 +627,47 @@ shroud_up() {
     fi
     shroud_own_nebular_dir || return 1
   fi
+  shroud_apply_api_role || return 1
   if ! shroud_compose up -d --build --remove-orphans; then
     shroud_diagnose_up
     return 1
   fi
   shroud_apply_admin_db
   shroud_publish_web_build
+}
+
+# Starts Postgres alone and gives the API its own role (server/docker/api-role.sql) before the API
+# starts: on a volume from before that role, its tables still belong to the superuser, and the API
+# logs in as shroud_api from now on. The init script does this on an empty data directory; this
+# covers a volume that already existed, and sets the password from .env again.
+shroud_apply_api_role() {
+  local user db pass tries=0
+  user="$(shroud_env_value POSTGRES_USER)"
+  db="$(shroud_env_value POSTGRES_DB)"
+  pass="$(shroud_env_value API_DB_PASSWORD)"
+  user="${user:-shroud}"
+  db="${db:-shroud}"
+  [[ -n "$pass" && "$pass" != "GENERATE_ME" ]] || {
+    echo "ERROR: API_DB_PASSWORD is not set in .env." >&2
+    return 1
+  }
+  shroud_compose up -d postgres || return 1
+  # Over TCP: while the image sets up a new data directory, its temporary server listens on the
+  # socket only, and the init scripts are still running.
+  until shroud_compose exec -T postgres pg_isready -q -h 127.0.0.1 -U "$user" -d "$db" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if ((tries > 90)); then
+      echo "ERROR: Postgres did not accept connections within 90 s." >&2
+      echo "  Logs:  ./deploy.sh --logs postgres" >&2
+      return 1
+    fi
+    sleep 1
+  done
+  if ! shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+    -v pwd="$pass" -v dbname="$db" -f /shroud/api-role.sql >/dev/null; then
+    echo "ERROR: could not set up the API's database role (server/docker/api-role.sql)." >&2
+    return 1
+  fi
 }
 
 # The init script only runs on an empty data directory. This creates shroud_admin on a volume

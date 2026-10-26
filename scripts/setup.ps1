@@ -119,6 +119,8 @@ $NEBULAR_ACCESS_KEY_ID = "SHRD" + (New-Secret -Bytes 8).ToUpperInvariant()
 $NEBULAR_SECRET_ACCESS_KEY = New-Secret
 $NOS_METRICS_TOKEN = New-Secret
 $REDIS_PASSWORD = New-Secret
+# The API's own database role. Deploy sets it on the role every time, so a new one works.
+$API_DB_PASSWORD = New-Secret
 Write-Host "  Nebular OS secret and the API's access key: generated" -ForegroundColor Green
 # Reused like the Postgres password: a new one only ends the TURN logins already handed out.
 $existingTurn = $null
@@ -218,6 +220,7 @@ $envLines = @(
     "POSTGRES_USER=shroud"
     "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
     "POSTGRES_DB=shroud"
+    "API_DB_PASSWORD=$API_DB_PASSWORD"
     "NOS_JWT_SECRET=$NOS_JWT_SECRET"
     "NEBULAR_ACCESS_KEY_ID=$NEBULAR_ACCESS_KEY_ID"
     "NEBULAR_SECRET_ACCESS_KEY=$NEBULAR_SECRET_ACCESS_KEY"

@@ -123,10 +123,10 @@ Stop:
 
 ```bash
 ./deploy.sh --down              # keep the data
-./deploy.sh --down --volumes    # wipe Postgres / Nebular / media data (needed if POSTGRES_PASSWORD changed)
+./deploy.sh --down --volumes    # wipe Postgres / Nebular / media data
 ```
 
-Postgres only hashes `POSTGRES_PASSWORD` the first time it sets up its data. Changing the password in `.env` later will make the API fail with `password authentication failed`. Either restore the original password or wipe the data as above.
+The API logs in to Postgres as its own role, `shroud_api`, with `API_DB_PASSWORD`; every `./deploy.sh` sets that password on the role before the API starts, so it may be changed in `.env`. `POSTGRES_PASSWORD` is the superuser's, which no service uses; Postgres applies it only the first time it sets up its data, so changing it in `.env` later changes nothing.
 
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
 

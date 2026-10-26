@@ -107,13 +107,14 @@ function New-HexSecret {
 }
 
 # Credentials an older .env lacks, generated once and never replaced: Nebular's own secret, the
-# API's access key (id + secret), the /metrics token, and the Redis password.
+# API's access key (id + secret), the /metrics token, the Redis password and the password of the
+# API's database role.
 function Add-NebularSecrets {
     $path = Join-Path $repoRoot ".env"
     if (-not (Test-Path -LiteralPath $path)) { return }
     $lines = Read-EnvLines
     $added = @()
-    foreach ($key in @("NOS_JWT_SECRET", "NEBULAR_ACCESS_KEY_ID", "NEBULAR_SECRET_ACCESS_KEY", "NOS_METRICS_TOKEN", "REDIS_PASSWORD")) {
+    foreach ($key in @("NOS_JWT_SECRET", "NEBULAR_ACCESS_KEY_ID", "NEBULAR_SECRET_ACCESS_KEY", "NOS_METRICS_TOKEN", "REDIS_PASSWORD", "API_DB_PASSWORD")) {
         $current = Get-EnvValue $key
         if ($current -and $current -ne "GENERATE_ME") { continue }
         $value = if ($key -eq "NEBULAR_ACCESS_KEY_ID") { "SHRD" + (New-HexSecret -Bytes 8).ToUpperInvariant() } else { New-HexSecret }
@@ -200,6 +201,42 @@ function Set-AdminPublicUrl {
         Write-Die "WEB_PUBLIC_URL is not set, or ADMIN_HOST is not a host name. The console is served at that address plus /admin, or at ADMIN_HOST plus /admin."
     }
     Set-EnvValue "ADMIN_PUBLIC_URL" $url
+}
+
+# Starts Postgres alone and gives the API its own role (server/docker/api-role.sql) before the API
+# starts: on a volume from before that role, its tables still belong to the superuser, and the API
+# logs in as shroud_api from now on. The init script does this on an empty data directory; this
+# covers a volume that already existed, and sets the password from .env again.
+function Apply-ApiRole {
+    $user = Get-EnvValue "POSTGRES_USER"; if (-not $user) { $user = "shroud" }
+    $db = Get-EnvValue "POSTGRES_DB"; if (-not $db) { $db = "shroud" }
+    $pass = Get-EnvValue "API_DB_PASSWORD"
+    if (-not $pass -or $pass -eq "GENERATE_ME") { Write-Die "API_DB_PASSWORD is not set in .env." }
+    $files = Get-ComposeArgs
+    # Created here, not by Docker: a missing bind-mount source would be made by the daemon.
+    $dataDir = Get-DataDir
+    if ($dataDir) {
+        foreach ($kind in $script:DataKinds) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $dataDir $kind.Folder) | Out-Null
+        }
+    }
+    Invoke-WithDataDirEnv { & docker compose @files up -d postgres }
+    if ($LASTEXITCODE -ne 0) { throw "could not start Postgres" }
+    # Over TCP: while the image sets up a new data directory, its temporary server listens on the
+    # socket only, and the init scripts are still running.
+    $ready = $false
+    for ($try = 0; $try -lt 90 -and -not $ready; $try++) {
+        Invoke-WithDataDirEnv {
+            & docker compose @files exec -T postgres pg_isready -q -h 127.0.0.1 -U $user -d $db 2>$null | Out-Null
+        }
+        $ready = ($LASTEXITCODE -eq 0)
+        if (-not $ready) { Start-Sleep -Seconds 1 }
+    }
+    if (-not $ready) { throw "Postgres did not accept connections within 90 s (.\deploy.ps1 -Logs postgres)" }
+    Invoke-WithDataDirEnv {
+        & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "pwd=$pass" -v "dbname=$db" -f /shroud/api-role.sql | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) { throw "could not set up the API's database role (server/docker/api-role.sql)" }
 }
 
 # The init script only runs on an empty data directory. This creates shroud_admin on a volume
@@ -390,12 +427,6 @@ function Test-StorageHas {
 function Test-PgDataExists {
     param([string]$Storage = (Get-DataDir))
     return (Test-StorageHas $Storage (Get-ProjectName) $script:DataKinds[0])
-}
-
-function Get-PgDataLocation {
-    $dir = Get-DataDir
-    if ($dir) { return (Join-Path $dir "database") }
-    return "the volume $(Get-ProjectName)_shroud_pg_data"
 }
 
 # Asks a yes/no question, default no. -Yes answers yes.
@@ -762,6 +793,7 @@ function Invoke-Wizard {
             docker network create proxy-network | Out-Null
         }
     }
+    Apply-ApiRole
     Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
     Apply-AdminDb
     Show-Info
@@ -890,6 +922,7 @@ try {
         Invoke-Compose @("build", "--pull")
     }
     try {
+        Apply-ApiRole
         Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
     } catch {
         $apiLogs = & docker logs shroud-api 2>&1 | Select-Object -Last 80
@@ -897,11 +930,9 @@ try {
             Write-Host ""
             Write-Line "ERROR: Postgres rejected the API password." "Red"
             Write-Host ""
-            Write-Host "  The Postgres image applies POSTGRES_PASSWORD only the first time it sets up"
-            Write-Host "  its data ($(Get-PgDataLocation)). A new password in .env is ignored after that."
-            Write-Host ""
-            Write-Host "  Keep data:  set POSTGRES_PASSWORD in .env to the original (old default: shroud)"
-            Write-Host "  Wipe data:  .\deploy.ps1 -Down -Volumes ; .\deploy.ps1"
+            Write-Host "  The API logs in as shroud_api with API_DB_PASSWORD, which .\deploy.ps1 sets on"
+            Write-Host "  that role before it starts the API. Started some other way (docker compose up),"
+            Write-Host "  the role may be missing or have another password. Run:  .\deploy.ps1"
             Write-Host ""
         }
         throw

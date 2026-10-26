@@ -1083,6 +1083,7 @@ fn configuration_groups() -> Vec<GroupBody> {
             group: "Database",
             variables: vec![
                 plain("DATABASE_URL"),
+                secret("API_DB_PASSWORD", "API_DB_PASSWORD_SET"),
                 plain("DATABASE_POOL_MAX"),
                 plain("RUN_MIGRATIONS"),
                 plain("REDIS_URL"),

@@ -167,7 +167,19 @@ Postgres 16: a `shroud.probe` table made by `shroud_admin` shadowed `public.prob
 superuser session before, and not after. `shroud_admin` keeps `CREATE` on the database: Postgres
 checks it before `IF NOT EXISTS`, so the console's migration 001 (`CREATE SCHEMA IF NOT EXISTS
 admin`, checksummed) would fail without it. Trusted extensions need `CREATE` on the target schema,
-so they stay in schemas it owns. **Open:** the API still runs as a superuser.
+so they stay in schemas it owns. **Fixed (the superuser):** the API connects as its own role,
+`shroud_api` (`server/docker/api-role.sql`): `LOGIN` and nothing else, owner of the database, schema
+`public` and every table, view and sequence in it, `search_path = public`. The superuser created by
+the image (it cannot be demoted: it is the bootstrap role) is left for deploys and maintenance; no
+service logs in with it. On a fresh data directory the init script `init-api-role.sh` sets the role
+up; on an existing one `./deploy.sh` and `deploy.ps1` start Postgres alone, apply the same file (it
+moves the tables the API made as the superuser) and only then start the API. `API_DB_PASSWORD` is
+generated like the other secrets and set on the role at every deploy. `pgcrypto` is created by the
+superuser first, since migration 001 needs it. `grants.sql` makes its grants and view as
+`shroud_api`, and the audit log goes to the superuser. Checked on Postgres 16: the server suite
+(377 tests) passes connected as `shroud_api`, both on a database migrated as the superuser and then
+handed over, and on a fresh one; the admin suites pass. The deploy scripts were not run against
+Docker here.
 
 ## Medium
 
@@ -485,8 +497,8 @@ run (no Xcode or Android SDK where they were written).
 - **L2 (admin, nginx):** the console sends `frame-ancestors 'none'` (with `base-uri 'none'` and
   `form-action 'self'`) and `X-Frame-Options: DENY`; nginx's admin block adds HSTS. Unit tests
   check both headers.
-- **L3 (admin, deploy):** `grants.sql`, run by the API's role, takes schema `admin` and the audit
-  log from `shroud_admin`, which keeps `USAGE`/`CREATE` on the schema and `SELECT`/`INSERT` on the
+- **L3 (admin, deploy):** `grants.sql`, run by the superuser (the API's role before H5's fix), takes
+  schema `admin` and the audit log from `shroud_admin`, which keeps `USAGE`/`CREATE` on the schema and `SELECT`/`INSERT` on the
   log. The deploy scripts wait for the console to create its schema first. On Postgres 16 the
   console role then gets "permission denied"/"must be owner" for `UPDATE`, `DELETE`, `TRUNCATE` and
   `DROP` of the log and for renaming or dropping the schema. Its integration tests clear entries

@@ -37,8 +37,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run ./deploy.sh, which writes .env}
       POSTGRES_DB: ${POSTGRES_DB:-shroud}
       ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:?API_DB_PASSWORD is not set - run ./deploy.sh, which writes .env}
     volumes:
       - shroud_pg_data:/var/lib/postgresql/data
+      - ./server/docker/api-role.sql:/shroud/api-role.sql:ro
+      - ./server/docker/init-api-role.sh:/docker-entrypoint-initdb.d/10-api-role.sh:ro
       - ./server/docker/init-admin-role.sh:/docker-entrypoint-initdb.d/20-admin-role.sh:ro
     networks:
       - shroud-internal
@@ -156,7 +159,8 @@ services:
         condition: service_healthy
     environment:
       <<: *shroud-logging
-      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run ./deploy.sh, which writes .env}@postgres:5432/${POSTGRES_DB:-shroud}"
+      # Its own role, not the superuser (server/docker/api-role.sql, security audit H5).
+      DATABASE_URL: "postgres://shroud_api:${API_DB_PASSWORD:?API_DB_PASSWORD is not set - run ./deploy.sh, which writes .env}@postgres:5432/${POSTGRES_DB:-shroud}"
       DATABASE_POOL_MAX: "10"
       RUN_MIGRATIONS: "true"
       TRUST_FORWARDED_HEADERS: "true"
@@ -311,7 +315,7 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
       TRUST_FORWARDED_HEADERS: "true"
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-      DATABASE_URL: "postgres://${POSTGRES_USER:-shroud}@postgres:5432/${POSTGRES_DB:-shroud}"
+      DATABASE_URL: "postgres://shroud_api@postgres:5432/${POSTGRES_DB:-shroud}"
       DATABASE_POOL_MAX: "10"
       RUN_MIGRATIONS: "true"
       REDIS_URL: redis://redis:6379
@@ -343,6 +347,7 @@ services:
       ANDROID_UPDATE_URL: ${ANDROID_UPDATE_URL:-}
       WEB_BUILD_FILE: /run/shroud/web-build
       POSTGRES_PASSWORD_SET: ${POSTGRES_PASSWORD:+true}
+      API_DB_PASSWORD_SET: ${API_DB_PASSWORD:+true}
       REDIS_PASSWORD_SET: ${REDIS_PASSWORD:+true}
       NOS_JWT_SECRET_SET: ${NOS_JWT_SECRET:+true}
       NEBULAR_SECRET_ACCESS_KEY_SET: ${NEBULAR_SECRET_ACCESS_KEY:+true}
