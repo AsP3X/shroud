@@ -671,8 +671,8 @@ run (no Xcode or Android SDK where they were written).
   stops without `POSTGRES_PASSWORD`/`REDIS_PASSWORD` instead of using "shroud". CI: read-only
   `permissions`, actions pinned to commit SHAs, and new admin and web workflows (fmt, clippy,
   tests; type-check and the 37 self-tests that run in Node). `docker compose config` passes with
-  every overlay; the container itself was not started here. The server workflow's `cargo fmt
-  --check` already failed on drift in untouched code.
+  every overlay; the container itself was not started here. The server crate was reformatted
+  with `rustfmt`, so the server workflow's `cargo fmt --check` passes again.
 - **L19 (deploy):** the role scripts keep `set_config`'s row (the password) in a psql variable
   with `\gset`; checked against Postgres 16, nothing is printed.
 
