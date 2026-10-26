@@ -3,9 +3,10 @@
 A read-only review of the whole repository at `d4134a4` (dev): server, admin console, deployment,
 web, iOS and Android. Each finding below was traced through the code from a real entry point to
 its effect. Where a finding could not be run end to end here (a browser, a locked iPhone), it says
-so. H1–H5 and M1–M10 are fixed since; each says how under **Fixed**. The iOS and Android parts of
-M7–M9 were not compiled or run (no Xcode or Android SDK where they were written) and need a build
-and test run before release. The Low items and the dependency updates are open.
+so. Every finding is fixed since, except L16 and part of L17; each says how under **Fixed** (the
+Low items under [Low: fixed](#low-fixed)). The iOS and Android changes were not compiled or run (no
+Xcode or Android SDK where they were written) and need a build and test run before release. The
+dependency updates are open.
 
 Severity is what an attacker gains, weighted by what they need first. "Server" in a client finding
 means a malicious or compromised Shroud server, which the E2EE design is meant to withstand.
@@ -29,7 +30,7 @@ means a malicious or compromised Shroud server, which the E2EE design is meant t
 | M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Fixed (unbuilt) |
 | M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Fixed (iOS/Android unbuilt) |
 | M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Fixed (opt-in `ADMIN_HOST`) |
-| L1–L19 | Low | various | See [Low](#low) | Open |
+| L1–L19 | Low | various | See [Low](#low) | Fixed, except L16 and part of L17 (iOS/Android unbuilt) |
 | — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Open |
 
 ## High
@@ -466,7 +467,30 @@ and set, for the web and the console host and each kind of path. The cookie path
 
 ### Low: fixed
 
-- **L6:** a block, an accept and a contact request (the mutual auto-accept included) now take
+Each item says what changed and how it was checked. iOS and Android items were not compiled or
+run (no Xcode or Android SDK where they were written).
+
+- **L1 (admin):** the console records the last accepted TOTP time step per operator (admin
+  migration 002) and accepts a code only for a later step, in one atomic `UPDATE`; a reused code is
+  refused and audited as "Code already used", so the code that signed in can't pass the step-up.
+  The session test signs in and steps up with consecutive steps and asserts the sign-in code is
+  refused for the step-up (fails with the check removed).
+- **L2 (admin, nginx):** the console sends `frame-ancestors 'none'` (with `base-uri 'none'` and
+  `form-action 'self'`) and `X-Frame-Options: DENY`; nginx's admin block adds HSTS. Unit tests
+  check both headers.
+- **L3 (admin, deploy):** `grants.sql`, run by the API's role, takes schema `admin` and the audit
+  log from `shroud_admin`, which keeps `USAGE`/`CREATE` on the schema and `SELECT`/`INSERT` on the
+  log. The deploy scripts wait for the console to create its schema first. On Postgres 16 the
+  console role then gets "permission denied"/"must be owner" for `UPDATE`, `DELETE`, `TRUNCATE` and
+  `DROP` of the log and for renaming or dropping the schema. Its integration tests clear entries
+  through `GRANT_TEST_SUPER_URL`.
+- **L4 (server):** the hourly session job revokes sessions unused for `SESSION_IDLE_DAYS`
+  (default 90, 0 for never); they answer like a sign-out. Chosen knowing the iPhone and web
+  clients clear local data on a sign-out. Test `idle_sessions_are_revoked`. **Open:** asking for
+  the password before removing a device, which would change the clients' API.
+- **L5 (server):** the operator listener binds `OPERATOR_HOST` (127.0.0.1 unless set; Compose
+  sets 0.0.0.0 on the internal network) and refuses a token under 32 bytes. Unit tests.
+- **L6 (server):** a block, an accept and a contact request (the mutual auto-accept included) now take
   one transaction-scoped advisory lock per pair (`contacts.rs` `lock_pair`) before any row
   lock, so a block either deletes the contact rows an accept wrote or the accept sees the
   block; the request path also re-checks the block under the lock. `GET /presence`, the
@@ -474,27 +498,30 @@ and set, for the web and the console host and each kind of path. The cookie path
   skip a pair with a block either way. Tests `a_block_racing_an_accept_leaves_no_contact`,
   `a_block_racing_a_mutual_request_leaves_no_contact` (`api_contacts.rs`) and
   `a_block_stops_presence_and_typing_even_with_contact_rows_left` (`api_ws.rs`).
-- **L7:** `POST /messages/{id}/read` and `POST /messages/read` record and send a read receipt
+- **L7 (server):** `POST /messages/{id}/read` and `POST /messages/read` record and send a read receipt
   only when `send_read_receipts` would: the peer is a contact, nobody blocked either way, and
   both allow receipts (`messages.rs` `receipts_allowed`, now shared by all three). Otherwise
   they answer as before (204, or `marked: 0`) and only move the reader's own unread marker.
   Notes is unchanged: one's own messages were never marked read. Test
   `read_receipts_need_a_contact_nobody_blocked` (`api_presence.rs`).
-- **L8:** `POST /blocks` ends the pair's ringing and active calls in its transaction, as the
+- **L8 (server):** `POST /blocks` ends the pair's ringing and active calls in its transaction, as the
   blocker's hangup would (`calls.rs` `end_calls_between`), and after commit sends `call.ended`
   to every device of both people. `accept_call` and `signal_call` answer 403 while either
   blocks the other, for a call that rang before the block or slipped past it. Tests
   `a_block_ends_the_pairs_calls` and `accept_and_signal_are_refused_across_a_block`
   (`api_calls.rs`).
-
-- **Fixed (L9):** `GET /calls/ice-servers` has a budget of 60 a minute per account
+- **L9 (server, coturn):** `GET /calls/ice-servers` has a budget of 60 a minute per account
   (`ICE_SERVERS_USER`, twice the call budget; a device asks once per call it places or answers).
   coturn now runs with `--user-quota` (12 relays per minted login), `--total-quota` (100, the
   relay port range) and `--max-bps` (1 MB/s per relay and direction, twice a 1080p call), set by
   `TURN_USER_QUOTA`, `TURN_TOTAL_QUOTA` and `TURN_MAX_BPS`. `docs/calls.md` gives the random
   login name. The 12 h lifetime stays, not tied to a call: the caller asks before the call
   exists, and coturn checks the expiry on every refresh, so a shorter one would end long calls.
-- **Fixed (L11):** an APNs token or Web Push/UnifiedPush endpoint moves only from devices of the
+- **L10 (server):** `MediaStore::put_stream` takes a check that runs right before publishing;
+  `put_content` locks the media row there and refuses when it was linked or deleted during the
+  upload, holding the lock through the publish. Test
+  `an_upload_linked_before_it_finishes_does_not_publish` (204 before, 409 after).
+- **L11 (server):** an APNs token or Web Push/UnifiedPush endpoint moves only from devices of the
   same account, or from a device nothing is pushed to any more (no live session). Held by
   another account's signed-in device, the registration fails `409 PUSH_TOKEN_IN_USE` and
   nothing changes; an advisory lock on the token keeps two accounts from both taking it. Logout
@@ -503,32 +530,37 @@ and set, for the web and the console host and each kind of path. The cookie path
   leaves the old account's device holding the token until that device is removed from it.
   iOS ignores the failure, Android shows push as unavailable, and the web drops that browser
   subscription and makes a new one (a new endpoint, so it works) at the next unlock.
-- **Fixed (L13):** a 401/403 counts as "this server's VAPID key was refused" (error log,
+- **L12 (server):** the link relay refuses `::/96`, the rest of `64:ff9b::/32` and `fec0::/10`
+  (the well-known NAT64 `/96` and 6to4 keep their IPv4 check). The unit test fails without it.
+- **L12 (iOS):** `LinkPreviewFetcher.isGloballyRoutableIPv6` now checks the IPv4 address
+  inside NAT64 `64:ff9b::/96` and 6to4 `2002::/16` against the IPv4 rules (iOS synthesizes
+  `64:ff9b::` answers on IPv6-only carrier networks, so the range itself must stay allowed), and
+  refuses the rest of `64:ff9b::/32` (local-use `64:ff9b:1::/48` included), site-local
+  `fec0::/10` and all of `::/96`. Not compiled or run (no Xcode here).
+- **L12 (Android):** the link-preview address check (`LinkTargetRules.isGloballyRoutableIPv6`)
+  now refuses IPv4-compatible `::/96`, local-use NAT64 `64:ff9b:1::/48` and site-local `fec0::/10`,
+  and holds well-known NAT64 `64:ff9b::/96` and 6to4 `2002::/16` addresses to the IPv4 rules for
+  the address inside them, so DNS64 answers for public hosts still work. New cases in
+  `LinkTargetRulesTest`. Not compiled or run: the Android SDK cannot be downloaded here.
+- **L13 (server):** a 401/403 counts as "this server's VAPID key was refused" (error log,
   `misconfigured` on the test screen) only from a push service the operator chose: a listed
   host or local `http`. From an endpoint allowed only by `UNIFIEDPUSH_PUBLIC_HOSTS` it is an
   ordinary `failed` with a warning, and that host's answer is never read into logs or the test
   screen (`HTTP 401`). Every answer that is quoted is escaped first (printable ASCII as is,
   line breaks and terminal escapes as `\n`, `\u{1b}`). The VAPID token cache drops tokens due
   for renewal whenever it signs one and holds at most 256, evicting the soonest to expire.
-
-- **L15. Fixed (iOS):** `EncryptionPhrasePasteboard.copy` writes the phrase with
+- **L14 (web):** a sealed preview counts only when its URL is one of the message's own links
+  (`previewOfText`), for text and large-picture link messages; every client builds previews that
+  way. Self-test cases fail before. **Open:** showing the host instead of the sender's site name,
+  a design change (`design/webclient.pen` via Pencil, not available here).
+- **L15 (iOS):** `EncryptionPhrasePasteboard.copy` writes the phrase with
   `setItems(_:options:)` and `[.localOnly: true, .expirationDate: now + 60 s]`, so Universal
   Clipboard no longer hands it to the user's other devices; other apps on the iPhone still paste
   it, and it still clears after 60 s. The fallback write uses the same options instead of
   `pasteboard.string = …`, which synced and never expired. Not compiled or run (no Xcode here).
-- **L12. Fixed (iOS):** `LinkPreviewFetcher.isGloballyRoutableIPv6` now checks the IPv4 address
-  inside NAT64 `64:ff9b::/96` and 6to4 `2002::/16` against the IPv4 rules (iOS synthesizes
-  `64:ff9b::` answers on IPv6-only carrier networks, so the range itself must stay allowed), and
-  refuses the rest of `64:ff9b::/32` (local-use `64:ff9b:1::/48` included), site-local
-  `fec0::/10` and all of `::/96`. Not compiled or run (no Xcode here).
-- **L17. Fixed in part (iOS):** the link-preview session sets `connectionProxyDictionary = [:]`,
-  so no system or PAC proxy resolves the name past the address check or sees the links. **Open:**
-  the rebinding window. URLSession resolves the name again after the `getaddrinfo` check and has
-  no way to connect to the checked address; closing it would take an HTTP client of our own on
-  Network.framework (TLS with SNI, redirects, chunked and compressed bodies), more than a Low fix
-  should carry. What remains is a TCP and TLS attempt to a private address on port 443 with the
-  certificate checked against the public name, so nothing is read back. Not compiled or run.
-- **L16. Open (iOS), blocked:** iOS runs a different model from Android, so Android's pin cannot
+  Check on a device that a copied phrase still pastes into Notes: the comment this replaces said
+  `.localOnly` broke that, against Apple's documentation ("not available to other devices").
+- **L16 (iOS), open:** iOS runs a different model from Android, so Android's pin cannot
   be reused. WhisperKit fetches the Core ML folder `openai_whisper-<variant>` from
   `argmaxinc/whisperkit-coreml` and the tokenizer from `openai/whisper-<variant>`, both from
   `main`; Android's revision `5359861c…` and SHA-256s are for the ggml files of
@@ -542,12 +574,22 @@ and set, for the web and the console host and each kind of path. The cookie path
   rest), fetch the files the way Android's `WhisperModelStore` does (pinned `resolve/<commit>/`
   URLs, size and hash checked before the file is moved into place, a failed check deletes it),
   and hand the folders to `WhisperKitConfig(modelFolder:tokenizerFolder:…, download: false)`.
-
-- **L12, Fixed (Android):** the link-preview address check (`LinkTargetRules.isGloballyRoutableIPv6`)
-  now refuses IPv4-compatible `::/96`, local-use NAT64 `64:ff9b:1::/48` and site-local `fec0::/10`,
-  and holds well-known NAT64 `64:ff9b::/96` and 6to4 `2002::/16` addresses to the IPv4 rules for
-  the address inside them, so DNS64 answers for public hosts still work. New cases in
-  `LinkTargetRulesTest`. Not compiled or run: the Android SDK cannot be downloaded here.
+- **L17 (iOS), in part:** the link-preview session sets `connectionProxyDictionary = [:]`,
+  so no system or PAC proxy resolves the name past the address check or sees the links. **Open:**
+  the rebinding window. URLSession resolves the name again after the `getaddrinfo` check and has
+  no way to connect to the checked address; closing it would take an HTTP client of our own on
+  Network.framework (TLS with SNI, redirects, chunked and compressed bodies), more than a Low fix
+  should carry. What remains is a TCP and TLS attempt to a private address on port 443 with the
+  certificate checked against the public name, so nothing is read back. Not compiled or run.
+- **L18 (Compose, CI):** the API container runs read-only with a tmpfs `/tmp`,
+  `no-new-privileges`, and only CHOWN, FOWNER, SETUID and SETGID (for its entrypoint); Compose
+  stops without `POSTGRES_PASSWORD`/`REDIS_PASSWORD` instead of using "shroud". CI: read-only
+  `permissions`, actions pinned to commit SHAs, and new admin and web workflows (fmt, clippy,
+  tests; type-check and the 37 self-tests that run in Node). `docker compose config` passes with
+  every overlay; the container itself was not started here. The server workflow's `cargo fmt
+  --check` already failed on drift in untouched code.
+- **L19 (deploy):** the role scripts keep `set_config`'s row (the password) in a psql variable
+  with `\gset`; checked against Postgres 16, nothing is printed.
 
 ## Design notes (no change asked for here)
 
