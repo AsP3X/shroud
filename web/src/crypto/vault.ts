@@ -8,8 +8,8 @@ import { b64ToBytes, bytesToB64, bytesToHex, randomBytes, utf8, utf8decode } fro
 /*
  * The at-rest vault: everything this browser keeps about the account is sealed under one
  * random 256-bit key — the identity keys, ratchet sessions, decrypted message bodies and
- * transcripts, chat previews, language statistics and the media cache. Storage names that
- * would otherwise carry a message id or a contact's user id are keyed hashes.
+ * transcripts, chat previews, contact names, language statistics and the media cache. Storage
+ * names that would otherwise carry a message id or a contact's user id are keyed hashes.
  *
  * The vault key never touches storage in the clear. It is kept twice, wrapped:
  *   - under the PIN and a server-held pepper, which opens it on every page load and after a

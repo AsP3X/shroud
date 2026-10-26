@@ -6,11 +6,19 @@ import type { IdentityMaterial } from "./crypto/identity";
 import { peerIdentityForSending } from "./crypto/peerIdentity";
 import { openBox, sealBox, type SealedBox } from "./crypto/sealedBox";
 import { usernameHashB64 } from "./crypto/username";
+import { vaultGet, vaultSet } from "./crypto/vault";
 
 /** Shown until a mutual contact's seal opens on this device. */
 export const CONTACT_PLACEHOLDER = "Contact";
 
 const NAME_RE = /^[a-z0-9_]{3,32}$/;
+
+/*
+ * Both maps are keyed by contacts' user ids and sealed in the vault (security audit M9): the
+ * user id → username book is the one thing the server does not have. While the vault is locked
+ * they read as empty and nothing is written; the app shows no chats then. Browsers from before
+ * keep them in the clear until the next unlock seals them (`sealLegacyStorage`).
+ */
 
 function bookKey(ownerId: string): string {
   return `shroud.contact-names.${ownerId.toLowerCase()}`;
@@ -22,7 +30,7 @@ function publishedKey(ownerId: string): string {
 
 function readMap(key: string): Record<string, string> {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = vaultGet(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, string>;
     return parsed && typeof parsed === "object" ? parsed : {};
@@ -34,7 +42,7 @@ function readMap(key: string): Record<string, string> {
 function writeMap(key: string, map: Record<string, string>) {
   try {
     if (Object.keys(map).length === 0) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(map));
+    else vaultSet(key, JSON.stringify(map));
   } catch {
     /* a full disk keeps the names already on screen */
   }

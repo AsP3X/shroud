@@ -39,6 +39,20 @@ import {
 const LEGACY_PIN_PREFIX = "shroud.pin.";
 const LEGACY_PREFIXES = ["shroud.pt.", "shroud.preview.", "shroud.ratchet."] as const;
 
+/**
+ * Account items sealed under the name they already have: the identity keys, language
+ * statistics, and the contact name book with the record of names published to contacts
+ * (`contactNames.ts`). Another account's wait for its own unlock.
+ */
+function sealedInPlace(me: string): string[] {
+  return [
+    `shroud.identity.${me}`,
+    STATS_KEY,
+    `shroud.contact-names.${me}`,
+    `shroud.contact-names.published.${me}`,
+  ];
+}
+
 type LegacyPinRecord = { salt: string; hash: string };
 
 function legacyPinKey(userId: string): string {
@@ -211,13 +225,14 @@ function reseal(from: string, name: string, value: string): void {
 
 /**
  * Seals every account item this browser still holds in the clear: identity keys, ratchet
- * sessions, message bodies and transcripts, chat previews, language statistics. The old PIN
- * hash is deleted and unsealed media is dropped. Needs the open vault.
+ * sessions, message bodies and transcripts, chat previews, language statistics, contact names.
+ * The old PIN hash is deleted and unsealed media is dropped. Needs the open vault.
  */
 export async function sealLegacyStorage(userId: string): Promise<void> {
   if (!isVaultOpen(userId) || storageSealed()) return;
   sealSessionToken();
   const me = userId.toLowerCase();
+  const inPlace = sealedInPlace(me);
   for (const name of storageNames()) {
     let value: string | null;
     try {
@@ -231,7 +246,7 @@ export async function sealLegacyStorage(userId: string): Promise<void> {
       localStorage.removeItem(name);
       continue;
     }
-    if ((name === `shroud.identity.${me}` || name === STATS_KEY) && !isSealedValue(value)) {
+    if (inPlace.includes(name) && !isSealedValue(value)) {
       reseal(name, name, value);
       continue;
     }

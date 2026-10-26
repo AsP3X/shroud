@@ -304,6 +304,15 @@ stolen laptop profile or an iCloud backup gets the whole contact list without a 
 **Fix:** web: `vaultSet`/`vaultGet` and migrate in `sealLegacyStorage`. iOS: seal under the history
 key in an Application Support file marked `isExcludedFromBackup`. Android: `SealedFile`.
 
+**Fixed (web):** `web/src/contactNames.ts` reads and writes both maps, the name book and the record
+of names published to each contact, through `vaultGet`/`vaultSet` under their old storage names, so
+the wipe and the orphan sweep still find them by prefix. Locked, they read as empty and nothing is
+written; the chat shell only runs with the vault open. `sealLegacyStorage` seals plaintext maps of
+the unlocking account in place on the next unlock. The public API is unchanged. Cases in
+`crypto/vault.selftest.ts` (a pre-vault book and record are sealed on the first unlock and still
+read; locked, nothing reads or is written) fail on the code before; `deviceWipe.selftest.ts` checks
+that a sealed book without a session is swept. iOS and Android are still open.
+
 ### M10. The operator console shares the messenger's origin
 
 `web/nginx.conf.template:54-68`, admin cookie `Path=/` (`admin/api/src/auth.rs:1122-1129`).

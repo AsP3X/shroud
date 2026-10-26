@@ -80,6 +80,7 @@ const { closeVault, derivePinSecrets, isVaultOpen, openVaultWithPhrase, openVaul
 const { clearPin, hasPin, needsPhrase, setPin, unlockWithPin } = await import("./vaultAccess");
 const { loadSession } = await import("../session");
 const { history } = await import("../voice/language");
+const { contactName, rememberContactName, retainContactNames } = await import("../contactNames");
 
 function check(ok: boolean, message: string): void {
   if (!ok) throw new Error(message);
@@ -113,6 +114,10 @@ memory.set(
 );
 memory.set(`shroud.ratchet.${me}.${peer}`, JSON.stringify({ secret }));
 memory.set("transcription.languageStats", JSON.stringify({ [peer]: { de: 3 }, "*": { de: 3 } }));
+/* The contact name book and what was published to whom (security audit M9). */
+const peerName = "bob_the_builder";
+memory.set(`shroud.contact-names.${me}`, JSON.stringify({ [peer]: peerName }));
+memory.set(`shroud.contact-names.published.${me}`, JSON.stringify({ [peer]: "published-fingerprint" }));
 
 check(hasPin(me), "the legacy PIN still unlocks");
 check(!(await unlockWithPin(me, "654321")).ok, "a wrong legacy PIN must fail");
@@ -122,6 +127,7 @@ check(guards.size === 1, "the first unlock registers a PIN guard with the server
 function assertNothingReadable(): void {
   for (const [name, value] of memory) {
     check(!value.includes(secret), `plaintext left under ${name}`);
+    check(!value.includes(peerName), `contact name left in the clear under ${name}`);
     check(!value.includes(token), `session token left in the clear under ${name}`);
     check(!name.includes(messageId) && !name.includes(peer), `id left in the name ${name}`);
     check(!value.includes(peer), `peer id left in the value of ${name}`);
@@ -137,16 +143,27 @@ check(loadPlaintext(messageId, peer) === null, "an unbound body is not readable 
 check(loadPreview(me, peer)?.text === secret, "the preview opens after migration");
 check(loadIdentity(me)?.userId === me, "the identity opens after migration");
 check(Object.keys(history(peer)).join() === "de", "language statistics survive migration");
+check(contactName(me, peer) === peerName, "the contact name book survives migration");
+retainContactNames(me, []);
+check(!memory.has(`shroud.contact-names.published.${me}`), "the published record opens and empties after migration");
+rememberContactName(me, peer, peerName);
+check(contactName(me, peer) === peerName, "a name remembered after migration reads back");
+check(!memory.get(`shroud.contact-names.${me}`)?.includes(peer), "a name remembered later is sealed too");
 
 /* Locked: nothing reads, nothing writes. */
 closeVault();
 check(loadUnboundPlaintext(messageId) === null, "locked: body unreadable");
 check(loadPreview(me, peer) === null, "locked: preview unreadable");
 check(loadIdentity(me) === null, "locked: identity unreadable");
+check(contactName(me, peer) === null, "locked: contact names unreadable");
 const before = memory.size;
+const bookBefore = memory.get(`shroud.contact-names.${me}`);
 savePlaintext("dddddddd-dddd-4ddd-8ddd-dddddddddddd", peer, "written while locked");
+rememberContactName(me, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "written_while_locked");
 check(memory.size === before, "locked: nothing is written");
+check(memory.get(`shroud.contact-names.${me}`) === bookBefore, "locked: the name book is left as it was");
 check(![...memory.values()].some((v) => v.includes("written while locked")), "locked: no plaintext");
+check(![...memory.values()].some((v) => v.includes("written_while_locked")), "locked: no contact name");
 
 /* A copy of storage without the server: even the right PIN does not open it. */
 const guard = vaultPinGuard(me)!;
@@ -165,6 +182,7 @@ check(!wrong.ok && wrong.kind === "wrong" && wrong.message.includes("9"), "wrong
 check(!isVaultOpen(me), "wrong PIN leaves it closed");
 check((await unlockWithPin(me, "123456")).ok, "right PIN opens the vault");
 check(loadUnboundPlaintext(messageId) !== null, "unlocked: body readable again");
+check(contactName(me, peer) === peerName, "unlocked: contact names readable again");
 
 /* Sealed values are bound to their names: swapping two does not open either. */
 const [nameA, nameB] = [...memory.keys()].filter((n) => n.startsWith("shroud.pt.") || n.startsWith("shroud.preview."));

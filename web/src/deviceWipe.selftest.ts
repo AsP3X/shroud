@@ -121,6 +121,12 @@ check(
   hasOrphanedAccountData(new FakeStorage({ "shroud.token-hash": "x" })),
   "a token hash without its session is left over from one",
 );
+// Sealed in the vault now, under the same names (security audit M9).
+check(
+  hasOrphanedAccountData(new FakeStorage({ [`shroud.contact-names.${ME}`]: "e1.sealed" })) &&
+    hasOrphanedAccountData(new FakeStorage({ [`shroud.contact-names.published.${ME}`]: "e1.sealed" })),
+  "a sealed contact name book without its session is left over from one",
+);
 
 /* --- what verify reports ------------------------------------------------- */
 
