@@ -36,6 +36,7 @@ export function TextField({ label, value, onChange, hint, error, ok, ...rest }: 
 
 export function PasswordField({ label, value, onChange, hint, error, ok, ...rest }: BaseProps) {
   const id = useId();
+  const errorId = useId();
   const [shown, setShown] = useState(false);
   const [caps, setCaps] = useState(false);
 
@@ -52,6 +53,7 @@ export function PasswordField({ label, value, onChange, hint, error, ok, ...rest
           onKeyUp={(event) => setCaps(event.getModifierState?.("CapsLock") ?? false)}
           onBlur={() => setCaps(false)}
           aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
           {...rest}
         />
         <button
@@ -66,7 +68,9 @@ export function PasswordField({ label, value, onChange, hint, error, ok, ...rest
         </button>
       </div>
       {error ? (
-        <p className="afield-note error">{error}</p>
+        <p id={errorId} className="afield-note error" role="alert">
+          {error}
+        </p>
       ) : hint ? (
         <p className="afield-note">{hint}</p>
       ) : null}

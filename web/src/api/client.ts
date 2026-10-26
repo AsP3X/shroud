@@ -31,8 +31,8 @@ export class ApiError extends Error {
   /** From `error.reason`. Absent is null. `"account_deleted"` means the account is gone. */
   readonly reason: string | null;
   /**
-   * A 401 that must not sign the browser out: the wrong password on Delete Account.
-   * `isAuthFailure` is then false, so the usual sign-out checks leave it alone.
+   * A 401 that must not sign the browser out: the wrong password on Delete Account or on
+   * removing a device. `isAuthFailure` is then false, so the usual sign-out checks leave it alone.
    */
   readonly keepsSession: boolean;
   constructor(code: string, message: string, status: number, body?: unknown, keepsSession = false) {
@@ -251,6 +251,21 @@ async function request<T>(
   }
 }
 
+/**
+ * A call that sends the account password. Its wrong password (`401 INVALID_CREDENTIALS`) comes
+ * back with `keepsSession`, so it does not sign the browser out; every other 401 still does.
+ */
+async function withPassword(call: Promise<void>): Promise<void> {
+  try {
+    await call;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401 && err.code === "INVALID_CREDENTIALS") {
+      throw new ApiError(err.code, err.message, err.status, err.body, true);
+    }
+    throw err;
+  }
+}
+
 /** Bytes moved so far, and the expected total when the server (or caller) knows it. */
 export type TransferProgress = (loaded: number, total: number | null) => void;
 
@@ -440,20 +455,14 @@ export const api = {
    * A wrong password (`401 INVALID_CREDENTIALS`) keeps the session: `keepsSession` makes
    * `isAuthFailure` false. Every other 401 still ends it.
    */
-  deleteAccount: async (token: string, password: string) => {
-    try {
-      await request<void>("/auth/account", {
+  deleteAccount: (token: string, password: string) =>
+    withPassword(
+      request<void>("/auth/account", {
         method: "DELETE",
         token,
         body: JSON.stringify({ password }),
-      });
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401 && err.code === "INVALID_CREDENTIALS") {
-        throw new ApiError(err.code, err.message, err.status, err.body, true);
-      }
-      throw err;
-    }
-  },
+      }),
+    ),
   /**
    * No session: a locked page cannot read its token, only the token's SHA-256 (see
    * `deviceRemoval.ts`). `removed` is true only when the session with that hash belongs to a
@@ -555,8 +564,19 @@ export const api = {
       token,
     }),
   devices: (token: string) => request<{ devices: Device[] }>("/devices", { token }),
-  revokeDevice: (token: string, deviceId: string) =>
-    request<void>(`/devices/${deviceId}`, { method: "DELETE", token }),
+  /**
+   * Removes one of the account's devices. Body is `{ password }` and is not logged (security
+   * audit L4). As on `deleteAccount`, a wrong password keeps the session; `429` is the budget
+   * shared with password change and account deletion; `404` means it is already gone.
+   */
+  revokeDevice: (token: string, deviceId: string, password: string) =>
+    withPassword(
+      request<void>(`/devices/${encodeURIComponent(deviceId)}`, {
+        method: "DELETE",
+        token,
+        body: JSON.stringify({ password }),
+      }),
+    ),
   /** Stores a device's sealed name; the server never sees it in the clear. */
   putDeviceName: (token: string, deviceId: string, sealedName: string) =>
     request<void>(`/devices/${encodeURIComponent(deviceId.toLowerCase())}/name`, {

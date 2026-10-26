@@ -14,7 +14,9 @@ import { fullTimestamp, listTimestamp } from "../../format";
 import { DEVICE_LIMIT } from "../../deviceLimit";
 import { CopyButton } from "../CopyButton";
 import { DeviceTile, deviceKind } from "../DeviceTile";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { PasswordField } from "../auth/Fields";
+import { DELETE_ACCOUNT_COPY } from "./deleteAccount";
+import { mapRemoveDeviceAnswer, REMOVE_DEVICE_PROMPT } from "./removeDevice";
 import { SettingsGroup, SettingsNote } from "./SettingsRow";
 
 /**
@@ -40,9 +42,12 @@ function lastActivity(device: Device): number {
   return new Date(device.last_seen_at ?? device.created_at).getTime();
 }
 
-/** A 404 means the device is already gone (removed elsewhere meanwhile) — the goal is met. */
-function isAlreadyRemoved(err: unknown): boolean {
-  return err instanceof ApiError && err.status === 404;
+/** Why a removal failed: Delete Account's copy for a wrong password and the rate limit. */
+function removalError(err: unknown, fallback: string): string {
+  const outcome = mapRemoveDeviceAnswer(err);
+  if (outcome === "wrong-password") return DELETE_ACCOUNT_COPY.wrongPassword;
+  if (outcome === "rate-limited") return DELETE_ACCOUNT_COPY.rateLimited;
+  return err instanceof ApiError ? err.message : fallback;
 }
 
 /**
@@ -153,20 +158,23 @@ export function DevicesView({
     return null;
   }
 
-  // Escape closes the top dialog only — never the Settings page behind it.
+  // Escape closes the top dialog only — never the Settings page behind it, and never a
+  // confirmation while its removal runs.
   const dialogOpen = Boolean(confirming || confirmingAll || detail);
   useEffect(() => {
     if (!dialogOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       event.stopImmediatePropagation();
-      if (confirming) setConfirming(null);
-      else if (confirmingAll) setConfirmingAll(false);
-      else setDetail(null);
+      if (confirming) {
+        if (!revoking.has(confirming.id)) setConfirming(null);
+      } else if (confirmingAll) {
+        if (!revokingAll) setConfirmingAll(false);
+      } else setDetail(null);
     }
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [dialogOpen, confirming, confirmingAll]);
+  }, [dialogOpen, confirming, confirmingAll, revoking, revokingAll]);
 
   const list = useMemo(() => devices ?? [], [devices]);
   const current = list.find(isCurrent) ?? null;
@@ -185,22 +193,19 @@ export function DevicesView({
     onCount?.(next.length);
   }
 
-  async function revoke(device: Device) {
-    if (isCurrent(device)) return;
-    setConfirming(null);
+  /**
+   * Sends the password the confirmation asked for (security audit L4). Resolves to an error for
+   * the confirmation, which then stays open, or null once it has closed.
+   */
+  async function revoke(device: Device, password: string): Promise<string | null> {
+    if (isCurrent(device)) return null;
     setActionError(null);
     setRevoking((prev) => new Set(prev).add(device.id));
+    let error: unknown = null;
     try {
-      await api.revokeDevice(session.token, device.id);
-      removeLocally([device.id]);
-      setToast(`${nameOf(device)} removed`);
+      await api.revokeDevice(session.token, device.id, password);
     } catch (err) {
-      if (isAlreadyRemoved(err)) {
-        removeLocally([device.id]);
-        setToast(`${nameOf(device)} was already removed`);
-      } else if (!authFailed(err)) {
-        setActionError(err instanceof ApiError ? err.message : "Could not remove that device.");
-      }
+      error = err;
     } finally {
       setRevoking((prev) => {
         const next = new Set(prev);
@@ -208,47 +213,77 @@ export function DevicesView({
         return next;
       });
     }
+    const outcome = mapRemoveDeviceAnswer(error);
+    if (outcome === "signed-out") {
+      setConfirming(null);
+      onUnauthorized(error);
+      return null;
+    }
+    if (outcome !== "removed" && outcome !== "already-removed") {
+      return removalError(error, "Could not remove that device.");
+    }
+    setConfirming(null);
+    removeLocally([device.id]);
+    setToast(outcome === "removed" ? `${nameOf(device)} removed` : `${nameOf(device)} was already removed`);
     await load();
+    return null;
   }
 
-  /** No bulk endpoint — one DELETE per device, carrying on past failures. */
-  async function revokeAllOthers() {
+  /**
+   * No bulk endpoint — one DELETE per device with the same password, carrying on past failures.
+   * A wrong password or the rate limit stops it, since every later call would get the same.
+   * Resolves to an error for the confirmation when nothing was removed, else null once it closed.
+   */
+  async function revokeAllOthers(password: string): Promise<string | null> {
     const targets = others;
-    setConfirmingAll(false);
-    if (targets.length === 0) return;
+    if (targets.length === 0) {
+      setConfirmingAll(false);
+      return null;
+    }
     setActionError(null);
     setRevokingAll(true);
     const removed: string[] = [];
     let lastError: unknown = null;
     for (const device of targets) {
+      let error: unknown = null;
       try {
-        await api.revokeDevice(session.token, device.id);
-        removed.push(device.id);
+        await api.revokeDevice(session.token, device.id, password);
       } catch (err) {
-        if (isAlreadyRemoved(err)) {
-          removed.push(device.id);
-        } else if (authFailed(err)) {
-          setRevokingAll(false);
-          return;
-        } else {
-          lastError = err;
-        }
+        error = err;
+      }
+      const outcome = mapRemoveDeviceAnswer(error);
+      if (outcome === "removed" || outcome === "already-removed") {
+        removed.push(device.id);
+      } else if (outcome === "signed-out") {
+        setRevokingAll(false);
+        setConfirmingAll(false);
+        onUnauthorized(error);
+        return null;
+      } else {
+        lastError = error;
+        if (outcome !== "failed") break;
       }
     }
-    removeLocally(removed);
     setRevokingAll(false);
     if (lastError) {
       const failed = targets.length - removed.length;
-      const reason = lastError instanceof ApiError ? lastError.message : "Try again.";
+      const reason = removalError(lastError, "Try again.");
       const lead =
         targets.length === 1
           ? "The device could not be removed."
           : `${failed} of ${targets.length} devices could not be removed.`;
+      // Nothing removed: the dialog stays open with the password (a wrong one selected).
+      if (removed.length === 0) {
+        return mapRemoveDeviceAnswer(lastError) === "failed" ? `${lead} ${reason}` : reason;
+      }
       setActionError(`${lead} ${reason}`);
     } else {
       setToast(removed.length === 1 ? "1 device removed" : `${removed.length} devices removed`);
     }
+    setConfirmingAll(false);
+    removeLocally(removed);
     await load();
+    return null;
   }
 
   function retry() {
@@ -429,22 +464,22 @@ export function DevicesView({
       ) : null}
 
       {confirming ? (
-        <ConfirmDialog
+        <RemoveDevicesDialog
           title={`Remove ${nameOf(confirming)}?`}
           body={revokeConsequences(false)}
           action="Remove"
           onCancel={() => setConfirming(null)}
-          onConfirm={() => void revoke(confirming)}
+          onRemove={(password) => revoke(confirming, password)}
         />
       ) : null}
 
       {confirmingAll ? (
-        <ConfirmDialog
+        <RemoveDevicesDialog
           title="Remove all other devices?"
           body={`Only this browser stays signed in. ${revokeConsequences(true)}`}
           action={`Remove ${others.length}`}
           onCancel={() => setConfirmingAll(false)}
-          onConfirm={() => void revokeAllOthers()}
+          onRemove={revokeAllOthers}
         />
       ) : null}
 
@@ -455,6 +490,113 @@ export function DevicesView({
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * A removal confirmation that asks for the account password (security audit L4), with Delete
+ * Account's field, copy and answers: Remove stays disabled until a password is typed, a wrong
+ * password stays selected under its error, and nothing dismisses the dialog while it removes.
+ */
+function RemoveDevicesDialog({
+  title,
+  body,
+  action,
+  onCancel,
+  onRemove,
+}: {
+  title: string;
+  body: string;
+  action: string;
+  onCancel: () => void;
+  /** Resolves to an error to show under the password, or null once the dialog has closed. */
+  onRemove: (password: string) => Promise<string | null>;
+}) {
+  const form = useRef<HTMLFormElement>(null);
+  const submitting = useRef(false);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (busy || fieldError !== DELETE_ACCOUNT_COPY.wrongPassword) return;
+    const input = form.current?.querySelector<HTMLInputElement>('input[name="password"]');
+    if (!input) return;
+    input.focus({ preventScroll: true });
+    input.select();
+  }, [busy, fieldError]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (submitting.current || password.length === 0) return;
+    submitting.current = true;
+    setBusy(true);
+    setFieldError(null);
+    const error = await onRemove(password);
+    if (error === null) return;
+    submitting.current = false;
+    setBusy(false);
+    setFieldError(error);
+  }
+
+  return (
+    <div className="modal-scrim" onMouseDown={() => (busy ? undefined : onCancel())}>
+      <form
+        ref={form}
+        className="modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="dev-remove-title"
+        aria-describedby="dev-remove-body dev-remove-prompt"
+        aria-busy={busy || undefined}
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => void submit(event)}
+      >
+        <header>
+          <h2 id="dev-remove-title">{title}</h2>
+        </header>
+        <p id="dev-remove-body">{body}</p>
+        <p id="dev-remove-prompt">{REMOVE_DEVICE_PROMPT}</p>
+        <PasswordField
+          label={DELETE_ACCOUNT_COPY.passwordLabel}
+          name="password"
+          autoComplete="current-password"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder={DELETE_ACCOUNT_COPY.passwordPlaceholder}
+          value={password}
+          onChange={(value) => {
+            setPassword(value);
+            if (fieldError) setFieldError(null);
+          }}
+          error={fieldError}
+          readOnly={busy}
+          autoFocus
+        />
+        <div className="modal-actions">
+          <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy}>
+            {DELETE_ACCOUNT_COPY.cancel}
+          </button>
+          <button
+            type="submit"
+            className="btn btn-destructive"
+            disabled={!busy && password.length === 0}
+            // Not `disabled` while busy: that would drop focus out of the dialog and dim the button.
+            aria-disabled={busy || undefined}
+          >
+            {busy ? (
+              <>
+                <span className="dev-spinner on-danger" aria-hidden="true" />
+                Removing…
+              </>
+            ) : (
+              action
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

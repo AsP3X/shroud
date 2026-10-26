@@ -1,4 +1,4 @@
-/** A yes/no question about something that can't be undone (removing a device, a new QR code). */
+/** A yes/no question about something that can't be undone (a new QR code). */
 export function ConfirmDialog({
   title,
   body,
