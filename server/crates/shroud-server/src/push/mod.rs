@@ -1104,11 +1104,10 @@ impl PushService {
                 }
                 Delivery::Rejected(format!("subscription gone ({status})"))
             }
-            // The push service refused the VAPID signature or key: the server's, not the browser's.
-            WebPushOutcome::Failed {
-                status: status @ (401 | 403),
-                reason,
-            } => {
+            // A push service the operator chose refused the VAPID signature or key: the
+            // server's, not the browser's. A public-host-mode endpoint's 401 or 403 is only
+            // `Failed`: anyone can run one.
+            WebPushOutcome::KeyRefused { status, reason } => {
                 tracing::error!(%device_id, ?channel, status, %reason, "web push refused this server's VAPID key");
                 Delivery::Misconfigured(format!("{status} {reason}").trim().to_string())
             }

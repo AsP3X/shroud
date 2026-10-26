@@ -503,6 +503,13 @@ and set, for the web and the console host and each kind of path. The cookie path
   leaves the old account's device holding the token until that device is removed from it.
   iOS ignores the failure, Android shows push as unavailable, and the web drops that browser
   subscription and makes a new one (a new endpoint, so it works) at the next unlock.
+- **Fixed (L13):** a 401/403 counts as "this server's VAPID key was refused" (error log,
+  `misconfigured` on the test screen) only from a push service the operator chose: a listed
+  host or local `http`. From an endpoint allowed only by `UNIFIEDPUSH_PUBLIC_HOSTS` it is an
+  ordinary `failed` with a warning, and that host's answer is never read into logs or the test
+  screen (`HTTP 401`). Every answer that is quoted is escaped first (printable ASCII as is,
+  line breaks and terminal escapes as `\n`, `\u{1b}`). The VAPID token cache drops tokens due
+  for renewal whenever it signs one and holds at most 256, evicting the soonest to expire.
 
 ## Design notes (no change asked for here)
 

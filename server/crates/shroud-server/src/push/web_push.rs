@@ -36,6 +36,8 @@ const VAPID_KEY_NAME: &str = "vapid_p256_pkcs8";
 /// VAPID tokens may live 24 hours; renew well before.
 const VAPID_TOKEN_LIFETIME_SECS: u64 = 12 * 60 * 60;
 const VAPID_TOKEN_RENEW_BEFORE_SECS: u64 = 60 * 60;
+/// Most VAPID tokens cached at once (one per push-service origin).
+const MAX_CACHED_VAPID_TOKENS: usize = 256;
 
 /// Push services browsers subscribe with. A subscription must point at one of these (or a host
 /// from `WEB_PUSH_ALLOWED_HOSTS`): anything else would let a client aim the server's requests
@@ -324,10 +326,45 @@ pub enum WebPushOutcome {
     Gone {
         status: u16,
     },
+    /// 401/403 from a push service the operator chose (a listed host, or local `http`): it
+    /// refused this server's VAPID key or subject. `reason` is its answer, escaped.
+    KeyRefused {
+        status: u16,
+        reason: String,
+    },
+    /// Anything else. `reason` quotes a chosen service's answer (escaped), never a
+    /// public-host-mode endpoint's: any public name can be one.
     Failed {
         status: u16,
         reason: String,
     },
+}
+
+/// How [`WebPushClient::send`] reads a push service's status.
+#[derive(Debug, PartialEq, Eq)]
+enum Answer {
+    Accepted,
+    Gone,
+    KeyRefused,
+    /// `quote`: the service's answer may go into logs and the test screen.
+    Failed {
+        quote: bool,
+    },
+}
+
+/// What `status` from a push service reached by `route` means.
+///
+/// Human: Only a service the operator chose speaks for this server's configuration. In
+/// public-host mode anyone can stand up the endpoint, so its 401 or 403 says nothing about
+/// the VAPID key, and nothing it writes back is quoted (security audit L13).
+fn answer(status: u16, route: EndpointRoute) -> Answer {
+    let chosen = route != EndpointRoute::PublicHost;
+    match status {
+        200..=299 => Answer::Accepted,
+        404 | 410 => Answer::Gone,
+        401 | 403 if chosen => Answer::KeyRefused,
+        _ => Answer::Failed { quote: chosen },
+    }
 }
 
 /// Sends Web Push requests with a cached VAPID token per push-service origin.
@@ -532,18 +569,34 @@ impl WebPushClient {
             }
         };
         let status = response.status().as_u16();
-        match status {
-            200..=299 => WebPushOutcome::Accepted,
-            404 | 410 => WebPushOutcome::Gone { status },
-            _ => WebPushOutcome::Failed {
+        match answer(status, route) {
+            Answer::Accepted => WebPushOutcome::Accepted,
+            Answer::Gone => WebPushOutcome::Gone { status },
+            Answer::KeyRefused => WebPushOutcome::KeyRefused {
                 status,
                 reason: error_snippet(response).await,
+            },
+            Answer::Failed { quote: true } => WebPushOutcome::Failed {
+                status,
+                reason: error_snippet(response).await,
+            },
+            Answer::Failed { quote: false } => WebPushOutcome::Failed {
+                status,
+                reason: format!("HTTP {status}"),
             },
         }
     }
 
     async fn token_for(&self, audience: &str) -> Result<String, String> {
-        let now = unix_now();
+        self.token_at(audience, unix_now()).await
+    }
+
+    /// The cached VAPID token for `audience` at `now`, or a new one.
+    ///
+    /// Human: In public-host mode any public name can become an audience, so a token is kept
+    /// only while it is current, and only [`MAX_CACHED_VAPID_TOKENS`] of them: one evicted is
+    /// signed again when it is next needed.
+    async fn token_at(&self, audience: &str, now: u64) -> Result<String, String> {
         if let Some((token, expires_at)) = self.inner.tokens.read().await.get(audience)
             && *expires_at > now + VAPID_TOKEN_RENEW_BEFORE_SECS
         {
@@ -554,11 +607,17 @@ impl WebPushClient {
             .inner
             .vapid
             .token(audience, &self.inner.subject, expires_at)?;
-        self.inner
-            .tokens
-            .write()
-            .await
-            .insert(audience.to_string(), (token.clone(), expires_at));
+        let mut tokens = self.inner.tokens.write().await;
+        tokens.retain(|_, (_, expires)| *expires > now + VAPID_TOKEN_RENEW_BEFORE_SECS);
+        if tokens.len() >= MAX_CACHED_VAPID_TOKENS
+            && let Some(soonest) = tokens
+                .iter()
+                .min_by_key(|(_, (_, expires))| *expires)
+                .map(|(cached, _)| cached.clone())
+        {
+            tokens.remove(&soonest);
+        }
+        tokens.insert(audience.to_string(), (token.clone(), expires_at));
         Ok(token)
     }
 }
@@ -743,8 +802,8 @@ fn public_addresses(found: Vec<IpAddr>) -> Result<Vec<IpAddr>, &'static str> {
     Ok(found)
 }
 
-/// The start of a push service's error answer, for logs and the test screen. Reads at most
-/// a few hundred bytes: the body is the service's to size.
+/// The start of a push service's error answer, for logs and the test screen, escaped. Reads
+/// at most a few hundred bytes: the body is the service's to size.
 async fn error_snippet(mut response: reqwest::Response) -> String {
     const LIMIT: usize = 512;
     let mut bytes = Vec::new();
@@ -755,7 +814,23 @@ async fn error_snippet(mut response: reqwest::Response) -> String {
         }
     }
     bytes.truncate(LIMIT);
-    String::from_utf8_lossy(&bytes).chars().take(200).collect()
+    let start: String = String::from_utf8_lossy(&bytes).chars().take(200).collect();
+    escaped(&start)
+}
+
+/// `text` as it may appear in a log line or on the test screen: printable ASCII as is, and
+/// everything else (line breaks, terminal escapes, bidi controls, other scripts) escaped as
+/// Rust writes it (`\n`, `\u{1b}`), so a service cannot forge a log line or restyle a terminal.
+fn escaped(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c == ' ' || (c.is_ascii_graphic() && c != '\\') {
+            out.push(c);
+        } else {
+            out.extend(c.escape_default());
+        }
+    }
+    out
 }
 
 /// `WEB_PUSH_ALLOWED_HOSTS`: extra push-service host suffixes, comma separated.
@@ -1414,5 +1489,144 @@ mod tests {
             SubscriptionClient::from_column(Some("android")),
             SubscriptionClient::Android
         );
+    }
+
+    #[test]
+    fn only_a_service_the_operator_chose_speaks_for_the_vapid_key() {
+        use EndpointRoute::{Listed, LocalHttp, PublicHost};
+        for route in [Listed, LocalHttp, PublicHost] {
+            assert_eq!(answer(201, route), Answer::Accepted);
+            assert_eq!(answer(404, route), Answer::Gone);
+            assert_eq!(answer(410, route), Answer::Gone);
+        }
+        for status in [401, 403] {
+            assert_eq!(answer(status, Listed), Answer::KeyRefused);
+            assert_eq!(answer(status, LocalHttp), Answer::KeyRefused);
+            // Anyone can run a public host: its refusal is its own, and is not quoted.
+            assert_eq!(answer(status, PublicHost), Answer::Failed { quote: false });
+        }
+        assert_eq!(answer(500, Listed), Answer::Failed { quote: true });
+        assert_eq!(answer(429, PublicHost), Answer::Failed { quote: false });
+    }
+
+    #[test]
+    fn a_push_services_answer_is_escaped() {
+        assert_eq!(escaped("Unauthorized: bad JWT"), "Unauthorized: bad JWT");
+        assert_eq!(
+            escaped("no\n2026-10-26 ERROR forged\r\x1b[2J\u{202e}é\\"),
+            "no\\n2026-10-26 ERROR forged\\r\\u{1b}[2J\\u{202e}\\u{e9}\\\\"
+        );
+    }
+
+    /// A refusal from a service the operator chose (here local `http`) is a VAPID problem, and
+    /// its answer reaches the log and the test screen only escaped.
+    #[tokio::test]
+    async fn a_chosen_services_refusal_is_quoted_escaped() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let service = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // The whole request first: answering early can reset the client's upload.
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0u8; 4096];
+                let read = socket.read(&mut chunk).await.unwrap();
+                request.extend_from_slice(&chunk[..read]);
+                let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    assert!(read > 0, "request ended early");
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                let length: usize = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map_or(0, |value| value.trim().parse().unwrap());
+                if request.len() >= end + 4 + length || read == 0 {
+                    break;
+                }
+            }
+            let body = "denied\n2026-10-26T00:00:00Z ERROR forged\x1b[2J";
+            let answer = format!(
+                "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(answer.as_bytes()).await.unwrap();
+        });
+
+        let (vapid, _) = VapidKey::generate().unwrap();
+        let policy = UnifiedPushPolicy {
+            allow_local_http: true,
+            ..UnifiedPushPolicy::default()
+        };
+        let client =
+            WebPushClient::new(vapid, "mailto:t@example.org".into(), vec![], policy).unwrap();
+        let key = EphemeralPrivateKey::generate(&ECDH_P256, &SystemRandom::new()).unwrap();
+        let subscription = WebSubscription {
+            endpoint: format!("http://127.0.0.1:{port}/up1"),
+            p256dh: key.compute_public_key().unwrap().as_ref().to_vec(),
+            auth: vec![1; 16],
+            client: SubscriptionClient::Android,
+        };
+        let outcome = client
+            .send(
+                &subscription,
+                b"{}",
+                &WebPushOptions {
+                    ttl_secs: 60,
+                    urgency: Urgency::High,
+                    topic: None,
+                },
+            )
+            .await;
+        service.await.unwrap();
+        match outcome {
+            WebPushOutcome::KeyRefused {
+                status: 401,
+                reason,
+            } => assert_eq!(
+                reason,
+                "denied\\n2026-10-26T00:00:00Z ERROR forged\\u{1b}[2J"
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_vapid_token_cache_keeps_current_tokens_and_only_so_many() {
+        let (vapid, _) = VapidKey::generate().unwrap();
+        let client = WebPushClient::new(
+            vapid,
+            "mailto:t@example.org".into(),
+            vec![],
+            UnifiedPushPolicy::default(),
+        )
+        .unwrap();
+        let now = 1_800_000_000;
+        let first = client.token_at("https://push.example", now).await.unwrap();
+        assert_eq!(
+            client
+                .token_at("https://push.example", now + 60)
+                .await
+                .unwrap(),
+            first
+        );
+        // Public-host mode: every public name is an audience.
+        for i in 0..2 * MAX_CACHED_VAPID_TOKENS {
+            let audience = format!("https://p{i}.public.example");
+            client.token_at(&audience, now).await.unwrap();
+        }
+        assert_eq!(
+            client.inner.tokens.read().await.len(),
+            MAX_CACHED_VAPID_TOKENS
+        );
+        // Tokens due for renewal go at the next one signed.
+        let later = now + VAPID_TOKEN_LIFETIME_SECS - VAPID_TOKEN_RENEW_BEFORE_SECS;
+        let renewed = client
+            .token_at("https://push.example", later)
+            .await
+            .unwrap();
+        assert_ne!(renewed, first);
+        assert_eq!(client.inner.tokens.read().await.len(), 1);
     }
 }

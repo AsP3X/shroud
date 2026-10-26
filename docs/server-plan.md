@@ -1759,9 +1759,13 @@ its VAPID `Authorization` — so the distributor sees ciphertext and timing only
 A "Notifications are working" push to the calling device, socket or not. `channel`: `apns`, `web`
 (a browser), `unifiedpush` (the Android app's distributor), or null when it registered for none. `status`: `sent`, `not_registered`, `not_configured` (this
 server cannot reach that relay), `misconfigured` (the relay refused this server's key or topic —
-`BadEnvironmentKeyInToken`, `InvalidProviderToken`, a VAPID 401/403, …; nothing on the device can
-fix it), `rejected` (the relay refused the token or subscription; it was removed), `failed`;
-`detail` says why for the last three. Budget: 6 per minute per device.
+`BadEnvironmentKeyInToken`, `InvalidProviderToken`, a VAPID 401/403 from a listed push service, …;
+nothing on the device can fix it), `rejected` (the relay refused the token or subscription; it was
+removed), `failed`; `detail` says why for the last three. A push service's answer in `detail` is
+cut to 200 characters and escaped (printable ASCII as is, anything else as `\n`, `\u{1b}`); an
+endpoint allowed only by `UNIFIEDPUSH_PUBLIC_HOSTS` is never quoted (`detail` is `HTTP 401`), and
+its 401/403 is `failed`, not `misconfigured`: anyone can run such a host. Budget: 6 per minute
+per device.
 
 #### Sign-out and deletion
 
