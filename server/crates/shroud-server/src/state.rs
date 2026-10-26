@@ -39,6 +39,8 @@ pub struct AppState {
     /// Which proxies may name the client in `X-Real-IP` / `X-Forwarded-For`
     /// ([`crate::rate_limit::ClientIp`]).
     pub forwarded_trust: crate::rate_limit::ForwardedTrust,
+    /// Spaces out each user's `presence.update` fan-out.
+    pub presence_throttle: Arc<crate::routes::presence::PresenceThrottle>,
     /// Process metrics for `/operator/metrics`.
     pub metrics: Arc<Metrics>,
     /// Link-preview relay: target policy and each account's open pipes.
@@ -87,6 +89,9 @@ impl AppState {
                 enabled: true,
                 proxies: Vec::new(),
             },
+            presence_throttle: Arc::new(crate::routes::presence::PresenceThrottle::new(
+                crate::routes::presence::PRESENCE_INTERVAL,
+            )),
             metrics: Arc::new(Metrics::new()),
             link_relay: Arc::new(LinkRelay::new(RelayPolicy::production())),
         }

@@ -6,6 +6,9 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
@@ -184,4 +187,146 @@ async fn publish_presence(
         .realtime
         .publish_to_users(recipients, None, &payload)
         .await;
+}
+
+/// Least time between two `presence.update` fan-outs for one user (security audit M5).
+pub const PRESENCE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Entries kept before old ones are swept.
+const PRESENCE_SWEEP_AT: usize = 4096;
+
+/// Spaces out each user's presence fan-out.
+///
+/// Human: A socket that flips `focus` as fast as its frame budget allows would otherwise send a
+/// `presence.update` to every contact each time, filling their queues until their real events
+/// are dropped. The first change in an interval is told at once; the rest are folded into one
+/// update at the interval's end that tells the state as it is then, so contacts never keep a
+/// stale "online". Per replica: each one spaces out the changes its own sockets make.
+/// Agent: `admit` → Now (announce), Later(delay) (announce the current state after `delay`,
+/// then `release`), or Folded (one is already scheduled).
+#[derive(Debug)]
+pub struct PresenceThrottle {
+    interval: Duration,
+    users: Mutex<HashMap<Uuid, ThrottleSlot>>,
+}
+
+#[derive(Debug)]
+struct ThrottleSlot {
+    last: Instant,
+    scheduled: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PresenceTurn {
+    Now,
+    Later(Duration),
+    Folded,
+}
+
+impl PresenceThrottle {
+    pub fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            users: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn admit(&self, user_id: Uuid) -> PresenceTurn {
+        let now = Instant::now();
+        let mut users = self
+            .users
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if users.len() >= PRESENCE_SWEEP_AT {
+            let interval = self.interval;
+            users.retain(|_, slot| slot.scheduled || now.duration_since(slot.last) < interval);
+        }
+        match users.get_mut(&user_id) {
+            Some(slot) if slot.scheduled => PresenceTurn::Folded,
+            Some(slot) if now.duration_since(slot.last) < self.interval => {
+                slot.scheduled = true;
+                PresenceTurn::Later(self.interval - now.duration_since(slot.last))
+            }
+            _ => {
+                users.insert(
+                    user_id,
+                    ThrottleSlot {
+                        last: now,
+                        scheduled: false,
+                    },
+                );
+                PresenceTurn::Now
+            }
+        }
+    }
+
+    /// The scheduled update is going out now; it starts the next interval.
+    pub fn release(&self, user_id: Uuid) {
+        let mut users = self
+            .users
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        users.insert(
+            user_id,
+            ThrottleSlot {
+                last: Instant::now(),
+                scheduled: false,
+            },
+        );
+    }
+}
+
+/// Tells contacts whether `user_id` is online, at most once per [`PRESENCE_INTERVAL`].
+///
+/// `online` and `last_seen_at` describe the change that asked; a change folded into a later
+/// update is told as the state at that time instead.
+pub(crate) async fn announce_presence(
+    state: &AppState,
+    user_id: Uuid,
+    online: bool,
+    last_seen_at: Option<DateTime<Utc>>,
+) {
+    match state.presence_throttle.admit(user_id) {
+        PresenceTurn::Now => {
+            notify_presence_to_contacts(state, user_id, online, last_seen_at).await
+        }
+        PresenceTurn::Later(delay) => {
+            let state = state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                state.presence_throttle.release(user_id);
+                let online = state.realtime.is_user_online(user_id).await;
+                let last_seen_at = max_last_seen(&state.pool, user_id).await.ok().flatten();
+                notify_presence_to_contacts(&state, user_id, online, last_seen_at).await;
+            });
+        }
+        PresenceTurn::Folded => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn throttle_tells_the_first_change_and_folds_the_rest() {
+        let throttle = PresenceThrottle::new(Duration::from_secs(60));
+        let user = Uuid::new_v4();
+        assert_eq!(throttle.admit(user), PresenceTurn::Now);
+        assert!(
+            matches!(throttle.admit(user), PresenceTurn::Later(delay) if delay <= Duration::from_secs(60))
+        );
+        assert_eq!(throttle.admit(user), PresenceTurn::Folded);
+        assert_eq!(throttle.admit(Uuid::new_v4()), PresenceTurn::Now);
+        throttle.release(user);
+        assert!(matches!(throttle.admit(user), PresenceTurn::Later(_)));
+    }
+
+    #[test]
+    fn throttle_tells_at_once_after_a_quiet_interval() {
+        let throttle = PresenceThrottle::new(Duration::ZERO);
+        let user = Uuid::new_v4();
+        assert_eq!(throttle.admit(user), PresenceTurn::Now);
+        assert_eq!(throttle.admit(user), PresenceTurn::Now);
+    }
 }

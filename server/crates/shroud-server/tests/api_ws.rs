@@ -1197,6 +1197,62 @@ async fn a_background_socket_is_not_online_until_its_app_is_in_front() {
     let _ = server.await;
 }
 
+/// Human: A socket that flips between front and background as fast as it may still sends its
+/// contacts at most one presence update per interval, and the last one tells where it ended
+/// (security audit M5).
+#[tokio::test]
+async fn flapping_focus_is_folded_into_few_presence_updates() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping flapping_focus_is_folded_into_few_presence_updates: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let (alice_token, alice_id) = register(&client, addr).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    become_contacts(
+        &client,
+        addr,
+        (&alice_token, &alice_id),
+        (&bob_token, &bob_id),
+    )
+    .await;
+    let mut bob = connect_authed(addr, &bob_token).await;
+    let mut alice = connect_authed(addr, &alice_token).await;
+    let update = presence_update(&mut bob, &alice_id, Duration::from_secs(5))
+        .await
+        .expect("online");
+    assert_eq!(update["online"], true);
+
+    // Eleven flips, ending in the background.
+    for flip in 0..11 {
+        let frame = if flip % 2 == 0 {
+            json!({ "type": "focus", "focused": false, "background": true })
+        } else {
+            json!({ "type": "focus", "focused": true })
+        };
+        send_frame(&mut alice, frame).await;
+    }
+    let mut updates = Vec::new();
+    while let Some(update) = presence_update(&mut bob, &alice_id, Duration::from_secs(4)).await {
+        updates.push(update);
+    }
+    assert!(
+        !updates.is_empty() && updates.len() <= 2,
+        "{} updates: {updates:?}",
+        updates.len()
+    );
+    assert_eq!(updates.last().unwrap()["online"], false);
+    assert!(!presence_of(&client, addr, &bob_token, &alice_id).await.0);
+
+    let _ = alice.close(None).await;
+    let _ = bob.close(None).await;
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
 /// Human: A socket opened while the app was on screen is kept by the background connection
 /// when the app leaves. `focus:false` with `"background": true` turns it into a background
 /// socket; a plain `focus:false` (a browser tab in the background) keeps its user online.

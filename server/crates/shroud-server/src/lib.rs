@@ -283,6 +283,9 @@ pub async fn run() -> Result<(), AppError> {
         rate_limiter,
         redis_required,
         forwarded_trust: config.forwarded_trust.clone(),
+        presence_throttle: Arc::new(crate::routes::presence::PresenceThrottle::new(
+            crate::routes::presence::PRESENCE_INTERVAL,
+        )),
         metrics,
         link_relay: Arc::new(crate::routes::link_relay::LinkRelay::new(
             crate::link_relay::RelayPolicy::production(),

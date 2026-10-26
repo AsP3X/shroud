@@ -263,8 +263,11 @@ their real `message.new` and `call.ring` events. `typing` does the same to one c
 per-connection token bucket; at most one presence announcement per user every few seconds.
 
 **Fixed:** `/ws` takes 16 KiB frames and the relay 64 KiB. Each `/ws` socket may send 20 text frames
-per 10 s; past that it is closed with 1008 (its disconnect announces offline once). Presence is not
-debounced beyond that. Tests `frame_budget_refuses_past_the_window_and_resets`,
+per 10 s; past that it is closed with 1008 (its disconnect announces offline once). A user's
+`presence.update` fan-out goes out at most once per 2 s per replica (`PresenceThrottle`,
+`routes/presence.rs`): the first change at once, later ones folded into one update at the end of the
+interval that tells the state as it is then. Test `flapping_focus_is_folded_into_few_presence_updates`
+(11 updates before, at most 2 after). Tests `frame_budget_refuses_past_the_window_and_resets`,
 `websocket_closes_a_socket_that_floods_frames`, `websocket_refuses_an_oversized_frame` (the last two
 fail before the change).
 

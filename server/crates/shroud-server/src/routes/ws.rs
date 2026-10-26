@@ -26,7 +26,7 @@ use crate::error::AppError;
 use crate::rate_limit::{ClientIp, budgets};
 use crate::realtime::{OnlineChange, SocketMode, Subscription};
 use crate::routes::contacts::{are_contacts, is_blocked_either_way};
-use crate::routes::presence::{max_last_seen, notify_presence_to_contacts, touch_device_last_seen};
+use crate::routes::presence::{announce_presence, max_last_seen, touch_device_last_seen};
 use crate::routes::privacy::{Visibility, both_allow};
 use crate::state::AppState;
 
@@ -384,7 +384,7 @@ async fn announce_online_change(
         OnlineChange::Unchanged => {}
         OnlineChange::CameOnline => {
             if let Ok(last_seen) = touch_device_last_seen(&state.pool, device_id).await {
-                notify_presence_to_contacts(state, user_id, true, Some(last_seen)).await;
+                announce_presence(state, user_id, true, Some(last_seen)).await;
             }
         }
         OnlineChange::WentOffline => {
@@ -394,7 +394,7 @@ async fn announce_online_change(
                     Some(ts) => Some(ts),
                     None => max_last_seen(&state.pool, user_id).await.ok().flatten(),
                 };
-                notify_presence_to_contacts(state, user_id, false, last).await;
+                announce_presence(state, user_id, false, last).await;
             }
         }
     }
