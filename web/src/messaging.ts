@@ -209,9 +209,20 @@ let deliveryQueue: Promise<void> = Promise.resolve();
 function deliveryAckDue(dto: WireMessage, me: string, peerUserId: string): boolean {
   if (peerUserId.toLowerCase() === me.toLowerCase()) return false; // Notes
   if (dto.sender_user_id.toLowerCase() === me.toLowerCase()) return false;
+  if (!sentInChat(dto, me, peerUserId)) return false;
   if (dto.deleted_for_everyone) return false;
   if (acknowledgedDeliveries.has(dto.id.toLowerCase())) return false;
   return loadPlaintext(dto.id, dto.sender_user_id) == null;
+}
+
+/**
+ * Whether `dto` can belong to the chat with `peerUserId`: sent by me or by that peer. The server
+ * decides what a page lists, so it could file a stranger's message under this chat; that one is
+ * never opened, and the stranger's key is never fetched for it (security audit M7).
+ */
+function sentInChat(dto: WireMessage, me: string, peerUserId: string): boolean {
+  const sender = dto.sender_user_id.toLowerCase();
+  return sender === me.toLowerCase() || sender === peerUserId.toLowerCase();
 }
 
 /** Queues one ack per id not acked yet in this tab; returns at once. */
@@ -512,6 +523,19 @@ export async function decodeIncoming(
       annotation,
     };
   };
+  // A sender who is neither of us is a message the server filed under the wrong chat. Neither a
+  // cached body nor the sender's key is touched: it fails like an envelope that does not open.
+  if (!sentInChat(dto, me, peerUserId)) {
+    if (isAnnotation) return annotationFrom(null);
+    const msg: ChatMessage = {
+      ...base,
+      deleted: false,
+      text: isMedia ? "Media" : "[Unable to decrypt]",
+      failed: true,
+    };
+    rememberPreview(me, peerUserId, msg);
+    return msg;
+  }
   if (dto.deleted_for_everyone) {
     if (isAnnotation) return annotationFrom(null);
     const msg: ChatMessage = { ...base, text: "Message deleted" };
@@ -703,13 +727,15 @@ export async function hydratePreviews(
       const dto = res.messages.find((m) => m.content_type !== "annotation");
       if (!dto) continue;
       const mine = dto.sender_user_id.toLowerCase() === me.toLowerCase();
-      const cached = loadPlaintext(dto.id, dto.sender_user_id);
+      // A stranger's message filed under this chat shows as one that does not open (M7).
+      const inChat = sentInChat(dto, me, peer.id);
+      const cached = inChat ? loadPlaintext(dto.id, dto.sender_user_id) : null;
       if (cached && cached !== "[media]") {
         const payload = dto.content_type === "media" ? parseMediaPayload(cached) : null;
         let transcript = payload?.t === "voice" ? payload.c?.trim() || null : null;
         if (payload?.t === "voice" && !transcript) {
           for (const other of res.messages) {
-            if (other.content_type !== "annotation") continue;
+            if (other.content_type !== "annotation" || !sentInChat(other, me, peer.id)) continue;
             const raw = loadPlaintext(other.id, other.sender_user_id);
             const shared = raw ? parseAnnotation(raw) : null;
             if (shared?.r === dto.id.toLowerCase()) {
@@ -741,7 +767,7 @@ export async function hydratePreviews(
         });
         continue;
       }
-      if (mine || dto.deleted_for_everyone) {
+      if (inChat && (mine || dto.deleted_for_everyone)) {
         await decodeIncoming(dto, me, peer.id, token, material);
         if (stillCurrent && !stillCurrent(peer.id)) {
           forgetMessageLocally(dto.id);

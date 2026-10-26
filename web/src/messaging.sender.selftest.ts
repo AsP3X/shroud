@@ -1,6 +1,7 @@
 /**
  * A message id is not a capability. Cached plaintext is reused only for the same sender,
- * and an idempotent media replay remembers the row the server kept.
+ * a message from someone outside the chat never opens, and an idempotent media replay
+ * remembers the row the server kept.
  * Run: `npx tsx src/messaging.sender.selftest.ts`.
  */
 import type { WireMessage } from "./api/client";
@@ -36,9 +37,17 @@ const BOB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const TOKEN = "session-token-for-the-selftest";
 const ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const identityFetches: string[] = [];
+/** What `GET /messages` lists; null answers 404 like every other path. */
+let listed: WireMessage[] | null = null;
 
 globalThis.fetch = (async (input: RequestInfo | URL) => {
   const url = new URL(String(input), "https://shroud.test");
+  if (listed && url.pathname.endsWith("/messages")) {
+    return new Response(JSON.stringify({ conversation_id: null, messages: listed, has_more: false }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   identityFetches.push(url.pathname);
   return new Response(JSON.stringify({ error: { code: "NOT_FOUND", message: "no key" } }), {
     status: 404,
@@ -47,8 +56,8 @@ globalThis.fetch = (async (input: RequestInfo | URL) => {
 }) as typeof fetch;
 
 const { createVault, derivePinSecrets } = await import("./crypto/vault");
-const { loadPlaintext, savePlaintext } = await import("./crypto/plaintextCache");
-const { decodeIncoming, keptMediaSend } = await import("./messaging");
+const { loadPlaintext, loadPreview, savePlaintext } = await import("./crypto/plaintextCache");
+const { decodeIncoming, hydratePreviews, keptMediaSend } = await import("./messaging");
 
 const secrets = await derivePinSecrets("123456", new Uint8Array(16), 1);
 createVault(ME, { secrets, pepper: new Uint8Array(32).fill(7), guardId: "guard" }, new Uint8Array(32).fill(9));
@@ -87,6 +96,44 @@ const mine = await decodeIncoming(wire(ME), ME, BOB, TOKEN, material);
 check(mine.text === "for your eyes", "the same sender still reads the cache");
 check(mine.senderUserId === ME, "the cached row is still ours");
 check(identityFetches.length === fetchesAfterBob, "a cache hit for the same sender does not open");
+
+/*
+ * Security audit M7: the server lists a stranger's message in the chat with Bob. It must not
+ * open, read a body cached for that sender, or fetch (and so pin) the stranger's key.
+ */
+const STRANGER = "99999999-9999-4999-8999-999999999999";
+const PLANTED = "12121212-1212-4212-8212-121212121212";
+const SEALED = "34343434-3434-4343-8343-343434343434";
+const GONE = "56565656-5656-4565-8565-565656565656";
+savePlaintext(PLANTED, STRANGER, "planted by the server");
+const fetchesBeforeStranger = identityFetches.length;
+
+const planted = await decodeIncoming(wire(STRANGER, { id: PLANTED }), ME, BOB, TOKEN, material);
+check(planted.failed === true, "a stranger's message in Bob's chat fails");
+check(planted.text === "[Unable to decrypt]", "a body cached for the stranger is not shown");
+check(planted.isMine === false && planted.senderUserId === STRANGER, "the failed row still names its sender");
+
+const sealed = await decodeIncoming(wire(STRANGER, { id: SEALED }), ME, BOB, TOKEN, material);
+check(sealed.failed === true, "a stranger's envelope is not opened");
+const gone = await decodeIncoming(
+  wire(STRANGER, { id: GONE, ciphertext: null, deleted_for_everyone: true }),
+  ME,
+  BOB,
+  TOKEN,
+  material,
+);
+check(gone.failed === true && !gone.deleted, "a stranger's tombstone is not Bob's deletion");
+const note = await decodeIncoming(wire(BOB, { id: SEALED }), ME, ME, TOKEN, material);
+check(note.failed === true, "Notes hold only my own messages");
+check(identityFetches.length === fetchesBeforeStranger, "no key is fetched for a sender outside the chat");
+
+listed = [wire(STRANGER, { id: PLANTED, created_at: "2026-10-03T12:00:00.000Z" })];
+await hydratePreviews(TOKEN, ME, [{ id: BOB, lastMessageAt: "2026-10-03T12:00:00.000Z" }], material);
+listed = null;
+const preview = loadPreview(ME, BOB);
+check(preview?.id === PLANTED && preview.failed === true, "the chat list does not show a stranger's body");
+check(preview?.text !== "planted by the server", "the planted body stays out of the preview");
+check(identityFetches.length === fetchesBeforeStranger, "the chat list fetches no stranger's key");
 
 const serverBlob = "11111111-1111-4111-8111-111111111111";
 const uploadBlob = "22222222-2222-4222-8222-222222222222";

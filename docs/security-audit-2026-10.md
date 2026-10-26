@@ -260,6 +260,17 @@ recipient, so the server can file my message to Alice under Bob on my other devi
 recipient's id into the plaintext and check it on open. **The iOS and Android decrypt paths were not
 checked for this specific gap and should be.**
 
+**Fixed (web):** `decodeIncoming` fails a message whose sender is neither me nor the chat's peer
+before it reads the plaintext cache or asks for a key (`sentInChat` in `web/src/messaging.ts`), so
+the stranger's key is never fetched or pinned. The row shows as one that does not open ("[Unable to
+decrypt]", also for a tombstone) and is not acked. The latest page, older pages and Notes all decode
+there; realtime `message.new` files someone else's message under its sender's chat, so it is never
+shown as the peer's. The chat list's `hydratePreviews` skips the cache for such a row, and for
+shared transcripts from outside the chat. Search and notifications read the decoded rows. Cases in
+`messaging.sender.selftest.ts` (a cached and an uncached stranger's message, a stranger's tombstone,
+Notes, the chat list) fail on the code before. Sealing the recipient's id into the plaintext is
+still open, as are iOS and Android.
+
 ### M8. A locked iPhone trusts any identity key the server sends (malicious server)
 
 `ios/shroud/Services/API/PeerIdentityStore.swift:21-34,86-97`,
