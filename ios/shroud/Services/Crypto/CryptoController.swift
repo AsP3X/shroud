@@ -12,7 +12,8 @@ import Foundation
 final class CryptoController {
     private(set) var material: IdentityKeyMaterial? {
         didSet {
-            // Ratchet sessions and the voice language file follow the same lock as the chats.
+            // Ratchet sessions, the voice language file and the contact names follow the same
+            // lock as the chats.
             if let material {
                 SealedLocalState.unlock(historyKey: material.historyKey)
             } else if oldValue != nil {

@@ -2128,6 +2128,9 @@ final class CallController {
 
     private func applyCallerName(_ name: String, callID: UUID, video: Bool) {
         guard var call = active, !name.isEmpty, name != "Incoming call" else { return }
+        // The placeholder only says this phone can't read the name now (the book is sealed
+        // while the chats are locked): it never replaces the name the push brought.
+        if name == ContactNames.placeholder, call.peerUsername != "Incoming call" { return }
         call.peerUsername = name
         active = call
         ensureCallKit().update(callID, callerName: name, video: video)

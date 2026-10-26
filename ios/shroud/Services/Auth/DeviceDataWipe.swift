@@ -54,6 +54,8 @@ struct DeviceDataWipe {
         var shroud: URL { applicationSupport.appendingPathComponent("shroud", isDirectory: true) }
         /// Matches `TranscriptionLanguageMemory.defaultFileURL`'s directory.
         var voiceLanguageStats: URL { shroud.appendingPathComponent("voice", isDirectory: true) }
+        /// Matches `ContactNames.defaultFileURL`'s directory.
+        var contactNames: URL { shroud.appendingPathComponent("contacts", isDirectory: true) }
 
         static var app: Locations {
             let files = FileManager.default
@@ -168,6 +170,8 @@ struct DeviceDataWipe {
         // Sealed voice language statistics, keyed by who the user exchanges voice notes with.
         // The sweep below would take it too; named so a narrower sweep cannot miss it.
         remove(locations.voiceLanguageStats)
+        // The sealed contact username book, for the same reason.
+        remove(locations.contactNames)
         sweep(locations.applicationSupport)
         sweep(locations.documents)
         for child in children(of: locations.library) where !Self.libraryHandledElsewhere.contains(child.lastPathComponent) {

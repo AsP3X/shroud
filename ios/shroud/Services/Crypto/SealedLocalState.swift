@@ -2,14 +2,14 @@ import CryptoKit
 import Foundation
 
 /// The history key for sealed stores that sit outside the messaging repository: Double Ratchet
-/// sessions in the Keychain and the voice language statistics file.
+/// sessions in the Keychain, the voice language statistics file and the contact username book.
 ///
 /// Human: These follow the chat lock exactly. While chats are locked the key is not here, so
-/// ratchet state and who-you-send-voice-notes-to cannot be read, and nothing is written in the
-/// clear instead.
+/// ratchet state, who-you-send-voice-notes-to and your contacts' names cannot be read, and
+/// nothing is written in the clear instead.
 /// Agent: SET by `CryptoController` whenever its `material` changes (unlock → `unlock`,
-/// nil → `lock`). READ by `RatchetSessionStore` and `TranscriptionLanguageMemory`. Unlock also
-/// runs their plaintext migrations. Never logs the key.
+/// nil → `lock`). READ by `RatchetSessionStore`, `TranscriptionLanguageMemory` and
+/// `ContactNames`. Unlock also runs their plaintext migrations. Never logs the key.
 nonisolated enum SealedLocalState {
     private static let keyLock = NSLock()
     private nonisolated(unsafe) static var key: SymmetricKey?
@@ -24,11 +24,13 @@ nonisolated enum SealedLocalState {
         setHistoryKey(historyKey)
         RatchetSessionStore.sealPlaintextSessions(historyKey: historyKey)
         TranscriptionLanguageMemory.unlock(historyKey: historyKey)
+        ContactNames.unlock(historyKey: historyKey)
     }
 
     static func lock() {
         setHistoryKey(nil)
         TranscriptionLanguageMemory.lock()
+        ContactNames.lock()
     }
 
     /// Only the key, no migrations — `unlock` and unit tests.

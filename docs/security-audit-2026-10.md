@@ -350,6 +350,18 @@ memory. Tests: `ContactNameBookTest`, `ContactsControllerTest.onlyAWipeForgetsTh
 **Not compiled or run:** no Android SDK or Google Maven could be reached from the machine this was
 written on.
 
+**Fixed (iOS):** `ContactNames` keeps both maps (names and published fingerprints) in
+`Application Support/shroud/contacts/names.sealed`, sealed under the history key
+(`LocalHistoryCrypto` context `contactNames`) and marked `isExcludedFromBackup`, the way
+`TranscriptionLanguageMemory` keeps the voice language file. `SealedLocalState` opens it when the
+chats unlock and forgets it when they lock; locked, every name reads as unknown and writes drop.
+Unlocking folds the `shroud.contact-names.*` UserDefaults keys into the file and deletes them
+once it is written. Log Out's settings step deletes the file by name (the container sweep would
+too). While the chats are locked a ringing call can no longer read a name from the book, so the
+placeholder no longer replaces the name the VoIP push brought (`CallController.applyCallerName`).
+`ContactNamesTests` and `DeviceDataWipeTests` cover the seal, the lock, the migration and the
+wipe. Not compiled or run in this review (no Xcode here). Web and Android are still open.
+
 ### M10. The operator console shares the messenger's origin
 
 `web/nginx.conf.template:54-68`, admin cookie `Path=/` (`admin/api/src/auth.rs:1122-1129`).

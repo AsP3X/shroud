@@ -28,6 +28,8 @@ nonisolated enum LocalHistoryCrypto {
         case ratchetKeychain = "shroud-keychain-ratchet-v1"
         /// Per-conversation voice transcription language statistics.
         case languageStats = "shroud-local-language-stats-v1"
+        /// Contact usernames and the fingerprints of the names published to them (`ContactNames`).
+        case contactNames = "shroud-local-contact-names-v1"
     }
 
     /// Magic prefix so we can tell sealed blobs from legacy plaintext leftovers.

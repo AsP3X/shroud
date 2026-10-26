@@ -73,6 +73,7 @@ struct DeviceDataWipeTests {
             try write("Library/Application Support/shroud/plaintext/bc159ab5.sealed")
             try write("Library/Application Support/shroud/media/46177c15.sealed", bytes: 4096)
             try write("Library/Application Support/shroud/voice/language-stats.sealed")
+            try write("Library/Application Support/shroud/contacts/names.sealed")
             try write("tmp/decrypted-clip.mov", bytes: 2048)
             try write("Library/Caches/de.corespace.shroud/Cache.db", bytes: 1024)
             try write("Library/Caches/de.corespace.shroud/Cache.db-wal", bytes: 64)
@@ -203,6 +204,7 @@ struct DeviceDataWipeTests {
         #expect(!DeviceDataWipe.keepsDefaultsKey("transcription.locale"))
         #expect(!DeviceDataWipe.keepsDefaultsKey(TranscriptionPreferences.automaticKey))
         #expect(!DeviceDataWipe.keepsDefaultsKey("transcription.languageStats"))
+        #expect(!DeviceDataWipe.keepsDefaultsKey("shroud.contact-names.bc26c1ed-22cb-4a74-b98f-581c6faca09d"))
         #expect(!DeviceDataWipe.keepsDefaultsKey("security.requireUserPresence"))
         #expect(!DeviceDataWipe.keepsDefaultsKey("msg_plain_v2.e09da208"))
     }
