@@ -1226,7 +1226,7 @@ async fn device_names_are_kept_sealed_only() {
         "DELETE",
         &format!("/api/v1/devices/{browser}"),
         &phone_token,
-        None,
+        Some(json!({ "password": password })),
     )
     .await;
     assert_eq!(removed.status(), StatusCode::NO_CONTENT);
@@ -1480,13 +1480,32 @@ async fn removing_a_device_keeps_what_it_sent() {
     .await;
     assert_eq!(delivered.status(), StatusCode::NO_CONTENT);
 
+    // Removing a device takes the account password (security audit L4).
+    for (body, status) in [
+        (None, StatusCode::BAD_REQUEST),
+        (
+            Some(json!({ "password": "wrong-horse-battery" })),
+            StatusCode::UNAUTHORIZED,
+        ),
+    ] {
+        let refused = authed(
+            &app,
+            "DELETE",
+            &format!("/api/v1/devices/{laptop_id}"),
+            &phone_token,
+            body,
+        )
+        .await;
+        assert_eq!(refused.status(), status);
+    }
+
     // The phone removes the laptop.
     let removed = authed(
         &app,
         "DELETE",
         &format!("/api/v1/devices/{laptop_id}"),
         &phone_token,
-        None,
+        Some(json!({ "password": password })),
     )
     .await;
     assert_eq!(removed.status(), StatusCode::NO_CONTENT);
@@ -1555,7 +1574,7 @@ async fn removing_a_device_keeps_what_it_sent() {
         "DELETE",
         &format!("/api/v1/devices/{laptop_id}"),
         &phone_token,
-        None,
+        Some(json!({ "password": password })),
     )
     .await;
     assert_eq!(again.status(), StatusCode::NOT_FOUND);

@@ -50,6 +50,9 @@ pub mod budgets {
     pub const ICE_SERVERS_USER: (u64, Duration) = (60, Duration::from_secs(60));
     /// Password change and account delete (expensive / sensitive).
     pub const AUTH_SENSITIVE_USER: (u64, Duration) = (5, Duration::from_secs(3600));
+    /// Device removals, each with a password check: removing every other device at the
+    /// limit takes four, which leaves room for a few typos.
+    pub const DEVICE_REMOVE_USER: (u64, Duration) = (10, Duration::from_secs(3600));
     /// Link-preview relay upgrades per client IP (a preview is a page plus its image,
     /// and redirects add one each).
     pub const LINK_RELAY_IP: (u64, Duration) = (120, Duration::from_secs(60));

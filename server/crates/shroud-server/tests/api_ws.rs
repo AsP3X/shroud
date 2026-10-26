@@ -534,6 +534,7 @@ async fn removing_a_device_closes_its_socket() {
     let removed = client
         .delete(format!("http://{addr}/api/v1/devices/{}", two.laptop_id))
         .bearer_auth(&two.phone_token)
+        .json(&json!({ "password": PASSWORD }))
         .send()
         .await
         .expect("remove device");
@@ -857,6 +858,7 @@ async fn removing_a_device_closes_its_socket_via_redis() {
     let removed = client
         .delete(format!("http://{api}/api/v1/devices/{}", two.laptop_id))
         .bearer_auth(&two.phone_token)
+        .json(&json!({ "password": PASSWORD }))
         .send()
         .await
         .expect("remove device");
@@ -1291,6 +1293,7 @@ async fn removing_a_device_closes_its_background_socket() {
     let removed = client
         .delete(format!("http://{addr}/api/v1/devices/{android_id}"))
         .bearer_auth(&phone_token)
+        .json(&json!({ "password": PASSWORD }))
         .send()
         .await
         .expect("remove device");

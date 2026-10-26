@@ -1542,7 +1542,7 @@ async fn a_removed_device_is_woken_and_told_to_wipe() {
             "DELETE",
             &format!("/api/v1/devices/{}", removed.device_id),
             &phone.token,
-            None,
+            Some(json!({ "password": "correct-horse-battery" })),
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -1701,7 +1701,7 @@ async fn a_removed_device_is_still_told_after_the_session_purge() {
         "DELETE",
         &format!("/api/v1/devices/{}", removed.device_id),
         &phone.token,
-        None,
+        Some(json!({ "password": "correct-horse-battery" })),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -1775,7 +1775,7 @@ async fn a_device_without_an_alert_registration_gets_no_wake() {
             "DELETE",
             &format!("/api/v1/devices/{}", device.device_id),
             &phone.token,
-            None,
+            Some(json!({ "password": "correct-horse-battery" })),
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -2335,7 +2335,7 @@ async fn a_removed_android_app_is_woken_and_told_to_wipe() {
         "DELETE",
         &format!("/api/v1/devices/{}", android.device_id),
         &phone.token,
-        None,
+        Some(json!({ "password": "correct-horse-battery" })),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);

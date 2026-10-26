@@ -12,6 +12,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::auth::session::AuthContext;
+use crate::auth::verify_password;
 use crate::error::AppError;
 use crate::rate_limit::budgets;
 use crate::state::AppState;
@@ -134,20 +135,56 @@ pub async fn put_device_name(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeleteDeviceRequest {
+    pub password: String,
+}
+
 /// `DELETE /devices/:id` — sign the device out for good and forget its keys.
 ///
 /// Human: Messages, uploads and calls reference their sending device (`ON DELETE CASCADE`), so
 /// deleting the row erased everything it ever sent, for both participants. The row stays,
 /// marked `revoked_at`: it leaves the device list, delivery fan-out, key bundles and the cap,
-/// and a login presenting its id gets a fresh device instead.
-/// Agent: UPDATE sessions + devices SET revoked_at; DELETE keys/push/PIN guard and undelivered
-/// delivery rows for the device; CLOSES its open WebSocket and SENDS it a wake push after
-/// commit; 404 for foreign or already-removed ids.
+/// and a login presenting its id gets a fresh device instead. The account password is asked
+/// for, as for a password change, so a stolen session cannot sign the owner's other devices
+/// out and keep the account to itself (security audit L4).
+/// Agent: body `{ "password" }` (400 without it, 401 `INVALID_CREDENTIALS` when wrong, on the
+/// `device_remove_user` budget); UPDATE sessions + devices SET revoked_at; DELETE
+/// keys/push/PIN guard and undelivered delivery rows for the device; CLOSES its open WebSocket
+/// and SENDS it a wake push after commit; 404 for foreign or already-removed ids.
 pub async fn delete_device(
     State(state): State<AppState>,
     auth: AuthContext,
     Path(device_id): Path<Uuid>,
+    body: Option<Json<DeleteDeviceRequest>>,
 ) -> Result<StatusCode, AppError> {
+    let Some(Json(body)) = body else {
+        return Err(AppError::validation(
+            "Enter your password to remove a device.",
+        ));
+    };
+    state
+        .rate_limiter
+        .check_budget(
+            "device_remove_user",
+            &auth.user_id.to_string(),
+            budgets::DEVICE_REMOVE_USER,
+        )
+        .await?;
+    let password_hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(auth.user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|err| AppError::Internal(format!("device removal load failed: {err}")))?
+            .flatten();
+    let Some(password_hash) = password_hash else {
+        return Err(AppError::device_removed());
+    };
+    if !verify_password(&body.password, &password_hash).await? {
+        return Err(AppError::invalid_credentials());
+    }
+
     let mut tx = state
         .pool
         .begin()

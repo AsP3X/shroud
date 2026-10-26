@@ -799,6 +799,8 @@ Base64 or size. Budget: 60 per hour per user.
 
 #### `DELETE /devices/:id` → `204`
 
+Body `{ "password": "…" }`: the account password, so a stolen session cannot sign the owner's other devices out (security audit L4). `400 VALIDATION_ERROR` without it, `401 INVALID_CREDENTIALS` when it is wrong (the caller stays signed in). Budget: 10 per hour per user, every attempt counted.
+
 Revokes sessions for that device, deletes its keys, push tokens, Web Push subscription, notification settings, PIN guard, sealed name and undelivered delivery rows, and sets `devices.revoked_at`. The row is **not** deleted: messages, uploads and calls reference their sending device with `ON DELETE CASCADE`, so history the device sent stays for both participants. `404` for a foreign or already-removed id. Deleting the current device invalidates the caller’s token.
 
 The removed device must wipe the account's data at once, wherever it is:
