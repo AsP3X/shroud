@@ -134,9 +134,12 @@ class LinkPreviewPayloadTest {
     }
 
     @Test
-    fun displaySiteNameFallsBackToHost() { // :67-70, web links.selftest.ts:103-105
-        assertEquals("example.com", LinkPreview(url = "https://www.example.com/a", title = "A page").displaySiteName)
-        assertEquals("komoot", sample().displaySiteName)
+    fun theSiteLineIsTheHost() { // :67-70, web links.selftest.ts:103-105
+        assertEquals("example.com", LinkPreview(url = "https://www.example.com/a", title = "A page").displayHost)
+        // The sender's site name is never the site line: the block names the host it opens (L14).
+        assertEquals("komoot.com", sample().displayHost)
+        val claimed = LinkPreview(url = "https://evil.example/login", siteName = "paypal.com", title = "PayPal")
+        assertEquals("evil.example", claimed.displayHost)
         assertEquals("not a url", LinkPreview("not a url").displayHost)
         assertEquals("example.org", LinkPreview("https://WWW.Example.org").displayHost)
     }
@@ -209,13 +212,13 @@ class LinkPreviewPayloadTest {
             MessageReplyReference.Kind.Text,
             "Which trail?",
         )
-        val wire = MessageTextPayload.wire("This one", quote, sample())
+        val wire = MessageTextPayload.wire("This one: komoot.com/tour/1398273", quote, sample())
         val parsed = MessageTextPayload.parse(wire)
         assertEquals(quote, parsed.replyTo)
         assertEquals(sample(), parsed.linkPreview)
         assertTrue(MessageTextPayload.isEnvelope(wire))
         // Sorted recursively: c, lp (its keys sorted), re, t.
-        assertTrue(wire.startsWith("""{"c":"This one","lp":{"ab":true,"d":"""))
+        assertTrue(wire.startsWith("""{"c":"This one: komoot.com/tour/1398273","lp":{"ab":true,"d":"""))
         assertTrue(wire.endsWith(""""x":"Which trail?"},"t":"text"}"""))
     }
 
@@ -237,9 +240,9 @@ class LinkPreviewPayloadTest {
 
     @Test
     fun parsesWhatTheWebClientSeals() { // :115-135
-        val fromWeb = """{"t":"text","c":"Route for Saturday","re":{"id":"11111111-1111-1111-1111-111111111111","u":"22222222-2222-2222-2222-222222222222","k":"text","x":"Which route?"},"lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","th":"/9j/4AAQSkZJRg==","w":1200,"h":630,"ab":true}}"""
+        val fromWeb = """{"t":"text","c":"Route for Saturday: www.komoot.com/tour/1398273","re":{"id":"11111111-1111-1111-1111-111111111111","u":"22222222-2222-2222-2222-222222222222","k":"text","x":"Which route?"},"lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","th":"/9j/4AAQSkZJRg==","w":1200,"h":630,"ab":true}}"""
         val parsed = MessageTextPayload.parse(fromWeb)
-        assertEquals("Route for Saturday", parsed.body)
+        assertEquals("Route for Saturday: www.komoot.com/tour/1398273", parsed.body)
         assertEquals(UUID.fromString("11111111-1111-1111-1111-111111111111"), parsed.replyTo?.messageId)
         assertEquals("Which route?", parsed.replyTo?.snippet)
         val preview = parsed.linkPreview!!
@@ -254,11 +257,11 @@ class LinkPreviewPayloadTest {
 
     @Test
     fun parsesTheLinkMediaTheWebClientSeals() { // :137-148
-        val fromWeb = """{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","s":48000,"c":"Route for Saturday","th":"/9j/4AAQ","lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","w":1200,"h":630,"ab":true}}"""
+        val fromWeb = """{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","s":48000,"c":"Route for Saturday: www.komoot.com/tour/1398273","th":"/9j/4AAQ","lp":{"u":"https://www.komoot.com/tour/1398273","n":"komoot","ti":"Herzogstand – Heimgarten ridge walk","d":"Intermediate hike · 13.6 km · 5:10 h.","w":1200,"h":630,"ab":true}}"""
         val payload = MediaMessagePayload.parse(fromWeb.toByteArray())!!
         assertTrue(payload.isLink)
         assertFalse(payload.isImage)
-        assertEquals("Route for Saturday", payload.c)
+        assertEquals("Route for Saturday: www.komoot.com/tour/1398273", payload.c)
         assertEquals(1200, payload.w)
         assertEquals("Herzogstand – Heimgarten ridge walk", payload.lp?.title)
         assertNull("the blob is the picture", payload.lp?.thumbnail)
@@ -271,6 +274,42 @@ class LinkPreviewPayloadTest {
         assertEquals("still readable", parsed.body)
         assertNull(parsed.linkPreview)
         assertNull(MessageTextPayload.parse("just text").linkPreview)
+    }
+
+    // --- A preview belongs to the text (security audit L14; web links.selftest.ts) ---------------------
+
+    @Test
+    fun aPreviewForALinkNotInTheTextIsDropped() {
+        val elsewhere = """{"t":"text","c":"Route: komoot.com/tour/1398273","lp":{"u":"https://evil.example/login","n":"komoot"}}"""
+        val parsed = MessageTextPayload.parse(elsewhere)
+        assertEquals("Route: komoot.com/tour/1398273", parsed.body)
+        assertNull(parsed.linkPreview)
+        assertFalse(MessageTextPayload.isEnvelope(elsewhere))
+        assertNull(MessageTextPayload.parse("""{"t":"text","c":"No link here","lp":{"u":"https://komoot.com/tour/1398273"}}""").linkPreview)
+        // An e-mail address is a link in the text, but never one a preview is for.
+        assertNull(MessageTextPayload.parse("""{"t":"text","c":"mail me@example.com","lp":{"u":"https://example.com"}}""").linkPreview)
+    }
+
+    @Test
+    fun theSameLinkWrittenDifferentlyStillMatches() {
+        assertNotNull(MessageTextPayload.parse("""{"t":"text","c":"see www.example.com","lp":{"u":"https://www.example.com/"}}""").linkPreview)
+        assertNotNull(
+            MessageTextPayload.parse("""{"t":"text","c":"see HTTPS://Example.COM:443/a?b=1#c","lp":{"u":"https://example.com/a?b=1#c"}}""").linkPreview,
+        )
+        // The path is part of the link: another page on the same host does not match.
+        assertNull(MessageTextPayload.parse("""{"t":"text","c":"see example.com/a","lp":{"u":"https://example.com/b"}}""").linkPreview)
+        // Any of the text's links counts, not only the first.
+        assertNotNull(MessageTextPayload.parse("""{"t":"text","c":"a.com/x or komoot.com/tour/1","lp":{"u":"https://komoot.com/tour/1"}}""").linkPreview)
+        assertNull(LinkPreview.ofText(null, "komoot.com"))
+    }
+
+    @Test
+    fun aLinkMediaPreviewForALinkNotInTheCaptionIsDropped() {
+        val linkMedia = { u: String -> """{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","c":"Route komoot.com","s":48000,"lp":{"u":"$u"}}""" }
+        val elsewhere = MediaMessagePayload.parse(linkMedia("https://evil.example").toByteArray())!!
+        assertNull(elsewhere.lp)
+        assertFalse(elsewhere.isLink)
+        assertTrue(MediaMessagePayload.parse(linkMedia("https://komoot.com").toByteArray())!!.isLink)
     }
 
     // --- Media envelope (large image) -----------------------------------------------------------------
@@ -306,7 +345,7 @@ class LinkPreviewPayloadTest {
 
     @Test
     fun webLinkMediaIsALinkNotAPhotoVoiceNoteOrVideo() { // web links.selftest.ts:134-140
-        val raw = """{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","c":"Route","s":48000,"lp":{"u":"https://komoot.com"}}"""
+        val raw = """{"t":"link","mime":"image/jpeg","w":1200,"h":630,"k":"a2V5","c":"Route komoot.com","s":48000,"lp":{"u":"https://komoot.com"}}"""
         val parsed = MediaMessagePayload.parse(raw.toByteArray())!!
         assertTrue(parsed.isLink)
         assertFalse(parsed.isVoice)

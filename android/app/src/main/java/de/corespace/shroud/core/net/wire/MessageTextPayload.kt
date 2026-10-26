@@ -50,7 +50,8 @@ object MessageTextPayload {
      * Splits sealed plaintext into body, quote and link preview (`:156-173`). Never throws: unless
      * the trimmed text is a JSON object with `"t":"text"` and a string `c`, the result is
      * [plaintext] verbatim with no quote or preview. The body is `c` untrimmed; `re` and `lp` are
-     * each dropped on their own when broken (a broken `lp` keeps the message). A person who types
+     * each dropped on their own when broken (a broken `lp` keeps the message), and `lp` also when
+     * its URL is not one of the body's links ([LinkPreview.ofText]). A person who types
      * `{"t":"text","c":"nice try"}` gets `nice try` — accepted on iOS
      * (`testJSONLookingTextIsNotMistakenForAReply`).
      */
@@ -65,7 +66,8 @@ object MessageTextPayload {
         return Parsed(
             body = body,
             replyTo = (obj["re"] as? JsonObject)?.let(MessageReplyReference::parse),
-            linkPreview = (obj["lp"] as? JsonObject)?.let(LinkPreview::parse),
+            // Only a preview of one of the body's own links counts (security audit L14).
+            linkPreview = LinkPreview.ofText((obj["lp"] as? JsonObject)?.let(LinkPreview::parse), body),
         )
     }
 

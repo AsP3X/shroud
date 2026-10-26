@@ -150,7 +150,9 @@ data class StoredMessage(
      */
     fun toChatMessage(hasFullMedia: (UUID) -> Boolean): ChatMessage {
         val kind = ChatMessageKind.fromStorageKey(kind) ?: ChatMessageKind.Text
-        val preview = linkPreview?.let(LinkPreview::parse)
+        // A row written before the text-link rule may hold a preview for a link the text doesn't
+        // have; it is dropped like a newly received one (security audit L14).
+        val preview = LinkPreview.ofText(linkPreview?.let(LinkPreview::parse), text)
         val media = when (kind) {
             ChatMessageKind.Image, ChatMessageKind.Voice, ChatMessageKind.Video, ChatMessageKind.File -> hasFullMedia(id)
             // A link preview's large image is stored like a photo.

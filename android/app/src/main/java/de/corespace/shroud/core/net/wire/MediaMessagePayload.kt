@@ -161,8 +161,8 @@ data class MediaMessagePayload(
          * The payload in a parsed object (`:137-155`): null unless `t` and `k` are non-empty strings
          * after trimming. Strings are trimmed (blank → absent), `null` counts as absent, numbers may be
          * doubles (`1500.0` → 1500) or numeric strings, `mime` defaults to `application/octet-stream`,
-         * `w`/`h` to 0, a `pg` below 1 to absent; `re`/`lp` are read only when they are objects and dropped when broken; unknown
-         * keys are ignored.
+         * `w`/`h` to 0, a `pg` below 1 to absent; `re`/`lp` are read only when they are objects and dropped when broken
+         * (`lp` also when its URL is not one of the caption's links, [LinkPreview.ofText]); unknown keys are ignored.
          */
         fun parse(obj: JsonObject): MediaMessagePayload? {
             val t = LenientJson.trimmedString(obj["t"]) ?: return null
@@ -179,7 +179,11 @@ data class MediaMessagePayload(
                 th = LenientJson.trimmedString(obj["th"]),
                 s = LenientJson.long(obj["s"]),
                 re = (obj["re"] as? JsonObject)?.let(MessageReplyReference::parse),
-                lp = (obj["lp"] as? JsonObject)?.let(LinkPreview::parse),
+                // Only a preview of one of the caption's own links counts (security audit L14).
+                lp = LinkPreview.ofText(
+                    (obj["lp"] as? JsonObject)?.let(LinkPreview::parse),
+                    LenientJson.trimmedString(obj["c"]).orEmpty(),
+                ),
                 n = LenientJson.trimmedString(obj["n"]),
                 // Like `th`: read leniently, and anything but a positive count is absent.
                 pg = LenientJson.int(obj["pg"])?.takeIf { it >= 1 },

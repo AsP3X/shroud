@@ -114,7 +114,8 @@ class StoredModelsTest {
             id = UUID.randomUUID(),
             peerUserId = UUID.randomUUID(),
             senderUserId = me,
-            text = "the body",
+            // The preview's link is in the text, as on every client (a preview for another link is dropped, L14).
+            text = "the body komoot.com/tour/1398273",
             createdAt = Instant.parse("2026-09-24T12:00:00.123456Z"),
             createdAtWire = "2026-09-24T12:00:00.123456Z",
             isMine = true,
@@ -187,6 +188,22 @@ class StoredModelsTest {
         assertFalse(message.hasFullMedia) // plain text never asks the media cache
     }
 
+    /** Security audit L14: a stored preview for a link the text doesn't have is dropped on load too. */
+    @Test
+    fun aStoredPreviewForALinkNotInTheTextIsDropped() {
+        val stored = row(kind = "text").copy(
+            text = "Route: komoot.com/tour/1398273",
+            linkPreview = LinkPreview("https://evil.example/login", siteName = "komoot", title = "Komoot").wire(),
+        )
+        val message = stored.toChatMessage { true }
+        assertNull(message.linkPreview)
+        assertEquals("Route: komoot.com/tour/1398273", message.text)
+        assertEquals(
+            "https://komoot.com/tour/1398273",
+            stored.copy(linkPreview = LinkPreview("https://komoot.com/tour/1398273").wire()).toChatMessage { true }.linkPreview?.url,
+        )
+    }
+
     @Test
     fun onlyMediaKindsAndLargeLinkImagesAskTheMediaCache() {
         val asked = ArrayList<String>()
@@ -196,7 +213,7 @@ class StoredModelsTest {
         assertEquals(listOf("image", "voice", "video"), asked)
 
         // `:153-157`: a text message with a link preview and a media id has its large image cached like a photo.
-        val link = row(kind = "text").copy(mediaObjectId = UUID.randomUUID(), linkPreview = LinkPreview("https://example.com/a").wire())
+        val link = row(kind = "text").copy(text = "see https://example.com/a", mediaObjectId = UUID.randomUUID(), linkPreview = LinkPreview("https://example.com/a").wire())
         assertTrue(link.toChatMessage { true }.hasFullMedia)
         assertFalse(link.copy(mediaObjectId = null).toChatMessage { true }.hasFullMedia)
         assertFalse(link.copy(linkPreview = null).toChatMessage { true }.hasFullMedia)

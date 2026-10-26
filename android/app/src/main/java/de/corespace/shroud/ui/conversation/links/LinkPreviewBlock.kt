@@ -140,13 +140,13 @@ private fun decodeCached(message: ChatMessage, variant: LinkPreviewImageCache.Va
 
 /**
  * Telegram's link preview block — iOS `LinkPreviewView` (`LinkPreviewView.swift:27-189`;
- * conversation-thread §6.2): accent stripe, tinted card, site name, title, description, and a small
- * thumbnail the text flows around ([CutoutText]) or a large picture under the text. Same stripe,
- * radius and tint as the reply quote: in Telegram they are one component.
+ * conversation-thread §6.2): accent stripe, tinted card, the link's host, title, description, and
+ * a small thumbnail the text flows around ([CutoutText]) or a large picture under the text. Same
+ * stripe, radius and tint as the reply quote: in Telegram they are one component.
  *
  * Tapping opens the page ([onOpen]; the caller claims the tap); it shrinks to 0.98 while pressed
  * (ease-in-out 0.3 s in, 0.2 s out, none under reduce motion). Disabled without [onOpen].
- * TalkBack: "Link preview, {site}, {title}, {summary}", a link that "Opens the page".
+ * TalkBack: "Link preview, {host}, {title}, {summary}", a link that "Opens the page".
  */
 @Composable
 fun LinkPreviewBlock(
@@ -273,9 +273,9 @@ object LinkPreviewText {
         .copy(lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both))
 
     /**
-     * Site name and title semibold, description regular, one per line (`:219-248`): the site name in
-     * [accent], the rest in [primary] — the description stays plain white on outgoing bubbles, where
-     * dimmed white misses 4.5:1.
+     * The host and title semibold, description regular, one per line (`:219-248`): the host (never
+     * the sender's site name, security audit L14) in [accent], the rest in [primary] — the
+     * description stays plain white on outgoing bubbles, where dimmed white misses 4.5:1.
      */
     fun attributed(preview: LinkPreview, accent: Color, primary: Color): AnnotatedString = buildAnnotatedString {
         var first = true
@@ -284,14 +284,14 @@ object LinkPreviewText {
             first = false
             withStyle(SpanStyle(fontWeight = weight, color = color)) { append(text) }
         }
-        part(preview.displaySiteName, FontWeight.SemiBold, accent)
+        part(preview.displayHost, FontWeight.SemiBold, accent)
         preview.title?.let { part(it, FontWeight.SemiBold, primary) }
         preview.summary?.let { part(it, FontWeight.Normal, primary) }
     }
 
-    /** "Link preview, {site}, {title}, {summary}" (`:169-174`). */
+    /** "Link preview, {host}, {title}, {summary}" (`:169-174`). */
     fun accessibilityLabel(preview: LinkPreview): String =
-        listOfNotNull("Link preview", preview.displaySiteName, preview.title, preview.summary).joinToString(", ")
+        listOfNotNull("Link preview", preview.displayHost, preview.title, preview.summary).joinToString(", ")
 
     /** Very tall or very wide pictures are cropped to a sane band (`:134-135`). */
     fun clampAspect(aspect: Float): Float = aspect.coerceIn(0.75f, 2.4f)

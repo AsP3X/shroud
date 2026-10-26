@@ -33,7 +33,7 @@ object BubbleAccessibility {
         replyPart(reply)?.let(parts::add)
         parts += displayText
         if (linkPreview != null && !deleted) {
-            parts += "Link preview: " + listOfNotNull(linkPreview.displaySiteName, linkPreview.title).joinToString(", ")
+            parts += "Link preview: " + listOfNotNull(linkPreview.displayHost, linkPreview.title).joinToString(", ")
         }
         if (!deleted) chips.spokenSummary()?.let(parts::add)
         parts += time

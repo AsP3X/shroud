@@ -1,6 +1,7 @@
 package de.corespace.shroud.core.net.wire
 
 import de.corespace.shroud.core.crypto.B64
+import de.corespace.shroud.core.links.LinkDetector
 import de.corespace.shroud.core.model.Bytes
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -24,7 +25,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 data class LinkPreview private constructor(
     /** The page the preview describes, as the sender wrote it (`http`/`https` only after [parse]). */
     val url: String,
-    /** "komoot", "YouTube" — the accent-coloured first line. */
+    /**
+     * "komoot", "YouTube" as the sender's page claimed it. Sealed and kept for the wire, but never
+     * drawn: the sender chooses it, so the block's first line is [displayHost] (security audit L14).
+     */
     val siteName: String?,
     val title: String?,
     val summary: String?,
@@ -42,17 +46,16 @@ data class LinkPreview private constructor(
     val openUrl: String? get() = url.takeIf { url.toHttpUrlOrNull() != null }
 
     /**
-     * Host without `www.`, the fallback site name ("komoot.com"); the URL itself when it has no host
-     * (`LinkPreview.swift:99-103`). OkHttp's host is already lower case (IDN as punycode).
+     * Host without `www.` ("komoot.com"), the accent-coloured first line of the block; the URL itself
+     * when it has no host (`LinkPreview.swift`, `displayHost`). OkHttp's host is already lower case
+     * (IDN as punycode). Always the host the block opens, never the sealed [siteName], so a sender
+     * cannot make a card read "paypal.com" for a link to another site (security audit L14).
      */
     val displayHost: String
         get() {
             val host = url.toHttpUrlOrNull()?.host?.lowercase() ?: return url
             return if (host.startsWith("www.")) host.substring(4) else host
         }
-
-    /** First line of the block: the site's own name, else its host (`LinkPreview.swift:105-108`). */
-    val displaySiteName: String get() = siteName ?: displayHost
 
     /** Image aspect (width / height) when the sender knew it (`LinkPreview.swift:110-114`). */
     val imageAspect: Float?
@@ -147,6 +150,21 @@ data class LinkPreview private constructor(
             val collapsed = WireText.collapseWhitespace(raw, units)
             if (collapsed.isEmpty()) return null
             return WireText.clampCharacters(collapsed, max, units)
+        }
+
+        /**
+         * [preview] when its URL is one of [text]'s own links, else null (security audit L14; web
+         * `previewOfText` in `links.ts`, iOS `LinkPreview.ofText`). Every client builds a preview
+         * for a link it found in the message and seals that link as typed, so a received preview
+         * for any other URL is a block that names one site and opens another: it is dropped and the
+         * message shows without one. URLs are compared as OkHttp canonicalises them (scheme and
+         * host lower case, default port dropped, an empty path `/`), like the web's `URL.href`, so
+         * `www.example.com` in the text matches `https://www.example.com/`. E-mail addresses never match.
+         */
+        fun ofText(preview: LinkPreview?, text: String): LinkPreview? {
+            val target = preview?.url?.toHttpUrlOrNull() ?: return null
+            val inText = LinkDetector.links(text).any { !it.isEmail && it.url.toHttpUrlOrNull() == target }
+            return if (inText) preview else null
         }
 
         /**

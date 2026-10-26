@@ -118,7 +118,8 @@ class SendPipelineTest {
         // `textWire` budget (LinkPreviewPayloadTests.testTextWireDropsThumbnailThenPreviewForLongMessages).
         val w = world()
         val preview = LinkPreview(url = "https://example.com/a", title = "Title", thumbnail = Bytes.of(ByteArray(5 * 1024) { 1 }))
-        w.pipeline().sendText("a".repeat(7 * 1024), w.peer, null, LinkPreviewAttachment(preview, null, null, null))
+        // The link is in the text, as every client sends it: a preview counts only for its own link (L14).
+        w.pipeline().sendText("https://example.com/a " + "a".repeat(7 * 1024), w.peer, null, LinkPreviewAttachment(preview, null, null, null))
         assertEquals(preview.withoutThumbnail(), MessageTextPayload.parse(w.openAsPeer(w.server.lastRequest())).linkPreview)
 
         w.pipeline().sendText("b".repeat(13 * 1024), w.peer, null, LinkPreviewAttachment(preview, null, null, null))
@@ -281,7 +282,7 @@ class SendPipelineTest {
         val w = world()
         w.transfers.failUploads = 1
         val preview = LinkPreview(url = "https://example.com/a", title = "A page", thumbnail = Bytes.of(ByteArray(100) { 2 }))
-        w.pipeline().sendText("see this", w.peer, null, LinkPreviewAttachment(preview, Bytes.of(ByteArray(30_000) { 5 }), 1200, 630))
+        w.pipeline().sendText("see https://example.com/a", w.peer, null, LinkPreviewAttachment(preview, Bytes.of(ByteArray(30_000) { 5 }), 1200, 630))
 
         val request = w.server.lastRequest()
         assertEquals(ContentType.TEXT, request.contentType)
