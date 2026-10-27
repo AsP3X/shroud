@@ -22,6 +22,7 @@ struct NotificationsSettingsView: View {
     @State private var toast: Toast?
     @State private var testResult: String?
     @State private var isTesting = false
+    @State private var isRetryingPush = false
     @State private var showResetConfirm = false
     @State private var unmuting: Set<UUID> = []
     @State private var saveTask: Task<Void, Never>?
@@ -81,8 +82,46 @@ struct NotificationsSettingsView: View {
 
     // MARK: - Permission
 
+    /// The server won't push here: another account's signed-in device holds this one's tokens.
+    private func pushTokenRefusalCard(_ message: String) -> some View {
+        card {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Notifications can't reach this \(Self.deviceNoun)", systemImage: "bell.slash.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.danger)
+                Text(message)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    isRetryingPush = true
+                    Task {
+                        await PushNotificationService.shared.retryRefusedTokens()
+                        isRetryingPush = false
+                        if notifications.pushTokenRefusal != nil { Haptics.notification(.error) }
+                    }
+                } label: {
+                    Text(isRetryingPush ? "Trying\u{2026}" : "Try Again")
+                        .contentShape(Rectangle().inset(by: -13))
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .disabled(isRetryingPush)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+        }
+    }
+
+    private static var deviceNoun: String {
+        UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+    }
+
     @ViewBuilder
     private var permissionCard: some View {
+        if let refusal = notifications.pushTokenRefusal {
+            pushTokenRefusalCard(refusal)
+        }
         switch notifications.authorization {
         case .denied:
             card {

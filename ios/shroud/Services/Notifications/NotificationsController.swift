@@ -36,6 +36,10 @@ final class NotificationsController {
     let preferences = NotificationPreferences.shared
     private(set) var authorization: UNAuthorizationStatus = .notDetermined
     private(set) var banner: InAppNotification?
+    /// The server refused this device's push tokens (`409 PUSH_TOKEN_IN_USE`): another account's
+    /// signed-in device still holds them, so no message or call reaches this one (security audit
+    /// L11). The server's explanation, shown on Notifications; nil once the tokens go through.
+    private(set) var pushTokenRefusal: String?
     /// Set by a tap; the chats open it once they are on screen (after an unlock, if need be).
     var pendingOpen: NotificationOpenRequest?
 
@@ -75,6 +79,10 @@ final class NotificationsController {
         }
         await refreshAuthorization()
         return authorization == .authorized || authorization == .provisional
+    }
+
+    func setPushTokenRefusal(_ message: String?) {
+        pushTokenRefusal = message
     }
 
     // MARK: - Arrivals while the app runs

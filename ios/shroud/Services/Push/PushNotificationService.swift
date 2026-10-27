@@ -21,6 +21,8 @@ final class PushNotificationService: NSObject {
     private weak var callController: CallController?
     private var lastAlertTokenHex: String?
     private var lastVoipTokenHex: String?
+    /// Token kinds the server refused as held by another account (`PUSH_TOKEN_IN_USE`).
+    private var refusedKinds: Set<TokenKind> = []
     /// A VoIP push that woke the app before the call controller existed.
     private var pendingVoip: (UUID, UUID?, String, CallModality)?
 
@@ -106,6 +108,8 @@ final class PushNotificationService: NSObject {
         UIApplication.shared.unregisterForRemoteNotifications()
         lastAlertTokenHex = nil
         lastVoipTokenHex = nil
+        refusedKinds = []
+        NotificationsController.shared.setPushTokenRefusal(nil)
         voipRegistry?.desiredPushTypes = []
         voipRegistry = nil
     }
@@ -128,6 +132,14 @@ final class PushNotificationService: NSObject {
         case voip
     }
 
+    /// Sends the refused tokens again, after the user freed them on the other account.
+    func retryRefusedTokens() async {
+        for kind in refusedKinds {
+            guard let hex = kind == .alert ? lastAlertTokenHex : lastVoipTokenHex else { continue }
+            await uploadToken(hex: hex, kind: kind)
+        }
+    }
+
     private func uploadToken(hex: String, kind: TokenKind) async {
         guard let token = sessionController?.bearerToken else { return }
         // The key the server seals each push's ids and names with; without one (Keychain
@@ -140,6 +152,15 @@ final class PushNotificationService: NSObject {
                 PushTokenBody(token: hex, environment: Self.apnsEnvironment, kind: kind.rawValue, payloadKey: payloadKey),
                 token: token
             )
+            refusedKinds.remove(kind)
+            if refusedKinds.isEmpty {
+                NotificationsController.shared.setPushTokenRefusal(nil)
+            }
+        } catch let APIError.server(code, message, 409, _) where code == "PUSH_TOKEN_IN_USE" {
+            // Another account's signed-in device holds this token (security audit L11): nothing
+            // reaches this one until that device is signed out or removed there.
+            refusedKinds.insert(kind)
+            NotificationsController.shared.setPushTokenRefusal(message)
         } catch {
             #if DEBUG
             print("push token upload failed: \(error)")

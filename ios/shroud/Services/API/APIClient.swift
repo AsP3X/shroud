@@ -531,6 +531,19 @@ nonisolated final class APIClient: Sendable {
             request.httpBody = bodyData
         }
 
+        var (data, http) = try await send(request)
+        // Every Argon2 slot was busy for a moment: wait as told and send it once more.
+        if let wait = Self.briefRateLimitWait(method: method, path: path, response: http) {
+            try await Task.sleep(for: .seconds(wait))
+            (data, http) = try await send(request)
+        }
+
+        Self.noteOutcome(method: method, path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
+
+        return (data, http)
+    }
+
+    private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let data: Data
         let response: URLResponse
         do {
@@ -539,14 +552,35 @@ nonisolated final class APIClient: Sendable {
             // Unreachable / offline — transport only. Never counts as auth failure.
             throw APIError.transport(error.localizedDescription)
         }
-
         guard let http = response as? HTTPURLResponse else {
             throw APIError.transport("Invalid response")
         }
-
-        Self.noteOutcome(method: method, path: path, status: http.statusCode, data: data, bearerToken: bearerToken)
-
         return (data, http)
+    }
+
+    /// Calls the server checks a password on: login, register, `DELETE auth/account` and
+    /// `DELETE devices/{id}`.
+    static func checksPassword(method: String, path: String) -> Bool {
+        let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if method.uppercased() == "POST" { return trimmed == "auth/login" || trimmed == "auth/register" }
+        return isDeleteAccount(method: method, path: path) || isRemoveDevice(method: method, path: path)
+    }
+
+    /// The longest `Retry-After` a password call waits out before it is sent again.
+    static let briefRateLimitSeconds = 2
+
+    /// How long to wait before sending a password call again, or nil to take the answer as it is.
+    ///
+    /// Human: The server runs a few password hashes at a time. When all are busy for 5 s it
+    /// answers `429` with `Retry-After: 1` (security audit M3): that is not "Too many tries", so
+    /// the app waits and asks once more. A spent login budget names a longer wait and shows as is.
+    static func briefRateLimitWait(method: String, path: String, response: HTTPURLResponse) -> Int? {
+        guard response.statusCode == 429, checksPassword(method: method, path: path),
+              let header = response.value(forHTTPHeaderField: "Retry-After"),
+              let seconds = Int(header.trimmingCharacters(in: .whitespaces)),
+              (0 ... briefRateLimitSeconds).contains(seconds)
+        else { return nil }
+        return seconds
     }
 
     private func resolveURL(_ path: String, query: [String: String]? = nil) -> URL {

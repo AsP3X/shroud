@@ -123030,6 +123030,1260 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "WP1f9",
+      "x": 10910,
+      "y": 13281,
+      "name": "Notifications and Sounds · Push refused",
+      "context": "Settings › Notifications and Sounds (full length). The Allow card shows until iOS permission is decided (denied: 'Notifications are off for Shroud' + how to turn them on). Push settings are per device and saved to the server; in-app switches stay on this iPhone.",
+      "clip": true,
+      "width": 390,
+      "fill": "$bg-grouped",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "stjTO",
+          "type": "ref",
+          "ref": "ohoDT",
+          "name": "Status Bar"
+        },
+        {
+          "id": "hVYpi",
+          "type": "ref",
+          "ref": "Koeh8",
+          "name": "Nav Bar",
+          "width": "fill_container",
+          "descendants": {
+            "HlyZD": {
+              "content": "Notifications and Sounds"
+            }
+          }
+        },
+        {
+          "type": "frame",
+          "id": "tdA9W",
+          "name": "Body",
+          "width": "fill_container",
+          "layout": "vertical",
+          "padding": [
+            8,
+            16,
+            40,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "WPWf1",
+              "name": "Push Refused Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "XLvNP",
+                  "name": "Push Refused",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "padding": 14,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "i320c7",
+                      "name": "Title",
+                      "gap": 7,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "jL5jm",
+                          "name": "Glyph",
+                          "width": 18,
+                          "height": 18,
+                          "icon": "bell-slash-fill",
+                          "library": "phosphor",
+                          "fill": "#FF3B30"
+                        },
+                        {
+                          "type": "text",
+                          "id": "G7tdd",
+                          "name": "Title Label",
+                          "fill": "#FF3B30",
+                          "content": "Notifications can't reach this iPhone",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "faoQ8",
+                      "name": "Body",
+                      "fill": "$text-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Another account still gets this device's notifications. Remove this device from that account, then try again.",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "s56ROb",
+                      "name": "Try Again",
+                      "fill": "$accent",
+                      "content": "Try Again",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t2zDwI",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "a30IL",
+              "name": "Push Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "b8ykiO",
+                  "name": "Row Show Notifications",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "aLBd0",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "B3gJ1",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Show Notifications",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "RwNnF",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "New messages on this iPhone while Shroud is closed or locked.",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "C8HMFm",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "vWpuk",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "K1WF5q",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "kIduF",
+                  "name": "Row Show Sender",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "f4Ftw",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "j427G",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Show Sender",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "w8UdG",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Off, a notification only says that something arrived.",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "qr32g",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "z5uM97",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "uQdf9",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "W5d807",
+                  "name": "Row Sound",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "y6Le0M",
+                      "name": "Title",
+                      "fill": "$text-primary",
+                      "content": "Sound",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sFltB",
+                      "name": "Spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "C3epb5",
+                      "name": "Value",
+                      "fill": "$text-secondary",
+                      "content": "Default",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "u9qqB0",
+                      "name": "Chevron",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "#C7C7CC"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "ZsBem",
+              "name": "Footer",
+              "width": "fill_container",
+              "padding": [
+                7,
+                14,
+                0,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "f1YCau",
+                  "name": "Footer Text",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Notifications that arrive while Shroud is closed or locked never contain message text — the server can't read it. With Show Sender on, the sender's name travels sealed, so Apple can't read it either.",
+                  "lineHeight": 1.3,
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Pq1nW",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "ea4KL",
+              "name": "Header Also notify me about",
+              "width": "fill_container",
+              "padding": [
+                8,
+                14,
+                7,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "oOb74",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "ALSO NOTIFY ME ABOUT",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Q3Z4pO",
+              "name": "Also Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "M51mtC",
+                  "name": "Row Reactions to My Messages",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "M0QRNf",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "A9uts",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Reactions to My Messages",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "PNh9d",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "v5HiuL",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "lDArI",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fffuL",
+                  "name": "Row Contact Requests",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "u6lll5",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "Z0PtKM",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Contact Requests",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "Cg1g1",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "W8P3R",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "jFqUX",
+              "name": "Header In-app notifications",
+              "width": "fill_container",
+              "padding": [
+                8,
+                14,
+                7,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "aKCxR",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "IN-APP NOTIFICATIONS",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "j59Ke",
+              "name": "In-App Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "G1BEmw",
+                  "name": "Row Banners",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ynuJB",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "H7f1s9",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Banners",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "Z3nMB",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "dRro9",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "WhleK",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "hbO4E",
+                  "name": "Row Message Preview",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "sSVc4",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "QQ84k",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Message Preview",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "TrgbA",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Show the text in banners.",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "cMp3Q",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ehgHZ",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "q3LG6",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HKrr8",
+                  "name": "Row Sounds",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "qANnw",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "euUSd",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Sounds",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "oNOcp",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "t6dlNI",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "CzaPY",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rncCv",
+                  "name": "Row Vibrate",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "eyxQe",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "YEize",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Vibrate",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "pHX6c",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "VtPGI",
+              "name": "Footer",
+              "width": "fill_container",
+              "padding": [
+                7,
+                14,
+                0,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "BIHwm",
+                  "name": "Footer Text",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "While Shroud is open, a banner, sound or vibration tells you about messages in other chats. Banners can show the text: they never reach the notification centre.",
+                  "lineHeight": 1.3,
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Q15lZ0",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "EExhU",
+              "name": "Header Badge counter",
+              "width": "fill_container",
+              "padding": [
+                8,
+                14,
+                7,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "uYnTI",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "BADGE COUNTER",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "RCPX0",
+              "name": "Badge Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "iPgnd",
+                  "name": "Row Show Badge",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "Ciwug",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "bdPWd",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Show Badge",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "VAQni",
+                          "name": "Subtitle",
+                          "fill": "$text-secondary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "Unread messages on the app icon.",
+                          "lineHeight": 1.3,
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "Sl0Lb",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "jsxWd",
+                  "name": "Divider",
+                  "width": "fill_container",
+                  "height": 1,
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "pwNfa",
+                      "name": "Line",
+                      "fill": "$separator",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "K1PCa",
+                  "name": "Row Include Muted Chats",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    11,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "SV8hD",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 3,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "F0N2L",
+                          "name": "Title",
+                          "fill": "$text-primary",
+                          "content": "Include Muted Chats",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "Y1RkVM",
+                      "type": "ref",
+                      "ref": "A6Obz",
+                      "name": "Toggle",
+                      "fill": "#E9E9EA",
+                      "justifyContent": "start"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "eZAMv",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "kcjem",
+              "name": "Header Muted chats",
+              "width": "fill_container",
+              "padding": [
+                8,
+                14,
+                7,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "UAtXT",
+                  "name": "Header",
+                  "fill": "$text-secondary",
+                  "content": "MUTED CHATS",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "O0iIw8",
+              "name": "Muted Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "rcxpa",
+                  "name": "Row Mom",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    8,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "P769x",
+                      "type": "ref",
+                      "ref": "gTywD",
+                      "name": "Avatar",
+                      "width": 30,
+                      "height": 30,
+                      "cornerRadius": 15,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#FF7A9E",
+                            "position": 0
+                          },
+                          {
+                            "color": "#E64A72",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "descendants": {
+                        "ugwnH": {
+                          "content": "MO",
+                          "fontSize": 13
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "xDl4c",
+                      "name": "Text",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "AeUN5",
+                          "name": "Name",
+                          "fill": "$text-primary",
+                          "content": "Mom",
+                          "fontFamily": "$font",
+                          "fontSize": 16,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "X2NIVJ",
+                          "name": "Until",
+                          "fill": "$text-secondary",
+                          "content": "Muted",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "wKXFh",
+                      "name": "Unmute",
+                      "fill": "$accent",
+                      "content": "Unmute",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "500"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "awM7g",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "R4keT",
+              "name": "Test Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "vXUHv",
+                  "name": "Row Test",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "padding": [
+                    10,
+                    14
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "WZvyF",
+                      "name": "Icon Square",
+                      "width": 30,
+                      "height": 30,
+                      "fill": "#2E8FE0",
+                      "cornerRadius": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "GuLG6",
+                          "name": "Glyph",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "paper-plane-tilt-fill",
+                          "library": "phosphor",
+                          "fill": "#FFFFFF"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "lYMli",
+                      "name": "Label",
+                      "fill": "$text-primary",
+                      "content": "Send a Test Notification",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "Eu098",
+              "name": "Gap",
+              "width": "fill_container",
+              "height": 14
+            },
+            {
+              "type": "frame",
+              "id": "tzqXI",
+              "name": "Reset Card",
+              "clip": true,
+              "width": "fill_container",
+              "fill": "$bg",
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "n3sDpF",
+                  "name": "Row Reset",
+                  "width": "fill_container",
+                  "padding": [
+                    13,
+                    14
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "AFOf4",
+                      "name": "Label",
+                      "fill": "#FF3B30",
+                      "content": "Reset Notification Settings",
+                      "fontFamily": "$font",
+                      "fontSize": 16,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sEMBp",
+              "name": "Footer",
+              "width": "fill_container",
+              "padding": [
+                7,
+                14,
+                0,
+                14
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "k3VMks",
+                  "name": "Footer Text",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Every switch on this screen goes back to how a new install notifies. Muted chats stay muted.",
+                  "lineHeight": 1.3,
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {

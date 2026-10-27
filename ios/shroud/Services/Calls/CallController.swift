@@ -902,7 +902,22 @@ final class CallController {
             guard current(machine), let token = sessionController?.bearerToken else { return }
             machine.identitySecret = secret
             machine.keys = CallSignalKeys(secret: secret, callID: id, role: .callee)
-            let ice = (try? await service.iceServers(token: token)) ?? []
+            let ice: [IceServerDTO]
+            do {
+                ice = try await service.iceServers(token: token)
+            } catch {
+                // A direct call still connects without STUN or TURN. A relay-only one can't, and
+                // its failure is the fetch (offline, or the server's TURN budget), not a missing relay.
+                if SecurityPreferences.alwaysRelayCalls {
+                    // Nothing was accepted: end it here only, so the ring goes on on the other devices.
+                    guard current(machine) else { return }
+                    let message = callErrorText(error, peer: active?.peerUsername ?? "them")
+                    lastError = message
+                    finish(machine, text: message, notify: nil, status: "ended", close: .report(.failed), visible: .seconds(4))
+                    return
+                }
+                ice = []
+            }
             guard current(machine) else { return }
             let relayOnly = try Self.relayPolicy(for: ice)
             let camera = video ? await cameraAccess() : false
