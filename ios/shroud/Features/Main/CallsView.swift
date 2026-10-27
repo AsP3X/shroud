@@ -414,7 +414,7 @@ struct CallsView: View {
     }
 
     /// A call of theirs that we never took: rang out, or they gave up.
-    static func isMissed(_ item: CallController.RecentCall) -> Bool {
+    nonisolated static func isMissed(_ item: CallController.RecentCall) -> Bool {
         !item.isOutgoing && (item.status == "missed" || item.status == "cancelled")
     }
 

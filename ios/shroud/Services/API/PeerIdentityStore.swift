@@ -12,7 +12,7 @@ import Security
 /// audit M8; Android `PeerIdentityStore.PinRead.Unavailable`).
 struct PeerIdentityStore: Sendable {
     /// What the Keychain says about one peer's pin.
-    enum PinRead: Equatable {
+    nonisolated enum PinRead: Equatable, Sendable {
         /// The pinned key.
         case pinned(Data)
         /// Nothing pinned (or a pin that is not Base64): trust on first use applies.
@@ -26,7 +26,7 @@ struct PeerIdentityStore: Sendable {
         }
     }
 
-    enum KeychainRead: Equatable {
+    nonisolated enum KeychainRead: Equatable, Sendable {
         case found(String)
         case notFound
         case unavailable

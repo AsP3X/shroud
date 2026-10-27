@@ -349,7 +349,7 @@ nonisolated final class LinkPreviewConnection: @unchecked Sendable {
 
     /// Connects and completes the TLS handshake.
     func open() async throws {
-        try await perform { (waiter: Waiter<Void>) in
+        try await perform { [self] (waiter: Waiter<Void>) in
             self.onReady = { waiter.finish(.success(())) }
             self.connection.stateUpdateHandler = { [weak self] state in
                 self?.handle(state)
@@ -438,7 +438,7 @@ nonisolated final class LinkPreviewConnection: @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Value, Error>) in
                 let waiter = Waiter<Value>(continuation)
-                self.queue.async {
+                self.queue.async { [self] in
                     if let reason = self.closeReason {
                         waiter.finish(.failure(reason))
                         return

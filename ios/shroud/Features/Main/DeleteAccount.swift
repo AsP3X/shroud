@@ -23,7 +23,7 @@ enum DeleteAccountCopy {
     static let tooManyTries = "Too many tries. Try again later."
     static let unreachable = "Couldn't reach the server. Your account wasn't deleted."
     /// C10 plus the trailing space the other wipe leads use.
-    static let accountDeletedLead = "This account was deleted. "
+    nonisolated static let accountDeletedLead = "This account was deleted. "
 
     enum Icon: Equatable, Sendable {
         case messageDeleted, people, trash, at, phone
@@ -31,7 +31,7 @@ enum DeleteAccountCopy {
 }
 
 /// What `DELETE /auth/account` told the app to do (§3.2). Shared by the screen and the tests.
-enum DeleteAccountAnswer: Equatable, Sendable {
+nonisolated enum DeleteAccountAnswer: Equatable, Sendable {
     /// `204`, or `401 DEVICE_REMOVED` with any reason: wipe as account deleted.
     case deleted
     /// `401 INVALID_CREDENTIALS`. Stay on the screen.

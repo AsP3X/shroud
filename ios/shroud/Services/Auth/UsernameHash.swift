@@ -1,12 +1,13 @@
 import Argon2
 import CryptoKit
 import Foundation
+import os
 
 /// The account name, checked here and sent as a slow salted digest. Same rules as `auth/username.rs`.
 ///
 /// `digest` stays SHA-256: it is the legacy login value and the local fingerprint of
 /// `username + "." + public key` (`MessagingController`).
-enum UsernameHash {
+nonisolated enum UsernameHash {
     private static let reservedExact: Set<String> = [
         "admin", "administrator", "support", "help", "shroud", "system", "root", "security",
         "null", "undefined", "api", "www", "mail", "email", "mod", "moderator", "staff",
@@ -54,11 +55,15 @@ enum UsernameHash {
 
     private static let migrationKey = "shroud.username-kdf"
     private static let weak = "This server's username protection is too weak to sign in."
-    private static let cacheLock = NSLock()
-    private static var digestCache: [String: String] = [:]
-    private static var kdfState: KdfState = .unknown
+    /// The digests already worked out, and what the server said about its username KDF.
+    private struct Cache {
+        var digests: [String: String] = [:]
+        var kdfState: KdfState = .unknown
+    }
 
-    private enum KdfState {
+    private static let cache = OSAllocatedUnfairLock(initialState: Cache())
+
+    private enum KdfState: Sendable {
         case unknown
         case legacy
         case params(UsernameKdfParams)
@@ -92,12 +97,9 @@ enum UsernameHash {
     /// Argon2id of a normalized name. Cached so a device-limit retry does not hash twice.
     static func argon2idDigest(_ normalized: String, params: UsernameKdfParams) async throws -> String {
         let key = "\(normalized)\n\(params.salt)\n\(params.memoryKiB)\n\(params.iterations)"
-        cacheLock.lock()
-        if let hit = digestCache[key] {
-            cacheLock.unlock()
+        if let hit = cache.withLock({ $0.digests[key] }) {
             return hit
         }
-        cacheLock.unlock()
         let salt = Data(base64Encoded: params.salt) ?? Data()
         let password = Data(normalized.utf8)
         let iterations = params.iterations
@@ -115,9 +117,7 @@ enum UsernameHash {
             )
         }.value
         let digest = output.base64EncodedString()
-        cacheLock.lock()
-        digestCache[key] = digest
-        cacheLock.unlock()
+        cache.withLock { $0.digests[key] = digest }
         return digest
     }
 
@@ -126,9 +126,7 @@ enum UsernameHash {
     }
 
     private static func currentKdf() async throws -> UsernameKdfParams? {
-        cacheLock.lock()
-        let cached = kdfState
-        cacheLock.unlock()
+        let cached = cache.withLock { $0.kdfState }
         switch cached {
         case .legacy:
             return nil
@@ -139,9 +137,7 @@ enum UsernameHash {
         }
         let (status, data) = try await APIClient.makeConfiguredClient().response("GET", path: "auth/username-kdf")
         if status == 404 {
-            cacheLock.lock()
-            kdfState = .legacy
-            cacheLock.unlock()
+            cache.withLock { $0.kdfState = .legacy }
             return nil
         }
         guard (200 ..< 300).contains(status) else {
@@ -154,14 +150,12 @@ enum UsernameHash {
             throw APIError.server(code: "VALIDATION_ERROR", message: weak, statusCode: 400, reason: nil)
         }
         try params.validate()
-        cacheLock.lock()
-        kdfState = .params(params)
-        cacheLock.unlock()
+        cache.withLock { $0.kdfState = .params(params) }
         return params
     }
 }
 
-struct UsernameKdfParams: Decodable, Sendable {
+nonisolated struct UsernameKdfParams: Decodable, Sendable {
     let algorithm: String
     let version: Int
     let salt: String
