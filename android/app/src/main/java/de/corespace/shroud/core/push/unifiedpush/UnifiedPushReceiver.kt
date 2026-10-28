@@ -16,15 +16,7 @@ class UnifiedPushReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (!UserManagerCompat.isUserUnlocked(context)) return
         val app = context.applicationContext as? ShroudApplication ?: return
-        val event = DistributorEvent(
-            action = intent.action,
-            token = intent.getStringExtra(UnifiedPushProtocol.EXTRA_TOKEN),
-            endpoint = intent.getStringExtra(UnifiedPushProtocol.EXTRA_ENDPOINT),
-            bytes = intent.getByteArrayExtra(UnifiedPushProtocol.EXTRA_BYTES_MESSAGE),
-            id = intent.getStringExtra(UnifiedPushProtocol.EXTRA_ID),
-            reason = intent.getStringExtra(UnifiedPushProtocol.EXTRA_REASON),
-            useDistributor = intent.getStringExtra(UnifiedPushProtocol.EXTRA_USE_DISTRIBUTOR),
-        )
+        val event = distributorEvent(intent)
         val pending = goAsync()
         app.container.appScope.launch {
             try {
@@ -35,3 +27,14 @@ class UnifiedPushReceiver : BroadcastReceiver() {
         }
     }
 }
+
+/** The connector extras of a distributor → app [intent]. */
+internal fun distributorEvent(intent: Intent) = DistributorEvent(
+    action = intent.action,
+    token = intent.getStringExtra(UnifiedPushProtocol.EXTRA_TOKEN),
+    endpoint = intent.getStringExtra(UnifiedPushProtocol.EXTRA_ENDPOINT),
+    bytes = intent.getByteArrayExtra(UnifiedPushProtocol.EXTRA_BYTES_MESSAGE),
+    id = intent.getStringExtra(UnifiedPushProtocol.EXTRA_ID),
+    reason = intent.getStringExtra(UnifiedPushProtocol.EXTRA_REASON),
+    useDistributor = intent.getStringExtra(UnifiedPushProtocol.EXTRA_USE_DISTRIBUTOR),
+)

@@ -1,10 +1,12 @@
 package de.corespace.shroud.core.push.unifiedpush;
 
 import android.content.Context;
+import android.content.Intent;
 
 import org.unifiedpush.android.embedded_fcm_distributor.FailedReason;
 import org.unifiedpush.android.embedded_fcm_distributor.Utils;
 import org.unifiedpush.android.embedded_fcm_distributor.c2m.C2mRequests;
+import org.unifiedpush.android.embedded_fcm_distributor.impl.FirebaseReceiver;
 
 import kotlin.Unit;
 import kotlin.coroutines.Continuation;
@@ -31,6 +33,14 @@ public final class EmbeddedFcmBridge {
         Utils.INSTANCE.saveVapid(context, token, vapid);
         return C2mRequests.INSTANCE.c2mRegister(
                 context, token, vapid, false, onSuccess, onFailure, continuation);
+    }
+
+    /**
+     * The library's handling of a Play Services broadcast: it reads the push, acknowledges it to
+     * Play Services and reports the result with {@code context.sendBroadcast}.
+     */
+    public static void receive(Context context, Intent intent) {
+        new FirebaseReceiver().onReceive(context, intent);
     }
 
     public static Object unregister(

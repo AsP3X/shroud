@@ -21,7 +21,7 @@
 -dontwarn org.jni_zero.JniZeroJni
 
 # Embedded FCM registers through Play Services Messenger IPC. The call starts in
-# EmbeddedFcmBridge and the incoming push starts at the manifest FirebaseReceiver.
+# EmbeddedFcmBridge, and the incoming push reaches the library's FirebaseReceiver through it too.
 # Nothing else names those classes, and shrinking them leaves registration hanging.
 -keep class org.unifiedpush.android.embedded_fcm_distributor.** { *; }
 

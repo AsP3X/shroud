@@ -207,6 +207,24 @@
         </receiver>
 
         <!--
+          Pushes and token changes from Play Services. The library receiver reports them with a
+          broadcast to this package that never arrives, so this one hands them over in-process.
+          Only Play Services holds the c2dm SEND permission.
+        -->
+        <receiver
+            android:name="org.unifiedpush.android.embedded_fcm_distributor.impl.FirebaseReceiver"
+            tools:node="remove" />
+        <receiver
+            android:name=".core.push.unifiedpush.PlayPushReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+                <action android:name="com.google.android.c2dm.intent.REGISTRATION" />
+            </intent-filter>
+        </receiver>
+
+        <!--
           AND_3.1.0: a distributor may bind this for five seconds while delivering, so a
           backgrounded process can raise a foreground service. The binder does no work.
         -->
