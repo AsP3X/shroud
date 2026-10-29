@@ -13,17 +13,13 @@ import {
   shouldForceLanguage,
   TRUSTED_PRIOR,
 } from "./language";
-import { randomBytes } from "../crypto/bytes";
-import { createVault, derivePinSecrets } from "../crypto/vault";
 
-/* With `localStorage` the memory is sealed in the vault, and a locked vault records nothing. */
-if (typeof localStorage !== "undefined") {
-  createVault(
-    "00000000-0000-4000-8000-0000000000aa",
-    { secrets: await derivePinSecrets("123456"), pepper: randomBytes(32), guardId: "test" },
-    randomBytes(32),
-  );
-}
+/*
+ * The language memory itself, on its in-memory store. With `localStorage` (`npm test` gives
+ * every selftest one) it is sealed in the vault, which a locked vault refuses; the vault has its
+ * own selftest.
+ */
+Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });
 
 resetMemory();
 setPreferredLanguageTags(["en-DE"]);
