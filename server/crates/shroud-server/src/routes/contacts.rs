@@ -756,11 +756,17 @@ async fn insert_contact_pair(
     Ok(())
 }
 
+/// Accepted contacts with no block either way. A block drops the edges, but checking it here
+/// too means no caller (presence, typing, key fetch) ever treats a blocked pair as contacts.
 pub(crate) async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Result<bool, AppError> {
     sqlx::query_scalar(
         r#"
         SELECT EXISTS(
             SELECT 1 FROM contacts WHERE user_id = $1 AND contact_user_id = $2
+        ) AND NOT EXISTS(
+            SELECT 1 FROM blocks
+            WHERE (blocker_id = $1 AND blocked_id = $2)
+               OR (blocker_id = $2 AND blocked_id = $1)
         )
         "#,
     )

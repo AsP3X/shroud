@@ -8,7 +8,7 @@
 use sqlx::postgres::PgPoolOptions;
 
 /// Expected number of forward migration files under `server/migrations/postgres/`.
-const EXPECTED_MIGRATION_COUNT: i64 = 27;
+const EXPECTED_MIGRATION_COUNT: i64 = 28;
 
 #[tokio::test]
 async fn all_migrations_apply_and_core_tables_exist() {
