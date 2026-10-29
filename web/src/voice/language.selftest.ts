@@ -13,6 +13,17 @@ import {
   shouldForceLanguage,
   TRUSTED_PRIOR,
 } from "./language";
+import { randomBytes } from "../crypto/bytes";
+import { createVault, derivePinSecrets } from "../crypto/vault";
+
+/* With `localStorage` the memory is sealed in the vault, and a locked vault records nothing. */
+if (typeof localStorage !== "undefined") {
+  createVault(
+    "00000000-0000-4000-8000-0000000000aa",
+    { secrets: await derivePinSecrets("123456"), pepper: randomBytes(32), guardId: "test" },
+    randomBytes(32),
+  );
+}
 
 resetMemory();
 setPreferredLanguageTags(["en-DE"]);
