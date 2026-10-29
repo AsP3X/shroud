@@ -22,6 +22,7 @@ import {
   type CallView,
 } from "./logic";
 import { RELAY_UNAVAILABLE } from "./relay";
+import { PeerKeyChanged } from "../crypto/peerIdentity";
 
 function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`calls controller selftest: ${what}`);
@@ -1714,6 +1715,65 @@ const ICE = 150;
   check(server.requests.filter((r) => r === "b1 accept").length === accepts, "and never accepts");
   a1.controller.hangup();
   await clock.advance(4_000);
+}
+
+/* --- a changed key on the ended screen lets the auto-lock go ------------------------------- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  new Device(bob, "b1", server, clock);
+  a1.controller.configure({
+    userId: alice.id,
+    deviceId: "a1",
+    api: server.api(a1),
+    identity: () => ({ privateKey: alice.privateKey.slice(), publicKey: alice.publicKey.slice() }),
+    peerKey: async () => {
+      throw new PeerKeyChanged();
+    },
+    peerName: () => "bob",
+  });
+  a1.controller.start({ id: bob.id, username: "bob" }, "voice");
+  await clock.advance(0);
+  await clock.advance(60 * 60_000);
+  check(phase(a1) === "ended" && a1.view?.keyChanged === true, "the changed key waits for Close or Trust");
+  check(a1.holds === 0, "but the app may lock meanwhile");
+}
+
+/* --- glare: their ring arrives while ours is still being placed ---------------------------- */
+{
+  const { clock, server, alice, bob } = world();
+  const a1 = new Device(alice, "a1", server, clock);
+  new Device(bob, "b1", server, clock);
+  let release!: () => void;
+  server.holdCreate = new Promise<void>((resolve) => (release = resolve));
+  a1.controller.start({ id: bob.id, username: "bob" }, "voice");
+  await settle();
+  const ours = [...server.calls.values()][0];
+  // Bob calls at the same moment: the server ends ours (he is its callee) and rings Alice.
+  ours.status = "missed";
+  ours.ended_reason = "declined";
+  const theirs = {
+    ...ours,
+    id: crypto.randomUUID(),
+    caller_user_id: bob.id,
+    caller_device_id: "b1",
+    caller_username: "bob",
+    callee_user_id: alice.id,
+    callee_username: "alice",
+    status: "ringing",
+    ended_reason: undefined,
+  } as CallInfo;
+  server.calls.set(theirs.id, theirs);
+  a1.controller.handle({ type: "call.ring", raw: { type: "call.ring", call: { ...theirs } } });
+  a1.controller.handle({ type: "call.ended", raw: { type: "call.ended", call: { ...ours } } });
+  release();
+  server.holdCreate = null;
+  await clock.advance(0);
+  await settle();
+  check(
+    phase(a1) === "incoming" && a1.view?.role === "callee" && a1.view.peer.id === bob.id,
+    `glare: bob's call rings instead of being dropped (${phase(a1)})`,
+  );
 }
 
 console.log("calls controller selftest ok");
