@@ -1,0 +1,321 @@
+# orbit.toml — how orbit sets up, builds and runs Shroud (format: orbit/docs/orbit-toml.md).
+# It reproduces ./deploy.sh and scripts/compose-env.sh: the same .env keys and generators, compose files,
+# profiles, API role, admin grants, web build id and storage handling. Secrets are never stored here.
+version = 1
+name = "Shroud"
+kind = "compose"
+description = "End-to-end encrypted messenger: API, web client, Postgres, Redis, Nebular, optional calls and admin"
+
+[checks]
+files = [
+  "docker-compose.yml", "docker-compose.local.yml", "docker-compose.npm.yml", "docker-compose.data-dir.yml",
+  "web/Dockerfile", "server/Dockerfile", "server/docker/api-role.sql", "admin/api/grants.sql",
+]
+
+# ── reach ───────────────────────────────────────────────────────────────────
+
+[settings.PROXY_MODE]
+ask = "How will people reach Shroud?"
+type = "choice"
+choices = ["local", "npm"]
+labels = { local = "Ports on this machine", npm = "Nginx Proxy Manager" }
+aliases = { external = "npm", proxy = "npm" }
+default = "local"
+
+[settings.WEB_PORT]
+ask = "Web host port"
+type = "port"
+default = "8081"
+check_free = true
+distinct = ["API_PORT"]
+when = "PROXY_MODE == 'local'"
+otherwise = "8081"
+
+[settings.API_PORT]
+ask = "API host port"
+type = "port"
+default = "8080"
+check_free = true
+distinct = ["WEB_PORT"]
+when = "PROXY_MODE == 'local'"
+otherwise = "8080"
+
+[settings.WEB_PUBLIC_URL]
+ask = "Public web URL"
+type = "url"
+default = [
+  { when = "PROXY_MODE == 'npm'", value = "https://web.example.com" },
+  { value = "http://localhost:${WEB_PORT}" },
+]
+
+[settings.API_PUBLIC_URL]
+ask = "Public API URL (iOS)"
+type = "url"
+default = [
+  { when = "PROXY_MODE == 'npm'", value = "https://api.example.com" },
+  { value = "http://localhost:${API_PORT}" },
+]
+
+# ── storage ─────────────────────────────────────────────────────────────────
+
+[settings.SHROUD_DATA_DIR]
+ask = "Data folder"
+help = "empty: Docker volumes. A folder (e.g. ./data) keeps the database, blobs and media there"
+type = "path"
+
+# ── database and service secrets (generated once, never replaced) ───────────
+
+[settings.POSTGRES_USER]
+default = "shroud"
+[settings.POSTGRES_DB]
+default = "shroud"
+
+[settings.POSTGRES_PASSWORD]
+type = "secret"
+generate = "hex:32"
+locked_when = "data:database"
+
+[settings.API_DB_PASSWORD]
+type = "secret"
+generate = "hex:32"
+
+[settings.NOS_JWT_SECRET]
+type = "secret"
+generate = "hex:32"
+
+[settings.NEBULAR_ACCESS_KEY_ID]
+type = "secret"
+generate = "SHRD+HEX:8"
+
+[settings.NEBULAR_SECRET_ACCESS_KEY]
+type = "secret"
+generate = "hex:32"
+
+[settings.NOS_METRICS_TOKEN]
+type = "secret"
+generate = "hex:32"
+
+[settings.REDIS_PASSWORD]
+type = "secret"
+generate = "hex:32"
+
+# Public salt for username lookups: a new value makes every username stop matching.
+[settings.USERNAME_KDF_SALT]
+type = "secret"
+generate = "hex:16"
+
+[settings.TURN_SECRET]
+type = "secret"
+generate = "hex:32"
+
+[settings.CORS_ALLOWED_ORIGINS]
+derive = "${WEB_PUBLIC_URL|trim_slash}"
+keep_when = "CORS_ALLOWED_ORIGINS contains WEB_PUBLIC_URL"
+
+[settings.RUST_LOG]
+default = "info"
+[settings.RUST_LOG_FORMAT]
+default = "text"
+
+# ── calls ───────────────────────────────────────────────────────────────────
+
+[profiles.calls]
+ask = "Enable calls (TURN relay)?"
+help = "needs UDP/TCP 3478 and UDP 49160-49259 reachable"
+
+[settings.TURN_URLS]
+ask = "TURN URLs"
+help = "the relay's public host or IP, as turn:HOST:3478?transport=udp,turn:HOST:3478?transport=tcp"
+when = "profile:calls"
+default = "turn:${API_PUBLIC_URL|host}:3478?transport=udp,turn:${API_PUBLIC_URL|host}:3478?transport=tcp"
+
+# ── admin console ───────────────────────────────────────────────────────────
+
+[profiles.admin]
+ask = "Enable the admin console?"
+help = "served at the web address plus /admin (or on ADMIN_HOST)"
+
+[settings.ADMIN_DB_PASSWORD]
+type = "secret"
+generate = "hex:32"
+when = "profile:admin"
+
+[settings.ADMIN_SECRET_KEY]
+type = "secret"
+generate = "hex:32"
+when = "profile:admin"
+
+[settings.OPERATOR_TOKEN]
+type = "secret"
+generate = "hex:32"
+when = "profile:admin"
+
+[settings.ADMIN_DATABASE_URL]
+default = "postgres://shroud_admin:${ADMIN_DB_PASSWORD}@postgres:5432/shroud"
+when = "profile:admin"
+
+[settings.ADMIN_PORT]
+default = "8082"
+when = "profile:admin"
+
+[settings.OPERATOR_PORT]
+default = "8090"
+when = "profile:admin"
+
+# Always derived, so it cannot drift from the web address. ADMIN_HOST, when set, replaces the host.
+[settings.ADMIN_PUBLIC_URL]
+when = "profile:admin"
+derive = [
+  { when = "ADMIN_HOST", value = "${WEB_PUBLIC_URL|scheme}://${ADMIN_HOST}${WEB_PUBLIC_URL|port}/admin" },
+  { value = "${WEB_PUBLIC_URL|trim_slash}/admin" },
+]
+
+# ── compose ─────────────────────────────────────────────────────────────────
+
+[compose]
+files = ["docker-compose.yml"]
+overlays = [
+  { file = "docker-compose.local.yml", when = "PROXY_MODE == 'local'" },
+  { file = "docker-compose.npm.yml", when = "PROXY_MODE == 'npm'" },
+  { file = "docker-compose.data-dir.yml", when = "SHROUD_DATA_DIR" },
+]
+networks = [{ name = "proxy-network", when = "PROXY_MODE == 'npm'" }]
+# Baked into the web bundle; the API offers open tabs a reload when it changes.
+build_env = { SHROUD_WEB_BUILD = "${git.tree_hash:web!web/*.md}" }
+# deploy.sh starts without --wait: compose depends_on/healthchecks order the services.
+wait = false
+
+[[storage]]
+name = "database"
+service = "postgres"
+mount = "/var/lib/postgresql/data"
+volume = "shroud_pg_data"
+folder_setting = "SHROUD_DATA_DIR"
+folder = "${SHROUD_DATA_DIR}/database"
+has_data = "PG_VERSION"
+helper_image = "postgres:16-alpine"
+
+[[storage]]
+name = "nebular"
+service = "nebular"
+mount = "/data"
+volume = "shroud_nebular_data"
+folder_setting = "SHROUD_DATA_DIR"
+folder = "${SHROUD_DATA_DIR}/nebular"
+# Nebular runs as uid 10001; a host folder keeps the host user's owner otherwise.
+owner = "10001:10001"
+helper_image = "postgres:16-alpine"
+
+[[storage]]
+name = "media"
+service = "api"
+mount = "/data/shroud-media"
+volume = "shroud_media_data"
+folder_setting = "SHROUD_DATA_DIR"
+folder = "${SHROUD_DATA_DIR}/media"
+helper_image = "postgres:16-alpine"
+
+# ── around the start ────────────────────────────────────────────────────────
+
+# The API reads the web build id from here; made by orbit so Docker does not create it as root.
+[[hooks.before_up]]
+mkdir = [".shroud-run"]
+
+# The API's own role, before the API starts (covers volumes from before that role existed).
+[[hooks.before_up]]
+start = ["postgres"]
+[[hooks.before_up]]
+wait = { exec = "postgres", cmd = ["pg_isready", "-q", "-h", "127.0.0.1", "-U", "${POSTGRES_USER:-shroud}", "-d", "${POSTGRES_DB:-shroud}"], timeout = 90 }
+[[hooks.before_up]]
+label = "API database role"
+sql = { service = "postgres", user = "${POSTGRES_USER:-shroud}", db = "${POSTGRES_DB:-shroud}", file = "/shroud/api-role.sql", vars = { pwd = "${API_DB_PASSWORD}", dbname = "${POSTGRES_DB:-shroud}" } }
+
+# The admin console's role and grants, once its profile is on.
+[[hooks.after_up]]
+label = "Admin database role"
+when = "profile:admin"
+sql = { service = "postgres", user = "${POSTGRES_USER:-shroud}", db = "${POSTGRES_DB:-shroud}", vars = { pwd = "${ADMIN_DB_PASSWORD}", dbname = "${POSTGRES_DB:-shroud}" }, sql = '''
+-- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
+SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
+DO $body$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'shroud_admin') THEN
+    EXECUTE format(
+      'CREATE ROLE shroud_admin LOGIN PASSWORD %L',
+      current_setting('shroud.admin_password')
+    );
+  END IF;
+END
+$body$;
+GRANT CONNECT, CREATE ON DATABASE :"dbname" TO shroud_admin;
+GRANT USAGE ON SCHEMA public TO shroud_admin;
+ALTER ROLE CURRENT_USER SET search_path = public;
+''' }
+[[hooks.after_up]]
+label = "Wait for the console's tables"
+when = "profile:admin"
+warn_only = true
+wait = { exec = "postgres", cmd = ["psql", "-q", "-t", "-A", "-U", "${POSTGRES_USER:-shroud}", "-d", "${POSTGRES_DB:-shroud}", "-c", "SELECT to_regclass('admin.audit_log') IS NOT NULL"], expect = "t", timeout = 60 }
+[[hooks.after_up]]
+label = "Admin grants"
+when = "profile:admin"
+sql = { service = "postgres", user = "${POSTGRES_USER:-shroud}", db = "${POSTGRES_DB:-shroud}", stdin = "admin/api/grants.sql" }
+
+# Tell the running API which bundle the web container now serves.
+[[hooks.after_up]]
+label = "Publish the web build"
+warn_only = true
+write = { path = ".shroud-run/web-build", content = "${git.tree_hash:web!web/*.md}\n" }
+
+[[diagnose]]
+match = "password authentication failed"
+logs = "api"
+hint = "The database keeps the password it was created with. Reset starts over (deletes the data)."
+[[diagnose]]
+match = "database connection failed"
+logs = "api"
+hint = "The API cannot reach Postgres: see Logs for postgres."
+[[diagnose]]
+match = "port is already allocated"
+hint = "WEB_PORT or API_PORT is taken: run Setup and pick free ports."
+
+# ── actions ─────────────────────────────────────────────────────────────────
+
+[[action]]
+name = "Admin bootstrap"
+desc = "create the first console operator"
+when = "profile:admin"
+params = { name = { ask = "Operator name", default = "admin" } }
+steps = [{ run = { service = "admin", cmd = ["bootstrap", "--name", "${param.name}"], no_deps = true } }]
+
+[[action]]
+name = "Admin recovery"
+desc = "a new login for an operator who lost theirs"
+when = "profile:admin"
+confirm = "yes"
+params = { name = { ask = "Operator name", default = "admin" } }
+steps = [{ run = { service = "admin", cmd = ["bootstrap", "--recover", "--name", "${param.name}"], no_deps = true } }]
+
+[[action]]
+name = "Admin operators"
+desc = "how many console operators exist"
+when = "profile:admin"
+steps = [{ exec = { service = "postgres", cmd = ["psql", "-q", "-t", "-A", "-v", "ON_ERROR_STOP=1", "-U", "${POSTGRES_USER:-shroud}", "-d", "${POSTGRES_DB:-shroud}", "-c", "SELECT count(*) FROM admin.operators"] } }]
+
+# ── what orbit shows ────────────────────────────────────────────────────────
+
+[show]
+urls = [
+  { label = "Web", url = "${WEB_PUBLIC_URL}" },
+  { label = "API", url = "${API_PUBLIC_URL|trim_slash}/api/v1" },
+  { label = "Admin", url = "${ADMIN_PUBLIC_URL}", when = "profile:admin" },
+]
+open = "${WEB_PUBLIC_URL}"
+notes = [
+  { text = "Nginx Proxy Manager: ${WEB_PUBLIC_URL|host} → http://shroud-web:80, ${API_PUBLIC_URL|host} → http://shroud-api:8080", when = "PROXY_MODE == 'npm'" },
+  { text = "Calls: open UDP/TCP 3478 and UDP 49160-49259 to this machine (${TURN_URLS})", when = "profile:calls" },
+]
+
+[[checklist]]
+text = "Admin console: run the Admin bootstrap action to create the first operator"
+when = "profile:admin"
