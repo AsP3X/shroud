@@ -115,6 +115,8 @@ pub async fn create_block(
         .await
         .map_err(|err| AppError::Internal(format!("commit block failed: {err}")))?;
 
+    crate::routes::calls::end_calls_between(&state, auth.user_id, body.user_id).await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 

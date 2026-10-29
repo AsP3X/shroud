@@ -879,6 +879,49 @@ async fn end_live_calls_of(
     .map_err(|err| AppError::Internal(format!("end live calls failed: {err}")))
 }
 
+/// Ends every live call between `blocker` and `blocked`, as if `blocker` hung up, and tells
+/// both people's devices. A block refuses new calls; this ends the one already ringing or
+/// running, which `accept` and `signal` would otherwise carry on.
+pub(crate) async fn end_calls_between(state: &AppState, blocker: Uuid, blocked: Uuid) {
+    let ended = sqlx::query_as::<_, CallRow>(&format!(
+        r#"
+        WITH c AS (
+            UPDATE calls
+            SET status = CASE
+                    WHEN status = 'ringing' AND caller_user_id = $1 THEN 'cancelled'
+                    WHEN status = 'ringing' THEN 'missed'
+                    ELSE 'ended'
+                END,
+                ended_reason = CASE
+                    WHEN status = 'ringing' AND caller_user_id = $1 THEN 'cancelled'
+                    WHEN status = 'ringing' THEN 'declined'
+                    ELSE 'hangup'
+                END,
+                ended_at = now(),
+                {CLEAR_MEDIA_STATES}
+            WHERE status IN ('ringing', 'active')
+              AND ((caller_user_id = $1 AND callee_user_id = $2)
+                OR (caller_user_id = $2 AND callee_user_id = $1))
+            RETURNING *
+        )
+        SELECT {CALL_FIELDS} FROM c {CALL_JOINS}
+        "#
+    ))
+    .bind(blocker)
+    .bind(blocked)
+    .fetch_all(&state.pool)
+    .await;
+    match ended {
+        Ok(calls) => {
+            for call in &calls {
+                announce_end(state, call, None).await;
+                tracing::info!(call_id = %call.id, status = %call.status, "calls.end on block");
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "end calls on block failed"),
+    }
+}
+
 async fn load_call(pool: &sqlx::PgPool, call_id: Uuid) -> Result<Option<CallRow>, AppError> {
     sqlx::query_as::<_, CallRow>(&format!(
         "SELECT {CALL_FIELDS} FROM calls c {CALL_JOINS} WHERE c.id = $1"

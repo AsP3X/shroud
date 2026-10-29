@@ -111,7 +111,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Contact request | No expiry in v1; pending until accept / reject / cancel / block |
 | Mutual request | If reverse pending exists → **auto-accept** both ways |
 | Contacts storage | **Two directed rows** A→B and B→A |
-| Block | Drop contact edges + cancel pending either way; store block; unblock does not re-friend |
+| Block | Cancel pending either way + drop contact edges; end live calls between them; store block; unblock does not re-friend |
 | Message delete | Delete-for-me via `message_hides`; delete-for-everyone **anytime** (tombstone + clear ciphertext) |
 | Delete WS | `message.deleted` fan-out for for-everyone |
 | Account delete | Every chat deleted **for both**: their messages become tombstones; a peer with `allow_peer_chat_delete` loses the chat, others keep their own messages. Users row stays as a scrubbed placeholder (migration 021); username and share code are released |
