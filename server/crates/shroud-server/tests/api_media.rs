@@ -677,3 +677,109 @@ async fn purge_media_ids_removes_blob_and_row() {
         0
     );
 }
+
+/// A PUT whose body arrives in two halves: the first now, the second when the returned
+/// sender is used. The request runs on its own task; await the handle for its status.
+async fn slow_put(
+    app: &axum::Router,
+    token: &str,
+    media_id: &str,
+    bytes: &[u8],
+) -> (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<StatusCode>,
+) {
+    let (first, second) = bytes.split_at(bytes.len() / 2);
+    let (first, second) = (
+        axum::body::Bytes::copy_from_slice(first),
+        axum::body::Bytes::copy_from_slice(second),
+    );
+    let (go, wait) = tokio::sync::oneshot::channel::<()>();
+    let body = futures_util::stream::unfold(
+        (Some(first), Some((wait, second))),
+        |(first, rest)| async move {
+            if let Some(chunk) = first {
+                return Some((Ok::<_, std::io::Error>(chunk), (None, rest)));
+            }
+            let (wait, chunk) = rest?;
+            let _ = wait.await;
+            Some((Ok(chunk), (None, None)))
+        },
+    );
+    let request = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/v1/media/{media_id}/content"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .body(Body::from_stream(body))
+        .expect("request");
+    let app = app.clone();
+    let handle =
+        tokio::spawn(async move { app.oneshot(request).await.expect("response").status() });
+    // Let the handler take the first half before the test races it.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    (go, handle)
+}
+
+#[tokio::test]
+async fn an_upload_finishing_after_the_send_cannot_replace_the_content() {
+    let Some((app, _state)) = test_setup().await else {
+        eprintln!(
+            "skipping an_upload_finishing_after_the_send_cannot_replace_the_content: no DATABASE_URL"
+        );
+        return;
+    };
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+
+    let sent_bytes = blob_bytes(4096);
+    let media_id = create_upload(&app, &token_a, sent_bytes.len()).await;
+    assert_eq!(
+        put_content(&app, &token_a, &media_id, &sent_bytes).await,
+        StatusCode::NO_CONTENT
+    );
+    let swapped: Vec<u8> = sent_bytes.iter().map(|b| b ^ 0xff).collect();
+    let (go, upload) = slow_put(&app, &token_a, &media_id, &swapped).await;
+    send_media(&app, &token_a, &user_b, &media_id).await;
+    go.send(()).expect("upload still open");
+    assert_eq!(upload.await.expect("upload task"), StatusCode::CONFLICT);
+
+    let download = get_content(&app, &token_b, &media_id).await;
+    assert_eq!(download.status(), StatusCode::OK);
+    let body = download
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    assert_eq!(
+        body.as_ref(),
+        sent_bytes.as_slice(),
+        "the peer gets what was sent"
+    );
+}
+
+#[tokio::test]
+async fn an_upload_finishing_after_a_purge_leaves_no_blob() {
+    let Some((app, state)) = test_setup().await else {
+        eprintln!("skipping an_upload_finishing_after_a_purge_leaves_no_blob: no DATABASE_URL");
+        return;
+    };
+    let (token, _) = register(&app).await;
+    let bytes = blob_bytes(4096);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+    let (bucket, key) = blob_location(&state, &media_id).await;
+    let (go, upload) = slow_put(&app, &token, &media_id, &bytes).await;
+
+    shroud_server::routes::media::purge_media_ids(&state, &[Uuid::parse_str(&media_id).unwrap()])
+        .await
+        .expect("purge");
+    go.send(()).expect("upload still open");
+    assert_eq!(upload.await.expect("upload task"), StatusCode::NOT_FOUND);
+    assert!(row_is_gone(&state, &media_id).await);
+    assert!(
+        blob_is_gone(&state, &bucket, &key).await,
+        "no blob may outlive its row: nothing would ever delete it"
+    );
+}

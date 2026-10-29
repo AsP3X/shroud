@@ -57,10 +57,24 @@ impl LocalStore {
         S: Stream<Item = Result<Bytes, E>> + Send,
         E: std::fmt::Display,
     {
-        let path = self.path_for(key)?;
-        let parent = path.parent().ok_or(MediaStoreError::InvalidKey)?;
+        let (scratch, byte_count) = self.stage(body, max_bytes, expected).await?;
+        self.publish(&scratch, key).await?;
+        Ok(byte_count)
+    }
+
+    /// Receives `body` into a scratch file and checks it, publishing nothing. Returns the file
+    /// and its length; [`Self::publish`] makes it the blob, or the caller removes it.
+    pub async fn stage<S, E>(
+        &self,
+        body: S,
+        max_bytes: u64,
+        expected: Option<u64>,
+    ) -> Result<(PathBuf, u64), MediaStoreError>
+    where
+        S: Stream<Item = Result<Bytes, E>> + Send,
+        E: std::fmt::Display,
+    {
         let scratch_dir = self.root.join(SCRATCH_DIR);
-        tokio::fs::create_dir_all(parent).await.map_err(io_error)?;
         tokio::fs::create_dir_all(&scratch_dir)
             .await
             .map_err(io_error)?;
@@ -88,19 +102,31 @@ impl LocalStore {
                 expected,
             });
         }
-        if let Err(err) = async {
-            let file = tokio::fs::File::open(&scratch).await?;
-            file.sync_all().await?;
-            drop(file);
-            tokio::fs::rename(&scratch, &path).await?;
-            sync_dir(parent).await
+        Ok((scratch, byte_count))
+    }
+
+    /// Renames a file from [`Self::stage`] over the blob at `key`, in one step. The scratch
+    /// file is gone afterwards either way.
+    pub async fn publish(&self, scratch: &Path, key: &str) -> Result<(), MediaStoreError> {
+        let result = async {
+            let path = self.path_for(key)?;
+            let parent = path.parent().ok_or(MediaStoreError::InvalidKey)?;
+            async {
+                tokio::fs::create_dir_all(parent).await?;
+                let file = tokio::fs::File::open(scratch).await?;
+                file.sync_all().await?;
+                drop(file);
+                tokio::fs::rename(scratch, &path).await?;
+                sync_dir(parent).await
+            }
+            .await
+            .map_err(io_error)
         }
-        .await
-        {
-            let _ = tokio::fs::remove_file(&scratch).await;
-            return Err(io_error(err));
+        .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(scratch).await;
         }
-        Ok(byte_count)
+        result
     }
 
     pub async fn get(&self, key: &str) -> Result<MediaBlob, MediaStoreError> {

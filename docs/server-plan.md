@@ -131,6 +131,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Store auth | SigV4 access key: `editor` role, `shroud-media` bucket only (`NOS_BUCKET_POLICY`), signed body hash, 15-minute replay window. No JWT secret or presigned URLs in the API |
 | Layout | Bucket `shroud-media`, key `media/{xx}/{object_id}` (no uploader id); rows from before keep `{uploader_user_id}/{object_id}` |
 | Deletion | Immediate in the store (`NOS_SOFT_DELETE_TTL_SECS=0`); a failed delete keeps the row for the orphan GC to retry |
+| Upload publish | The body is staged first, then published under `FOR UPDATE` on its row, only while the row exists and is unlinked (409 once a message claimed it, 404 once purged). Purges hold the same lock across the blob delete, so no blob outlives its row |
 | Presign TTL | **15 minutes** (the `expires_at` field; the URLs are API paths) |
 | Max object size | **2 GiB** |
 | Transcripts | No transcript APIs in v1 |

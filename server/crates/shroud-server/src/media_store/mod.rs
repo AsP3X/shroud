@@ -178,22 +178,73 @@ impl MediaStore {
         E: std::fmt::Display,
     {
         local::validate_key(key)?;
+        let staged = self.stage(body, max_bytes, expected).await?;
+        self.publish(staged, bucket, key).await
+    }
+
+    /// Receives and checks an upload without publishing it, so the caller can decide, after
+    /// the (possibly long) transfer, whether it may still land. Pass it to [`Self::publish`] or
+    /// [`Self::discard`].
+    pub async fn stage<S, E>(
+        &self,
+        body: S,
+        max_bytes: u64,
+        expected: Option<u64>,
+    ) -> Result<StagedUpload, MediaStoreError>
+    where
+        S: futures_util::Stream<Item = Result<Bytes, E>> + Send,
+        E: std::fmt::Display,
+    {
         match &self.backend {
-            Backend::Local(store) => store.put_stream(key, body, max_bytes, expected).await,
-            Backend::Nebular(store) => {
+            Backend::Local(store) => {
+                let (path, len) = store.stage(body, max_bytes, expected).await?;
+                Ok(StagedUpload {
+                    path,
+                    len,
+                    hash: None,
+                })
+            }
+            Backend::Nebular(_) => {
                 let spooled = spool_upload(&self.spool_dir(), body, max_bytes, expected).await?;
-                // An empty body is not an object. Refuse it before Nebular publishes it.
-                if spooled.len == 0 {
-                    let _ = tokio::fs::remove_file(&spooled.path).await;
-                    return Err(MediaStoreError::TooLarge);
-                }
-                let result = store
-                    .put_file(bucket, key, &spooled.path, spooled.len, &spooled.hash)
-                    .await;
-                let _ = tokio::fs::remove_file(&spooled.path).await;
-                result.map(|()| spooled.len)
+                Ok(StagedUpload {
+                    path: spooled.path,
+                    len: spooled.len,
+                    hash: Some(spooled.hash),
+                })
             }
         }
+    }
+
+    /// Stores a staged upload under `bucket`/`key`, replacing what was there. Returns its
+    /// length. The staged file is gone afterwards either way.
+    pub async fn publish(
+        &self,
+        staged: StagedUpload,
+        bucket: &str,
+        key: &str,
+    ) -> Result<u64, MediaStoreError> {
+        if let Err(err) = local::validate_key(key) {
+            self.discard(staged).await;
+            return Err(err);
+        }
+        let result = match (&self.backend, staged.hash.as_deref()) {
+            (Backend::Local(store), _) => store.publish(&staged.path, key).await,
+            (Backend::Nebular(store), Some(hash)) => {
+                store
+                    .put_file(bucket, key, &staged.path, staged.len, hash)
+                    .await
+            }
+            (Backend::Nebular(_), None) => Err(MediaStoreError::Unavailable(
+                "upload was staged for another store".into(),
+            )),
+        };
+        let _ = tokio::fs::remove_file(&staged.path).await;
+        result.map(|()| staged.len)
+    }
+
+    /// Drops a staged upload that will not be published.
+    pub async fn discard(&self, staged: StagedUpload) {
+        let _ = tokio::fs::remove_file(&staged.path).await;
     }
 
     /// Streams a blob, from the legacy volume if it hasn't been moved yet.
@@ -469,6 +520,15 @@ async fn remove_unreferenced_legacy_blobs(
         let _ = tokio::fs::remove_dir(user_dir.path()).await;
     }
     Ok(removed)
+}
+
+/// An upload received in full and checked, not yet stored under any key.
+#[derive(Debug)]
+pub struct StagedUpload {
+    path: PathBuf,
+    len: u64,
+    /// SHA-256 of the body, for signing a Nebular upload; none for the local store.
+    hash: Option<String>,
 }
 
 struct SpooledUpload {
