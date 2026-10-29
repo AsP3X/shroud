@@ -327,7 +327,7 @@ export function AppShell({ session }: { session: Session }) {
       redactPreviewsFor(session.user.id, msg.id);
     }
     setPreviewRev((n) => n + 1);
-    void refresh();
+    void refresh().catch(() => undefined);
     return true;
   }
   const lastPresenceSweep = useRef(0);
@@ -1381,7 +1381,7 @@ export function AppShell({ session }: { session: Session }) {
         if (event.type === "message.new") {
           const dto = event.raw.message as WireMessage | undefined;
           if (!dto?.id) {
-            void refresh();
+            void refresh().catch(() => undefined);
             return;
           }
           void (async () => {
@@ -1436,7 +1436,7 @@ export function AppShell({ session }: { session: Session }) {
           return;
         }
         if (event.type === "conversation.deleted") {
-          void refresh();
+          void refresh().catch(() => undefined);
           // From the peer, or from one of our other devices (never the one that deleted it).
           const initiator = String(event.raw.user_id ?? "").toLowerCase();
           const other = String(event.raw.peer_user_id ?? "").toLowerCase();
@@ -1542,7 +1542,7 @@ export function AppShell({ session }: { session: Session }) {
           }
         }
         if (event.type.startsWith("contact.") || event.type === "message.deleted") {
-          void refresh();
+          void refresh().catch(() => undefined);
           const open = selectedRef.current;
           if (event.type === "message.deleted") {
             const id = String(event.raw.message_id ?? "");
@@ -1833,7 +1833,10 @@ export function AppShell({ session }: { session: Session }) {
     const peerId = selected.id;
     const material = identity;
     const reference = replyTo ? replyRefFor(replyTo) : null;
-    setReplyTo(null);
+    /* A take is sent after the strip folds away, and the chat may have changed by then (the
+       send goes out anyway). The bubble and the cleared reply belong to the chat it came from. */
+    const stillHere = () => selectedRef.current?.id.toLowerCase() === peerId.toLowerCase();
+    if (stillHere()) setReplyTo(null);
     const localId = `pending:${crypto.randomUUID()}`;
     const pending = take.pendingTranscript ?? Promise.resolve(null);
     /** Follows the bubble from its optimistic id to the server's. */
@@ -1857,9 +1860,11 @@ export function AppShell({ session }: { session: Session }) {
       replyTo: reference,
     };
     await saveMediaBlob(localId, take.data);
-    setThread((prev) => [...prev, optimistic]);
+    if (stillHere()) {
+      setThread((prev) => [...prev, optimistic]);
+      setThreadError(null);
+    }
     setSendingPeer(peerId);
-    setThreadError(null);
     // The note goes out without waiting for Whisper, so the other side can play it
     // right away; the transcript follows as an annotation (see below). Here it shows
     // on the bubble as soon as it lands, even while the upload is still running.
@@ -2172,6 +2177,11 @@ export function AppShell({ session }: { session: Session }) {
     const peerId = selected.id;
     const localOnly = isUnsent(message);
     const serverId = confirmedSends.current.get(message.id);
+    /* The chat this delete started in. Another chat may be open by the time the request
+       returns, and its thread must not become this chat's list line. */
+    const startedIn = threadRef.current;
+    const stillHere = () => selectedRef.current?.id.toLowerCase() === peerId.toLowerCase();
+    const chatThread = () => (stillHere() ? threadRef.current : startedIn);
     if (message.pending || localOnly) droppedSends.current.add(message.id);
     // The send was accepted after the dialog opened on the optimistic bubble.
     // Unsend that server row, or the next load puts the message back.
@@ -2180,7 +2190,7 @@ export function AppShell({ session }: { session: Session }) {
         await api.deleteMessage(session.token, serverId, "everyone");
       } catch (err) {
         droppedSends.current.delete(message.id);
-        if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+        if (stillHere()) {
           setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
         }
         return;
@@ -2193,8 +2203,8 @@ export function AppShell({ session }: { session: Session }) {
         const rest = list.filter((m) => m.id !== message.id && m.id.toLowerCase() !== serverKey);
         return server ? mergeMessages(rest, [tombstone(server)]) : rest;
       };
-      rewritePreview(session.user.id, peerId, apply(threadRef.current));
-      if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+      rewritePreview(session.user.id, peerId, apply(chatThread()));
+      if (stillHere()) {
         setThread(apply);
         setThreadError(null);
         setReplyTo((current) =>
@@ -2208,7 +2218,7 @@ export function AppShell({ session }: { session: Session }) {
       try {
         await api.deleteMessage(session.token, message.id, scope);
       } catch (err) {
-        if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+        if (stillHere()) {
           setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
         }
         return;
@@ -2220,8 +2230,8 @@ export function AppShell({ session }: { session: Session }) {
         ? list.map((m) => (m.id.toLowerCase() === key ? tombstone(m) : m))
         : list.filter((m) => m.id.toLowerCase() !== key);
     discardMessage(message.id);
-    rewritePreview(session.user.id, peerId, apply(threadRef.current));
-    if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
+    rewritePreview(session.user.id, peerId, apply(chatThread()));
+    if (stillHere()) {
       setThread(apply);
       setThreadError(null);
       // Deleting the message being answered ends that reply.

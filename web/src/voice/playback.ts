@@ -98,6 +98,20 @@ function start(id: string, data: Uint8Array, mime: string, fraction: number, aut
   const el = makeAudio(data, mime);
   audio = el;
   el.playbackRate = snapshot.rate;
+  // The note that was playing is done now, not once this one has loaded: its bubble would keep
+  // a pause button wired to this element, and keep it for good if this note never loads.
+  if (snapshot.activeId !== null && snapshot.activeId !== id) {
+    snapshot = { ...snapshot, activeId: null, playing: false, currentTime: 0, duration: 0 };
+    emit();
+  }
+  // A note this browser can't decode never gets `loadedmetadata`.
+  el.addEventListener(
+    "error",
+    () => {
+      if (audio === el) stopVoice();
+    },
+    { once: true },
+  );
   const applyStart = () => {
     if (audio !== el) return;
     const duration = Number.isFinite(el.duration) ? el.duration : 0;
@@ -162,12 +176,22 @@ export function toggleVoice(id: string, data: Uint8Array, mime: string): void {
       snapshot = { ...snapshot, playing: false, currentTime: audio.currentTime };
       emit();
     } else {
-      audio.playbackRate = snapshot.rate;
-      void audio.play().then(() => {
-        snapshot = { ...snapshot, playing: true };
-        startTick();
-        emit();
-      });
+      const el = audio;
+      el.playbackRate = snapshot.rate;
+      void el
+        .play()
+        .then(() => {
+          if (audio !== el) return;
+          snapshot = { ...snapshot, playing: true };
+          startTick();
+          emit();
+        })
+        .catch(() => {
+          // Paused again before it started, or the browser refused to play.
+          if (audio !== el) return;
+          snapshot = { ...snapshot, playing: false };
+          emit();
+        });
     }
     return;
   }
