@@ -276,6 +276,7 @@ pub async fn run() -> Result<(), AppError> {
             metrics_http_middleware,
         ))
         .layer(middleware::from_fn(request_tracking::request_id_middleware))
+        .layer(middleware::from_fn(rate_limit::peer_ip_middleware))
         .with_state(state);
 
     if !config.cors_allowed_origins.is_empty() {
@@ -296,10 +297,14 @@ pub async fn run() -> Result<(), AppError> {
 
     // Human: Drain in-flight HTTP after SIGTERM/Ctrl-C so orchestrators can stop cleanly.
     // Agent: CALLS axum::serve.with_graceful_shutdown; WS clients see close on process exit.
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|err| AppError::Internal(format!("server error: {err}")))?;
+    // Agent: ConnectInfo feeds rate_limit::peer_ip_middleware (the client IP for limit keys).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|err| AppError::Internal(format!("server error: {err}")))?;
 
     tracing::info!("shroud-server shut down");
     Ok(())

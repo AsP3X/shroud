@@ -576,7 +576,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Session status (`POST /auth/session-status`) | 60/min per IP |
 | PIN-guard unlock | 20/min per IP |
 
-`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. The client IP is the TCP peer; behind proxies it is the right-most public address in `X-Forwarded-For` + peer (proxies on private, loopback or link-local addresses are skipped; entries the client wrote sit further left and are never used). Key pattern: `rl:{scope}:{id}`.
 
 ### Link-preview relay
 
@@ -1672,7 +1672,7 @@ and other users' mutes of them.
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
-| `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
+| `TRUST_FORWARDED_HEADERS` | Read the client IP for rate-limit keys from the right-hand end of `X-Forwarded-For` (trusted proxy only; default false: the TCP peer) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
