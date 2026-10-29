@@ -85,9 +85,13 @@ export function connectRealtime(opts: {
       park();
       return;
     }
+    const wasParked = parked;
     parked = false;
-    if (!socket) open();
-    else sendFocus();
+    if (socket) sendFocus();
+    // Back in front after a park: dial now. Otherwise a closed socket already has a reconnect
+    // waiting out its backoff, and switching windows must not skip it (a server that is down,
+    // or one refusing more sockets, would be dialled on every focus and blur).
+    else if (wasParked) open();
   }
 
   function open() {

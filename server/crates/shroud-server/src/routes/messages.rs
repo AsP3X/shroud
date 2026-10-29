@@ -591,14 +591,16 @@ pub async fn mark_read(
 ) -> Result<StatusCode, AppError> {
     let meta = load_readable_message(&state.pool, message_id, auth.user_id).await?;
     // With receipts off on either side nothing is recorded, so turning them on later doesn't
-    // reveal when this message was read. The unread marker below moves either way.
-    if both_allow(
-        &state.pool,
-        auth.user_id,
-        meta.sender_user_id,
-        Visibility::ReadReceipts,
-    )
-    .await?
+    // reveal when this message was read. Nor once the two are no longer contacts, or either
+    // blocked the other (as `send_read_receipts`). The unread marker below moves either way.
+    if are_contacts(&state.pool, auth.user_id, meta.sender_user_id).await?
+        && both_allow(
+            &state.pool,
+            auth.user_id,
+            meta.sender_user_id,
+            Visibility::ReadReceipts,
+        )
+        .await?
     {
         let read_at = insert_read(&state.pool, message_id, auth.user_id).await?;
         fanout_message_read(

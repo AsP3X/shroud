@@ -591,6 +591,15 @@ async fn merge_otpks(
         return Ok(());
     }
 
+    // Two uploads at once would both count the pool before either inserts, and together pass
+    // the cap. Taking the device row first makes the second wait and count after the first.
+    // NO KEY UPDATE, not UPDATE: the key inserts before this hold KEY SHARE on the same row.
+    sqlx::query(r#"SELECT 1 FROM devices WHERE id = $1 FOR NO KEY UPDATE"#)
+        .bind(device_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("lock device for otpk failed: {err}")))?;
+
     let existing: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*)::bigint FROM device_one_time_prekeys WHERE device_id = $1"#,
     )

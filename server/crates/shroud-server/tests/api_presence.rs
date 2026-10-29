@@ -355,3 +355,77 @@ async fn read_requires_participant() {
         .expect("response");
     assert_eq!(outsider.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn a_block_beside_contact_rows_hides_presence_and_receipts() {
+    // Human: What a block that raced an accept used to leave behind (migration 028 clears it):
+    // the contact edges and a block at once. Nothing may treat the pair as contacts.
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
+        eprintln!(
+            "skipping a_block_beside_contact_rows_hides_presence_and_receipts: no DATABASE_URL"
+        );
+        return;
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("pool");
+    sqlx::migrate!("../../migrations/postgres")
+        .run(&pool)
+        .await
+        .expect("migrate");
+    let app = axum::Router::new()
+        .merge(routes::router())
+        .with_state(test_state(pool.clone()));
+
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    let msg = send_message(&app, &token_a, &user_b, Uuid::new_v4()).await;
+
+    sqlx::query("INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1, $2)")
+        .bind(Uuid::parse_str(&user_a).unwrap())
+        .bind(Uuid::parse_str(&user_b).unwrap())
+        .execute(&pool)
+        .await
+        .expect("block");
+
+    let presence = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/presence/{user_a}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(presence.status(), StatusCode::FORBIDDEN);
+
+    let read = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/messages/{msg}/read"))
+                .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(read.status(), StatusCode::NO_CONTENT);
+    let receipts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM message_reads WHERE message_id = $1")
+            .bind(Uuid::parse_str(&msg).unwrap())
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(
+        receipts, 0,
+        "a blocked reader must not leave a read receipt"
+    );
+}

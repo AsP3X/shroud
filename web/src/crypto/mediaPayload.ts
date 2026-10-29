@@ -22,6 +22,19 @@ export type MediaPayload = {
   lp?: Record<string, unknown> | null;
 };
 
+/**
+ * The sender's media type, if it is one a blob may carry: audio, video, or a raster image.
+ * It becomes the type of the `blob:` URL the bubble shows, and that URL is same-origin: opened
+ * in a tab ("Open image in new tab"), `text/html` or `image/svg+xml` would render the sender's
+ * page as Shroud. Anything else is "", and the reader falls back to its kind's default.
+ */
+export function mediaMime(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const mime = value.trim().toLowerCase();
+  if (!/^(image|video|audio)\/[a-z0-9][a-z0-9.+-]*(\s*;[\x20-\x7e]*)?$/.test(mime)) return "";
+  return mime.startsWith("image/svg") ? "" : mime;
+}
+
 export function parseMediaPayload(raw: string): MediaPayload | null {
   const trimmed = raw.trim();
   if (!trimmed.startsWith("{")) return null;
@@ -30,7 +43,7 @@ export function parseMediaPayload(raw: string): MediaPayload | null {
     if (typeof parsed.t !== "string" || typeof parsed.k !== "string") return null;
     return {
       t: parsed.t,
-      mime: typeof parsed.mime === "string" ? parsed.mime : "application/octet-stream",
+      mime: mediaMime(parsed.mime),
       w: typeof parsed.w === "number" ? parsed.w : 0,
       h: typeof parsed.h === "number" ? parsed.h : 0,
       k: parsed.k,

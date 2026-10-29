@@ -619,9 +619,21 @@ export class CallController {
       return;
     }
     fresh.enabled = true;
-    await call.video?.sender.replaceTrack(fresh).catch(() => undefined);
+    const sender = call.video?.sender;
+    const sent = sender
+      ? await sender.replaceTrack(fresh).then(
+          () => true,
+          () => false,
+        )
+      : true;
     if (this.gone(call)) {
       fresh.stop();
+      return;
+    }
+    if (!sent) {
+      // The sender still holds the camera stopped above: they would see a frozen picture.
+      fresh.stop();
+      this.cameraOff(call, CAMERA_UNAVAILABLE);
       return;
     }
     this.useCamera(call, fresh);
@@ -1007,6 +1019,14 @@ export class CallController {
     if (sameId(info.caller_user_id, account.userId) || !sameId(info.callee_user_id, account.userId)) return;
     const id = info.id.toLowerCase();
     if (info.status !== "ringing" || this.finished.includes(id)) return;
+    // Glare: we are still placing a call to the person now calling us. Their call ended ours on
+    // the server; that end may come before our ring's own response does. Hold the ring with it
+    // so it opens once ours has ended, instead of being dropped as busy.
+    const dialing = this.call;
+    if (dialing?.dialing && !dialing.id && sameId(info.caller_user_id, dialing.peer.id)) {
+      dialing.early.push({ type: "call.ring", raw: { call: info } });
+      return;
+    }
     if (this.call && (sameId(this.call.id, id) || this.busy())) return;
     const peer = {
       id: info.caller_user_id.toLowerCase(),
@@ -1170,7 +1190,12 @@ export class CallController {
         secret.fill(0);
         return;
       }
-      this.buildPeer(call, servers);
+      try {
+        this.buildPeer(call, servers);
+      } catch (err) {
+        secret.fill(0);
+        throw err;
+      }
       call.offerReady = this.prepareOffer(call);
       let info: CallInfo;
       try {
@@ -1203,8 +1228,11 @@ export class CallController {
       this.beat(call);
       call.ringTimer = this.env.setTimeout(() => this.finish(call, "No answer", "hangup"), OUTGOING_RING_LIMIT_MS);
       this.publish(call);
-      // A quick answer or decline that raced the ring's own response.
-      for (const event of call.early.splice(0)) this.handle(event);
+      // A quick answer or decline that raced the ring's own response. A held ring (glare)
+      // goes last, once the end of our call has freed the line for it.
+      const early = call.early.splice(0);
+      for (const event of early) if (event.type !== "call.ring") this.handle(event);
+      for (const event of early) if (event.type === "call.ring") this.handle(event);
     } catch (err) {
       if (!this.gone(call)) this.fail(call, err);
     }
@@ -1302,7 +1330,9 @@ export class CallController {
         this.publish(call);
         return;
       }
-      if (!this.gone(call)) this.fail(call, err);
+      // Answering broke after Accept (no relay, no keys): the caller would hear it ring on
+      // until the server gave up, and this browser's other tabs have already stopped ringing.
+      if (!this.gone(call)) this.fail(call, err, "hangup");
     }
   }
 
@@ -1492,10 +1522,10 @@ export class CallController {
   }
 
   /** A changed identity key stays on screen until it is trusted or dismissed. */
-  private fail(call: Call, err: unknown): void {
+  private fail(call: Call, err: unknown, notify: "hangup" | null = null): void {
     call.keyChanged = err instanceof PeerKeyChanged;
     const visible = call.keyChanged ? 0 : ERROR_VISIBLE_MS;
-    this.finish(call, callErrorText(err, call.peer.username), null, visible);
+    this.finish(call, callErrorText(err, call.peer.username), notify, visible);
   }
 
   /* --- signals ----------------------------------------------------------------------------- */
@@ -1976,6 +2006,11 @@ export class CallController {
       }
     }
     this.teardown(call);
+    // Over, so the app may lock again. The ended screen can stay up for good (a changed key
+    // waits for Close or Trust), and a call another one replaced never reaches `idle`.
+    const release = call.releaseHold;
+    call.releaseHold = null;
+    release?.();
     if (call.role === "callee") {
       this.env.notifyRing(
         rang && endText === "Missed call" ? { peer: call.peer, modality: call.modality, missed: true } : null,

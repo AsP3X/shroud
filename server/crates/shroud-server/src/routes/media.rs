@@ -165,35 +165,68 @@ pub async fn put_content(
     let stream = body
         .into_data_stream()
         .map(|chunk| chunk.map_err(|err| std::io::Error::other(err.to_string())));
-    let len = match state
+    let staged = match state
         .media
-        .put_stream(
-            &media.bucket,
-            &media.object_key,
+        .stage(
             stream,
             MAX_MEDIA_BYTES as u64,
             media.size_bytes.map(|n| n as u64),
         )
         .await
     {
-        Ok(0) => {
-            return Err(AppError::validation(format!(
-                "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+        Ok(staged) => staged,
+        Err(err) => return Err(upload_error(&state.metrics, media_id, err)),
+    };
+
+    // The upload can take minutes, and the checks above are from before it. Publish only while
+    // holding the row, and only if it is still there and unlinked: a message sent meanwhile
+    // must keep the content it was sent with, and a row purged meanwhile must not get its blob
+    // back (nothing would ever delete it). Sending and purging take the same row lock.
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(err) => {
+            state.media.discard(staged).await;
+            return Err(AppError::Internal(format!(
+                "begin transaction failed: {err}"
             )));
         }
-        Ok(len) => len,
+    };
+    let current = sqlx::query_as::<_, MediaRow>(
+        r#"
+        SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
+        FROM media_objects
+        WHERE id = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(media_id)
+    .fetch_optional(&mut *tx)
+    .await;
+    let current = match current {
+        Ok(Some(row)) if row.message_id.is_none() => row,
+        Ok(Some(_)) => {
+            state.media.discard(staged).await;
+            return Err(AppError::already_exists(
+                "Media is already linked to a message and cannot be overwritten.",
+            ));
+        }
+        Ok(None) => {
+            state.media.discard(staged).await;
+            return Err(AppError::not_found("Media not found."));
+        }
         Err(err) => {
-            return Err(match err {
-                MediaStoreError::TooLarge => AppError::validation(format!(
-                    "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
-                )),
-                MediaStoreError::SizeMismatch { actual, expected } => AppError::validation(
-                    format!("body size {actual} does not match declared size_bytes {expected}."),
-                ),
-                other => store_error(&state.metrics, media_id, "put", other),
-            });
+            state.media.discard(staged).await;
+            return Err(AppError::Internal(format!("load media failed: {err}")));
         }
     };
+    let len = state
+        .media
+        .publish(staged, &current.bucket, &current.object_key)
+        .await
+        .map_err(|err| upload_error(&state.metrics, media_id, err))?;
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit media upload failed: {err}")))?;
     state
         .metrics
         .media_puts_total
@@ -392,33 +425,59 @@ pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64
         return Ok(0);
     }
 
-    let rows = sqlx::query_as::<_, MediaRow>(
-        r#"
-        SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
-        FROM media_objects
-        WHERE id = ANY($1)
-        "#,
-    )
-    .bind(media_ids)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|err| AppError::Internal(format!("load media for purge failed: {err}")))?;
-
     let mut purged = 0_u64;
-    for media in rows {
-        if !delete_blob(&state.media, &state.metrics, &media).await {
-            continue;
-        }
-        let result = sqlx::query(r#"DELETE FROM media_objects WHERE id = $1"#)
-            .bind(media.id)
-            .execute(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("delete media row failed: {err}")))?;
-        if result.rows_affected() > 0 {
+    for &media_id in media_ids {
+        if purge_row(&state.pool, &state.media, &state.metrics, media_id, false).await? {
             purged += 1;
         }
     }
     Ok(purged)
+}
+
+/// Deletes one media row and its blob, holding the row throughout: an upload finishing now
+/// publishes only under the same lock, so it either lands before this (and goes with it) or
+/// finds the row gone. The blob goes first and the row only once it is gone, so a store outage
+/// leaves the row for the next pass rather than a blob nothing points at. `only_unlinked`
+/// skips a row a message has claimed since it was listed. True when the row was deleted.
+async fn purge_row(
+    pool: &PgPool,
+    media: &MediaStore,
+    metrics: &Metrics,
+    media_id: Uuid,
+    only_unlinked: bool,
+) -> Result<bool, AppError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+    let row = sqlx::query_as::<_, MediaRow>(
+        r#"
+        SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
+        FROM media_objects
+        WHERE id = $1 AND (NOT $2 OR message_id IS NULL)
+        FOR UPDATE
+        "#,
+    )
+    .bind(media_id)
+    .bind(only_unlinked)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("lock media for purge failed: {err}")))?;
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    if !delete_blob(media, metrics, &row).await {
+        return Ok(false);
+    }
+    sqlx::query(r#"DELETE FROM media_objects WHERE id = $1"#)
+        .bind(row.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete media row failed: {err}")))?;
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit media purge failed: {err}")))?;
+    Ok(true)
 }
 
 /// Deletes unlinked media older than [`ORPHAN_TTL_MINUTES`]: abandoned uploads, and blobs a
@@ -448,21 +507,7 @@ pub async fn purge_orphan_media(
 
     let mut purged = 0_u64;
     for orphan in orphans {
-        if !delete_blob(media, metrics, &orphan).await {
-            continue;
-        }
-        let result = sqlx::query(
-            r#"
-            DELETE FROM media_objects
-            WHERE id = $1 AND message_id IS NULL
-            "#,
-        )
-        .bind(orphan.id)
-        .execute(pool)
-        .await
-        .map_err(|err| AppError::Internal(format!("delete orphan media row failed: {err}")))?;
-
-        if result.rows_affected() > 0 {
+        if purge_row(pool, media, metrics, orphan.id, true).await? {
             purged += 1;
         }
     }
@@ -510,6 +555,19 @@ async fn delete_blob(media: &MediaStore, metrics: &Metrics, row: &MediaRow) -> b
             );
             false
         }
+    }
+}
+
+/// The client-facing error for an upload the store refused or could not take.
+fn upload_error(metrics: &Metrics, media_id: Uuid, err: MediaStoreError) -> AppError {
+    match err {
+        MediaStoreError::TooLarge => AppError::validation(format!(
+            "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+        )),
+        MediaStoreError::SizeMismatch { actual, expected } => AppError::validation(format!(
+            "body size {actual} does not match declared size_bytes {expected}."
+        )),
+        other => store_error(metrics, media_id, "put", other),
     }
 }
 

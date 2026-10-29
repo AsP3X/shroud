@@ -122,7 +122,10 @@ async fn lookup_user_by_username_and_share_code() {
     let name_json = json_body(by_name).await;
     assert_eq!(name_json["id"], id_b);
     assert_eq!(name_json["username"], name_b);
-    assert_eq!(name_json["share_code"], code_b);
+    assert!(
+        name_json.get("share_code").is_none(),
+        "a name lookup must not hand out someone else's share code"
+    );
 
     let by_code = app
         .clone()

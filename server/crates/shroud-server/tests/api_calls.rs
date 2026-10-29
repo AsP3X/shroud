@@ -891,3 +891,48 @@ async fn history_lists_both_directions_newest_first() {
     let (_, body) = call(&app, "GET", "/api/v1/calls?limit=1", &b.token, None).await;
     assert_eq!(body["calls"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn blocking_the_caller_ends_the_ringing_call() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping blocking_the_caller_ends_the_ringing_call: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let ringing = place_call(&app, &a, &b, "voice").await;
+    let id = ringing["id"].as_str().unwrap().to_string();
+    let mut caller = socket(&state, &a).await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/blocks",
+        &b.token,
+        Some(json!({ "user_id": a.user_id })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    assert_eq!(
+        status_of(&state, &id).await,
+        ("missed".into(), Some("declined".into()))
+    );
+    let ended = next_event(&mut caller, "call.ended").await;
+    assert_eq!(ended["call"]["id"], id.as_str());
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/api/v1/calls/{id}/accept"),
+        &b.token,
+        Some(json!({})),
+    )
+    .await;
+    assert_ne!(
+        status,
+        StatusCode::OK,
+        "a call ended by a block cannot be answered"
+    );
+}

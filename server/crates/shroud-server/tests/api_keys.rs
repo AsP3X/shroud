@@ -490,3 +490,70 @@ async fn list_bundles_returns_all_devices_and_consumes_otpk_each() {
         assert_eq!(status_json["otpk_count"], 1);
     }
 }
+
+#[tokio::test]
+async fn concurrent_otpk_uploads_cannot_pass_the_pool_cap() {
+    let Some(app) = test_app().await else {
+        eprintln!(
+            "skipping concurrent_otpk_uploads_cannot_pass_the_pool_cap: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, _user) = register(&app).await;
+
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/v1/keys/bundle")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(sample_bundle(100).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    // Pool at 100: each batch alone fits (200), both together would not.
+    let batch = |first: usize| {
+        let keys: Vec<Value> = (first..first + 100)
+            .map(|i| json!({ "key_id": i, "public_key": b64(32) }))
+            .collect();
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/keys/otpk")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({ "one_time_pre_keys": keys }).to_string()))
+                    .expect("request"),
+            )
+            .await
+            .expect("response")
+            .status()
+        }
+    };
+    let (first, second) = tokio::join!(batch(1_000), batch(2_000));
+    let accepted = [first, second]
+        .iter()
+        .filter(|s| **s == StatusCode::NO_CONTENT)
+        .count();
+    assert_eq!(accepted, 1, "statuses: {first}, {second}");
+
+    let status = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/keys/status")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(json_body(status).await["otpk_count"], 200);
+}

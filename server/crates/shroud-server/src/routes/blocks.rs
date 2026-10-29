@@ -61,21 +61,10 @@ pub async fn create_block(
 
     let now = Utc::now();
 
-    // Drop contact edges both ways.
-    sqlx::query(
-        r#"
-        DELETE FROM contacts
-        WHERE (user_id = $1 AND contact_user_id = $2)
-           OR (user_id = $2 AND contact_user_id = $1)
-        "#,
-    )
-    .bind(auth.user_id)
-    .bind(body.user_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|err| AppError::Internal(format!("delete contacts on block failed: {err}")))?;
-
-    // Cancel pending requests either way.
+    // Cancel pending requests either way, before the contacts go. An accept in flight holds its
+    // request row (`FOR UPDATE`), so this waits for it to commit; the delete below then runs on
+    // a fresh snapshot and removes the edges it wrote. The other way round the delete would miss
+    // them, and the two would stay contacts with a block between them.
     sqlx::query(
         r#"
         UPDATE contact_requests
@@ -94,6 +83,20 @@ pub async fn create_block(
     .await
     .map_err(|err| AppError::Internal(format!("cancel requests on block failed: {err}")))?;
 
+    // Drop contact edges both ways.
+    sqlx::query(
+        r#"
+        DELETE FROM contacts
+        WHERE (user_id = $1 AND contact_user_id = $2)
+           OR (user_id = $2 AND contact_user_id = $1)
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(body.user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("delete contacts on block failed: {err}")))?;
+
     sqlx::query(
         r#"
         INSERT INTO blocks (blocker_id, blocked_id, created_at)
@@ -111,6 +114,8 @@ pub async fn create_block(
     tx.commit()
         .await
         .map_err(|err| AppError::Internal(format!("commit block failed: {err}")))?;
+
+    crate::routes::calls::end_calls_between(&state, auth.user_id, body.user_id).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

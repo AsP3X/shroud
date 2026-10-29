@@ -111,7 +111,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Contact request | No expiry in v1; pending until accept / reject / cancel / block |
 | Mutual request | If reverse pending exists → **auto-accept** both ways |
 | Contacts storage | **Two directed rows** A→B and B→A |
-| Block | Drop contact edges + cancel pending either way; store block; unblock does not re-friend |
+| Block | Cancel pending either way + drop contact edges; end live calls between them; store block; unblock does not re-friend |
 | Message delete | Delete-for-me via `message_hides`; delete-for-everyone **anytime** (tombstone + clear ciphertext) |
 | Delete WS | `message.deleted` fan-out for for-everyone |
 | Account delete | Every chat deleted **for both**: their messages become tombstones; a peer with `allow_peer_chat_delete` loses the chat, others keep their own messages. Users row stays as a scrubbed placeholder (migration 021); username and share code are released |
@@ -131,6 +131,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Store auth | SigV4 access key: `editor` role, `shroud-media` bucket only (`NOS_BUCKET_POLICY`), signed body hash, 15-minute replay window. No JWT secret or presigned URLs in the API |
 | Layout | Bucket `shroud-media`, key `media/{xx}/{object_id}` (no uploader id); rows from before keep `{uploader_user_id}/{object_id}` |
 | Deletion | Immediate in the store (`NOS_SOFT_DELETE_TTL_SECS=0`); a failed delete keeps the row for the orphan GC to retry |
+| Upload publish | The body is staged first, then published under `FOR UPDATE` on its row, only while the row exists and is unlinked (409 once a message claimed it, 404 once purged). Purges hold the same lock across the blob delete, so no blob outlives its row |
 | Presign TTL | **15 minutes** (the `expires_at` field; the URLs are API paths) |
 | Max object size | **2 GiB** |
 | Transcripts | No transcript APIs in v1 |
@@ -576,7 +577,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Session status (`POST /auth/session-status`) | 60/min per IP |
 | PIN-guard unlock | 20/min per IP |
 
-`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). `TRUST_FORWARDED_HEADERS` must be true only behind a trusted reverse proxy. The client IP is the TCP peer; behind proxies it is the right-most public address in `X-Forwarded-For` + peer (proxies on private, loopback or link-local addresses are skipped; entries the client wrote sit further left and are never used). Key pattern: `rl:{scope}:{id}`.
 
 ### Link-preview relay
 
@@ -1672,7 +1673,7 @@ and other users' mutes of them.
 | `DATABASE_URL` | Postgres |
 | `DATABASE_POOL_MAX` | Pool size per instance |
 | `REDIS_URL` | Optional; enables multi-replica WS fan-out, shared rate limits, presence |
-| `TRUST_FORWARDED_HEADERS` | Honor XFF / X-Real-IP for rate-limit keys (trusted proxy only; default false) |
+| `TRUST_FORWARDED_HEADERS` | Read the client IP for rate-limit keys from the right-hand end of `X-Forwarded-For` (trusted proxy only; default false: the TCP peer) |
 | `REACTIONS_MAX_PER_USER` | Most emoji one person may leave on one message (default 5; outside 1–20 the server refuses to start); clients read it from `GET /config` |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |

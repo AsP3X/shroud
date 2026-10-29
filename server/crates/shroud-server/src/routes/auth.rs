@@ -244,6 +244,20 @@ pub async fn login(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
+    // The password was checked outside this transaction (argon2 is slow). A change that
+    // committed meanwhile revoked every other session before this one existed, so it would
+    // survive with the old password. Hold the user row and make sure the hash is still the one
+    // verified; a change waits for this login and then revokes its session like any other.
+    let current_hash: Option<String> =
+        sqlx::query_scalar(r#"SELECT password_hash FROM users WHERE id = $1 FOR UPDATE"#)
+            .bind(user.id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("login recheck failed: {err}")))?;
+    if current_hash.as_deref() != Some(user.password_hash.as_str()) {
+        return Err(AppError::invalid_credentials());
+    }
+
     let device_id = resolve_login_device(&mut tx, user.id, body.device_id).await?;
 
     // Human: One live token per device — revoke any prior active sessions on this device.

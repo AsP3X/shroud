@@ -1,4 +1,5 @@
-//! Public user card lookup (id, username, share code) and share-code rotation.
+//! Public user card lookup (id, username; the share code only to its owner) and share-code
+//! rotation.
 
 use axum::{
     Json,
@@ -30,14 +31,27 @@ async fn limit_user_lookup(state: &AppState, headers: &HeaderMap) -> Result<(), 
 pub struct UserCard {
     pub id: Uuid,
     pub username: String,
-    pub share_code: String,
+    /// Only on the caller's own card, and on a lookup by that very code. Anyone holding an id
+    /// (a former contact, a blocked user, whoever resolved a leaked code once) would otherwise
+    /// read the new code straight after a rotation, and a rotation would retire nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_code: Option<String>,
+}
+
+impl UserCard {
+    fn for_viewer(mut self, viewer: Uuid) -> Self {
+        if self.id != viewer {
+            self.share_code = None;
+        }
+        self
+    }
 }
 
 /// `GET /users/:user_id` — minimal public profile by UUID.
 pub async fn get_user(
     State(state): State<AppState>,
     headers: HeaderMap,
-    _auth: AuthContext,
+    auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<UserCard>, AppError> {
     limit_user_lookup(&state, &headers).await?;
@@ -52,7 +66,7 @@ pub async fn get_user(
     .map_err(|err| AppError::Internal(format!("user lookup failed: {err}")))?
     .ok_or_else(|| AppError::not_found("User not found."))?;
 
-    Ok(Json(row))
+    Ok(Json(row.for_viewer(auth.user_id)))
 }
 
 /// `GET /users/by-username/:username` — lookup by username (case-insensitive).
@@ -97,11 +111,14 @@ pub async fn get_user_by_username(
         return Err(AppError::not_found("User not found."));
     }
 
-    Ok(Json(UserCard {
-        id: row.id,
-        username: row.username,
-        share_code: row.share_code,
-    }))
+    Ok(Json(
+        UserCard {
+            id: row.id,
+            username: row.username,
+            share_code: Some(row.share_code),
+        }
+        .for_viewer(auth.user_id),
+    ))
 }
 
 /// Contacts, or a pending request either way: they have each other's id already.

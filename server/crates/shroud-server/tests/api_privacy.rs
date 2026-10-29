@@ -729,6 +729,21 @@ async fn rotating_the_share_code_retires_the_old_one() {
         .await
         .expect("json");
     assert_eq!(found["id"], alice.id.as_str());
+    let card: Value = server
+        .client
+        .get(server.url(&format!("/users/{}", alice.id)))
+        .bearer_auth(&bob.token)
+        .send()
+        .await
+        .expect("lookup by id")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(card["id"], alice.id.as_str());
+    assert!(
+        card.get("share_code").is_none(),
+        "the id alone must not hand out the new code"
+    );
     assert_eq!(
         server.me(&alice).await["user"]["share_code"],
         new.as_str(),

@@ -6,6 +6,7 @@
 //! are not flaky; unit tests and production use an enabled limiter.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -201,36 +202,101 @@ async fn memory_check(
     Ok(())
 }
 
-/// Best-effort client IP for limit keys (proxy-aware when trusted).
-///
-/// When `trust_forwarded` is true (API behind a trusted reverse proxy), prefer the
-/// first `X-Forwarded-For` hop, then `X-Real-IP`. Otherwise ignore those headers
-/// so clients cannot spoof rate-limit keys.
-pub fn client_ip(headers: &HeaderMap, trust_forwarded: bool) -> String {
-    if trust_forwarded {
-        if let Some(xff) = headers
-            .get("x-forwarded-for")
-            .and_then(|value| value.to_str().ok())
-            && let Some(first) = xff.split(',').next()
-        {
-            let trimmed = first.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
+/// Request header carrying the TCP peer address. Set by [`peer_ip_middleware`] from the
+/// connection itself; whatever a client sends under this name is dropped first.
+pub const PEER_IP_HEADER: &str = "x-shroud-peer-ip";
 
-        if let Some(real) = headers
-            .get("x-real-ip")
-            .and_then(|value| value.to_str().ok())
-        {
-            let trimmed = real.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
+/// Records the connection's peer address in [`PEER_IP_HEADER`] for [`client_ip`].
+///
+/// Human: Handlers only see headers, so the socket address travels as one the client cannot set.
+pub async fn peer_ip_middleware(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    request.headers_mut().remove(PEER_IP_HEADER);
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip().to_canonical());
+    if let Some(peer) = peer
+        && let Ok(value) = axum::http::HeaderValue::from_str(&peer.to_string())
+    {
+        request.headers_mut().insert(PEER_IP_HEADER, value);
+    }
+    next.run(request).await
+}
+
+/// Client IP for limit keys.
+///
+/// Without a trusted proxy (`trust_forwarded` false) this is the TCP peer, and forwarding
+/// headers are ignored so clients cannot pick their own key.
+///
+/// Behind proxies, every hop appends the address it saw to `X-Forwarded-For`, so only the
+/// right-hand end of the list is trustworthy: anything left of the real client is whatever the
+/// client sent. Walk the chain (`X-Forwarded-For`, then the peer) from the right past the
+/// proxies — private, loopback and link-local addresses such as Docker networks — and key on the
+/// first public address. A chain with no public address (a LAN deployment) falls back to its
+/// left-most entry, then `X-Real-IP`.
+pub fn client_ip(headers: &HeaderMap, trust_forwarded: bool) -> String {
+    let peer = header_str(headers, PEER_IP_HEADER).and_then(parse_ip);
+    if !trust_forwarded {
+        return peer.map_or_else(|| "unknown".into(), |ip| ip.to_string());
     }
 
-    "unknown".into()
+    let mut chain: Vec<IpAddr> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(parse_ip)
+        .collect();
+    chain.extend(peer);
+
+    if let Some(public) = chain.iter().rev().find(|ip| !is_internal(ip)) {
+        return public.to_string();
+    }
+    if let Some(first) = chain
+        .first()
+        .filter(|_| headers.contains_key("x-forwarded-for"))
+    {
+        return first.to_string();
+    }
+    if let Some(real) = header_str(headers, "x-real-ip").and_then(parse_ip) {
+        return real.to_string();
+    }
+    peer.map_or_else(|| "unknown".into(), |ip| ip.to_string())
+}
+
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+fn parse_ip(raw: &str) -> Option<IpAddr> {
+    let raw = raw.trim();
+    raw.parse::<IpAddr>()
+        .or_else(|_| raw.parse::<SocketAddr>().map(|addr| addr.ip()))
+        .ok()
+        .map(|ip| ip.to_canonical())
+}
+
+/// Addresses a reverse proxy in front of the API would have: never a client on the internet.
+fn is_internal(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                // 100.64.0.0/10, carrier-grade NAT and Tailscale.
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 #[cfg(test)]
@@ -337,6 +403,52 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
         assert_eq!(client_ip(&headers, true), "8.8.8.8");
+    }
+
+    #[test]
+    fn client_ip_skips_entries_the_client_wrote() {
+        // nginx appends the address it saw; the left-hand entry is the client's own claim.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "6.6.6.6, 203.0.113.7".parse().unwrap());
+        headers.insert(PEER_IP_HEADER, "172.18.0.3".parse().unwrap());
+        assert_eq!(client_ip(&headers, true), "203.0.113.7");
+    }
+
+    #[test]
+    fn client_ip_walks_past_every_proxy_hop() {
+        // Client → Nginx Proxy Manager → web nginx → API, all proxies on Docker networks.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "10.9.9.9, 198.51.100.4, 172.20.0.2".parse().unwrap(),
+        );
+        headers.insert(PEER_IP_HEADER, "172.18.0.5".parse().unwrap());
+        assert_eq!(client_ip(&headers, true), "198.51.100.4");
+    }
+
+    #[test]
+    fn client_ip_uses_the_peer_without_forwarding() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        headers.insert(PEER_IP_HEADER, "203.0.113.9".parse().unwrap());
+        assert_eq!(client_ip(&headers, false), "203.0.113.9");
+        // A public peer is the client even when trusted: a forwarding header cannot replace it.
+        assert_eq!(client_ip(&headers, true), "203.0.113.9");
+    }
+
+    #[test]
+    fn client_ip_on_a_lan_keys_on_the_first_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "192.168.1.20".parse().unwrap());
+        headers.insert(PEER_IP_HEADER, "172.18.0.3".parse().unwrap());
+        assert_eq!(client_ip(&headers, true), "192.168.1.20");
+    }
+
+    #[test]
+    fn client_ip_reads_mapped_ipv6_peers_as_ipv4() {
+        let mut headers = HeaderMap::new();
+        headers.insert(PEER_IP_HEADER, "::ffff:203.0.113.9".parse().unwrap());
+        assert_eq!(client_ip(&headers, false), "203.0.113.9");
     }
 
     #[test]

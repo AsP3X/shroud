@@ -32,6 +32,39 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(75);
 /// A write the peer does not take within this is a dead socket: a full send buffer would
 /// otherwise block the loop, idle close included, until TCP gave up many minutes later.
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest frame or message a client may send. Clients only send `auth`, `typing`,
+/// `recording` and `focus` — well under 1 KiB — so this is generous; the default (64 MiB)
+/// let an unauthenticated socket make the server buffer and parse a huge auth frame.
+const MAX_CLIENT_MESSAGE_BYTES: usize = 16 * 1024;
+/// Typing and recording frames one socket may relay per window; the rest are dropped. Each
+/// costs database checks and a fan-out, and the apps send a few per second at most.
+const ACTIVITY_PER_WINDOW: u32 = 20;
+const ACTIVITY_WINDOW: Duration = Duration::from_secs(10);
+
+/// Fixed-window budget for one socket's typing and recording frames.
+struct ActivityBudget {
+    window_start: tokio::time::Instant,
+    used: u32,
+}
+
+impl ActivityBudget {
+    fn new() -> Self {
+        Self {
+            window_start: tokio::time::Instant::now(),
+            used: 0,
+        }
+    }
+
+    fn take(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        if now.duration_since(self.window_start) >= ACTIVITY_WINDOW {
+            self.window_start = now;
+            self.used = 0;
+        }
+        self.used += 1;
+        self.used <= ACTIVITY_PER_WINDOW
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct ClientMessage {
@@ -55,7 +88,10 @@ pub async fn ws_upgrade(
         .rate_limiter
         .check_budget("ws_ip", &ip, budgets::WS_CONNECT_IP)
         .await?;
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
+    Ok(ws
+        .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
+        .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_socket(socket, state)))
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -194,6 +230,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     // Set when the session ended while the socket was open: signed out, or removed.
     let mut ended: Option<SessionState> = None;
+    let mut activity = ActivityBudget::new();
     loop {
         tokio::select! {
             outbound = rx.recv() => {
@@ -249,7 +286,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         }
                     }
                     Some(Ok(Message::Text(text))) => {
-                        handle_client_text(&state, user_id, device_id, connection_id, &text).await;
+                        handle_client_text(&state, user_id, device_id, connection_id, &mut activity, &text).await;
                     }
                     Some(Ok(Message::Binary(_))) | Some(Ok(Message::Pong(_))) => {}
                     Some(Err(_)) => break,
@@ -304,6 +341,7 @@ async fn handle_client_text(
     user_id: Uuid,
     device_id: Uuid,
     connection_id: u64,
+    activity: &mut ActivityBudget,
     text: &str,
 ) {
     let parsed: ClientMessage = match serde_json::from_str(text) {
@@ -313,6 +351,11 @@ async fn handle_client_text(
             return;
         }
     };
+
+    if matches!(parsed.r#type.as_str(), "typing" | "recording") && !activity.take() {
+        tracing::debug!(%user_id, "ws.activity over budget, dropped");
+        return;
+    }
 
     match parsed.r#type.as_str() {
         "typing" => {
@@ -428,4 +471,21 @@ async fn authenticate_text(state: &AppState, text: &str) -> Result<AuthIds, AppE
         .filter(|value| !value.is_empty())
         .ok_or_else(AppError::unauthorized)?;
     ids_for_token(&state.pool, &token).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn activity_budget_drops_frames_over_the_window_budget() {
+        let mut budget = ActivityBudget::new();
+        for _ in 0..ACTIVITY_PER_WINDOW {
+            assert!(budget.take());
+        }
+        assert!(!budget.take(), "one frame too many in the window");
+
+        budget.window_start -= ACTIVITY_WINDOW;
+        assert!(budget.take(), "a new window starts afresh");
+    }
 }
