@@ -231,4 +231,16 @@ if (!videoByMime || !isVideoPayload(videoByMime)) throw new Error("isVideoPayloa
 const photoNotVideo = parseMediaPayload('{"t":"image","k":"YQ==","mime":"video/mp4"}');
 if (!photoNotVideo || isVideoPayload(photoNotVideo)) throw new Error("isVideoPayload: t=image wins");
 
+
+/* A sender's media type becomes a same-origin blob: URL; only audio, video and raster images. */
+const htmlImage = parseMediaPayload('{"t":"image","k":"YQ==","mime":"text/html","w":1,"h":1}');
+if (!htmlImage || htmlImage.mime !== "") throw new Error("mediaMime: text/html must be dropped");
+const svgImage = parseMediaPayload('{"t":"image","k":"YQ==","mime":"image/svg+xml"}');
+if (!svgImage || svgImage.mime !== "") throw new Error("mediaMime: SVG must be dropped");
+const voiceType = parseMediaPayload('{"t":"voice","k":"YQ==","mime":"audio/webm;codecs=opus"}');
+if (voiceType?.mime !== "audio/webm;codecs=opus") throw new Error("mediaMime: keep audio parameters");
+if (parseMediaPayload('{"t":"image","k":"YQ==","mime":"IMAGE/HEIC"}')?.mime !== "image/heic") {
+  throw new Error("mediaMime: case-folds a raster type");
+}
+
 console.log("media selftest ok");

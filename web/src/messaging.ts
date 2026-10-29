@@ -317,7 +317,7 @@ function messageFromMediaPayload(
     caption: caption || null,
     mediaObjectId: mediaObjectId ?? null,
     mediaKey: payload.k,
-    mime: payload.mime,
+    mime: payload.mime || "image/jpeg",
     imageWidth: payload.w > 0 ? payload.w : null,
     imageHeight: payload.h > 0 ? payload.h : null,
     thumbnail: payload.th?.trim() || null,
