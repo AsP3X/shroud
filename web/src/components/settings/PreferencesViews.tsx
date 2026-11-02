@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Monitor, Moon, Sun, Trash2 } from "lucide-react";
-import { apiBase } from "../../config";
 import { cacheStats, clearCache } from "../../crypto/plaintextCache";
 import { forgetFiles } from "../../media/fileTransfer";
 import { forgetImages } from "../../media/images";
@@ -127,33 +126,6 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
         Newer messages are fetched and decrypted again the next time you open a chat. Messages from
         before 23 September 2026 can't be read again after clearing: they were sent in an older
         format this app no longer trusts. Chat list previews will look empty until then.
-      </SettingsNote>
-    </>
-  );
-}
-
-export function ServerView() {
-  const base = apiBase();
-  const sameOrigin = base.startsWith("/");
-  return (
-    <>
-      <SettingsGroup title="Connection">
-        <div className="set-row">
-          <span className="set-row-copy">
-            <strong>API endpoint</strong>
-            <code>{sameOrigin ? `${window.location.origin}${base}` : base}</code>
-          </span>
-        </div>
-        <div className="set-row">
-          <span className="set-row-copy">
-            <strong>Mode</strong>
-            <span>{sameOrigin ? "Same-origin (reverse proxied)" : "Configured origin"}</span>
-          </span>
-        </div>
-      </SettingsGroup>
-      <SettingsNote>
-        Unlike iOS, the web client cannot switch servers from here — it talks to whichever host
-        served this page. Point it elsewhere by deploying against a different API.
       </SettingsNote>
     </>
   );

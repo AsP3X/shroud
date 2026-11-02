@@ -1,29 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
-import { Lock, QrCode, ShieldCheck, Trash2 } from "lucide-react";
+import { KeyRound, Lock, ShieldCheck } from "lucide-react";
 import { api, ApiError, type BlockItem, type PrivacySettings, type Session } from "../../api/client";
+import { bytesToB64 } from "../../crypto/bytes";
+import type { IdentityMaterial } from "../../crypto/identity";
 import { setPrivacySettings, usePrivacySettings } from "../../privacy";
-import { lockOnHidden, saveShareCode, setLockOnHidden } from "../../session";
+import { lockOnHidden, setLockOnHidden } from "../../session";
 import { generatesLinkPreviews, setGeneratesLinkPreviews } from "../../linkPreview/settings";
 import { alwaysRelaysCalls, setAlwaysRelaysCalls } from "../../calls/relay";
 import { CONTACT_PLACEHOLDER, displayContactName } from "../../contactNames";
 import { Avatar } from "../Avatar";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { DELETE_ACCOUNT_COPY } from "./deleteAccount";
-import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow, Switch } from "./SettingsRow";
+import { SettingsGroup, SettingsNote, SettingsRow, Switch } from "./SettingsRow";
 
+/**
+ * Privacy and security, top to bottom: locking this browser, what contacts see of you, what
+ * leaves this browser for links and calls, what contacts may do to your chats, who is blocked,
+ * and the key everything is sealed with.
+ */
 export function PrivacyView({
   session,
+  identity,
   onLockNow,
-  onShareCodeChanged,
   onUnauthorized,
-  onDeleteAccount,
 }: {
   session: Session;
+  identity: IdentityMaterial | null;
   onLockNow: () => void;
-  onShareCodeChanged: (shareCode: string) => void;
   /** `err` tells a removed device (`DEVICE_REMOVED`) from a session that merely ended. */
   onUnauthorized: (err?: unknown) => void;
-  onDeleteAccount: () => void;
 }) {
   const [background, setBackground] = useState(() => lockOnHidden());
   const [linkPreviews, setLinkPreviews] = useState(() => generatesLinkPreviews());
@@ -33,9 +36,6 @@ export function PrivacyView({
   const [blocked, setBlocked] = useState<BlockItem[]>([]);
   const [unblocking, setUnblocking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmingReset, setConfirmingReset] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const unauthorized = useCallback(
     (err: unknown) => err instanceof ApiError && err.isAuthFailure,
@@ -84,36 +84,6 @@ export function PrivacyView({
     }
   }
 
-  useEffect(() => {
-    if (!confirmingReset) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setConfirmingReset(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [confirmingReset]);
-
-  async function resetShareCode() {
-    setConfirmingReset(false);
-    setResetting(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const { share_code: shareCode } = await api.rotateShareCode(session.token);
-      saveShareCode(shareCode);
-      onShareCodeChanged(shareCode);
-      setNotice("New QR code ready. The old one no longer works.");
-    } catch (err) {
-      if (unauthorized(err)) {
-        onUnauthorized(err);
-        return;
-      }
-      setError(err instanceof ApiError ? err.message : "Could not reset your QR code.");
-    } finally {
-      setResetting(false);
-    }
-  }
-
   const serverSwitch = (key: keyof PrivacySettings, label: string, description: string) => (
     <Switch
       checked={settings?.[key] ?? false}
@@ -153,18 +123,15 @@ export function PrivacyView({
           label="Lock chats in background"
           description="Leaving this tab for more than a few seconds locks Shroud and asks for your PIN when you come back. Reloading the page does not. Five minutes of inactivity still locks even if this is off."
         />
-      </SettingsGroup>
-
-      <SettingsCard>
         <SettingsRow
           title="Lock chats now"
           subtitle="Leave chats until you enter your PIN again."
           Icon={Lock}
           onClick={onLockNow}
         />
-      </SettingsCard>
+      </SettingsGroup>
 
-      <SettingsGroup title="Visibility">
+      <SettingsGroup title="What contacts see">
         {serverSwitch(
           "send_read_receipts",
           "Read receipts",
@@ -185,21 +152,7 @@ export function PrivacyView({
         These work both ways: when you hide yours, you won't see your contacts' either.
       </SettingsNote>
 
-      <SettingsGroup title="Finding you">
-        <SettingsNote>
-          People add you with your QR code or share code. Your username is shared only with people you have both added, and the server never sees it.
-        </SettingsNote>
-        <SettingsRow
-          title="Reset QR code"
-          subtitle="Makes a new QR code and invite link. The old ones stop working."
-          Icon={QrCode}
-          danger
-          onClick={resetting ? undefined : () => setConfirmingReset(true)}
-        />
-      </SettingsGroup>
-      {notice ? <SettingsNote>{notice}</SettingsNote> : null}
-
-      <SettingsGroup title="Link previews">
+      <SettingsGroup title="Links and calls">
         <Switch
           checked={linkPreviews}
           onChange={(next) => {
@@ -209,9 +162,6 @@ export function PrivacyView({
           label="Link previews"
           description="When you send a link, this browser loads the page to build a preview and seals it into the message. The page is fetched end to end encrypted through the Shroud server, which sees only the website's name — not the link or the page; the website sees the server, not you. People you send it to never contact the website."
         />
-      </SettingsGroup>
-
-      <SettingsGroup title="Calls">
         <Switch
           checked={relayCalls}
           onChange={(next) => {
@@ -223,7 +173,7 @@ export function PrivacyView({
         />
       </SettingsGroup>
 
-      <SettingsGroup title="Chat deletion">
+      <SettingsGroup title="Chats">
         {serverSwitch(
           "allow_peer_chat_delete",
           "Let contacts clear chats for me",
@@ -231,9 +181,11 @@ export function PrivacyView({
         )}
       </SettingsGroup>
 
-      {blocked.length > 0 ? (
-        <SettingsGroup title="Blocked">
-          {blocked.map((item) => (
+      <SettingsGroup title="Blocked contacts">
+        {blocked.length === 0 ? (
+          <p className="set-placeholder">No one is blocked.</p>
+        ) : (
+          blocked.map((item) => (
             <div key={item.user_id} className="set-row">
               <Avatar name={displayContactName(session.user.id, item.user_id)} seed={item.user_id} size="sm" />
               <span className="set-row-copy">
@@ -249,47 +201,41 @@ export function PrivacyView({
                 {unblocking === item.user_id ? "…" : "Unblock"}
               </button>
             </div>
-          ))}
-        </SettingsGroup>
-      ) : null}
+          ))
+        )}
+      </SettingsGroup>
+      <SettingsNote>
+        Blocking someone is done from their profile in the iOS app; this list is where you undo it.
+      </SettingsNote>
 
-      {error ? <p className="set-error">{error}</p> : null}
-
-      {confirmingReset ? (
-        <ConfirmDialog
-          title="Reset your QR code?"
-          body="Your current QR code and invite link stop working. Anyone who wants to add you will need the new one. Your contacts aren't affected."
-          action="Reset"
-          onCancel={() => setConfirmingReset(false)}
-          onConfirm={() => void resetShareCode()}
-        />
-      ) : null}
-
+      <SettingsGroup title="Encryption">
+        <div className="set-row">
+          <span className="set-ico" aria-hidden="true">
+            <KeyRound size={20} />
+          </span>
+          <span className="set-row-copy">
+            <strong>{identity ? "This device’s identity key" : "No identity keys here"}</strong>
+            <code>
+              {identity
+                ? bytesToB64(identity.agreementPublic)
+                : "Log out and unlock with your 12-word phrase to restore them."}
+            </code>
+          </span>
+        </div>
+      </SettingsGroup>
       <div className="set-explainer">
         <strong>
           <ShieldCheck size={15} aria-hidden="true" />
           Encrypted on this device
         </strong>
         <p>
-          Chat history is sealed with a key derived from your 12-word encryption phrase. The phrase
-          itself is never stored here, and the server only ever holds ciphertext.
+          Chat history is sealed with a key derived from your 12-word encryption phrase. The same
+          X25519 identity as on iOS comes from that phrase, which itself is never stored here. The
+          server only ever holds ciphertext.
         </p>
       </div>
 
-      <SettingsNote>
-        Blocking someone is done from their profile in the iOS app; this list is where you undo it.
-      </SettingsNote>
-
-      <SettingsCard>
-        <SettingsRow
-          title={DELETE_ACCOUNT_COPY.rowTitle}
-          subtitle={DELETE_ACCOUNT_COPY.rowSubtitle}
-          Icon={Trash2}
-          danger
-          wrapSubtitle
-          onClick={onDeleteAccount}
-        />
-      </SettingsCard>
+      {error ? <p className="set-error">{error}</p> : null}
     </>
   );
 }

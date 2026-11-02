@@ -2479,11 +2479,6 @@ button.reply-quote { cursor: pointer; }
   flex-shrink: 1; min-width: 0; max-width: 60%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.about-privacy { align-items: flex-start; }
-.about-privacy p {
-  flex: 1; min-width: 0; margin: 0; padding-top: 4px;
-  font-size: var(--fs-md); line-height: 1.5; color: var(--text-secondary);
-}
 .set-card > .lic-item:first-child > .set-row { border-top: 0; }
 .lic-chevron { transition: transform 0.18s var(--ease); }
 .set-row[aria-expanded="true"] .lic-chevron { transform: rotate(180deg); }

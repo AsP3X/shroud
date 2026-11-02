@@ -1,33 +1,69 @@
-import { Globe, Key, Link2, LogOut, QrCode, User } from "lucide-react";
-import type { Session } from "../../api/client";
-import { bytesToB64 } from "../../crypto/bytes";
-import type { IdentityMaterial } from "../../crypto/identity";
+import { useEffect, useState } from "react";
+import { Key, Link2, LogOut, QrCode, RotateCcw, Trash2, User } from "lucide-react";
+import { api, ApiError, type Session } from "../../api/client";
+import { saveShareCode } from "../../session";
 import { CopyButton } from "../CopyButton";
-import { DevicesView } from "./DevicesView";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { DELETE_ACCOUNT_COPY } from "./deleteAccount";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 
 /**
- * Account: who is signed in, the devices that share the account, the invite, the identity key,
- * and the way out.
+ * Account: who is signed in, how people add you (share code, invite link, QR code and its
+ * reset), and the two ways out — logging this browser out, or deleting the account.
  */
 export function AccountView({
   session,
-  identity,
   shareLink,
   onShowQr,
+  onShareCodeChanged,
   onLogout,
+  onDeleteAccount,
   onUnauthorized,
-  onDeviceCount,
 }: {
   session: Session;
-  identity: IdentityMaterial | null;
   shareLink: string;
   onShowQr: () => void;
+  onShareCodeChanged: (shareCode: string) => void;
   onLogout: () => void;
+  onDeleteAccount: () => void;
   onUnauthorized: (err?: unknown) => void;
-  onDeviceCount: (count: number) => void;
 }) {
   const handle = `@${session.user.username}`;
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirmingReset) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmingReset(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [confirmingReset]);
+
+  async function resetShareCode() {
+    setConfirmingReset(false);
+    setResetting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { share_code: shareCode } = await api.rotateShareCode(session.token);
+      saveShareCode(shareCode);
+      onShareCodeChanged(shareCode);
+      setNotice("New QR code ready. The old one no longer works.");
+    } catch (err) {
+      if (err instanceof ApiError && err.isAuthFailure) {
+        onUnauthorized(err);
+        return;
+      }
+      setError(err instanceof ApiError ? err.message : "Could not reset your QR code.");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   return (
     <>
       <SettingsCard>
@@ -41,10 +77,12 @@ export function AccountView({
           </span>
         </div>
       </SettingsCard>
+      <SettingsNote>
+        Your username is shared only with people you have both added. The server never sees it.
+      </SettingsNote>
 
-      <DevicesView session={session} onUnauthorized={onUnauthorized} onCount={onDeviceCount} />
-
-      <SettingsGroup title="Invite">
+      <SettingsGroup title="How people add you">
+        <SettingsRow title="Show QR code" Icon={QrCode} onClick={onShowQr} />
         <div className="set-row">
           <span className="set-ico" aria-hidden="true">
             <Key size={20} />
@@ -65,38 +103,53 @@ export function AccountView({
           </span>
           <CopyButton value={shareLink} label="invite link" />
         </div>
-        <SettingsRow title="Show QR code" Icon={QrCode} onClick={onShowQr} />
-      </SettingsGroup>
-
-      <SettingsGroup title="Encryption">
-        <div className="set-row">
-          <span className="set-ico" aria-hidden="true">
-            <Globe size={20} />
-          </span>
-          <span className="set-row-copy">
-            <strong>{identity ? "This device’s identity key" : "No identity keys here"}</strong>
-            <code>
-              {identity
-                ? bytesToB64(identity.agreementPublic)
-                : "Log out and unlock with your 12-word phrase to restore them."}
-            </code>
-          </span>
-        </div>
+        <SettingsRow
+          title={resetting ? "Resetting…" : "Reset QR code"}
+          subtitle="Makes a new QR code, share code and invite link. The old ones stop working."
+          Icon={RotateCcw}
+          danger
+          wrapSubtitle
+          disabled={resetting}
+          onClick={() => setConfirmingReset(true)}
+        />
       </SettingsGroup>
       <SettingsNote>
-        Same X25519 identity as iOS, derived from your 12-word phrase. The phrase itself is never
-        stored here.
+        {notice ??
+          "All three open the same door: anyone with one of them can send you a contact request. Your contacts keep working after a reset."}
       </SettingsNote>
 
       <SettingsCard>
         <SettingsRow
           title="Log out"
-          subtitle="Keys and messages on this browser are erased"
+          subtitle="Keys and messages on this browser are erased. Your account and other devices stay."
           Icon={LogOut}
-          danger
+          wrapSubtitle
           onClick={onLogout}
         />
       </SettingsCard>
+
+      <SettingsCard>
+        <SettingsRow
+          title={DELETE_ACCOUNT_COPY.rowTitle}
+          subtitle={DELETE_ACCOUNT_COPY.rowSubtitle}
+          Icon={Trash2}
+          danger
+          wrapSubtitle
+          onClick={onDeleteAccount}
+        />
+      </SettingsCard>
+
+      {error ? <p className="set-error">{error}</p> : null}
+
+      {confirmingReset ? (
+        <ConfirmDialog
+          title="Reset your QR code?"
+          body="Your current QR code, share code and invite link stop working. Anyone who wants to add you will need the new one. Your contacts aren't affected."
+          action="Reset"
+          onCancel={() => setConfirmingReset(false)}
+          onConfirm={() => void resetShareCode()}
+        />
+      ) : null}
     </>
   );
 }

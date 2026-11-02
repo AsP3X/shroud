@@ -5,9 +5,9 @@ import {
   CodeXml,
   Download,
   ExternalLink,
-  Lock,
   RefreshCw,
   ScrollText,
+  Server,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -24,8 +24,8 @@ import type { SettingsRoute } from "./routes";
 
 const SOURCE_URL = "https://github.com/AsP3X/shroud";
 
-/** The host the API answers on: this page's own when it is reverse proxied (Settings → Server). */
-function serverHost(): string {
+/** The host the API answers on: this page's own when it is reverse proxied (Settings → About). */
+export function serverHost(): string {
   const base = apiBase();
   if (base.startsWith("/")) return window.location.host;
   try {
@@ -33,6 +33,12 @@ function serverHost(): string {
   } catch {
     return base;
   }
+}
+
+/** The full API endpoint, with this page's origin filled in when it is reverse proxied. */
+function serverEndpoint(): string {
+  const base = apiBase();
+  return base.startsWith("/") ? `${window.location.origin}${base}` : base;
 }
 
 export function useUpdateSnapshot() {
@@ -89,10 +95,13 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
 
       <SettingsGroup title="Server">
         <div className="set-row">
-          <span className="set-row-copy">
-            <strong>Address</strong>
+          <span className="set-ico" aria-hidden="true">
+            <Server size={20} />
           </span>
-          <span className="set-row-value about-value">{serverHost()}</span>
+          <span className="set-row-copy">
+            <strong>{serverHost()}</strong>
+            <code>{serverEndpoint()}</code>
+          </span>
         </div>
         <div className="set-row">
           <span className="set-row-copy">
@@ -100,19 +109,19 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
           </span>
           <span className="set-row-value about-value">{serverVersion ?? "—"}</span>
         </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="Privacy">
-        <div className="set-row about-privacy">
-          <span className="set-ico" aria-hidden="true">
-            <Lock size={20} />
+        <div className="set-row">
+          <span className="set-row-copy">
+            <strong>Connection</strong>
           </span>
-          <p>
-            Messages, media and calls are end-to-end encrypted. They’re sealed on your devices, so
-            the server passes them on without being able to read them.
-          </p>
+          <span className="set-row-value about-value">
+            {apiBase().startsWith("/") ? "Same origin, reverse proxied" : "Configured origin"}
+          </span>
         </div>
       </SettingsGroup>
+      <SettingsNote>
+        The web client talks to whichever server served this page and cannot switch from here.
+        Point it elsewhere by deploying it against a different API.
+      </SettingsNote>
 
       <SettingsGroup title="More">
         <a className="set-row set-row-button" href={SOURCE_URL} target="_blank" rel="noopener noreferrer">

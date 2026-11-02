@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, ApiError, sessionEndOf, type Session } from "../api/client";
+import { webVersion } from "../appVersion";
 import type { WipeReason } from "./DeviceWipeDialog";
 import type { IdentityMaterial } from "../crypto/identity";
+import { DEVICE_LIMIT } from "../deviceLimit";
 import { displayName } from "../format";
 import { useNotificationPrefs } from "../notifications/prefs";
 import { useThemePref } from "../theme";
 import { Avatar } from "./Avatar";
 import { LogoutDialog } from "./LogoutDialog";
-import { AboutView, LicensesView } from "./settings/AboutView";
+import { AboutView, LicensesView, serverHost, useUpdateSnapshot } from "./settings/AboutView";
 import { AccountView } from "./settings/AccountView";
 import { DeleteAccountView } from "./settings/DeleteAccountView";
+import { DevicesView } from "./settings/DevicesView";
 import { notificationsSummary, NotificationsView, type MutedChat } from "./settings/NotificationsView";
-import { AppearanceView, DataStorageView, ServerView, themeLabel } from "./settings/PreferencesViews";
+import { AppearanceView, DataStorageView, themeLabel } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
 import {
   SETTINGS_INTROS,
@@ -54,7 +57,7 @@ export function SettingsPane({
   onLockNow: () => void;
   onShowQr: () => void;
   onCacheCleared: () => void;
-  /** Settings → Privacy made a new share code: the QR code and invite link change with it. */
+  /** Settings → Account made a new share code: the QR code and invite link change with it. */
   onShareCodeChanged: (shareCode: string) => void;
   /** For Notifications and sounds: the chats muted now, and a way to unmute one. */
   mutedChats: MutedChat[];
@@ -74,6 +77,7 @@ export function SettingsPane({
   const pref = useThemePref();
   // Re-renders the Notifications row's line when it changes.
   useNotificationPrefs();
+  const { status: updateStatus } = useUpdateSnapshot();
 
   const forceLogout = useCallback(
     (err?: unknown) => onSessionEnded(err instanceof ApiError ? sessionEndOf(err) : "ended"),
@@ -82,9 +86,9 @@ export function SettingsPane({
   const forceLogoutRef = useRef(forceLogout);
   forceLogoutRef.current = forceLogout;
 
-  /* The device count for the Account row's line, while the Account page is not open to count them. */
+  /* The device count for the Devices row's line, while the Devices page is not open to count them. */
   useEffect(() => {
-    if (route === "account") return;
+    if (route === "devices") return;
     let cancelled = false;
     api
       .devices(session.token)
@@ -141,12 +145,13 @@ export function SettingsPane({
   }, [parent, back, confirmLogout]);
 
   const lines: Record<SettingsSection, string> = {
-    account: deviceCount === null ? "Username, devices, log out" : `@${session.user.username}, ${deviceCount} of 5 devices`,
+    account: `@${session.user.username}`,
+    devices: deviceCount === null ? "Signed in to your account" : `${deviceCount} of ${DEVICE_LIMIT} in use`,
     notifications: notificationsSummary(),
     appearance: `${themeLabel(pref)} theme`,
-    privacy: "Keys, safety numbers, who sees you",
+    privacy: "Locking, what contacts see, blocked",
     data: "What this browser keeps",
-    server: window.location.host,
+    about: updateStatus === "available" ? "Update available" : `Shroud ${webVersion()} · ${serverHost()}`,
   };
   const active = sectionOf(route);
   const intro = SETTINGS_INTROS[route];
@@ -221,13 +226,16 @@ export function SettingsPane({
           {route === "account" ? (
             <AccountView
               session={session}
-              identity={identity}
               shareLink={shareLink}
               onShowQr={onShowQr}
+              onShareCodeChanged={onShareCodeChanged}
               onLogout={() => setConfirmLogout(true)}
+              onDeleteAccount={() => setRoute("delete-account")}
               onUnauthorized={forceLogout}
-              onDeviceCount={setDeviceCount}
             />
+          ) : null}
+          {route === "devices" ? (
+            <DevicesView session={session} onUnauthorized={forceLogout} onCount={setDeviceCount} />
           ) : null}
           {route === "notifications" ? (
             <NotificationsView
@@ -239,13 +247,7 @@ export function SettingsPane({
           ) : null}
           {route === "appearance" ? <AppearanceView /> : null}
           {route === "privacy" ? (
-            <PrivacyView
-              session={session}
-              onLockNow={onLockNow}
-              onShareCodeChanged={onShareCodeChanged}
-              onUnauthorized={forceLogout}
-              onDeleteAccount={() => setRoute("delete-account")}
-            />
+            <PrivacyView session={session} identity={identity} onLockNow={onLockNow} onUnauthorized={forceLogout} />
           ) : null}
           {route === "delete-account" ? (
             <DeleteAccountView
@@ -257,12 +259,7 @@ export function SettingsPane({
             />
           ) : null}
           {route === "data" ? <DataStorageView onCleared={onCacheCleared} /> : null}
-          {route === "server" ? (
-            <>
-              <ServerView />
-              <AboutView onNavigate={setRoute} />
-            </>
-          ) : null}
+          {route === "about" ? <AboutView onNavigate={setRoute} /> : null}
           {route === "licenses" ? <LicensesView /> : null}
         </div>
       </main>
