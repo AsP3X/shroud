@@ -102,6 +102,8 @@ export function App() {
             )
           }
         />
+        {/* The same page for a browser that already has an account, with the way into the app instead of the ways in. */}
+        <Route path="/about" element={<Welcome signedIn={Boolean(session)} />} />
         <Route
           path="/login"
           element={

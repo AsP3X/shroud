@@ -42,7 +42,8 @@ const CALL_WAVE = [5, 11, 15, 8, 13, 6, 10];
 const NOTE_WAVE = [5, 11, 15, 8, 13, 17, 6, 12, 15, 7, 13, 5, 10];
 const SAFETY = ["48213", "90714", "22568", "31907", "64120", "07355", "88241", "15096", "73902", "40617", "58233", "96170"];
 
-export function Welcome() {
+/** `signedIn`: the page at /about in a browser that has an account. The actions lead into the app. */
+export function Welcome({ signedIn = false }: { signedIn?: boolean } = {}) {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const hint = usernameHint(username);
@@ -58,7 +59,7 @@ export function Welcome() {
       <header className="landing-top landing-wrap">
         <Brand withHost />
         <nav aria-label="Account">
-          <Link to="/login">Log in</Link>
+          {signedIn ? <Link to="/app">Open Shroud</Link> : <Link to="/login">Log in</Link>}
         </nav>
       </header>
 
@@ -72,12 +73,20 @@ export function Welcome() {
                 and how big. No phone number, no email, and your whole account is twelve words.
               </p>
               <div className="landing-actions">
-                <Link className="btn btn-primary landing-btn" to="/signup">
-                  Create an account
-                </Link>
-                <Link className="landing-link" to="/login">
-                  Log in
-                </Link>
+                {signedIn ? (
+                  <Link className="btn btn-primary landing-btn" to="/app">
+                    Open Shroud
+                  </Link>
+                ) : (
+                  <>
+                    <Link className="btn btn-primary landing-btn" to="/signup">
+                      Create an account
+                    </Link>
+                    <Link className="landing-link" to="/login">
+                      Log in
+                    </Link>
+                  </>
+                )}
               </div>
               <p className="landing-fine">Drag the veil across the chat to see what the server sees.</p>
             </div>
@@ -348,6 +357,16 @@ export function Welcome() {
                   you are the only way back in.
                 </p>
               </div>
+              {signedIn ? (
+                <div className="landing-start">
+                  <p className="landing-start-else">
+                    This browser already has an account.{" "}
+                    <Link className="landing-link" to="/app">
+                      Open Shroud
+                    </Link>
+                  </p>
+                </div>
+              ) : (
               <form className="landing-start" onSubmit={start} autoComplete="off" noValidate>
                 <label htmlFor="landing-username">Username</label>
                 <div className="landing-start-field">
@@ -380,6 +399,7 @@ export function Welcome() {
                   with the same username and your twelve words, and this browser joins your devices.
                 </p>
               </form>
+              )}
             </div>
             <div className="landing-host">
               <div className="landing-host-id">
@@ -405,8 +425,14 @@ export function Welcome() {
         <div className="landing-wrap">
           <Brand />
           <nav aria-label="Footer">
-            <Link to="/signup">Create an account</Link>
-            <Link to="/login">Log in</Link>
+            {signedIn ? (
+              <Link to="/app">Open Shroud</Link>
+            ) : (
+              <>
+                <Link to="/signup">Create an account</Link>
+                <Link to="/login">Log in</Link>
+              </>
+            )}
             <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
               Source code
             </a>
