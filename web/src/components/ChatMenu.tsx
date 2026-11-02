@@ -40,11 +40,14 @@ export function ChatMenu({
   if (muted) {
     items.push({ id: "unmute", label: "Unmute", Icon: Bell, separatorBefore: items.length > 0 });
   } else {
+    /* One "Mute" heading, then the spans as plain choices under it. */
     MUTE_CHOICES.forEach((choice, index) => {
       items.push({
         id: `mute:${choice.seconds === null ? "forever" : choice.seconds}`,
-        label: index === MUTE_CHOICES.length - 1 ? "Mute until I turn it back on" : `Mute ${choice.label.toLowerCase()}`,
+        label: choice.label,
         Icon: BellOff,
+        sub: true,
+        heading: index === 0 ? { label: "Mute", Icon: BellOff } : undefined,
         separatorBefore: index === 0 && items.length > 0,
       });
     });
@@ -55,6 +58,7 @@ export function ChatMenu({
       items={items}
       label={`Chat with ${username}`}
       trigger={trigger}
+      lift={trigger && trigger.classList.contains("row") ? trigger : null}
       settle={settle}
       onSelect={onAction}
       onClose={onClose}

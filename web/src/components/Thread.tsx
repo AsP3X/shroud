@@ -112,6 +112,7 @@ import {
 import { quoteOf, ReplyQuote, resolveQuote } from "./ReplyQuote";
 import { useSwipeToReply } from "./useSwipeToReply";
 import { Receipt } from "./Receipt";
+import { ReplyPreview } from "./ReplyPreview";
 import { TypingBubble, TypingLabel } from "./Typing";
 import { VideoBubble } from "./VideoBubble";
 import { VoiceBubble } from "./VoiceBubble";
@@ -1012,10 +1013,89 @@ export function Thread({
     send();
   }
 
+  /* The search bar unfolds from its button: the row grows into place, the bar reveals from the
+     button's side, and the button's glyph travels into the bar's own glyph slot. Closing runs it
+     backwards before the bar leaves. */
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const searchWrap = useRef<HTMLDivElement>(null);
+  const searchGlyph = useRef<HTMLSpanElement>(null);
+  const searchClosing = useRef(false);
+  function searchMorph(open: boolean): number {
+    const wrap = searchWrap.current;
+    const button = searchButton.current;
+    const glyph = searchGlyph.current;
+    const bar = wrap?.querySelector<HTMLElement>(".thread-search");
+    const buttonIcon = button?.querySelector<HTMLElement>("svg");
+    if (!wrap || !bar || !glyph || !buttonIcon || typeof wrap.animate !== "function") return 0;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return 0;
+    const ease = "cubic-bezier(0.16, 1, 0.3, 1)";
+    const height = bar.offsetHeight;
+    const from = buttonIcon.getBoundingClientRect();
+    const to = glyph.getBoundingClientRect();
+    const dx = Math.round(to.left - from.left);
+    const dy = Math.round(to.top - from.top);
+    const flying = glyph.cloneNode(true) as HTMLElement;
+    flying.classList.add("fly-glyph");
+    flying.setAttribute("aria-hidden", "true");
+    const place = (r: DOMRect) => `left:${Math.round(r.left)}px;top:${Math.round(r.top)}px;width:${r.width}px;height:${r.height}px`;
+    document.body.appendChild(flying);
+    const parts = [...wrap.querySelectorAll<HTMLElement>("input, .thread-search-count, .icon-btn")];
+    wrap.style.overflow = "hidden";
+    if (open) {
+      flying.style.cssText = `${place(from)};color:${getComputedStyle(buttonIcon).color}`;
+      buttonIcon.style.opacity = "0";
+      glyph.style.opacity = "0";
+      wrap.animate([{ height: "0px" }, { height: `${height}px` }], { duration: 260, easing: ease, fill: "both" }).onfinish = () => {
+        wrap.style.overflow = "";
+      };
+      bar.animate([{ clipPath: "inset(0 0 0 100% round 12px)" }, { clipPath: "inset(0 0 0 0 round 0)" }], { duration: 320, easing: ease, fill: "both" });
+      parts.forEach((part) => part.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, delay: 140, easing: "ease-out", fill: "backwards" }));
+      const flight = flying.animate(
+        [{ transform: "none" }, { transform: `translate(${dx}px, ${dy}px)`, color: getComputedStyle(glyph).color }],
+        { duration: 320, easing: ease, fill: "forwards" },
+      );
+      flight.onfinish = flight.oncancel = () => {
+        flying.remove();
+        glyph.style.opacity = "";
+        buttonIcon.style.opacity = "";
+      };
+      return 320;
+    }
+    flying.style.cssText = `${place(to)};color:${getComputedStyle(glyph).color}`;
+    glyph.style.opacity = "0";
+    buttonIcon.style.opacity = "0";
+    parts.forEach((part) => part.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 100, easing: "ease-out", fill: "forwards" }));
+    bar.animate([{ clipPath: "inset(0 0 0 0 round 0)" }, { clipPath: "inset(0 0 0 100% round 12px)" }], { duration: 260, delay: 40, easing: ease, fill: "forwards" });
+    wrap.animate([{ height: `${height}px` }, { height: "0px" }], { duration: 240, delay: 80, easing: ease, fill: "forwards" });
+    const flight = flying.animate(
+      [{ transform: "none" }, { transform: `translate(${-dx}px, ${-dy}px)`, color: getComputedStyle(buttonIcon).color }],
+      { duration: 280, easing: ease, fill: "forwards" },
+    );
+    flight.onfinish = flight.oncancel = () => {
+      flying.remove();
+      buttonIcon.style.opacity = "";
+    };
+    return 320;
+  }
+  useLayoutEffect(() => {
+    if (searchOpen) searchMorph(true);
+  }, [searchOpen]);
+
   function closeSearch() {
-    setSearchOpen(false);
-    setSearchQuery("");
-    if (finePointer()) field.current?.focus();
+    if (searchClosing.current) return;
+    const wait = searchMorph(false);
+    const finish = () => {
+      searchClosing.current = false;
+      setSearchOpen(false);
+      setSearchQuery("");
+      if (finePointer()) field.current?.focus();
+    };
+    if (wait === 0) {
+      finish();
+      return;
+    }
+    searchClosing.current = true;
+    window.setTimeout(finish, wait);
   }
 
   /** The file sheet, once the photo and video sheets before it have closed. */
@@ -1516,18 +1596,18 @@ export function Thread({
         </button>
         <Avatar name={peer.username} seed={peer.id} online={online} />
         <div className="thread-peer">
-          <strong>{peer.username}</strong>
+          <strong>
+            <span>{peer.username}</span>
+            <ShieldCheck size={14} className="peer-lock" aria-label="End-to-end encrypted" />
+          </strong>
           {activity ? (
             <TypingLabel word={activity} />
           ) : (
             <span className={online ? "online" : undefined}>{presence || " "}</span>
           )}
         </div>
-        <span className="e2e-badge" title="End-to-end encrypted">
-          <ShieldCheck size={13} aria-hidden="true" />
-          Encrypted
-        </span>
         <button
+          ref={searchButton}
           className="icon-btn search-in-chat"
           type="button"
           aria-label="Search in chat"
@@ -1570,8 +1650,11 @@ export function Thread({
       </header>
 
       {searchOpen ? (
+        <div className="search-wrap" ref={searchWrap}>
         <div className="thread-search">
-          <Search size={15} aria-hidden="true" />
+          <span className="thread-search-glyph" ref={searchGlyph} aria-hidden="true">
+            <Search size={15} />
+          </span>
           <input
             ref={searchField}
             type="search"
@@ -1596,6 +1679,7 @@ export function Thread({
           <button className="icon-btn" type="button" aria-label="Close search" onClick={closeSearch}>
             <X size={16} />
           </button>
+        </div>
         </div>
       ) : null}
 
@@ -1730,34 +1814,29 @@ export function Thread({
             onRemove={linkPreview.dismiss}
           />
         ) : replyTo ? (
-          <div className="reply-bar">
-            <Reply className="reply-bar-glyph" size={18} aria-hidden="true" />
-            <ReplyQuote
-              quote={quoteOf(
-                messages.find((m) => m.id.toLowerCase() === replyTo.id.toLowerCase()) ?? replyTo,
-                peer.username,
-              )}
-              variant="bar"
-              onClick={() => jumpTo(replyTo.id.toLowerCase())}
-            />
-            <button
-              className="icon-btn reply-bar-close"
-              type="button"
-              aria-label="Cancel reply"
-              onClick={onCancelReply}
-            >
-              <X size={18} />
-            </button>
-          </div>
+          <ReplyPreview
+            quote={quoteOf(
+              messages.find((m) => m.id.toLowerCase() === replyTo.id.toLowerCase()) ?? replyTo,
+              peer.username,
+            )}
+            message={messages.find((m) => m.id.toLowerCase() === replyTo.id.toLowerCase()) ?? replyTo}
+            peer={{ id: peer.id, name: peer.username }}
+            me={{ id: myId, name: myName }}
+            onJump={() => jumpTo(replyTo.id.toLowerCase())}
+            onCancel={onCancelReply}
+          />
         ) : null}
 
         <div className="compose-shell" ref={voice.shellRef}>
-          <VoiceStrip voice={voice} />
           <form
-            className={draft.trim() ? "compose has-draft" : "compose"}
+            className={`compose${draft.trim() ? " has-draft" : ""}${
+              voice.phase === "opening" || voice.phase === "live" || voice.phase === "closing" ? " is-recording" : ""
+            }`}
             onSubmit={submit}
             aria-busy={sending}
           >
+            {/* Recording takes the field's place: bin, the capsule, send. */}
+            <VoiceStrip voice={voice} />
             <button
               className="icon-btn compose-plus"
               type="button"
@@ -1799,7 +1878,7 @@ export function Thread({
                 ref={field}
                 className="compose-field"
                 rows={1}
-                placeholder={canSend ? "Message" : "Unlock your keys to send"}
+                placeholder={!canSend ? "Unlock your keys to send" : replyTo ? `Reply to ${peer.username}` : "Message"}
                 aria-label="Message"
                 value={draft}
                 onChange={(event) => onDraftChange(event.target.value)}

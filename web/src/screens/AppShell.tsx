@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, BellOff, Phone, QrCode, Video, X } from "lucide-react";
+import { Bell, BellOff, Phone, Video, X } from "lucide-react";
 import {
   api,
   ApiError,
@@ -29,7 +29,8 @@ import { onDeviceRemoved } from "../deviceRemoval";
 import { LogoutDialog } from "../components/LogoutDialog";
 import { Modal } from "../components/Modal";
 import { ProfileSheet } from "../components/ProfileSheet";
-import { MyQrSheet } from "../components/qr/MyQrSheet";
+import { MyQrBody } from "../components/qr/MyQrSheet";
+import { AddContactBody } from "../components/AddContactBody";
 import { Rail, TabBar, type Tab } from "../components/Rail";
 import { Thread } from "../components/Thread";
 import { listTimestamp, presenceLabel, visiblePresence, type Presence } from "../format";
@@ -45,7 +46,7 @@ import {
   suggestedDeviceName,
 } from "../deviceNaming";
 import { DeviceNameDialog } from "../components/DeviceNameDialog";
-import { parseInvite, shareUrl } from "../invite";
+import { shareUrl } from "../invite";
 import {
   applyAnnotations,
   fetchLatest,
@@ -238,8 +239,24 @@ export function AppShell({ session }: { session: Session }) {
   const [selected, setSelected] = useState<PeerRef | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [showQr, setShowQr] = useState(false);
+  /* Add contact and My QR code are one dialog that morphs between its two faces. */
+  const [contactDialog, setContactDialog] = useState<"add" | "qr" | null>(null);
+  const [contactDialogMorphed, setContactDialogMorphed] = useState(false);
+  const openContactDialog = useCallback((view: "add" | "qr") => {
+    setContactDialogMorphed(false);
+    setContactDialog(view);
+  }, []);
+  const switchContactDialog = useCallback((view: "add" | "qr") => {
+    setContactDialogMorphed(true);
+    setContactDialog(view);
+  }, []);
+  /* Everyone the lookup may recognise by name: contacts, and anyone with a conversation. */
+  const contactNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const c of contacts) if (c.username) names.set(c.user_id.toLowerCase(), c.username);
+    for (const c of conversations) if (c.peer.username) names.set(c.peer.id.toLowerCase(), c.peer.username);
+    return names;
+  }, [contacts, conversations]);
   /** Account menu on the rail: the profile sheet, and the logout confirmation. */
   const [showProfile, setShowProfile] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -256,9 +273,6 @@ export function AppShell({ session }: { session: Session }) {
     [],
   );
   const [showInfo, setShowInfo] = useState(false);
-  const [invite, setInvite] = useState("");
-  const [addBusy, setAddBusy] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
   const [thread, setThread] = useState<ChatMessage[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
@@ -1826,31 +1840,6 @@ export function AppShell({ session }: { session: Session }) {
     [],
   );
 
-  async function sendInvite() {
-    setAddError(null);
-    const parsed = parseInvite(invite);
-    if (!parsed) {
-      setAddError("Paste a share code, username, or shroud.corespace.de/u/… link.");
-      return;
-    }
-    setAddBusy(true);
-    try {
-      const user = await api.lookupUser(session.token, parsed);
-      if (user.id === session.user.id) {
-        setAddError("That’s you.");
-        return;
-      }
-      await api.createContactRequest(session.token, user.id);
-      setAdding(false);
-      setInvite("");
-      await refresh();
-    } catch (err) {
-      setAddError(err instanceof ApiError ? err.message : "Could not send request.");
-    } finally {
-      setAddBusy(false);
-    }
-  }
-
   async function submitMessage() {
     const text = draftRef.current.trim();
     if (!text || !selected || !identity) return;
@@ -2628,7 +2617,7 @@ export function AppShell({ session }: { session: Session }) {
                 onLogout={() => setWipe("logout")}
                 onSessionEnded={endSession}
                 onLockNow={lockNow}
-                onShowQr={() => setShowQr(true)}
+                onShowQr={() => openContactDialog("qr")}
                 onCacheCleared={() => setPreviewRev((n) => n + 1)}
                 onShareCodeChanged={setNewShareCode}
                 mutedChats={mutedChats}
@@ -2644,9 +2633,9 @@ export function AppShell({ session }: { session: Session }) {
               title={tab === "chats" ? "Chats" : "Contacts"}
               query={query}
               onQueryChange={setQuery}
-              onAdd={() => setAdding(true)}
+              onAdd={() => openContactDialog("add")}
               addLabel="Add contact"
-              onShowQr={tab === "contacts" ? () => setShowQr(true) : undefined}
+              onShowQr={tab === "contacts" ? () => openContactDialog("qr") : undefined}
               loading={loading}
               error={error}
               requests={tab === "contacts" ? requests : []}
@@ -2663,14 +2652,11 @@ export function AppShell({ session }: { session: Session }) {
               banner={
                 offerNotifications ? (
                   <div className="notify-offer" role="region" aria-label="Notifications">
-                    <span className="notify-offer-icon" aria-hidden="true">
-                      <Bell size={17} />
-                    </span>
+                    <Bell size={16} className="notify-offer-icon" aria-hidden="true" />
                     <div className="notify-offer-copy">
-                      <strong>Get notified of new messages</strong>
-                      <p>Even when this tab is closed or locked.</p>
+                      Get notified of new messages, even when this tab is closed or locked.{" "}
                       <button type="button" onClick={() => void turnOnNotifications()}>
-                        Turn on notifications
+                        Turn on
                       </button>
                     </div>
                     <button
@@ -2795,50 +2781,34 @@ export function AppShell({ session }: { session: Session }) {
         </div>
       ) : null}
 
-      {adding ? (
+      {contactDialog ? (
         <Modal
-          title="Add contact"
-          onClose={() => {
-            setAdding(false);
-            setAddError(null);
-          }}
+          title={contactDialog === "add" ? "Add contact" : "My QR code"}
+          onClose={() => setContactDialog(null)}
+          className={contactDialog === "add" ? "add-modal" : "qr-modal"}
+          morphKey={contactDialog}
+          sheet
         >
-          <p>Paste an invite link, share code, or username.</p>
-          <form
-            className="modal-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void sendInvite();
-            }}
-          >
-            <input
-              className="field"
-              placeholder="shroud.corespace.de/u/… or share code"
-              aria-label="Invite link, share code, or username"
-              value={invite}
-              onChange={(event) => setInvite(event.target.value)}
+          {contactDialog === "add" ? (
+            <AddContactBody
+              session={session}
+              contactNames={contactNames}
+              onSent={async () => {
+                setContactDialog(null);
+                await refresh();
+              }}
+              onOpenChat={(id, username) => {
+                setContactDialog(null);
+                setTab("chats");
+                setSelected({ id, username });
+              }}
+              onShowQr={() => switchContactDialog("qr")}
             />
-            {addError ? <p className="err">{addError}</p> : null}
-            <button className="btn btn-primary" type="submit" disabled={addBusy}>
-              {addBusy ? "Sending…" : "Send request"}
-            </button>
-          </form>
-          <button
-            type="button"
-            className="qr-entry"
-            onClick={() => {
-              setAdding(false);
-              setAddError(null);
-              setShowQr(true);
-            }}
-          >
-            <QrCode size={15} aria-hidden="true" />
-            Show my QR code instead
-          </button>
+          ) : (
+            <MyQrBody session={profile} late={contactDialogMorphed} onAddContact={() => switchContactDialog("add")} />
+          )}
         </Modal>
       ) : null}
-
-      {showQr ? <MyQrSheet session={profile} onClose={() => setShowQr(false)} /> : null}
 
       {showProfile ? (
         <ProfileSheet
@@ -2846,7 +2816,7 @@ export function AppShell({ session }: { session: Session }) {
           shareLink={shareLink}
           onShowQr={() => {
             setShowProfile(false);
-            setShowQr(true);
+            openContactDialog("qr");
           }}
           onClose={() => setShowProfile(false)}
         />

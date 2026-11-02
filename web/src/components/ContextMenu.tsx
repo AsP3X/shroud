@@ -22,7 +22,37 @@ export type MenuItem<Id extends string = string> = {
   danger?: boolean;
   /** Draw a hairline above this item (e.g. to set a destructive action apart). */
   separatorBefore?: boolean;
+  /** A heading (one glyph and a word) drawn above this item: the start of a group of choices. */
+  heading?: { label: string; Icon: ComponentType<{ size?: number; "aria-hidden"?: boolean | "true" }> };
+  /** One of a group's choices: indented under its heading, without a glyph of its own. */
+  sub?: boolean;
 };
+
+/** How long a morphing or lifting menu takes to unfold, and to fold back. */
+const MORPH_MS = 380;
+const FOLD_MS = 300;
+const MORPH_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+
+/** A copy of `source`, fixed over it, that flies to `target`'s box; it removes itself after. */
+function fly(source: HTMLElement, target: DOMRect, duration: number, onDone?: () => void): void {
+  const from = source.getBoundingClientRect();
+  const clone = source.cloneNode(true) as HTMLElement;
+  clone.classList.add("fly-avatar");
+  clone.setAttribute("aria-hidden", "true");
+  clone.style.cssText = `left:${Math.round(from.left)}px;top:${Math.round(from.top)}px;width:${from.width}px;height:${from.height}px;font-size:${getComputedStyle(source).fontSize};opacity:1`;
+  document.body.appendChild(clone);
+  const scale = target.width / from.width;
+  const animation = clone.animate(
+    [{ transform: "none" }, { transform: `translate(${Math.round(target.left - from.left)}px, ${Math.round(target.top - from.top)}px) scale(${scale})` }],
+    { duration, easing: MORPH_EASE, fill: "forwards" },
+  );
+  const finish = () => {
+    clone.remove();
+    onDone?.();
+  };
+  animation.onfinish = finish;
+  animation.oncancel = finish;
+}
 
 /** Keeps the menu this far from every viewport edge. */
 const EDGE = 8;
@@ -144,6 +174,9 @@ export function ContextMenu<Id extends string>({
   trigger,
   returnFocus,
   settle = false,
+  morphFrom = null,
+  sharedAvatar = null,
+  lift = null,
 }: {
   anchor: MenuAnchor;
   items: MenuItem<Id>[];
@@ -163,8 +196,22 @@ export function ContextMenu<Id extends string>({
   returnFocus?: HTMLElement | null;
   /** Opened by a finger that is still down. Ignore that gesture, then accept taps. */
   settle?: boolean;
+  /** The menu unfolds out of this element's box and folds back into it (the rail avatar). */
+  morphFrom?: HTMLElement | null;
+  /** A copy of this element travels into the header's avatar as the menu opens, and back as it
+   * closes; the element itself hides meanwhile. */
+  sharedAvatar?: HTMLElement | null;
+  /** A chat row: the window dims, a copy of the row lifts off the list, and the menu unfolds from
+   * the row's edge — below it, or above it near the bottom of the list. */
+  lift?: HTMLElement | null;
 }) {
   const menu = useRef<HTMLDivElement>(null);
+  const scrim = useRef<HTMLDivElement>(null);
+  const lifted = useRef<HTMLDivElement>(null);
+  /* Where a morphing menu started from (its clip at the trigger), for the fold-back. */
+  const startClip = useRef("");
+  const liftBelow = useRef(true);
+  const leaving = useRef(false);
   const [position, setPosition] = useState<Placement | null>(null);
   const [live, setLive] = useState(!settle);
   /* Content that grows after opening without announcing it re-fits the menu on screen.
@@ -213,10 +260,129 @@ export function ContextMenu<Id extends string>({
     const key = `${anchor.x},${anchor.y}`;
     const at = key === lastAnchor.current ? placedAt.current : null;
     lastAnchor.current = key;
-    const next = at ? refit(at, null, width, height) : place(anchor, width, height);
+    let next: Placement;
+    if (lift) {
+      /* Flush with the row, under it when there is room, over it otherwise. */
+      const row = lift.getBoundingClientRect();
+      const below = row.bottom + 6 + height + EDGE <= window.innerHeight;
+      liftBelow.current = below;
+      next = {
+        left: Math.round(Math.max(EDGE, row.left)),
+        top: Math.round(below ? row.bottom + 6 : row.top - 6 - height),
+        origin: below ? "left top" : "left bottom",
+      };
+    } else next = at ? refit(at, null, width, height) : place(anchor, width, height);
     placedAt.current = next;
     setPosition(next);
   }, [anchor.x, anchor.y, items.length, grown]);
+
+  /* A menu that grows out of something: once placed, it unfolds from the trigger's box (the
+     avatar flying into the header), or from the lifted row's edge over a dimmed window. */
+  const opened = position !== null;
+  useLayoutEffect(() => {
+    const node = menu.current;
+    if (!opened || !node) return;
+    if (lift) lift.classList.add("menu-open");
+    if (prefersReducedMotion() || typeof node.animate !== "function") return;
+    const box = node.getBoundingClientRect();
+    const body = node.querySelector<HTMLElement>(".ctx-menu-body");
+    const fade = (el: HTMLElement | null, delay: number) =>
+      el?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay, easing: "ease-out", fill: "backwards" });
+    if (morphFrom) {
+      const from = morphFrom.getBoundingClientRect();
+      startClip.current = `inset(${Math.round(from.top - box.top)}px ${Math.round(box.right - from.right)}px ${Math.round(box.bottom - from.bottom)}px ${Math.round(from.left - box.left)}px round 18px)`;
+      node.animate([{ clipPath: startClip.current }, { clipPath: "inset(0 0 0 0 round 14px)" }], {
+        duration: MORPH_MS,
+        easing: MORPH_EASE,
+        fill: "both",
+      });
+      fade(node.querySelector<HTMLElement>(".ctx-menu-who"), 150);
+      fade(body, 210);
+      const target = node.querySelector<HTMLElement>(".ctx-menu-header .avatar");
+      if (sharedAvatar && target) {
+        target.style.opacity = "0";
+        sharedAvatar.style.opacity = "0";
+        fly(sharedAvatar, target.getBoundingClientRect(), MORPH_MS, () => {
+          target.style.opacity = "";
+        });
+      }
+    } else if (lift) {
+      const below = liftBelow.current;
+      scrim.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out", fill: "both" });
+      lifted.current?.animate(
+        [
+          { transform: "translateY(0)", boxShadow: "0 0 0 rgba(0, 0, 0, 0)" },
+          { transform: "translateY(-2px)", boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)" },
+        ],
+        { duration: 240, easing: MORPH_EASE, fill: "both" },
+      );
+      startClip.current = below ? "inset(0 0 100% 0 round 14px)" : "inset(100% 0 0 0 round 14px)";
+      node.animate([{ clipPath: startClip.current }, { clipPath: "inset(0 0 0 0 round 14px)" }], {
+        duration: 320,
+        delay: 40,
+        easing: MORPH_EASE,
+        fill: "both",
+      });
+      fade(body, 110);
+    }
+  }, [opened]);
+  useEffect(
+    () => () => {
+      lift?.classList.remove("menu-open");
+      if (sharedAvatar) sharedAvatar.style.opacity = "";
+    },
+    [],
+  );
+
+  /* Every way out: a morphing or lifting menu folds back first, then the caller's close runs. */
+  function leave(then: () => void): void {
+    const node = menu.current;
+    if (leaving.current) return;
+    if (!node || (!morphFrom && !lift) || prefersReducedMotion() || typeof node.animate !== "function") {
+      then();
+      return;
+    }
+    leaving.current = true;
+    node.style.pointerEvents = "none";
+    const body = node.querySelector<HTMLElement>(".ctx-menu-body");
+    const fadeOut = (el: HTMLElement | null, duration: number) =>
+      el?.animate([{ opacity: 1 }, { opacity: 0 }], { duration, easing: "ease-out", fill: "forwards" });
+    let wait = FOLD_MS;
+    if (morphFrom) {
+      fadeOut(body, 110);
+      fadeOut(node.querySelector<HTMLElement>(".ctx-menu-who"), 110);
+      node.animate([{ clipPath: "inset(0 0 0 0 round 14px)" }, { clipPath: startClip.current }], {
+        duration: FOLD_MS,
+        easing: MORPH_EASE,
+        fill: "forwards",
+      });
+      const header = node.querySelector<HTMLElement>(".ctx-menu-header .avatar");
+      if (sharedAvatar && header) {
+        header.style.opacity = "0";
+        const shared = sharedAvatar;
+        fly(header, shared.getBoundingClientRect(), FOLD_MS, () => {
+          shared.style.opacity = "";
+        });
+      }
+    } else if (lift) {
+      fadeOut(body, 100);
+      node.animate([{ clipPath: "inset(0 0 0 0 round 14px)" }, { clipPath: startClip.current }], {
+        duration: 220,
+        easing: MORPH_EASE,
+        fill: "forwards",
+      });
+      lifted.current?.animate(
+        [
+          { transform: "translateY(-2px)", boxShadow: "0 12px 32px rgba(0, 0, 0, 0.35)" },
+          { transform: "translateY(0)", boxShadow: "0 0 0 rgba(0, 0, 0, 0)" },
+        ],
+        { duration: 220, delay: 40, easing: MORPH_EASE, fill: "forwards" },
+      );
+      scrim.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, delay: 40, easing: "ease-out", fill: "forwards" });
+      wait = 270;
+    }
+    window.setTimeout(then, wait);
+  }
 
   const menuFit = useMemo<MenuFit>(
     () => ({
@@ -334,7 +500,7 @@ export function ContextMenu<Id extends string>({
       if (event?.type === "scroll" && event.target instanceof Node && menu.current?.contains(event.target)) {
         return;
       }
-      close.current();
+      leave(() => close.current());
     };
     const onResize = () => {
       /* Typing in the menu (the reaction search) on a phone brings the keyboard up, which some
@@ -351,7 +517,7 @@ export function ContextMenu<Id extends string>({
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (menu.current?.contains(target) || toggler.current?.contains(target)) return;
-      close.current();
+      leave(() => close.current());
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -361,7 +527,7 @@ export function ContextMenu<Id extends string>({
       event.preventDefault();
       event.stopImmediatePropagation();
       opener.current?.focus({ preventScroll: true });
-      close.current();
+      leave(() => close.current());
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("keydown", onKeyDown, true);
@@ -436,7 +602,7 @@ export function ContextMenu<Id extends string>({
     else if (event.key === "Tab") {
       // Tab moves between the header's own controls; from an action it leaves the menu.
       if (inHeader) return;
-      close.current();
+      leave(() => close.current());
       return;
     }
     if (next < 0) return;
@@ -444,10 +610,29 @@ export function ContextMenu<Id extends string>({
     stops[next]?.focus();
   }
 
+  const liftBox = lift?.getBoundingClientRect();
   return (
+    <>
+    {lift ? (
+      <>
+        <div className="menu-scrim" ref={scrim} aria-hidden="true" />
+        <div
+          className={`menu-lift ${lift.className}`}
+          ref={lifted}
+          aria-hidden="true"
+          style={{
+            left: Math.round(liftBox?.left ?? 0),
+            top: Math.round(liftBox?.top ?? 0),
+            width: Math.round(liftBox?.width ?? 0),
+            height: Math.round(liftBox?.height ?? 0),
+          }}
+          dangerouslySetInnerHTML={{ __html: lift.innerHTML }}
+        />
+      </>
+    ) : null}
     <div
       ref={menu}
-      className="ctx-menu"
+      className={morphFrom || lift ? "ctx-menu is-morph" : "ctx-menu"}
       role="menu"
       aria-label={label}
       style={{
@@ -466,24 +651,35 @@ export function ContextMenu<Id extends string>({
             {header}
           </div>
         ) : null}
-        {items.map(({ id, label: text, Icon, danger, separatorBefore }) => (
+        <div className="ctx-menu-body" role="none">
+        {items.map(({ id, label: text, Icon, danger, separatorBefore, heading, sub }) => (
           <div key={id} role="none">
             {separatorBefore ? <hr className="ctx-menu-sep" /> : null}
+            {heading ? (
+              <div className="ctx-menu-group" role="none">
+                <heading.Icon size={16} aria-hidden="true" />
+                {heading.label}
+              </div>
+            ) : null}
             <button
               type="button"
               role="menuitem"
-              className={danger ? "ctx-menu-item danger" : "ctx-menu-item"}
+              className={`ctx-menu-item${danger ? " danger" : ""}${sub ? " sub" : ""}`}
               onClick={() => {
-                opener.current?.focus({ preventScroll: true });
-                onSelect(id);
+                leave(() => {
+                  opener.current?.focus({ preventScroll: true });
+                  onSelect(id);
+                });
               }}
             >
-              <Icon size={16} aria-hidden="true" />
+              {sub ? null : <Icon size={16} aria-hidden="true" />}
               {text}
             </button>
           </div>
         ))}
+        </div>
       </MenuFitContext.Provider>
     </div>
+    </>
   );
 }

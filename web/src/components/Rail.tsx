@@ -71,8 +71,8 @@ export function Rail({
     }
     const rect = me.current?.getBoundingClientRect();
     if (!rect) return;
-    // Starts at the avatar's bottom edge; with no room below, the menu flips up from there.
-    setAccountMenu({ x: rect.right + 10, y: rect.bottom });
+    // Its bottom-left corner sits over the avatar: the menu unfolds up and out of it.
+    setAccountMenu({ x: rect.left - 8, y: rect.bottom + 8 });
   }
 
   function runAccountAction(action: AccountAction) {
@@ -132,6 +132,8 @@ export function Rail({
           onSelect={runAccountAction}
           onClose={() => setAccountMenu(null)}
           trigger={me.current}
+          morphFrom={me.current}
+          sharedAvatar={me.current?.querySelector<HTMLElement>(".avatar") ?? null}
         />
       ) : null}
     </nav>

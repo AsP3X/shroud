@@ -51,7 +51,9 @@ export function LinkBar({
 
   return (
     <div className="reply-bar link-bar">
-      <Link className="reply-bar-glyph" size={18} aria-hidden="true" />
+      <span className="reply-bar-icon" aria-hidden="true">
+        <Link size={18} />
+      </span>
       <button
         type="button"
         className="reply-quote reply-quote-bar"

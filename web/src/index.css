@@ -54,6 +54,12 @@
   --on-accent: #ffffff;
   --bubble-in: #22222a;
   --bubble-border: transparent;
+  /* Outgoing bubbles are the accent at a quarter strength over the canvas, not the accent itself:
+     the accent then marks only actions and state. Fields are fills in dark, hairlined in light. */
+  --bubble-out: color-mix(in srgb, var(--accent) 24%, var(--canvas));
+  --bubble-out-text: var(--text-primary);
+  --bubble-out-meta: var(--accent-text);
+  --field-border: transparent;
   --danger: #ff6b61;
   --danger-bg: #c0271d;
   --danger-soft: #3a1512;
@@ -93,6 +99,8 @@
     --on-accent: #ffffff;
     --bubble-in: #ffffff;
     --bubble-border: #e5e5ec;
+    --bubble-out: color-mix(in srgb, var(--accent) 13%, #ffffff);
+    --field-border: var(--separator);
     --danger: #d02a1b;
     --danger-bg: #c62716;
     --danger-soft: #fdecea;
@@ -131,6 +139,8 @@
   --on-accent: #ffffff;
   --bubble-in: #ffffff;
   --bubble-border: #e5e5ec;
+  --bubble-out: color-mix(in srgb, var(--accent) 13%, #ffffff);
+  --field-border: var(--separator);
   --danger: #d02a1b;
   --danger-bg: #c62716;
   --danger-soft: #fdecea;
@@ -927,7 +937,7 @@ a { color: var(--accent-text); text-decoration: none; }
 .pane-title-row { display: flex; justify-content: space-between; align-items: center; }
 .pane-actions { display: flex; gap: 6px; }
 .pane-title-row h1 {
-  font-size: var(--fs-2xl); margin: 0; text-align: left;
+  font-size: 24px; margin: 0; text-align: left;
   font-weight: 700; letter-spacing: -0.02em;
 }
 .icon-btn {
@@ -942,13 +952,13 @@ a { color: var(--accent-text); text-decoration: none; }
 .search {
   height: 38px; border-radius: var(--r-sm);
   background: var(--surface-2);
-  border: 1px solid var(--separator);
+  border: 1px solid var(--field-border);
   display: flex; align-items: center; gap: 8px;
   padding: 0 10px; color: var(--text-tertiary);
   width: 100%;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
-.search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.search:focus-within { border-color: var(--accent); }
 .search input {
   flex: 1; background: transparent; border: 0; color: var(--text-primary);
   outline: none; font-size: var(--fs-md); min-width: 0;
@@ -1065,9 +1075,12 @@ a { color: var(--accent-text); text-decoration: none; }
 }
 .thread-peer { min-width: 0; flex: 1; }
 .thread-peer strong {
-  display: block; font-size: var(--fs-lg); font-weight: 650;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 6px; font-size: var(--fs-lg); font-weight: 650;
+  white-space: nowrap;
 }
+.thread-peer strong > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Encryption is the rule, so it is a glyph by the name, not a badge. */
+.peer-lock { flex: none; color: var(--accent-text); }
 .thread-peer span {
   display: block; font-size: var(--fs-xs); color: var(--text-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1082,6 +1095,9 @@ a { color: var(--accent-text); text-decoration: none; }
 }
 .back-mobile { display: none; }
 
+.search-wrap { flex-shrink: 0; }
+.thread-search-glyph { display: grid; place-items: center; flex: none; }
+.fly-glyph { position: fixed; z-index: 71; display: grid; place-items: center; pointer-events: none; }
 .thread-search {
   flex-shrink: 0;
   display: flex; align-items: center; gap: 8px;
@@ -1114,8 +1130,8 @@ a { color: var(--accent-text); text-decoration: none; }
 }
 .bubble.out .bubble-text mark,
 .bubble.out .voice-tx-text mark {
-  background: rgba(255, 255, 255, 0.28);
-  color: var(--on-accent);
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text-primary);
 }
 
 .messages { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -1145,11 +1161,8 @@ a { color: var(--accent-text); text-decoration: none; }
 
 .day-sep { display: flex; justify-content: center; margin: 18px 0 10px; }
 .day-sep span {
-  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.03em;
-  color: var(--text-secondary);
-  background: var(--surface-2);
-  border: 1px solid var(--bubble-border);
-  padding: 4px 11px; border-radius: var(--r-full);
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-tertiary);
 }
 
 .bubble {
@@ -1180,16 +1193,17 @@ a { color: var(--accent-text); text-decoration: none; }
 .bubble.in:not(.first) { border-top-left-radius: var(--r-xs); }
 .bubble.in .bubble-meta { color: var(--text-secondary); }
 .bubble.out {
-  background: var(--accent); color: var(--on-accent);
+  background: var(--bubble-out); color: var(--bubble-out-text);
   align-self: flex-end;
   border-bottom-right-radius: var(--r-xs);
 }
 .bubble.out:not(.first) { border-top-right-radius: var(--r-xs); }
-.bubble.out .bubble-meta { color: rgba(255, 255, 255, 0.82); }
+.bubble.out .bubble-meta { color: var(--bubble-out-meta); }
 .bubble.first { margin-top: 10px; }
 .bubble.deleted { opacity: 0.6; font-style: italic; }
 .bubble.pending { opacity: 0.68; }
-.bubble.failed.out { background: var(--danger-bg); }
+.bubble.failed.out { background: var(--danger-bg); color: #fff; }
+.bubble.failed.out .bubble-meta { color: rgba(255, 255, 255, 0.82); }
 .bubble.failed.in { border-color: var(--danger); color: var(--text-secondary); }
 
 
@@ -1230,13 +1244,13 @@ a { color: var(--accent-text); text-decoration: none; }
   flex: 0 0 auto;
   width: 30px; height: 30px;
   display: grid; place-items: center;
-  border: 1px solid var(--separator); border-radius: 50%;
-  background: var(--surface-2); color: var(--text-secondary);
-  opacity: 0; transition: opacity 0.12s var(--ease), color 0.12s var(--ease);
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--text-tertiary);
+  opacity: 0; transition: opacity 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease);
 }
 .msg-row.mine .bubble-reply-btn { order: -1; }
 .msg-row:hover .bubble-reply-btn, .bubble-reply-btn:focus-visible { opacity: 1; }
-.bubble-reply-btn:hover { color: var(--accent-text); border-color: var(--accent); }
+.bubble-reply-btn:hover { color: var(--text-primary); background: var(--hover); }
 @media (hover: none) {
   .bubble-reply-btn { display: none; }
 }
@@ -1303,13 +1317,12 @@ button.reply-quote { cursor: pointer; }
 }
 .bubble.in .reply-quote-bubble .reply-quote-text { color: var(--text-primary); }
 .bubble.in .reply-quote-bubble .reply-quote-text.muted { color: var(--text-secondary); }
-/* Outgoing darkens rather than lightens: white text on a lightened accent falls below 4.5:1. */
 .bubble.out .reply-quote-bubble {
-  color: var(--on-accent);
-  background: rgba(0, 0, 0, 0.12);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.bubble.out .reply-quote-bubble .reply-quote-text { color: rgba(255, 255, 255, 0.92); }
-.bubble.out .reply-quote-bubble .reply-quote-text.muted { color: rgba(255, 255, 255, 0.72); }
+.bubble.out .reply-quote-bubble .reply-quote-text { color: var(--text-primary); }
+.bubble.out .reply-quote-bubble .reply-quote-text.muted { color: var(--text-secondary); }
 
 /* Text bubbles become a column once they carry a quote. */
 .bubble.has-reply { flex-direction: column; align-items: stretch; gap: 5px; }
@@ -1320,20 +1333,60 @@ button.reply-quote { cursor: pointer; }
 }
 .bubble.voice-msg .reply-quote { margin-bottom: 5px; }
 
-/* "Reply to …" strip above the composer. */
+/* Replying: the message itself, small, above the field (ReplyPreview). The arrow sits over the
+   attach buttons, the miniature over the text field, the close button over the mic. */
 .reply-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 8px 4px 16px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px 0;
   border-top: 1px solid var(--separator);
+  animation: reply-bar-in 0.22s var(--ease);
 }
-.reply-bar-glyph { flex: 0 0 auto; color: var(--accent); }
+@keyframes reply-bar-in { from { opacity: 0; transform: translateY(8px); } }
+.reply-bar-icon { width: 74px; display: flex; justify-content: center; color: var(--accent-text); flex-shrink: 0; }
+.reply-bar-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.reply-bar-label { display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.reply-bar-label b { font-weight: 600; color: var(--text-primary); }
+.reply-bar-label time { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.reply-bar-msg {
+  display: flex; align-items: flex-end; gap: 6px; max-width: 100%;
+  padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+.reply-mini {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 5px 11px; border-radius: 12px; border-bottom-left-radius: 4px;
+  background: var(--bubble-in); border: 1px solid var(--bubble-border);
+  font-size: var(--fs-sm); line-height: 1.35; color: var(--text-primary);
+  transform-origin: left bottom;
+  animation: reply-mini-in 0.26s cubic-bezier(0.2, 0.9, 0.25, 1.15) 40ms both;
+}
+@keyframes reply-mini-in { from { opacity: 0; transform: scale(0.85) translateY(4px); } }
+.reply-mini > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-mini > span.muted { color: var(--text-secondary); }
+.reply-mini > svg { flex: none; color: var(--accent-text); }
+.reply-mini.out { background: var(--bubble-out); color: var(--bubble-out-text); border-color: transparent; border-bottom-left-radius: 12px; border-bottom-right-radius: 4px; }
+/* Pictures and videos: the frame is the miniature, with the bubble's corners. */
+.reply-mini.media { padding: 0; background: transparent; border: 0; overflow: visible; }
+.reply-mini-pic {
+  position: relative; width: 84px; height: 63px; flex-shrink: 0; overflow: hidden;
+  border-radius: 12px; border-bottom-left-radius: 4px;
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--surface-2));
+  box-shadow: 0 1px 0 var(--bubble-border);
+}
+.reply-mini.out .reply-mini-pic { border-bottom-left-radius: 12px; border-bottom-right-radius: 4px; }
+.reply-mini-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.reply-mini-pic .media-play {
+  position: absolute; inset: 0; margin: auto; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(11, 11, 18, 0.6); color: #fff;
+}
+.reply-mini-cap { align-self: center; margin-left: 4px; font-size: var(--fs-sm); color: var(--text-secondary); }
+@media (hover: hover) { .reply-bar-msg:hover .reply-mini { filter: brightness(1.1); } }
 .reply-quote-bar {
   color: var(--accent);
   font-size: var(--fs-base);
   padding-block: 1px;
 }
 .reply-quote-bar .reply-quote-text { color: var(--text-secondary); }
-.reply-bar-close { flex: 0 0 auto; }
+.reply-bar-close { flex: 0 0 auto; width: 34px; height: 34px; align-self: flex-end; }
 
 /* The link strip above the composer: the reply bar's sibling (LinkBar in design/webclient.pen).
    A description reads as text; the bare link (loading, or a page without one) as a stand-in. */
@@ -1354,11 +1407,7 @@ button.reply-quote { cursor: pointer; }
   overflow-wrap: anywhere;
 }
 .msg-link:hover { text-decoration: underline; }
-.bubble.out .msg-link {
-  color: var(--on-accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
+.bubble.out .msg-link { color: var(--accent-text); }
 .msg-link:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; border-radius: 3px; }
 
 /* Text, block, then the time on a line of its own (or block first, time on the text). */
@@ -1386,8 +1435,8 @@ button.reply-quote { cursor: pointer; }
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .bubble.out .link-preview {
-  color: var(--on-accent);
-  background: rgba(0, 0, 0, 0.12);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .link-preview-site,
 .link-preview-title,
@@ -1396,8 +1445,8 @@ button.reply-quote { cursor: pointer; }
 .link-preview-title { font-weight: 600; }
 .bubble.in .link-preview-title,
 .bubble.in .link-preview-desc { color: var(--text-primary); }
-/* Plain white: dimmed white on the accent misses 4.5:1. */
-.bubble.out .link-preview-desc { color: var(--on-accent); }
+.bubble.out .link-preview-title,
+.bubble.out .link-preview-desc { color: var(--text-primary); }
 .link-preview:hover .link-preview-title { text-decoration: underline; }
 .link-preview.has-thumb { min-height: 76px; padding-right: 6px; }
 .link-preview-thumb {
@@ -1451,12 +1500,36 @@ button.reply-quote { cursor: pointer; }
   border: 1px solid var(--separator);
   border-radius: var(--r-md);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-  animation: ctx-menu-in 0.12s var(--ease);
+  will-change: clip-path, opacity;
+  animation: ctx-menu-in 0.22s var(--ease);
 }
+/* Reveals with a clip and a fade: nothing holding text is scaled, so it never shimmers. */
 @keyframes ctx-menu-in {
-  from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; clip-path: inset(0 0 40% 0 round 12px); }
+  to { opacity: 1; clip-path: inset(0 0 0 0 round 12px); }
 }
+/* Grown out of a trigger or a lifted row: the component animates these itself. */
+.ctx-menu.is-morph { animation: none; border-radius: 14px; }
+.ctx-menu-body { display: flex; flex-direction: column; gap: 2px; }
+.ctx-menu-group {
+  display: flex; align-items: center; gap: 12px;
+  height: 32px; padding: 0 10px;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+}
+.ctx-menu-group svg { color: var(--text-secondary); }
+.ctx-menu-item.sub { height: 34px; padding-left: 38px; }
+/* A chat row's menu: the window dims and a copy of the row lifts; the row itself hides under it. */
+.menu-scrim { position: fixed; inset: 0; z-index: 69; background: color-mix(in srgb, var(--bg) 55%, transparent); }
+.menu-lift {
+  position: fixed; z-index: 70;
+  pointer-events: none; will-change: transform;
+  background: var(--surface-2); border-radius: var(--r-md);
+}
+.menu-lift.active { background: var(--accent-soft); }
+.row.menu-open { visibility: hidden; }
+/* The avatar in flight between the rail and the account menu's header. */
+.fly-avatar { position: fixed; z-index: 71; margin: 0; pointer-events: none; transform-origin: top left; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
 .ctx-menu-item {
   display: flex; align-items: center; gap: 12px;
   width: 100%; height: 36px; padding: 0 10px;
@@ -1526,7 +1599,7 @@ button.reply-quote { cursor: pointer; }
   color: #fff;
   background: var(--accent);
 }
-.bubble.out .voice-play { background: rgba(255, 255, 255, 0.22); color: #fff; }
+.bubble.out .voice-play { background: var(--accent); color: #fff; }
 .voice-play[aria-label^="Play"] svg { transform: translateX(1px); }
 .voice-play:disabled { opacity: 0.7; cursor: default; }
 .voice-play:hover:not(:disabled) { filter: brightness(1.08); }
@@ -1548,7 +1621,7 @@ button.reply-quote { cursor: pointer; }
   background: color-mix(in srgb, var(--voice-played) calc(var(--played, 0) * 100%), var(--voice-rest));
 }
 .bubble.in.voice-msg { --voice-played: var(--accent); --voice-rest: color-mix(in srgb, var(--accent) 28%, transparent); }
-.bubble.out.voice-msg { --voice-played: #fff; --voice-rest: rgba(255, 255, 255, 0.4); }
+.bubble.out.voice-msg { --voice-played: var(--accent); --voice-rest: color-mix(in srgb, var(--accent) 28%, transparent); }
 .voice-footer {
   display: flex; align-items: center; gap: 6px;
   font-size: 11px; font-variant-numeric: tabular-nums;
@@ -1558,17 +1631,17 @@ button.reply-quote { cursor: pointer; }
   width: 5px; height: 5px; border-radius: 50%;
   background: var(--accent); flex-shrink: 0;
 }
-.bubble.out .voice-dot { background: #fff; }
+.bubble.out .voice-dot { background: var(--accent); }
 .voice-rate {
   border: 0; border-radius: var(--r-full);
   padding: 2px 5px;
   font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
   background: var(--accent-soft); color: var(--accent-text);
 }
-.bubble.out .voice-rate { background: rgba(255, 255, 255, 0.22); color: #fff; }
+.bubble.out .voice-rate { background: var(--accent-soft); color: var(--accent-text); }
 /* The time and ticks close the footer while the transcript is folded... */
 .voice-footer > .bubble-meta { margin-left: auto; }
-.bubble.out .voice-footer { color: rgba(255, 255, 255, 0.82); }
+.bubble.out .voice-footer { color: var(--text-secondary); }
 .bubble.in .voice-footer { color: var(--text-secondary); }
 
 /* The transcript toggle — Telegram's "→A". Its A folds into a chevron when the
@@ -1593,9 +1666,9 @@ button.reply-quote { cursor: pointer; }
   --voice-tx-hover: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .bubble.out.voice-msg {
-  --voice-tx-ink: #fff;
-  --voice-tx-fill: rgba(255, 255, 255, 0.2);
-  --voice-tx-hover: rgba(255, 255, 255, 0.28);
+  --voice-tx-ink: var(--accent-text);
+  --voice-tx-fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  --voice-tx-hover: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .voice-tx-enter { animation: voice-tx-in 320ms var(--ease) both; }
 @keyframes voice-tx-in {
@@ -1679,7 +1752,7 @@ button.reply-quote { cursor: pointer; }
 }
 @keyframes voice-tx-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 .bubble.in.voice-msg { --voice-wait-ink: var(--text-secondary); --voice-wait-shine: var(--text-primary); }
-.bubble.out.voice-msg { --voice-wait-ink: rgba(255, 255, 255, 0.6); --voice-wait-shine: #fff; }
+.bubble.out.voice-msg { --voice-wait-ink: var(--text-secondary); --voice-wait-shine: var(--text-primary); }
 /* --------------------------------------------------------------- typing -- */
 /* The peer's message taking shape: ink dots that swell and rise in turn, with a
    goo filter (Typing.tsx) pulling a liquid bridge between a swelling dot and its
@@ -1763,7 +1836,8 @@ button.reply-quote { cursor: pointer; }
 .typing-bubble > .rec-ink,
 .typing-bubble > .typing-ink { animation: activity-swap 260ms var(--ease) both; }
 @keyframes activity-swap { from { opacity: 0; scale: 0.6; } }
-.receipt-read { color: #8fe3ff; }
+/* Read ticks take the accent's own text colour on both sides: no second hue. */
+.receipt-read { color: var(--accent-text); }
 .bubble.in .receipt-read { color: var(--accent-text); }
 @keyframes bubble-in {
   from { opacity: 0; transform: translateY(6px); }
@@ -1807,12 +1881,11 @@ button.reply-quote { cursor: pointer; }
   flex: 1; min-width: 0;
   display: grid;
   overflow: hidden;
-  border-radius: var(--r-xl);
-  background: var(--surface-2); border: 1px solid var(--separator);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--field-border);
+  transition: border-color 0.15s ease;
 }
-.compose-grow:hover:not(:focus-within) { border-color: var(--text-tertiary); }
-.compose-grow:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.compose-grow:focus-within { border-color: var(--accent); }
 .compose-grow::after {
   content: attr(data-value) " ";
   white-space: pre-wrap;
@@ -1855,6 +1928,10 @@ button.reply-quote { cursor: pointer; }
   opacity: 0.38; cursor: default;
 }
 .compose-plus { display: none; }
+/* One button in the last slot: the mic while the field is empty, send once there is a draft
+   (a send in flight keeps its spinner). */
+.compose:not(.has-draft) .send:not(.is-busy) { display: none; }
+.compose.has-draft .compose-mic { display: none; }
 .send {
   width: 38px; height: 38px; border-radius: var(--r-full); border: 0;
   background: var(--accent); color: var(--on-accent);
@@ -1912,28 +1989,18 @@ button.reply-quote { cursor: pointer; }
 
 /* Rows animate 0fr <-> 1fr and the row is bottom-anchored, so the strip rises
    out of the composer while the capsule's position never moves. */
-.voice-strip {
-  display: grid; grid-template-rows: 1fr;
-  animation: voice-strip-open 300ms var(--ease) both;
-}
-.voice-strip[data-state="closing"] {
-  animation: voice-strip-close 260ms cubic-bezier(0.4, 0, 0.2, 1) 120ms both;
-}
-.voice-strip[data-close="discard"] { animation-delay: 240ms; }
-@keyframes voice-strip-open { from { grid-template-rows: 0fr; } }
-@keyframes voice-strip-close { to { grid-template-rows: 0fr; } }
-.voice-strip-clip {
-  min-height: 0; overflow: hidden;
-  display: flex; flex-direction: column; justify-content: flex-end;
-}
-.voice-strip-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px 4px;
-  /* Stay full-size inside a 0fr track so the droplet can measure the capsule. */
-  flex-shrink: 0;
-}
+/* Recording takes the composer row: the bin where the attach buttons were, the capsule in the
+   field's place, send where the mic was. The strip itself only fades out at the end; the
+   choreography below moves its parts. */
+.voice-strip { flex: 1; min-width: 0; display: flex; }
+.voice-strip[data-state="closing"] { animation: voice-strip-close 180ms ease-out 240ms both; }
+.voice-strip[data-close="discard"] { animation-delay: 380ms; }
+@keyframes voice-strip-close { to { opacity: 0; } }
+.voice-strip-clip { flex: 1; min-width: 0; display: flex; }
+.voice-strip-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.compose.is-recording > :not(.voice-strip) { display: none; }
 .voice-strip-discard {
-  width: 38px; height: 38px; flex-shrink: 0;
+  width: 34px; height: 34px; flex-shrink: 0; margin-bottom: 1px;
   border: 0; border-radius: var(--r-full);
   background: transparent; color: var(--danger);
   display: grid; place-items: center;
@@ -1942,12 +2009,13 @@ button.reply-quote { cursor: pointer; }
 .voice-strip-discard:disabled { opacity: 0.45; cursor: default; }
 .voice-strip-capsule {
   flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 12px;
-  height: 40px; padding: 0 16px 0 14px;
+  display: flex; align-items: center; gap: 10px;
+  height: 34px; margin: 0 4px 1px; padding: 0 12px;
   background: var(--surface-2);
-  border: 1px solid var(--separator);
-  border-radius: var(--r-full);
-  clip-path: inset(0 0 0 0 round 20px);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  clip-path: inset(0 0 0 0 round 12px);
 }
 .voice-rec-meta { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .voice-rec-dot {
@@ -2000,7 +2068,8 @@ button.reply-quote { cursor: pointer; }
 /* Discard: the capsule retracts into the bin, the bin catches it as it
    arrives, then the strip folds away with it. */
 .voice-strip[data-close="discard"] .voice-strip-capsule {
-  clip-path: inset(0 100% 0 0 round 20px);
+  clip-path: inset(0 100% 0 0 round 12px);
+  box-shadow: none;
   transition: clip-path 220ms cubic-bezier(0.45, 0, 0.8, 0.35);
 }
 .voice-strip[data-close="discard"] .voice-strip-capsule > * { opacity: 0; transition: opacity 100ms ease; }
@@ -2452,23 +2521,37 @@ button.reply-quote { cursor: pointer; }
    frames in design/webclient.pen; motion follows "Motion — My QR code". */
 /* `.modal` is declared later with equal specificity; qualify these so its
    gap and 200 ms entrance don't silently win. */
-.modal.qr-modal { gap: 16px; animation-duration: 260ms; }
+.modal.qr-modal { width: min(520px, 100%); gap: 14px; animation-duration: 260ms; }
 .qr-modal > header .icon-btn { background: var(--surface-1); }
 
-.qr-identity { display: flex; flex-direction: column; align-items: center; margin-top: 6px; }
-.qr-identity .avatar-lg { width: 64px; height: 64px; font-size: 22px; }
-.qr-identity > div { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 10px; }
-.qr-identity strong { font-size: 18px; font-weight: 600; }
-/* Scoped to the handle: a bare `span` also matched the avatar's initials. */
-.qr-identity > div > span { font-size: var(--fs-sm); color: var(--text-secondary); }
+/* My QR code: the code on its white tile beside the identity it carries. One object, read left
+   to right; on a phone the tile sits above the ledger. */
+.qr-layout { display: flex; gap: 22px; align-items: flex-start; padding: 4px 0; }
+.qr-side { display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
+.qr-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.qr-name { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; }
+.qr-name > span { display: flex; flex-direction: column; min-width: 0; }
+.qr-name strong { font-size: var(--fs-lg); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qr-name small { font-size: var(--fs-sm); color: var(--text-secondary); }
+.qr-facts { margin: 0; border-top: 1px solid var(--separator); }
+.qr-facts > div {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto;
+  column-gap: 8px; align-items: center;
+  padding: 9px 0; border-bottom: 1px solid var(--separator);
+}
+.qr-facts dt { grid-column: 1; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.qr-facts dd { grid-column: 1; margin: 0; font-size: var(--fs-sm); font-weight: 500; color: var(--text-primary); overflow-wrap: normal; word-break: keep-all; }
+.qr-facts dd.mono { font-family: var(--font-mono); font-size: var(--fs-md); letter-spacing: 0.06em; }
+.qr-facts .copy-pill { grid-column: 2; grid-row: 1 / 3; }
+.modal .qr-note { margin: 12px 0 0; font-size: var(--fs-xs); line-height: 1.5; color: var(--text-tertiary); text-wrap: pretty; }
 
 /* Always dark-on-white, whatever the theme: iOS's AVFoundation scanner doesn't
    reliably read inverted codes. */
 .qr-card {
   --qr-start: 200ms;
   position: relative;
-  width: min(254px, 100%); aspect-ratio: 1;
-  margin: 2px auto 0;
+  width: 196px; aspect-ratio: 1;
+  margin: 0;
   background: #fff;
   border-radius: 8.66%;
   overflow: hidden;
@@ -2528,13 +2611,14 @@ button.reply-quote { cursor: pointer; }
   100% { transform: translateY(460%); opacity: 0; }
 }
 
-.modal .qr-caption {
+.modal .qr-caption { justify-content: flex-start; padding-left: 2px; }
+.modal .qr-caption-old {
   margin: -2px 0 0; line-height: 1.2;
   display: flex; align-items: center; justify-content: center; gap: 6px;
   font-size: var(--fs-sm); color: var(--text-secondary);
 }
 
-.qr-codes {
+.qr-codes-old {
   background: var(--bg);
   border: 1px solid var(--separator);
   border-radius: var(--radius);
@@ -2550,6 +2634,43 @@ button.reply-quote { cursor: pointer; }
 }
 .qr-action { gap: 8px; }
 
+.dialog-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; padding-top: 14px; border-top: 1px solid var(--separator); }
+.dialog-foot-gap { flex: 1; }
+.dialog-foot .btn.dialog-primary { width: auto; height: 40px; padding: 0 18px; gap: 8px; font-size: var(--fs-md); }
+.btn-text {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 40px; padding: 0 8px; border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--accent-text);
+  font: inherit; font-size: var(--fs-md); font-weight: 600; cursor: pointer;
+}
+.btn-text:hover { background: var(--hover); }
+.modal.add-modal { width: min(420px, 100%); }
+.lookup-form { display: flex; flex-direction: column; gap: 12px; }
+.lookup {
+  display: flex; align-items: center; gap: 10px;
+  height: 46px; padding: 0 12px 0 14px; border-radius: var(--r-md);
+  background: var(--surface-1); border: 1px solid var(--separator);
+  color: var(--text-tertiary); transition: border-color 0.15s ease;
+}
+.lookup:focus-within { border-color: var(--accent); }
+.lookup input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: var(--text-primary); font: inherit; font-size: var(--fs-base); }
+.lookup input::placeholder { color: var(--text-tertiary); }
+.lookup-result { min-height: 64px; display: flex; align-items: center; }
+.modal .lookup-hint, .modal .lookup-none { margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+.lookup-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 6px 2px; animation: lookup-in 0.22s var(--ease) both; }
+@keyframes lookup-in { from { opacity: 0; transform: translateY(-4px); } }
+.lookup-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lookup-lines strong { font-size: var(--fs-base); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lookup-lines small { font-size: var(--fs-sm); color: var(--text-secondary); }
+.lookup-lines i.skeleton { height: 11px; }
+.lookup-status { font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
+.avatar.skeleton { background: var(--skeleton); animation: none; text-shadow: none; }
+.avatar.lookup-stranger { background: var(--surface-3); color: var(--text-tertiary); border: 1px solid var(--separator); text-shadow: none; }
+/* The dialog becoming another: the old content lives on as a ghost while the box moves. */
+.modal { position: relative; }
+.modal-content { display: flex; flex-direction: column; gap: inherit; min-width: 0; }
+.modal.is-morphing { overflow: hidden; }
+.modal-ghost { position: absolute; top: 0; left: 0; padding: inherit; display: flex; flex-direction: column; gap: inherit; pointer-events: none; }
 .qr-entry {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   align-self: center;
@@ -2579,7 +2700,10 @@ button.reply-quote { cursor: pointer; }
     margin-bottom: 2px;
   }
   .qr-modal.sheet { gap: 14px; }
-  .qr-card { --qr-start: 260ms; }
+  .qr-card { --qr-start: 260ms; width: min(254px, 100%); }
+  .qr-layout { flex-direction: column; align-items: center; gap: 16px; }
+  .qr-side { align-items: center; }
+  .qr-who { width: 100%; }
 }
 @keyframes sheet-up { from { transform: translateY(100%); } }
 
@@ -2801,7 +2925,7 @@ button.reply-quote { cursor: pointer; }
   cursor: zoom-in;
   -webkit-tap-highlight-color: transparent;
 }
-.bubble.out .photo-frame { background: color-mix(in srgb, #000 14%, var(--accent)); }
+.bubble.out .photo-frame { background: color-mix(in srgb, var(--text-primary) 7%, var(--bubble-out)); }
 .photo-frame.is-failed { cursor: pointer; }
 .photo-frame:focus-visible { outline: none; box-shadow: inset 0 0 0 3px var(--accent-text); }
 .photo-thumb, .photo-full {
@@ -2821,7 +2945,7 @@ button.reply-quote { cursor: pointer; }
   display: grid; place-items: center;
   color: var(--text-tertiary);
 }
-.bubble.out .photo-empty { color: rgba(255, 255, 255, 0.7); }
+.bubble.out .photo-empty { color: var(--text-tertiary); }
 @media (hover: hover) {
   .photo-frame:hover .photo-full { filter: brightness(1.05); }
 }
@@ -3174,9 +3298,9 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   background: var(--accent); color: #fff;
   transition: filter 0.15s ease;
 }
-.bubble.out .file-tile { background: rgba(255, 255, 255, 0.22); }
+.bubble.out .file-tile { background: var(--accent); }
 .file-tile.is-unsupported { background: var(--text-tertiary); }
-.bubble.out .file-tile.is-unsupported { background: rgba(0, 0, 0, 0.18); }
+.bubble.out .file-tile.is-unsupported { background: var(--text-tertiary); }
 .file-thumb {
   position: absolute; inset: 0;
   width: 100%; height: 100%;
@@ -3206,15 +3330,14 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.bubble.out .file-meta { color: rgba(255, 255, 255, 0.78); }
+.bubble.out .file-meta { color: var(--text-secondary); }
 .file-warning {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: var(--fs-xs); font-weight: 500; line-height: 1.3;
   color: var(--warn-text);
 }
 .file-warning svg { flex: none; }
-/* The dark theme's warning ink: legible on the accent bubble in both themes. */
-.bubble.out .file-warning { color: #f5d9a6; }
+.bubble.out .file-warning { color: var(--warn-text); }
 .file-caption { padding-top: 2px; }
 
 /* A PDF's preview card (docs/file-sharing.md §10.1): 4 from the bubble's top and sides (6 under a
@@ -3269,7 +3392,7 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 }
 /* "Can't play in this browser": the warning line's place, in the secondary colour. */
 .file-warning.file-cant-play { color: var(--text-secondary); font-weight: 400; }
-.bubble.out .file-warning.file-cant-play { color: rgba(255, 255, 255, 0.78); }
+.bubble.out .file-warning.file-cant-play { color: var(--text-secondary); }
 .audio-scrub {
   --track-played: var(--accent);
   --track-rest: rgba(142, 142, 160, 0.3);
@@ -3281,7 +3404,7 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   cursor: pointer;
   touch-action: none;
 }
-.bubble.out .audio-scrub { --track-played: #ffffff; --track-rest: rgba(255, 255, 255, 0.3); }
+.bubble.out .audio-scrub { --track-played: var(--accent); --track-rest: rgba(142, 142, 160, 0.3); }
 .audio-scrub:focus-visible { outline: none; }
 .audio-scrub::-webkit-slider-runnable-track {
   height: 3px; border-radius: 2px;
@@ -3931,9 +4054,11 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   .messages-inner { padding: 14px 12px 16px; }
   .bubble { max-width: 84%; }
   .compose { padding: 7px 10px; }
-  .voice-strip-row { padding: 7px 10px 3px; }
+  .voice-strip-row { padding: 0; }
   .compose-wide { display: none; }
   .compose-plus { display: grid; }
+  .reply-bar { padding: 8px 10px 0; }
+  .reply-bar-icon { width: 34px; }
   .compose.has-draft .compose-mic { display: none; }
   .compose:not(.has-draft) .send { display: none; }
   .jump-latest { right: 14px; bottom: calc(100% + 16px); }
@@ -4011,12 +4136,12 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   transition: background 0.12s var(--ease);
 }
 .reaction-chip.is-mine { --chip-bg: var(--accent); }
-.bubble.out .reaction-chip { --chip-bg: rgba(255, 255, 255, 0.2); }
-.bubble.out .reaction-chip.is-mine { --chip-bg: #fff; }
+.bubble.out .reaction-chip { --chip-bg: color-mix(in srgb, var(--accent) 22%, transparent); }
+.bubble.out .reaction-chip.is-mine { --chip-bg: var(--accent); }
 /* Faces sit in a ring of the chip's own colour, so overlapping ones stay apart. The out-bubble
    chip is translucent, so its ring takes the bubble's colour under it. */
 .reaction-chip .avatar-xs { box-shadow: 0 0 0 1.5px var(--chip-bg); }
-.bubble.out .reaction-chip:not(.is-mine) .avatar-xs { box-shadow: 0 0 0 1.5px var(--accent); }
+.bubble.out .reaction-chip:not(.is-mine) .avatar-xs { box-shadow: 0 0 0 1.5px var(--bubble-out); }
 .bubble.in .reaction-chip:not(.is-mine) .avatar-xs { box-shadow: 0 0 0 1.5px var(--bubble-in); }
 .reaction-emoji {
   height: 30px; min-width: 24px; padding: 0 2px;
@@ -4187,25 +4312,19 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 }
 
 .notify-offer {
-  display: flex; align-items: center; gap: 12px;
-  margin: 2px 2px 10px; padding: 12px;
-  border-radius: var(--r-md);
-  background: var(--accent-soft);
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 6px 6px; padding: 6px 2px 10px;
+  border-bottom: 1px solid var(--separator);
+  font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary);
 }
-.notify-offer-icon {
-  width: 34px; height: 34px; border-radius: var(--r-full);
-  display: grid; place-items: center; flex-shrink: 0;
-  background: var(--accent); color: var(--on-accent);
-}
+.notify-offer-icon { flex-shrink: 0; color: var(--accent-text); }
 .notify-offer-copy { flex: 1; min-width: 0; }
-.notify-offer-copy strong { display: block; font-size: var(--fs-md); font-weight: 600; }
-.notify-offer-copy p { margin: 2px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.4; }
 .notify-offer-copy button {
-  margin-top: 6px; padding: 0; border: 0; background: none;
-  color: var(--accent-text); font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+  padding: 0; border: 0; background: none;
+  color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap;
 }
 .notify-offer-copy button:hover { text-decoration: underline; }
-.notify-offer .icon-btn { align-self: flex-start; width: 28px; height: 28px; }
+.notify-offer .icon-btn { width: 28px; height: 28px; margin: -4px -6px -4px 0; }
 
 .set-row-button:disabled:active { background: transparent; }
 .set-sounds > .set-row:first-child { border-top: 0; }
