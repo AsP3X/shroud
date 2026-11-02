@@ -4,37 +4,27 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Shroud</title>
-  <meta name="description" content="Private messaging, fully encrypted. No phone number, no email: a username and a 12-word encryption phrase." />
+  <meta name="description" content="Private messaging. The server carries your messages and cannot read them. No phone number, no email: your whole account is twelve words." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     /* ------------------------------------------------------------- tokens --
-       The web client's own palette (web/src/index.css). Dark is the base;
-       light follows the OS unless data-theme pins one. Nothing on this page
-       uses a colour outside these roles. */
+       The web client's own palette and type. Dark is the base; light follows the OS
+       unless data-theme pins one. Nothing on this page uses a colour outside these roles. */
     :root {
       color-scheme: light dark;
       --font: Inter, system-ui, -apple-system, sans-serif;
 
-      --fs-2xs: 11px; --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px;
-      --fs-base: 15px; --fs-lg: 17px; --fs-xl: 20px; --fs-2xl: 28px;
-      --fs-display: clamp(38px, 3.6vw, 54px);
-
-      --r-xs: 8px; --r-sm: 10px; --r-md: 12px; --r-lg: 16px; --r-xl: 20px; --r-full: 999px;
-      --radius: 14px;
-
-      --rail-w: 76px; --pane-w: 340px;
-      --gutter: clamp(20px, 4vw, 64px);
-      --measure: 1280px;
+      --gutter: clamp(20px, 5vw, 72px);
+      --measure: 1200px;
+      --r-sm: 10px; --r-md: 12px; --r-lg: 16px; --r-full: 999px;
 
       --bg: #000000;
       --surface-1: #0a0a0e;
       --surface-2: #17171d;
       --surface-3: #22222a;
-      --canvas: #0e0e14;
       --hover: rgba(255, 255, 255, 0.055);
-      --pressed: rgba(255, 255, 255, 0.09);
       --separator: #2a2a31;
       --text-primary: #ffffff;
       --text-secondary: #a6a6b0;
@@ -46,32 +36,36 @@
       --on-accent: #ffffff;
       --bubble-in: #22222a;
       --bubble-border: transparent;
+      --bubble-out: color-mix(in srgb, var(--accent) 24%, #0e0e14);
       --online: #34c759;
       --frame-shadow: none;
+      --veil: rgba(255, 255, 255, 0.045);
     }
     @media (prefers-color-scheme: light) {
       :root:not([data-theme="dark"]) {
         --bg: #ffffff; --surface-1: #f7f7fa; --surface-2: #ffffff; --surface-3: #ffffff;
-        --canvas: #f1f1f6;
-        --hover: rgba(10, 10, 25, 0.045); --pressed: rgba(10, 10, 25, 0.08);
+        --hover: rgba(10, 10, 25, 0.045);
         --separator: #e2e2e8;
         --text-primary: #0b0b12; --text-secondary: #555562; --text-tertiary: #6c6c7a;
         --accent: #5e5ce6; --accent-hover: #4b49d6; --accent-soft: #ececfc; --accent-text: #4b49d6;
         --bubble-in: #ffffff; --bubble-border: #e5e5ec;
+        --bubble-out: color-mix(in srgb, var(--accent) 13%, #ffffff);
         --online: #1b7e3f;
         --frame-shadow: 0 14px 40px rgba(15, 15, 30, 0.12);
+        --veil: rgba(10, 10, 25, 0.035);
       }
     }
     :root[data-theme="light"] {
       --bg: #ffffff; --surface-1: #f7f7fa; --surface-2: #ffffff; --surface-3: #ffffff;
-      --canvas: #f1f1f6;
-      --hover: rgba(10, 10, 25, 0.045); --pressed: rgba(10, 10, 25, 0.08);
+      --hover: rgba(10, 10, 25, 0.045);
       --separator: #e2e2e8;
       --text-primary: #0b0b12; --text-secondary: #555562; --text-tertiary: #6c6c7a;
       --accent: #5e5ce6; --accent-hover: #4b49d6; --accent-soft: #ececfc; --accent-text: #4b49d6;
       --bubble-in: #ffffff; --bubble-border: #e5e5ec;
+      --bubble-out: color-mix(in srgb, var(--accent) 13%, #ffffff);
       --online: #1b7e3f;
       --frame-shadow: 0 14px 40px rgba(15, 15, 30, 0.12);
+      --veil: rgba(10, 10, 25, 0.035);
     }
 
     /* --------------------------------------------------------------- base -- */
@@ -80,459 +74,701 @@
     body {
       margin: 0; min-height: 100%;
       background: var(--bg); color: var(--text-primary);
-      font-family: var(--font); font-size: var(--fs-base); line-height: 1.5;
+      font: 400 16px/1.5 var(--font);
       -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-      overflow-x: hidden;
+      font-feature-settings: "cv11", "ss01";
     }
-    a { color: inherit; }
-    svg { display: block; }
-    .wrap { width: min(var(--measure), 100%); margin-inline: auto; padding-inline: var(--gutter); }
+    a { color: inherit; text-decoration: none; }
+    a:hover { text-decoration: underline; text-underline-offset: 3px; }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-    .ico { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
-    .ico-lg { width: 20px; height: 20px; }
+    svg { display: block; }
+    h1, h2, h3, p { margin: 0; }
+    .wrap { width: min(var(--measure), 100%); margin-inline: auto; padding-inline: var(--gutter); }
 
-    /* ----------------------------------------------------------- controls -- */
     .btn {
-      height: 48px; padding: 0 22px; border-radius: var(--radius); border: 0;
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      font: inherit; font-size: 16px; font-weight: 600; text-decoration: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 46px; padding: 0 22px; border-radius: var(--r-md);
       background: var(--accent); color: var(--on-accent);
-      transition: background 0.15s ease;
+      font: 600 15px/1 var(--font); white-space: nowrap;
     }
-    .btn:active { background: var(--accent-hover); }
-    .link {
-      display: inline-flex; align-items: center; gap: 6px;
-      font-weight: 600; text-decoration: none; color: var(--accent-text);
-    }
-    .link .ico { width: 15px; height: 15px; transition: transform 0.15s ease; }
-    @media (hover: hover) {
-      .btn:hover { background: var(--accent-hover); }
-      .link:hover { text-decoration: underline; text-underline-offset: 3px; }
-      .link:hover .ico { transform: translateX(2px); }
-    }
+    .btn:hover { background: var(--accent-hover); text-decoration: none; }
+    .quiet { font-weight: 600; color: var(--accent-text); }
 
     /* ---------------------------------------------------------------- top -- */
-    .top { height: 64px; display: flex; align-items: center; justify-content: space-between; }
-    .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; font-size: var(--fs-lg); letter-spacing: -0.01em; }
-    .brand svg { width: 28px; height: 28px; border-radius: 22.5%; }
-    .top nav { display: flex; align-items: center; gap: 28px; font-size: var(--fs-md); font-weight: 600; }
-    .top nav a { text-decoration: none; color: var(--text-secondary); }
-    @media (hover: hover) { .top nav a:hover { color: var(--text-primary); } }
+    .top { height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { display: inline-flex; align-items: baseline; gap: 12px; min-width: 0; }
+    .brand svg { align-self: center; border-radius: 22.5%; }
+    .brand b { font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+    .brand span { font-size: 13px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .brand:hover { text-decoration: none; }
+    .top nav { display: flex; align-items: center; gap: 28px; font-size: 14px; font-weight: 600; }
+    .top nav a { color: var(--text-secondary); }
+    .top nav a:hover { color: var(--text-primary); text-decoration: none; }
 
-    /* --------------------------------------------------------------- hero -- */
-    .hero { padding: clamp(40px, 7vh, 88px) 0 clamp(48px, 8vh, 96px); }
+    /* --------------------------------------------------------------- hero --
+       The one thing worth showing: a chat as you see it, and the same chat as the server
+       holds it. A veil lies over the right part of the picture; under it every message is
+       an envelope with a size and a time. The visitor drags the veil. */
+    .hero { padding-block: clamp(36px, 7vh, 88px) clamp(56px, 9vh, 104px); }
     .hero .wrap {
       display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      gap: clamp(32px, 5vw, 72px); align-items: center;
+      gap: clamp(32px, 5vw, 80px); align-items: center;
     }
     .hero h1 {
-      margin: 0; max-width: 13ch;
-      font-size: var(--fs-display); font-weight: 700; line-height: 1.06; letter-spacing: -0.035em;
+      max-width: 17ch;
+      font-size: clamp(32px, 3.3vw, 46px); font-weight: 600; line-height: 1.1; letter-spacing: -0.03em;
       text-wrap: balance;
     }
-    .hero .lede {
-      margin: 22px 0 0; max-width: 36ch;
-      font-size: var(--fs-lg); line-height: 1.5; color: var(--text-secondary);
-      text-wrap: pretty;
-    }
-    .hero .actions { margin-top: 36px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
-    .hero .note {
-      margin: 28px 0 0; max-width: 40ch;
-      font-size: var(--fs-sm); line-height: 1.55; color: var(--text-tertiary);
-    }
-    .hero .note b { font-weight: 600; color: var(--text-secondary); }
+    .lede { margin-top: 22px; max-width: 40ch; font-size: 17px; line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+    .actions { margin-top: 32px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+    .fine { margin-top: 26px; max-width: 44ch; font-size: 13px; line-height: 1.55; color: var(--text-tertiary); text-wrap: pretty; }
 
-    /* The product itself, drawn with the client's layout values. It is wider than
-       its column on purpose and runs off the right edge like a window would. */
-    .stage { position: relative; min-width: 0; height: calc(600px * var(--s, 1)); }
-    .frame {
-      width: 940px; max-width: none; height: 600px;
-      transform: scale(var(--s, 1)); transform-origin: top left;
-      display: flex; overflow: hidden;
-      border: 1px solid var(--separator); border-radius: var(--r-md);
+    .veil { --cut: 100%; min-width: 0; }
+    .veil-labels { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+    .veil-labels span:first-child { color: var(--text-secondary); }
+    .veil-labels span:last-child { color: var(--accent-text); }
+    .stage {
+      position: relative; height: clamp(420px, 54vh, 500px); overflow: hidden;
+      border: 1px solid var(--separator); border-radius: var(--r-lg);
       background: var(--bg); box-shadow: var(--frame-shadow);
-      font-size: var(--fs-base); user-select: none;
+      touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: ew-resize;
     }
+    .view { position: absolute; inset: 0; display: flex; flex-direction: column; font-size: 15px; }
+    .view.server { clip-path: inset(0 0 0 var(--cut)); background: var(--bg); }
+    .view.server::before { content: ""; position: absolute; inset: 0; background: var(--veil); pointer-events: none; }
+    .edge {
+      position: absolute; top: 0; bottom: 0; left: var(--cut); width: 2px; margin-left: -1px;
+      background: var(--accent); pointer-events: none;
+    }
+    .grip {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0;
+      background: var(--accent); color: var(--on-accent);
+      display: grid; place-items: center; cursor: ew-resize; pointer-events: auto;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    }
+    .grip:hover { background: var(--accent-hover); }
+    @media (prefers-reduced-motion: no-preference) {
+      /* The one orchestrated moment: the veil is drawn over the chat once, on load. */
+      .veil.drop { transition: --cut 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.35s; }
+    }
+    @property --cut { syntax: "<percentage>"; inherits: true; initial-value: 100%; }
 
-    .m-rail {
-      width: var(--rail-w); flex-shrink: 0;
-      display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-      padding: 18px 0; border-right: 1px solid var(--separator);
+    .frame-head { height: 64px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--separator); }
+    .avatar {
+      position: relative; flex: none; width: 40px; height: 40px; border-radius: 50%;
+      background: linear-gradient(180deg, #7c7aff, #5e5ce6); color: #fff;
+      display: grid; place-items: center; font-weight: 600; font-size: 14px;
     }
-    .m-rail-mark svg { width: 36px; height: 36px; border-radius: 22.5%; }
-    .m-tabs { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-    .m-tab { position: relative; width: 46px; height: 46px; border-radius: var(--r-md); display: grid; place-items: center; color: var(--text-secondary); }
-    .m-tab.active { background: var(--accent-soft); color: var(--accent-text); }
-    .m-badge {
-      position: absolute; top: 4px; right: 4px; min-width: 17px; height: 17px; padding: 0 4px;
-      border-radius: var(--r-full); background: var(--accent); color: var(--on-accent);
-      font-size: 10px; font-weight: 700; line-height: 17px; text-align: center;
-      box-shadow: 0 0 0 2px var(--bg);
+    .avatar i { position: absolute; right: 0; bottom: 0; width: 11px; height: 11px; border-radius: 50%; background: var(--online); box-shadow: 0 0 0 2px var(--bg); }
+    .server .avatar { background: var(--surface-3); color: var(--text-tertiary); }
+    .server .avatar i { display: none; }
+    .peer { min-width: 0; flex: 1; }
+    .peer strong { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 650; white-space: nowrap; }
+    .peer strong svg { color: var(--accent-text); }
+    .peer span { display: block; font-size: 12px; color: var(--online); }
+    .server .peer strong { font-variant-numeric: tabular-nums; color: var(--text-secondary); font-weight: 600; }
+    .server .peer span { color: var(--text-tertiary); }
+    .frame-head .acts { display: flex; gap: 4px; color: var(--text-secondary); }
+    .frame-head .acts span { width: 36px; height: 36px; display: grid; place-items: center; }
+    .msgs { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 3px; padding: 14px 14px 12px; }
+    .day { align-self: center; margin: 2px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
+    .bubble {
+      max-width: 78%; padding: 7px 12px; border-radius: var(--r-lg);
+      display: flex; align-items: flex-end; gap: 9px; line-height: 1.4;
     }
+    .bubble .meta { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1; opacity: 0.8; padding-bottom: 1px; }
+    .bubble.in { align-self: flex-start; background: var(--bubble-in); border: 1px solid var(--bubble-border); border-bottom-left-radius: 8px; }
+    .bubble.in + .bubble.in { border-top-left-radius: 8px; }
+    .bubble.in .meta { color: var(--text-secondary); }
+    .bubble.out { align-self: flex-end; background: var(--bubble-out); border-bottom-right-radius: 8px; }
+    .bubble.out + .bubble.out { border-top-right-radius: 8px; }
+    .bubble.out .meta { color: var(--accent-text); }
+    .bubble .voice { display: flex; align-items: center; gap: 10px; min-width: 190px; padding: 2px 0; }
+    .bubble .voice .play { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; flex: none; }
+    .bubble .voice .bars { flex: 1; display: flex; align-items: center; gap: 2px; height: 22px; }
+    .bubble .voice .bars b { width: 2px; border-radius: 1px; background: var(--accent-text); opacity: 0.7; }
+    .bubble .voice .bars b:nth-child(-n+9) { opacity: 1; }
+    .bubble .voice .len { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    /* The envelope: the bubble's exact shape, with what the server has of it. */
+    .bubble.sealed {
+      background: transparent; border: 1px solid var(--separator); color: var(--text-tertiary);
+      justify-content: space-between; align-items: center; gap: 12px; font-size: 12px; font-variant-numeric: tabular-nums;
+    }
+    .bubble.sealed .what { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+    .bubble.sealed .meta { color: var(--text-tertiary); opacity: 1; }
+    .compose { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px 12px; }
+    .compose .ib { width: 36px; height: 36px; display: grid; place-items: center; color: var(--text-secondary); flex: none; }
+    .compose .field { flex: 1; height: 38px; display: flex; align-items: center; padding: 0 14px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--bubble-border); color: var(--text-tertiary); }
+    .kept { flex: none; height: 60px; display: flex; align-items: center; padding: 0 16px; font-size: 13px; color: var(--text-tertiary); border-top: 1px solid var(--separator); }
 
-    .m-pane {
-      width: var(--pane-w); flex-shrink: 0; display: flex; flex-direction: column;
-      border-right: 1px solid var(--separator); background: var(--surface-1);
-    }
-    .m-pane-head { padding: 18px 14px 10px; display: flex; flex-direction: column; gap: 12px; }
-    .m-pane-title { display: flex; justify-content: space-between; align-items: center; }
-    .m-pane-title strong { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; }
-    .m-pane-actions { display: flex; gap: 6px; color: var(--text-secondary); }
-    .m-pane-actions span { width: 36px; height: 36px; display: grid; place-items: center; }
-    .m-search {
-      height: 38px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--separator);
-      display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--text-tertiary); font-size: var(--fs-md);
-    }
-    .m-rows { padding: 2px 6px 12px; display: flex; flex-direction: column; }
-    .m-row { display: flex; gap: 12px; align-items: center; padding: 9px 10px; border-radius: var(--r-md); }
-    .m-row.active { background: var(--accent-soft); }
-    .m-row.active .m-copy strong { color: var(--accent-text); }
-    .m-copy { flex: 1; min-width: 0; }
-    .m-copy strong { display: block; font-size: var(--fs-base); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .m-copy span { display: block; margin-top: 1px; font-size: var(--fs-sm); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .m-row.unread .m-copy span { color: var(--text-primary); }
-    .m-time { font-size: var(--fs-2xs); color: var(--text-tertiary); align-self: flex-start; padding-top: 3px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-    .m-time.unread { color: var(--accent-text); font-weight: 600; }
+    /* ----------------------------------------------------------- sections -- */
+    .section { padding: clamp(56px, 9vh, 112px) 0; border-top: 1px solid var(--separator); }
+    .section-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: clamp(28px, 5vw, 80px); align-items: start; }
+    .section-grid.wide { grid-template-columns: minmax(0, 3fr) minmax(0, 9fr); }
+    .section h2 { max-width: 16ch; font-size: 26px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2; text-wrap: balance; }
+    .section .intro { margin-top: 14px; max-width: 36ch; color: var(--text-secondary); text-wrap: pretty; }
 
-    .av {
-      position: relative; flex-shrink: 0; width: 44px; height: 44px; border-radius: var(--r-full);
-      background: linear-gradient(180deg, var(--av-top, #7c7aff), var(--av-bottom, #5e5ce6));
-      color: #fff; display: grid; place-items: center; font-weight: 600; font-size: var(--fs-base); letter-spacing: 0.01em;
-      text-shadow: 0 1px 1.5px rgb(0 0 0 / 0.18);
+    /* What the server holds. Each row shows the thing twice: as you have it, then past the
+       veil line, as the server has it. The sentence says what that means. */
+    .keeps { list-style: none; margin: 0; padding: 0; }
+    .keeps li {
+      display: grid; grid-template-columns: minmax(0, 11ch) minmax(0, 280px) minmax(0, 1fr);
+      gap: 20px clamp(20px, 3vw, 36px); align-items: center;
+      padding: 20px 0; border-top: 1px solid var(--separator);
     }
-    .av-sm { width: 32px; height: 32px; font-size: var(--fs-xs); }
-    .av-dot { position: absolute; right: 1px; bottom: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--online); box-shadow: 0 0 0 2px var(--bg); }
-    .av.a2 { --av-top: #ff9f7a; --av-bottom: #e8663a; }
-    .av.a3 { --av-top: #5fd3a3; --av-bottom: #1f9d6e; }
-    .av.a4 { --av-top: #ffd36a; --av-bottom: #e0a21b; }
-    .av.a5 { --av-top: #7cc4ff; --av-bottom: #2f86e0; }
-    .av.a6 { --av-top: #e78bff; --av-bottom: #b14ad9; }
-    .av.a7 { --av-top: #9aa3b5; --av-bottom: #5d6578; }
+    .keeps li:first-child { border-top: 0; padding-top: 0; }
+    .keeps li:last-child { padding-bottom: 0; }
+    .keeps .what { font-weight: 600; }
+    .keeps .why { max-width: 40ch; font-size: 15px; color: var(--text-secondary); text-wrap: pretty; }
+    .keeps .why b { font-weight: 600; color: var(--text-primary); }
+    .pair { display: grid; grid-template-columns: minmax(0, 1fr) 2px minmax(0, 1fr); align-items: center; gap: 14px; min-height: 44px; font-size: 13px; line-height: 1.3; }
+    .pair .line { align-self: stretch; background: var(--accent); border-radius: 1px; }
+    .pair .srv { position: relative; color: var(--text-tertiary); }
+    .mine, .srv { display: flex; align-items: center; min-width: 0; }
+    .srv { justify-content: flex-start; }
+    .mini {
+      display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+      padding: 6px 10px; border-radius: 12px; border-bottom-left-radius: 6px;
+      background: var(--bubble-in); border: 1px solid var(--bubble-border); white-space: nowrap;
+    }
+    .mini.out { background: var(--bubble-out); border-color: transparent; border-radius: 12px; border-bottom-right-radius: 6px; }
+    .mini .t { font-size: 10px; opacity: 0.8; color: var(--text-secondary); }
+    .mini.out .t { color: var(--accent-text); }
+    .env {
+      display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
+      padding: 6px 10px; border-radius: 12px; border: 1px solid var(--separator);
+      color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .env.nothing { border-color: transparent; padding-left: 0; }
+    .who { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-weight: 500; }
+    .who .avatar { width: 24px; height: 24px; font-size: 9px; }
+    .who.dim .avatar { background: var(--surface-3); color: var(--text-tertiary); }
+    .link { display: inline-flex; align-items: center; gap: 0; }
+    .link i { width: 14px; height: 14px; border-radius: 50%; background: var(--surface-3); border: 1px solid var(--separator); }
+    .link b { width: 28px; height: 1px; background: var(--separator); }
+    .slots { display: inline-flex; gap: 5px; }
+    .slots i { width: 14px; height: 18px; border-radius: 4px; border: 1px solid var(--separator); }
+    .slots i.on { background: var(--surface-3); }
+    .devs { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+    .devs span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--bubble-border); white-space: nowrap; }
+    .callbar { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--bubble-border); white-space: nowrap; }
+    .callbar .bars { display: inline-flex; align-items: center; gap: 2px; height: 16px; }
+    .callbar .bars b { width: 2px; border-radius: 1px; background: var(--accent-text); }
+    .field-x { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--separator); color: var(--text-tertiary); text-decoration: line-through; text-decoration-color: var(--text-tertiary); white-space: nowrap; }
 
-    .m-thread { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--canvas); }
-    .m-thread-head {
-      height: 68px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 16px;
-      background: var(--bg); border-bottom: 1px solid var(--separator);
-    }
-    .m-thread-head .av-dot { box-shadow: 0 0 0 2px var(--bg); }
-    .m-peer { flex: 1; min-width: 0; }
-    .m-peer strong { display: block; font-size: var(--fs-lg); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .m-peer span { display: block; font-size: var(--fs-xs); color: var(--online); }
-    .m-e2e {
-      display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: var(--r-full);
-      background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-2xs); font-weight: 600;
-    }
-    .m-e2e .ico { width: 12px; height: 12px; }
-    .m-head-btn { width: 36px; height: 36px; display: grid; place-items: center; color: var(--text-secondary); }
-    .m-msgs { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 12px 16px 14px; gap: 3px; }
-    .m-day { display: flex; justify-content: center; margin: 0 0 10px; }
-    .m-day span {
-      font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.03em; color: var(--text-secondary);
-      background: var(--surface-2); border: 1px solid var(--bubble-border); padding: 4px 11px; border-radius: var(--r-full);
-    }
-    .b {
-      max-width: min(560px, 74%); padding: 7px 13px; display: flex; align-items: flex-end; gap: 9px;
-      font-size: var(--fs-base); line-height: 1.4; border-radius: var(--r-lg);
-    }
-    .b p { margin: 0; min-width: 0; }
-    .b .meta { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-2xs); line-height: 1; opacity: 0.8; padding-bottom: 1px; font-variant-numeric: tabular-nums; }
-    .b .meta .ico { width: 13px; height: 13px; }
-    .b.in { align-self: flex-start; background: var(--bubble-in); border: 1px solid var(--bubble-border); border-bottom-left-radius: var(--r-xs); }
-    .b.in .meta { color: var(--text-secondary); }
-    .b.in + .b.in { border-top-left-radius: var(--r-xs); }
-    .b.out { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-bottom-right-radius: var(--r-xs); }
-    .b.out .meta { color: rgba(255, 255, 255, 0.82); }
-    .b.out + .b.out { border-top-right-radius: var(--r-xs); }
-    .b.first { margin-top: 10px; }
-    .m-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px 14px; background: var(--bg); border-top: 1px solid var(--separator); }
-    .m-compose-field {
-      flex: 1; min-width: 0; height: 40px; border-radius: var(--r-xl); background: var(--surface-2); border: 1px solid var(--separator);
-      display: flex; align-items: center; padding: 0 14px; color: var(--text-tertiary); font-size: var(--fs-base);
-    }
-    .m-compose-btn { width: 40px; height: 40px; display: grid; place-items: center; color: var(--text-secondary); }
+    /* One account on every device: the same thread on a phone and in this browser, drawn small. */
+    .devices { display: grid; grid-template-columns: 196px minmax(0, 1fr); gap: clamp(20px, 3vw, 36px); align-items: end; margin-bottom: clamp(40px, 6vh, 64px); font-size: 11px; line-height: 1.3; }
+    .phone { width: 196px; height: 380px; padding: 9px; border: 1px solid var(--separator); border-radius: 30px; background: var(--bg); box-shadow: var(--frame-shadow); }
+    .screen { height: 100%; border-radius: 22px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); }
+    .browser { height: 300px; display: flex; overflow: hidden; border: 1px solid var(--separator); border-radius: 12px; background: var(--bg); box-shadow: var(--frame-shadow); }
+    .b-rail { width: 44px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 14px; padding-top: 12px; border-right: 1px solid var(--separator); color: var(--text-tertiary); }
+    .b-rail svg:first-child { border-radius: 22.5%; }
+    .b-rail .on { color: var(--accent-text); }
+    .b-list { width: 164px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--separator); }
+    .b-title { padding: 12px 12px 8px; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+    .b-search { margin: 0 8px 6px; height: 24px; border-radius: 7px; background: var(--surface-2); display: flex; align-items: center; gap: 5px; padding: 0 8px; color: var(--text-tertiary); }
+    .b-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin: 0 4px; border-radius: 8px; }
+    .b-row.active { background: var(--accent-soft); }
+    .b-row .avatar { width: 26px; height: 26px; font-size: 9px; }
+    .b-row .avatar i { width: 7px; height: 7px; box-shadow: 0 0 0 1.5px var(--bg); }
+    .b-row > div:not(.avatar) { min-width: 0; flex: 1; }
+    .b-row .avatar { flex: none; }
+    .b-row b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .b-row span { display: block; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .b-row small { font-size: 9px; color: var(--text-tertiary); align-self: flex-start; }
+    .b-thread { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .m-head { flex: none; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px; border-bottom: 1px solid var(--separator); }
+    .m-head .avatar { width: 26px; height: 26px; font-size: 9px; }
+    .m-head .avatar i { width: 7px; height: 7px; box-shadow: 0 0 0 1.5px var(--bg); }
+    .m-head > div { min-width: 0; }
+    .m-head b { display: flex; align-items: center; gap: 4px; font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; }
+    .m-head b svg { color: var(--accent-text); }
+    .m-head span { display: block; color: var(--online); font-size: 10px; }
+    .m-head .back { color: var(--accent-text); margin-right: -2px; }
+    .m-msgs { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; padding: 10px; }
+    .m-bubble { max-width: 82%; padding: 5px 8px; border-radius: 11px; display: flex; align-items: flex-end; gap: 6px; }
+    .m-bubble .t { flex: none; font-size: 8px; opacity: 0.8; }
+    .m-bubble.in { align-self: flex-start; background: var(--bubble-in); border: 1px solid var(--bubble-border); border-bottom-left-radius: 5px; color: var(--text-primary); }
+    .m-bubble.in .t { color: var(--text-secondary); }
+    .m-bubble.out { align-self: flex-end; background: var(--bubble-out); border-bottom-right-radius: 5px; }
+    .m-bubble.out .t { color: var(--accent-text); }
+    .m-compose { flex: none; display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px; color: var(--text-tertiary); }
+    .m-compose .f { flex: 1; height: 28px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--bubble-border); display: flex; align-items: center; padding: 0 10px; }
+    .m-tabs { flex: none; display: flex; justify-content: space-around; padding: 8px 6px 12px; border-top: 1px solid var(--separator); color: var(--text-tertiary); font-size: 9px; }
+    .m-tabs span { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .m-tabs .on { color: var(--accent-text); }
 
-    /* --------------------------------------------------------------- facts -- */
-    .facts { border-top: 1px solid var(--separator); padding: clamp(48px, 8vh, 96px) 0; }
-    .facts .wrap { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(32px, 5vw, 72px); align-items: start; }
-    .facts h2 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.025em; line-height: 1.2; max-width: 18ch; text-wrap: balance; }
-    .facts .intro { margin: 14px 0 0; max-width: 38ch; color: var(--text-secondary); text-wrap: pretty; }
-    .ledger { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--separator); }
-    .ledger li {
-      display: grid; grid-template-columns: 24px minmax(0, 20ch) minmax(0, 1fr); gap: 20px; align-items: start;
-      padding: 20px 0; border-bottom: 1px solid var(--separator);
+    /* What the app does: each thing shown small, in the app's own clothes, then named. */
+    .does { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 36px clamp(24px, 4vw, 56px); }
+    .does li { max-width: 40ch; }
+    .does .spec { min-height: 60px; display: flex; align-items: center; margin-bottom: 14px; font-size: 13px; line-height: 1.3; }
+    .does p { font-size: 15px; color: var(--text-secondary); text-wrap: pretty; }
+    .does b { font-weight: 600; color: var(--text-primary); }
+    .mini .voice { display: flex; align-items: center; gap: 8px; }
+    .mini .voice .play { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; flex: none; }
+    .mini .voice .bars { display: inline-flex; align-items: center; gap: 2px; height: 18px; }
+    .mini .voice .bars b { width: 2px; border-radius: 1px; background: var(--accent-text); }
+    .mini .voice .len { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .mini.stack { flex-direction: column; align-items: flex-start; gap: 6px; white-space: normal; }
+    .mini .tr { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); max-width: 24ch; }
+    .mini .tr svg { color: var(--accent-text); flex: none; }
+    .shot { display: inline-flex; align-items: center; gap: 12px; }
+    .shot .pic { width: 76px; height: 56px; border-radius: 10px; background: linear-gradient(160deg, var(--accent-soft), var(--surface-3)); display: grid; place-items: center; color: var(--accent-text); border: 1px solid var(--bubble-border); }
+    .shot .env { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 6px 10px; white-space: normal; }
+    .shot .env s { text-decoration: line-through; }
+    .lp { display: inline-flex; align-items: center; gap: 10px; padding: 6px 10px 6px 6px; border-radius: 12px; background: var(--bubble-in); border: 1px solid var(--bubble-border); border-left: 3px solid var(--accent); }
+    .lp .thumb { width: 40px; height: 40px; border-radius: 7px; background: linear-gradient(160deg, var(--surface-3), var(--accent-soft)); flex: none; }
+    .lp b { display: block; font-weight: 600; }
+    .lp span { display: block; font-size: 11px; color: var(--text-tertiary); }
+    .sn { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 12px; font-size: 12px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; color: var(--text-secondary); }
+    .sn b { font-weight: 500; color: var(--text-primary); }
+    .toggles { display: grid; gap: 7px; }
+    .toggles span { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 190px; }
+    .toggles i { width: 30px; height: 18px; border-radius: 9px; background: var(--separator); position: relative; flex: none; }
+    .toggles i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+    .toggles i.on { background: var(--accent); }
+    .toggles i.on::after { left: 14px; }
+
+    /* The way in, started here: one statement, the username field itself, and whose server
+       this is. Logging in is a line, since it is also in the top bar. */
+    .start-grid { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); gap: clamp(28px, 5vw, 80px); align-items: center; }
+    .start-grid h2 { max-width: 18ch; font-size: clamp(28px, 3vw, 40px); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; text-wrap: balance; }
+    .start-grid .intro { margin-top: 16px; max-width: 38ch; font-size: 17px; }
+    .start { width: min(100%, 440px); margin-left: auto; }
+    .start label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+    .start-field {
+      display: flex; align-items: center; height: 52px; padding: 0 6px 0 16px;
+      border-radius: 14px; border: 1px solid var(--separator); background: var(--surface-2);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
-    .ledger li > .ico { color: var(--accent-text); margin-top: 3px; }
-    .ledger strong { font-size: var(--fs-base); font-weight: 600; line-height: 1.45; }
-    .ledger p { margin: 0; color: var(--text-secondary); line-height: 1.5; max-width: 42ch; text-wrap: pretty; }
+    .start-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .start-field .at { color: var(--text-tertiary); font-size: 17px; margin-right: 2px; }
+    .start-field input {
+      flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent;
+      color: var(--text-primary); font: 500 17px/1 var(--font); letter-spacing: 0.01em;
+    }
+    .start-field input::placeholder { color: var(--text-tertiary); font-weight: 400; }
+    .start-field .btn { height: 40px; padding: 0 16px; border-radius: 10px; }
+    .start-hint { margin-top: 10px; min-height: 1.5em; font-size: 13px; color: var(--text-tertiary); }
+    .start-hint.ok { color: var(--ok, var(--online)); }
+    .start-hint.bad { color: var(--text-secondary); }
+    .start-else { margin-top: 26px; font-size: 14px; color: var(--text-secondary); }
+    .host {
+      margin-top: clamp(40px, 7vh, 72px); padding-top: 28px; border-top: 1px solid var(--separator);
+      display: flex; align-items: center; gap: 14px 28px; flex-wrap: wrap;
+    }
+    .host-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .host-id svg { flex: none; border-radius: 22.5%; }
+    .host-id b { display: block; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .host-id span { display: block; font-size: 13px; color: var(--text-tertiary); }
+    .host p { flex: 1 1 36ch; max-width: 60ch; font-size: 14px; color: var(--text-secondary); text-wrap: pretty; }
 
-    /* --------------------------------------------------------------- start -- */
-    .start { border-top: 1px solid var(--separator); padding: clamp(48px, 8vh, 96px) 0; }
-    .start .wrap { display: grid; grid-template-columns: 1fr 1fr; }
-    .start section { padding-block: 4px; }
-    .start section + section { border-left: 1px solid var(--separator); padding-left: clamp(28px, 4vw, 64px); }
-    .start section:first-child { padding-right: clamp(28px, 4vw, 64px); }
-    .start .kicker { margin: 0; font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
-    .start h2 { margin: 10px 0 0; font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
-    .start p { margin: 10px 0 0; color: var(--text-secondary); max-width: 40ch; text-wrap: pretty; }
-    .start .act { margin-top: 22px; }
-
-    /* -------------------------------------------------------------- footer -- */
-    .foot { border-top: 1px solid var(--separator); padding: 24px 0 40px; }
-    .foot .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: var(--fs-sm); color: var(--text-tertiary); }
-    .foot .brand { font-size: var(--fs-md); color: var(--text-secondary); }
-    .foot .brand svg { width: 20px; height: 20px; }
+    .foot { border-top: 1px solid var(--separator); padding: 24px 0 44px; }
+    .foot .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-tertiary); }
+    .foot .brand b { font-size: 14px; color: var(--text-secondary); }
     .foot nav { display: flex; gap: 20px; }
-    .foot nav a { text-decoration: none; color: var(--text-tertiary); }
-    @media (hover: hover) { .foot nav a:hover { color: var(--text-primary); } }
 
-    /* ---------------------------------------------------------- responsive -- */
-    @media (max-width: 1100px) {
-      .frame { width: 940px; height: 600px; }
+    /* --------------------------------------------------------- responsive -- */
+    @media (max-width: 1040px) {
+      .hero .wrap { grid-template-columns: 1fr; gap: 40px; }
+      .hero h1 { max-width: 18ch; }
+      .section-grid, .section-grid.wide { grid-template-columns: 1fr; gap: 36px; }
+      .devices { grid-template-columns: 196px minmax(0, 1fr); }
     }
-    @media (max-width: 960px) {
-      .hero .wrap, .facts .wrap { grid-template-columns: 1fr; }
-      .hero .wrap { gap: 44px; }
-      .hero h1 { max-width: 16ch; }
-      .stage { height: auto; }
-      .frame { width: 100%; height: 520px; transform: none; }
-      .m-rail { display: none; }
-      .m-pane { width: 300px; }
-      .ledger li { grid-template-columns: 24px minmax(0, 1fr); gap: 4px 20px; }
-      .ledger p { grid-column: 2; }
-    }
-    @media (max-width: 720px) {
-      .frame { height: 480px; }
-      .m-pane { display: none; }
-      .m-e2e { padding: 6px; }
-      .m-e2e-text { display: none; }
-      .b { max-width: 84%; }
-      .start .wrap { grid-template-columns: 1fr; gap: 36px; }
-      .start section + section { border-left: 0; border-top: 1px solid var(--separator); padding-left: 0; padding-top: 36px; }
-      .start section:first-child { padding-right: 0; }
-      .foot .wrap { flex-direction: column; align-items: flex-start; }
-    }
-    @media (max-width: 440px) {
-      .top nav { gap: 18px; }
-      .hero .actions { gap: 18px; }
-      .hero .actions .btn { width: 100%; }
+    @media (max-width: 640px) {
+      .stage { height: 540px; }
+      .view { font-size: 14px; }
+      .bubble { max-width: 86%; }
+      .does { grid-template-columns: 1fr; gap: 30px; }
+      .devices { grid-template-columns: 1fr; justify-items: start; }
+      .browser { width: 100%; height: 260px; }
+      .b-list { width: 128px; }
+      .keeps li { grid-template-columns: 1fr; gap: 12px; }
+      .keeps .why { max-width: none; }
+      .start-grid { grid-template-columns: 1fr; gap: 28px; }
+      .start { margin-left: 0; }
+      .start-field .btn span { display: none; }
+      .brand span { display: none; }
+      .actions { gap: 18px; }
+      .actions .btn { width: 100%; }
     }
   </style>
 </head>
 <body>
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-    <defs>
-      <!-- The app icon as the client draws it (web/src/components/BrandMark.tsx). -->
-      <linearGradient id="bm-bg" x1="0.15" y1="0" x2="0.85" y2="1">
-        <stop offset="0" stop-color="#7D7BFA"/><stop offset="0.55" stop-color="#5E5CE6"/><stop offset="1" stop-color="#3432B8"/>
-      </linearGradient>
-      <radialGradient id="bm-glow" cx="0.5" cy="0.3" r="0.6">
-        <stop offset="0" stop-color="#fff" stop-opacity="0.18"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
-      </radialGradient>
-      <linearGradient id="bm-cloth" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E4E3FF"/>
-      </linearGradient>
-      <linearGradient id="bm-fold" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#4B49D8" stop-opacity="0"/><stop offset="1" stop-color="#4B49D8" stop-opacity="0.24"/>
-      </linearGradient>
-      <linearGradient id="bm-side" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0.7" stop-color="#4B49D8" stop-opacity="0"/><stop offset="1" stop-color="#4B49D8" stop-opacity="0.12"/>
-      </linearGradient>
-      <filter id="bm-shadow" x="-20%" y="-20%" width="140%" height="150%"><feGaussianBlur stdDeviation="22"/></filter>
-      <clipPath id="bm-tile"><rect width="1024" height="1024" rx="230"/></clipPath>
-      <clipPath id="bm-veil"><path d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z"/></clipPath>
-      <g id="bm">
-        <g clip-path="url(#bm-tile)">
-          <rect width="1024" height="1024" fill="url(#bm-bg)"/>
-          <rect width="1024" height="1024" fill="url(#bm-glow)"/>
-          <g transform="translate(512 518) scale(0.9) translate(-512 -528)">
-            <path d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="#0A0930" opacity="0.35" filter="url(#bm-shadow)" transform="translate(0 26)"/>
-            <path d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="url(#bm-cloth)"/>
-            <g clip-path="url(#bm-veil)">
-              <rect x="200" y="200" width="620" height="660" fill="url(#bm-side)"/>
-              <path d="M596 430C640 530 676 640 684 752C704 790 730 812 760 830C748 690 690 530 596 430Z" fill="url(#bm-fold)"/>
-              <path d="M424 440C468 540 490 650 494 758C512 790 540 816 572 836C562 690 510 540 424 440Z" fill="url(#bm-fold)"/>
-            </g>
-          </g>
+  <header class="wrap top">
+    <a class="brand" href="#" aria-label="Shroud">
+      <svg width="28" height="28" viewBox="0 0 1024 1024" aria-hidden="true">
+        <defs>
+          <linearGradient id="bg1" x1="0.15" y1="0" x2="0.85" y2="1"><stop offset="0" stop-color="#7D7BFA"/><stop offset="0.55" stop-color="#5E5CE6"/><stop offset="1" stop-color="#3432B8"/></linearGradient>
+          <clipPath id="tile1"><rect width="1024" height="1024" rx="230"/></clipPath>
+        </defs>
+        <g clip-path="url(#tile1)">
+          <rect width="1024" height="1024" fill="url(#bg1)"/>
+          <path transform="translate(512 518) scale(0.9) translate(-512 -528)" d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="#fff"/>
         </g>
-      </g>
-      <!-- Lucide icons the client uses, at the stroke the client uses. -->
-      <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
-      <symbol id="i-phone-device" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></symbol>
-      <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
-      <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
-      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
-      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
-      <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
-      <symbol id="i-call" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></symbol>
-      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
-      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
-      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
-      <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
-      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></symbol>
-      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
-      <symbol id="i-check2" viewBox="0 0 24 24"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></symbol>
-    </defs>
-  </svg>
-
-  <header class="top wrap">
-    <a class="brand" href="/">
-      <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#bm"/></svg>
-      Shroud
+      </svg>
+      <b>Shroud</b>
+      <span data-host>shroud.corespace.de</span>
     </a>
-    <nav aria-label="Account">
-      <a href="/login">Log in</a>
-    </nav>
+    <nav aria-label="Account"><a href="#">Log in</a></nav>
   </header>
 
   <main>
-    <section class="hero">
+    <section class="hero" aria-labelledby="hero-title">
       <div class="wrap">
         <div>
-          <h1>Private messaging, fully encrypted.</h1>
-          <p class="lede">No phone number. No email. Just your username and a 12‑word encryption phrase.</p>
+          <h1 id="hero-title">The server carries your messages. It cannot read them.</h1>
+          <p class="lede">Every message is sealed on your device. What reaches the server is an envelope: who it is for, when, and how big. No phone number, no email, and your whole account is twelve words.</p>
           <div class="actions">
-            <a class="btn" href="/signup">Create an account</a>
-            <a class="link" href="/login">Log in <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+            <a class="btn" href="#">Create an account</a>
+            <a class="quiet" href="#">Log in</a>
           </div>
-          <p class="note"><b>Already using Shroud on iPhone?</b> Log in with the same username and phrase and your chats come to this browser.</p>
+          <p class="fine">Drag the veil across the chat to see what the server sees.</p>
         </div>
 
-        <div class="stage">
-          <div class="frame" role="img" aria-label="The Shroud web client: a chat list beside an open end-to-end encrypted conversation.">
-            <div class="m-rail">
-              <div class="m-tabs">
-                <span class="m-rail-mark"><svg viewBox="0 0 1024 1024"><use href="#bm"/></svg></span>
-                <span class="m-tab active"><svg class="ico ico-lg"><use href="#i-chat"/></svg><span class="m-badge">3</span></span>
-                <span class="m-tab"><svg class="ico ico-lg"><use href="#i-users"/></svg></span>
-                <span class="m-tab"><svg class="ico ico-lg"><use href="#i-call"/></svg></span>
-                <span class="m-tab"><svg class="ico ico-lg"><use href="#i-settings"/></svg></span>
-              </div>
-              <span class="av av-sm a7">NV</span>
-            </div>
-
-            <div class="m-pane">
-              <div class="m-pane-head">
-                <div class="m-pane-title">
-                  <strong>Chats</strong>
-                  <div class="m-pane-actions">
-                    <span><svg class="ico ico-lg"><use href="#i-search"/></svg></span>
-                    <span><svg class="ico ico-lg"><use href="#i-plus"/></svg></span>
-                  </div>
+        <div class="veil" id="veil">
+          <div class="veil-labels" aria-hidden="true"><span>On your devices</span><span>On the server</span></div>
+          <div class="stage" id="stage">
+            <div class="view you" id="you">
+              <div class="frame-head">
+                <div class="avatar">ML<i></i></div>
+                <div class="peer">
+                  <strong><span>Mara Lindqvist</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+                  </strong>
+                  <span>online</span>
                 </div>
-                <div class="m-search"><svg class="ico"><use href="#i-search"/></svg>Search</div>
+                <div class="acts">
+                  <span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"/></svg></span>
+                  <span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></span>
+                </div>
               </div>
-              <div class="m-rows">
-                <div class="m-row active"><span class="av">ML</span><span class="m-copy"><strong>Mara Lindqvist</strong><span>I’ll be at the kiosk by the entrance</span></span><span class="m-time">17:52</span></div>
-                <div class="m-row unread"><span class="av a2">JR</span><span class="m-copy"><strong>Jonas Reinholt</strong><span>Photo</span></span><span class="m-time unread">16:05</span></div>
-                <div class="m-row unread"><span class="av a3">PN</span><span class="m-copy"><strong>Priya Natarajan</strong><span>Can you resend the PDF? The first one didn’t open</span></span><span class="m-time unread">14:38</span></div>
-                <div class="m-row"><span class="av a4">TW</span><span class="m-copy"><strong>Tomasz Wierzbicki</strong><span>Voice message · 0:42</span></span><span class="m-time">Yesterday</span></div>
-                <div class="m-row"><span class="av a5">ED</span><span class="m-copy"><strong>Elif Demir</strong><span>ok, see you there</span></span><span class="m-time">Yesterday</span></div>
-                <div class="m-row"><span class="av a6">SK</span><span class="m-copy"><strong>Søren Kjær</strong><span>Thanks again for yesterday</span></span><span class="m-time">Mon</span></div>
-                <div class="m-row"><span class="av a7">AB</span><span class="m-copy"><strong>Anneliese Bachmann-Hoffmeister</strong><span>You: Sent the invite to your new phone</span></span><span class="m-time">Sun</span></div>
+              <div class="msgs">
+                <span class="day">Today</span>
+                <div class="bubble in" data-size="0.3 KB">Did you get the tickets?<span class="meta">17:41</span></div>
+                <div class="bubble out" data-size="0.4 KB">Yes, both. Sent them to your phone too<span class="meta">17:44 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span></div>
+                <div class="bubble in" data-size="41 KB"><div class="voice"><span class="play"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg></span><span class="bars"><b style="height:6px"></b><b style="height:12px"></b><b style="height:18px"></b><b style="height:10px"></b><b style="height:16px"></b><b style="height:20px"></b><b style="height:8px"></b><b style="height:14px"></b><b style="height:18px"></b><b style="height:9px"></b><b style="height:15px"></b><b style="height:7px"></b><b style="height:12px"></b><b style="height:19px"></b><b style="height:11px"></b><b style="height:6px"></b><b style="height:14px"></b><b style="height:9px"></b><b style="height:17px"></b><b style="height:8px"></b><b style="height:13px"></b><b style="height:5px"></b></span><span class="len">0:42</span></div><span class="meta">17:52</span></div>
+                <div class="bubble in" data-size="0.3 KB">Perfect. Train’s at 18:40, platform 4<span class="meta">17:52</span></div>
+                <div class="bubble in" data-size="0.3 KB">I’ll be at the kiosk by the entrance<span class="meta">17:52</span></div>
+                <div class="bubble out" data-size="0.2 KB">On my way<span class="meta">17:53 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg></span></div>
+              </div>
+              <div class="compose">
+                <span class="ib"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>
+                <span class="field">Message</span>
+                <span class="ib"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></span>
               </div>
             </div>
-
-            <div class="m-thread">
-              <div class="m-thread-head">
-                <span class="av"><span>ML</span><span class="av-dot"></span></span>
-                <div class="m-peer"><strong>Mara Lindqvist</strong><span>online</span></div>
-                <span class="m-e2e"><svg class="ico"><use href="#i-lock"/></svg><span class="m-e2e-text">End-to-end encrypted</span></span>
-                <span class="m-head-btn"><svg class="ico ico-lg"><use href="#i-call"/></svg></span>
-              </div>
-              <div class="m-msgs">
-                <div class="m-day"><span>Today</span></div>
-                <div class="b in first"><p>Did you get the tickets?</p><span class="meta">17:41</span></div>
-                <div class="b out first"><p>Yes, both. Sent them to your phone too</p><span class="meta">17:44 <svg class="ico"><use href="#i-check2"/></svg></span></div>
-                <div class="b in first"><p>Perfect. Train’s at 18:40, platform 4</p><span class="meta">17:52</span></div>
-                <div class="b in"><p>I’ll be at the kiosk by the entrance</p><span class="meta">17:52</span></div>
-                <div class="b out first"><p>On my way</p><span class="meta">17:53 <svg class="ico"><use href="#i-check"/></svg></span></div>
-              </div>
-              <div class="m-compose">
-                <span class="m-compose-btn"><svg class="ico ico-lg"><use href="#i-clip"/></svg></span>
-                <div class="m-compose-field">Message</div>
-                <span class="m-compose-btn"><svg class="ico ico-lg"><use href="#i-mic"/></svg></span>
-              </div>
+            <!-- The server's copy of the same picture is built from the one above, so every envelope has its message's exact shape. -->
+            <div class="edge" aria-hidden="true">
+              <button class="grip" id="grip" type="button" role="slider" aria-label="How much of the chat the server sees" aria-valuemin="0" aria-valuemax="100" aria-valuenow="46" tabindex="0">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 7-5 5 5 5"/><path d="m15 7 5 5-5 5"/></svg>
+              </button>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="facts" aria-labelledby="facts-title">
-      <div class="wrap">
+    <section class="section" aria-labelledby="keeps-title">
+      <div class="wrap section-grid wide">
         <div>
-          <h2 id="facts-title">How Shroud keeps it private</h2>
-          <p class="intro">The browser is the same client as on your iPhone, with the same rules.</p>
+          <h2 id="keeps-title">What this server keeps</h2>
+          <p class="intro">Shroud is built so the server can pass messages along without reading them, or saying who you are.</p>
         </div>
-        <ul class="ledger">
+        <ul class="keeps">
           <li>
-            <svg class="ico" aria-hidden="true"><use href="#i-lock"/></svg>
-            <strong>End-to-end encrypted</strong>
-            <p>Messages decrypt only on your devices. Everything in between is ciphertext.</p>
+            <span class="what">Messages</span>
+            <div class="pair" aria-hidden="true">
+              <span class="mine"><span class="mini out">On my way <span class="t">17:53</span></span></span>
+              <span class="line"></span>
+              <span class="srv"><span class="env"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>0.2 KB <span>17:53</span></span></span>
+            </div>
+            <p class="why"><b>A sealed envelope</b>, delivered and then forgotten. It opens only on your devices.</p>
           </li>
           <li>
-            <svg class="ico" aria-hidden="true"><use href="#i-phone-device"/></svg>
-            <strong>A first-class device</strong>
-            <p>This browser is one of up to five linked devices, with the same chats as your iPhone.</p>
+            <span class="what">Username</span>
+            <div class="pair" aria-hidden="true">
+              <span class="mine"><span class="who"><span class="avatar">ML</span>mara</span></span>
+              <span class="line"></span>
+              <span class="srv"><span class="env">3f9a 1c0e b7d4 …</span></span>
+            </div>
+            <p class="why"><b>A slow, salted hash.</b> Nobody looks you up by name, the operator included.</p>
           </li>
           <li>
-            <svg class="ico" aria-hidden="true"><use href="#i-key"/></svg>
-            <strong>Safety numbers</strong>
-            <p>Compare keys in person before you trust a change. A new key is something you see, not something that just happens.</p>
+            <span class="what">Contacts</span>
+            <div class="pair" aria-hidden="true">
+              <span class="mine"><span class="who"><span class="avatar">ML</span>Mara Lindqvist</span></span>
+              <span class="line"></span>
+              <span class="srv"><span class="link"><i></i><b></b><i></i></span></span>
+            </div>
+            <p class="why"><b>Two accounts that may message each other.</b> The names you give people travel sealed.</p>
           </li>
           <li>
-            <svg class="ico" aria-hidden="true"><use href="#i-user"/></svg>
-            <strong>No phone number, no email</strong>
-            <p>A username and a 12‑word encryption phrase are the whole account. Write the phrase down; it is the only way back in.</p>
+            <span class="what">Devices</span>
+            <div class="pair" aria-hidden="true">
+              <span class="mine"><span class="devs"><span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>iPhone</span><span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Work laptop</span></span></span>
+              <span class="line"></span>
+              <span class="srv"><span class="slots"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span></span>
+            </div>
+            <p class="why"><b>Up to five slots</b>, so you can revoke one. Their names are sealed too.</p>
+          </li>
+          <li>
+            <span class="what">Calls</span>
+            <div class="pair" aria-hidden="true">
+              <span class="mine"><span class="callbar"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"/></svg>12:04<span class="bars"><b style="height:5px"></b><b style="height:11px"></b><b style="height:15px"></b><b style="height:8px"></b><b style="height:13px"></b><b style="height:6px"></b><b style="height:10px"></b><b style="height:14px"></b><b style="height:7px"></b></span></span></span>
+              <span class="line"></span>
+              <span class="srv"><span class="env"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>rang, answered</span></span>
+            </div>
+            <p class="why"><b>A ring and a handshake.</b> Audio and video go between your devices, or through a relay that cannot listen.</p>
+          </li>
+          <li>
+            <span class="what">Phone, email</span>
+            <div class="pair" aria-hidden="true">
+              <span class="mine"><span class="field-x">Phone number</span></span>
+              <span class="line"></span>
+              <span class="srv"><span class="env nothing">nothing</span></span>
+            </div>
+            <p class="why"><b>Never asked for.</b> There is nothing here to link to a person.</p>
           </li>
         </ul>
       </div>
     </section>
 
-    <section class="start" aria-label="Get started">
+    <section class="section" aria-labelledby="chat-title">
+      <div class="wrap section-grid wide">
+        <div>
+          <h2 id="chat-title">The same chats on your phone and in this browser</h2>
+          <p class="intro">An iPhone app, an Android app and the browser share one account. Open a chat on one, and it is there on the others.</p>
+        </div>
+        <div>
+          <div class="devices" aria-hidden="true">
+            <div class="phone">
+              <div class="screen">
+                <div class="m-head">
+                  <svg class="back" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                  <div class="avatar">ML<i></i></div>
+                  <div><b>Mara Lindqvist <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></b><span>online</span></div>
+                </div>
+                <div class="m-msgs">
+                  <div class="m-bubble in">Did you get the tickets?<span class="t">17:41</span></div>
+                  <div class="m-bubble out">Yes, both. Sent them to your phone too<span class="t">17:44</span></div>
+                  <div class="m-bubble in">Perfect. Train’s at 18:40, platform 4<span class="t">17:52</span></div>
+                  <div class="m-bubble in">I’ll be at the kiosk by the entrance<span class="t">17:52</span></div>
+                  <div class="m-bubble out">On my way<span class="t">17:53</span></div>
+                </div>
+                <div class="m-compose">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  <span class="f">Message</span>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="browser">
+              <div class="b-rail">
+                <svg width="22" height="22" viewBox="0 0 1024 1024"><g clip-path="url(#tile1)"><rect width="1024" height="1024" fill="url(#bg1)"/><path transform="translate(512 518) scale(0.9) translate(-512 -528)" d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="#fff"/></g></svg>
+                <svg class="on" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              </div>
+              <div class="b-list">
+                <div class="b-title">Chats</div>
+                <div class="b-search"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search</div>
+                <div class="b-row active"><div class="avatar">ML<i></i></div><div><b>Mara Lindqvist</b><span>You: On my way</span></div><small>17:53</small></div>
+                <div class="b-row"><div class="avatar" style="background:linear-gradient(180deg,#ff9f6e,#e8703f)">JR</div><div><b>Jonas Reinholt</b><span>Photo</span></div><small>16:05</small></div>
+                <div class="b-row"><div class="avatar" style="background:linear-gradient(180deg,#5fd0a6,#2fa97f)">PN</div><div><b>Priya Natarajan</b><span>Can you resend the PDF?</span></div><small>14:38</small></div>
+                <div class="b-row"><div class="avatar" style="background:linear-gradient(180deg,#f27bb0,#d94f8f)">ED</div><div><b>Elif Demir</b><span>ok, see you there</span></div><small>Yest.</small></div>
+              </div>
+              <div class="b-thread">
+                <div class="m-head">
+                  <div class="avatar">ML<i></i></div>
+                  <div><b>Mara Lindqvist <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></b><span>online</span></div>
+                </div>
+                <div class="m-msgs">
+                  <div class="m-bubble in">Did you get the tickets?<span class="t">17:41</span></div>
+                  <div class="m-bubble out">Yes, both. Sent them to your phone too<span class="t">17:44</span></div>
+                  <div class="m-bubble in">Perfect. Train’s at 18:40, platform 4<span class="t">17:52</span></div>
+                  <div class="m-bubble in">I’ll be at the kiosk by the entrance<span class="t">17:52</span></div>
+                  <div class="m-bubble out">On my way<span class="t">17:53</span></div>
+                </div>
+                <div class="m-compose">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  <span class="f">Message</span>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <ul class="does">
+            <li>
+              <div class="spec" aria-hidden="true"><span class="callbar"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>Sharing your screen <span style="color:var(--text-tertiary)">12:04</span><span class="bars"><b style="height:5px"></b><b style="height:11px"></b><b style="height:15px"></b><b style="height:8px"></b><b style="height:13px"></b><b style="height:6px"></b><b style="height:10px"></b></span></span></div>
+              <p><b>Voice and video calls</b>, with screen sharing from a computer.</p>
+            </li>
+            <li>
+              <div class="spec" aria-hidden="true"><span class="mini stack"><span class="voice"><span class="play"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg></span><span class="bars"><b style="height:5px"></b><b style="height:11px"></b><b style="height:15px"></b><b style="height:8px"></b><b style="height:13px"></b><b style="height:17px"></b><b style="height:6px"></b><b style="height:12px"></b><b style="height:15px"></b><b style="height:7px"></b><b style="height:13px"></b><b style="height:5px"></b><b style="height:10px"></b></span><span class="len">0:42</span></span><span class="tr"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>Perfect, platform four at twenty to seven</span></span></div>
+              <p><b>Voice notes with transcripts</b>, written by your own device rather than a server.</p>
+            </li>
+            <li>
+              <div class="spec" aria-hidden="true"><span class="shot"><span class="pic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span><span class="env"><s>Location 59.33, 18.07</s><s>iPhone 15 Pro, 24 mm</s><span>2.1 MB</span></span></span></div>
+              <p><b>Photos, videos and files</b>, with location and camera data stripped before they leave.</p>
+            </li>
+            <li>
+              <div class="spec" aria-hidden="true"><span class="lp"><span class="thumb"></span><span><b>Ridge Trail Loop</b><span>komoot.com, fetched through the relay</span></span></span></div>
+              <p><b>Link previews</b> fetched through the relay, so the site never sees you.</p>
+            </li>
+            <li>
+              <div class="spec" aria-hidden="true"><span class="sn"><b>48213</b><b>90714</b><b>22568</b><b>31907</b><span>64120</span><span>07355</span><span>88241</span><span>15096</span><span>73902</span><span>40617</span><span>58233</span><span>96170</span></span></div>
+              <p><b>Safety numbers</b> to compare in person. A changed key is something you see, never something that just happens.</p>
+            </li>
+            <li>
+              <div class="spec" aria-hidden="true"><span class="toggles"><span>Read receipts<i class="on"></i></span><span>Typing indicators<i></i></span><span>Online and last seen<i></i></span></span></div>
+              <p><b>Read receipts, typing and last seen</b> you can switch off, in both directions.</p>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="start-title">
       <div class="wrap">
-        <section>
-          <p class="kicker">New here</p>
-          <h2>Create an account in under a minute</h2>
-          <p>Pick a username, write down the 12 words you are given, and start chatting. There is nothing to verify and no inbox to check.</p>
-          <div class="act"><a class="btn" href="/signup">Create an account</a></div>
-        </section>
-        <section>
-          <p class="kicker">Already on iPhone</p>
-          <h2>Bring your chats to this browser</h2>
-          <p>Log in with the username and encryption phrase from your iPhone. This browser becomes one of your linked devices.</p>
-          <div class="act"><a class="link" href="/login">Log in <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
-        </section>
+        <div class="start-grid">
+          <div>
+            <h2 id="start-title">Pick a username. Everything else is twelve words.</h2>
+            <p class="intro">No phone number, no email, nothing to verify. Sign-up takes about a minute, and the words it gives you are the only way back in.</p>
+          </div>
+          <form class="start" action="#" autocomplete="off" novalidate>
+            <label for="start-name">Username</label>
+            <div class="start-field">
+              <span class="at" aria-hidden="true">@</span>
+              <input id="start-name" name="username" type="text" placeholder="yourname" maxlength="32" spellcheck="false" autocapitalize="none" />
+              <button class="btn" type="submit">Create<span>&nbsp;an account</span></button>
+            </div>
+            <p class="start-hint" id="start-hint" aria-live="polite">3 to 32 letters, numbers or underscores.</p>
+            <p class="start-else">Already on your phone? <a class="quiet" href="#">Log in</a> with the same username and your twelve words, and this browser joins your devices.</p>
+          </form>
+        </div>
+        <div class="host">
+          <div class="host-id">
+            <svg width="32" height="32" viewBox="0 0 1024 1024" aria-hidden="true"><g clip-path="url(#tile1)"><rect width="1024" height="1024" fill="url(#bg1)"/><path transform="translate(512 518) scale(0.9) translate(-512 -528)" d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="#fff"/></g></svg>
+            <div><b data-host>shroud.corespace.de</b><span>An independent Shroud server</span></div>
+          </div>
+          <p>Run by the people who invited you. Accounts live on this server only, and <a class="quiet" href="#">the code is public</a>, so anyone can check that it does what this page says.</p>
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="foot">
     <div class="wrap">
-      <a class="brand" href="/">
-        <svg viewBox="0 0 1024 1024" aria-hidden="true"><use href="#bm"/></svg>
-        Shroud
+      <a class="brand" href="#" aria-label="Shroud">
+        <svg width="20" height="20" viewBox="0 0 1024 1024" aria-hidden="true">
+          <g clip-path="url(#tile1)">
+            <rect width="1024" height="1024" fill="url(#bg1)"/>
+            <path transform="translate(512 518) scale(0.9) translate(-512 -528)" d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="#fff"/>
+          </g>
+        </svg>
+        <b>Shroud</b>
       </a>
-      <nav aria-label="Footer">
-        <a href="/signup">Create an account</a>
-        <a href="/login">Log in</a>
-      </nav>
+      <nav aria-label="Footer"><a href="#">Create an account</a><a href="#">Log in</a><a href="#">Source code</a></nav>
     </div>
   </footer>
+
   <script>
-    // Above the single-column breakpoint the product window is drawn at its real size
-    // (940px) and scaled to run from its column to just short of the viewport's edge.
-    (function () {
-      var stage = document.querySelector(".stage");
-      function fit() {
-        if (window.innerWidth <= 960) { stage.style.removeProperty("--s"); return; }
-        var room = window.innerWidth - stage.getBoundingClientRect().left - 24;
-        var s = Math.min(1, Math.max(0.62, room / 940));
-        stage.style.setProperty("--s", s.toFixed(4));
-      }
-      fit();
-      window.addEventListener("resize", fit);
-    })();
+    /* The page belongs to one server: name it. */
+    if (location.host) for (const el of document.querySelectorAll("[data-host]")) el.textContent = location.host;
+
+    /* The veil. The server's view is a copy of the visitor's: same header, same envelopes in the
+       same places, with only what the server holds inside them. */
+    const veil = document.getElementById("veil");
+    const stage = document.getElementById("stage");
+    const you = document.getElementById("you");
+    const grip = document.getElementById("grip");
+    const LOCK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+    let server = null;
+
+    function buildServerView() {
+      if (server) server.remove();
+      server = you.cloneNode(true);
+      server.id = "";
+      server.classList.replace("you", "server");
+      server.setAttribute("aria-hidden", "true");
+      const head = server.querySelector(".frame-head");
+      head.querySelector(".avatar").textContent = "";
+      head.querySelector(".peer strong").innerHTML = "<span>Account 7c2e91f4</span>";
+      head.querySelector(".peer span").textContent = "2 devices";
+      head.querySelector(".acts").remove();
+      const mine = you.querySelectorAll(".bubble");
+      server.querySelectorAll(".bubble").forEach((bubble, i) => {
+        const original = mine[i];
+        const time = original.querySelector(".meta").textContent.trim().slice(0, 5);
+        bubble.style.width = `${original.offsetWidth}px`;
+        bubble.style.height = `${original.offsetHeight}px`;
+        bubble.style.maxWidth = "none";
+        bubble.classList.add("sealed");
+        bubble.innerHTML = `<span class="what">${LOCK}${original.dataset.size}</span><span class="meta">${time}</span>`;
+      });
+      const compose = server.querySelector(".compose");
+      compose.outerHTML = '<div class="kept">Delivered, then forgotten.</div>';
+      stage.insertBefore(server, stage.querySelector(".edge"));
+    }
+
+    let cut = 100;
+    function setCut(value) {
+      cut = Math.min(100, Math.max(0, value));
+      veil.style.setProperty("--cut", `${cut}%`);
+      grip.setAttribute("aria-valuenow", String(Math.round(100 - cut)));
+    }
+    function cutFrom(clientX) {
+      const rect = stage.getBoundingClientRect();
+      return ((clientX - rect.left) / rect.width) * 100;
+    }
+    let dragging = false;
+    stage.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      veil.classList.remove("drop");
+      stage.setPointerCapture(event.pointerId);
+      setCut(cutFrom(event.clientX));
+    });
+    stage.addEventListener("pointermove", (event) => { if (dragging) setCut(cutFrom(event.clientX)); });
+    stage.addEventListener("pointerup", () => { dragging = false; });
+    stage.addEventListener("pointercancel", () => { dragging = false; });
+    grip.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 10 : 4;
+      if (event.key === "ArrowLeft") { setCut(cut - step); event.preventDefault(); }
+      if (event.key === "ArrowRight") { setCut(cut + step); event.preventDefault(); }
+      if (event.key === "Home") { setCut(0); event.preventDefault(); }
+      if (event.key === "End") { setCut(100); event.preventDefault(); }
+    });
+
+    buildServerView();
+    window.addEventListener("resize", buildServerView);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(buildServerView);
+
+    /* The username field: the rules while you type, the sign-up page when you submit. */
+    const nameField = document.getElementById("start-name");
+    const nameHint = document.getElementById("start-hint");
+    const RULES = "3 to 32 letters, numbers or underscores.";
+    nameField.addEventListener("input", () => {
+      const v = nameField.value.trim().toLowerCase();
+      nameHint.className = "start-hint";
+      if (!v) { nameHint.textContent = RULES; return; }
+      if (!/^[a-z0-9_]+$/.test(v)) { nameHint.textContent = "Only letters, numbers and underscores."; nameHint.classList.add("bad"); return; }
+      if (v.length < 3) { nameHint.textContent = "At least 3 characters."; nameHint.classList.add("bad"); return; }
+      nameHint.textContent = `@${v} is yours if nobody on this server has it yet.`;
+      nameHint.classList.add("ok");
+    });
+    nameField.form.addEventListener("submit", (event) => { event.preventDefault(); });
+
+    /* Draw the veil over the chat once the page is on screen; without motion it is simply there. */
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still || document.visibilityState !== "visible") {
+      setCut(54);
+    } else {
+      veil.classList.add("drop");
+      requestAnimationFrame(() => requestAnimationFrame(() => setCut(54)));
+      setTimeout(() => veil.classList.remove("drop"), 1800);
+    }
   </script>
 </body>
 </html>

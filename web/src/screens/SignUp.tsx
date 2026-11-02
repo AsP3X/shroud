@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { generateMnemonic, PhraseError, WORD_COUNT } from "../crypto/bip39";
@@ -28,10 +28,12 @@ function pickCheckIndices(): number[] {
 
 export function SignUp() {
   const navigate = useNavigate();
+  const location = useLocation();
   const words = useMemo(() => generateMnemonic(), []);
   const checkIndices = useMemo(pickCheckIndices, []);
   const [stepIndex, setStepIndex] = useState(0);
-  const [username, setUsername] = useState("");
+  /* The welcome page's username field hands its value over. */
+  const [username, setUsername] = useState((location.state as { username?: string } | null)?.username ?? "");
   const [password, setPassword] = useState("");
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
