@@ -415,6 +415,158 @@ a { color: var(--accent-text); text-decoration: none; }
 .auth-warn > svg { flex-shrink: 0; margin-top: 1px; }
 .auth-checks { display: grid; gap: 14px; }
 
+/* ------------------------------------------------------------- welcome -- */
+/* The page for a browser with no account (screens/Welcome.tsx): a left-aligned headline beside
+   the client itself, a ledger of what the client promises, and the two ways in. The product
+   picture (LandingPreview) reuses the rail, pane and thread classes so it keeps up with them. */
+.landing { min-height: 100%; }
+.landing-wrap { width: min(1280px, 100%); margin-inline: auto; padding-inline: clamp(20px, 4vw, 64px); }
+.landing a { color: inherit; }
+.landing svg { display: block; }
+
+.landing-top { height: 64px; display: flex; align-items: center; justify-content: space-between; }
+.landing-brand {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-weight: 600; font-size: var(--fs-lg); letter-spacing: -0.01em;
+}
+.landing-brand svg { border-radius: 22.5%; }
+.landing-top nav { display: flex; align-items: center; gap: 28px; font-size: var(--fs-md); font-weight: 600; }
+.landing-top nav a { color: var(--text-secondary); }
+.landing-top nav a:hover { color: var(--text-primary); }
+
+.landing-btn { display: inline-flex; width: auto; padding: 0 22px; }
+.landing-link { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--accent-text); }
+.landing-link svg { transition: transform 0.15s ease; }
+.landing-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.landing-link:hover svg { transform: translateX(2px); }
+
+.landing-hero { padding: clamp(40px, 7vh, 88px) 0 clamp(48px, 8vh, 96px); }
+.landing-hero .landing-wrap {
+  display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: clamp(32px, 5vw, 72px); align-items: center;
+}
+.landing-hero h1 {
+  margin: 0; max-width: 13ch;
+  font-size: clamp(38px, 3.6vw, 54px); font-weight: 700; line-height: 1.06; letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.landing-lede {
+  margin: 22px 0 0; max-width: 36ch;
+  font-size: var(--fs-lg); line-height: 1.5; color: var(--text-secondary);
+  text-wrap: pretty;
+}
+.landing-actions { margin-top: 36px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.landing-note { margin: 28px 0 0; max-width: 40ch; font-size: var(--fs-sm); line-height: 1.55; color: var(--text-tertiary); }
+.landing-note b { font-weight: 600; color: var(--text-secondary); }
+
+/* The client, laid out at desktop size (940 × 600) and scaled by LandingPreview to run from its
+   column to just short of the viewport's edge. The stage reserves the scaled height. */
+.landing-stage { position: relative; min-width: 0; height: calc(600px * var(--landing-scale, 1)); }
+.landing-frame {
+  width: 940px; height: 600px;
+  transform: scale(var(--landing-scale, 1)); transform-origin: top left;
+  overflow: hidden;
+  border: 1px solid var(--separator); border-radius: var(--r-md);
+  background: var(--bg); box-shadow: var(--landing-frame-shadow, none);
+  pointer-events: none; user-select: none;
+}
+:root[data-theme="light"] { --landing-frame-shadow: 0 14px 40px rgba(15, 15, 30, 0.12); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --landing-frame-shadow: 0 14px 40px rgba(15, 15, 30, 0.12); }
+}
+.landing-frame-inner { display: flex; width: 100%; height: 100%; }
+.landing-frame .rail-tabs { gap: 6px; }
+.landing-frame .rail-mark { margin-bottom: 12px; }
+.landing-frame .rail-btn { display: grid; }
+.landing-frame .row-time { font-variant-numeric: tabular-nums; }
+.landing-frame .search span { font-size: var(--fs-md); }
+.landing-messages {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: 12px 16px 14px; gap: 3px;
+}
+.landing-messages .day-sep { margin: 0 0 10px; }
+.landing-messages .bubble { animation: none; }
+/* Outranks the composer's grid and its mirrored ::after cell, which follow later in the file. */
+.landing-frame .landing-compose {
+  display: flex; align-items: center;
+  height: 38px; padding: 0 14px;
+  color: var(--text-tertiary); font-size: var(--fs-base);
+}
+.landing-frame .landing-compose::after { content: none; }
+.landing-send { background: var(--surface-3); color: var(--text-tertiary); }
+
+.landing-facts { border-top: 1px solid var(--separator); padding: clamp(48px, 8vh, 96px) 0; }
+.landing-facts .landing-wrap {
+  display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: clamp(32px, 5vw, 72px); align-items: start;
+}
+.landing-facts h2 {
+  margin: 0; max-width: 18ch;
+  font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.025em; line-height: 1.2;
+  text-wrap: balance;
+}
+.landing-intro { margin: 14px 0 0; max-width: 38ch; color: var(--text-secondary); text-wrap: pretty; }
+.landing-ledger { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--separator); }
+.landing-ledger li {
+  display: grid; grid-template-columns: 24px minmax(0, 20ch) minmax(0, 1fr); gap: 20px; align-items: start;
+  padding: 20px 0; border-bottom: 1px solid var(--separator);
+}
+.landing-ledger li > svg { color: var(--accent-text); margin-top: 3px; }
+.landing-ledger strong { font-size: var(--fs-base); font-weight: 600; line-height: 1.45; }
+.landing-ledger p { margin: 0; max-width: 42ch; color: var(--text-secondary); line-height: 1.5; text-wrap: pretty; }
+
+.landing-start { border-top: 1px solid var(--separator); padding: clamp(48px, 8vh, 96px) 0; }
+.landing-start .landing-wrap { display: grid; grid-template-columns: 1fr 1fr; }
+.landing-start section { padding-block: 4px; }
+.landing-start section:first-child { padding-right: clamp(28px, 4vw, 64px); }
+.landing-start section + section { border-left: 1px solid var(--separator); padding-left: clamp(28px, 4vw, 64px); }
+.landing-kicker {
+  margin: 0;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.landing-start h2 { margin: 10px 0 0; font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
+.landing-start p:not(.landing-kicker) { margin: 10px 0 0; max-width: 40ch; color: var(--text-secondary); line-height: 1.5; text-wrap: pretty; }
+.landing-act { margin-top: 22px; }
+
+.landing-foot { border-top: 1px solid var(--separator); padding: 24px 0 40px; }
+.landing-foot .landing-wrap {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  font-size: var(--fs-sm); color: var(--text-tertiary);
+}
+.landing-foot .landing-brand { font-size: var(--fs-md); color: var(--text-secondary); }
+.landing-foot nav { display: flex; gap: 20px; }
+.landing-foot nav a { color: var(--text-tertiary); }
+.landing-foot nav a:hover { color: var(--text-primary); }
+
+@media (max-width: 960px) {
+  .landing-hero .landing-wrap, .landing-facts .landing-wrap { grid-template-columns: 1fr; }
+  .landing-hero .landing-wrap { gap: 44px; }
+  .landing-hero h1 { max-width: 16ch; }
+  /* One column: the frame is drawn at the column's width, without the rail. */
+  .landing-stage { height: auto; }
+  .landing-frame { width: 100%; height: 520px; transform: none; }
+  .landing-frame .rail { display: none; }
+  .landing-frame .pane { width: 300px; }
+  .landing-ledger li { grid-template-columns: 24px minmax(0, 1fr); gap: 4px 20px; }
+  .landing-ledger p { grid-column: 2; }
+}
+@media (max-width: 720px) {
+  .landing-frame { height: 480px; }
+  .landing-frame .pane { display: none; }
+  .landing-frame .bubble { max-width: 84%; }
+  .landing-start .landing-wrap { grid-template-columns: 1fr; gap: 36px; }
+  .landing-start section:first-child { padding-right: 0; }
+  .landing-start section + section { border-left: 0; border-top: 1px solid var(--separator); padding-left: 0; padding-top: 36px; }
+  .landing-foot .landing-wrap { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 440px) {
+  .landing-top nav { gap: 18px; }
+  .landing-actions { gap: 18px; }
+  .landing-actions .landing-btn { width: 100%; }
+}
+
 /* ------------------------------------------------------------ auth fields -- */
 .afield { display: flex; flex-direction: column; gap: 6px; }
 .afield > label { font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
