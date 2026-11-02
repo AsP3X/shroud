@@ -54,15 +54,16 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
 
   return (
     <>
-      <header className="set-hero about-hero">
-        <BrandMark size={80} />
-        <h1>Shroud</h1>
-        <p>
-          Version {webVersion()} ({build ? `build ${build.slice(0, 12)}` : "development"})
-        </p>
-      </header>
-
       <SettingsGroup title="Updates">
+        <div className="set-row">
+          <span className="set-ico" aria-hidden="true">
+            <BrandMark size={20} />
+          </span>
+          <span className="set-row-copy">
+            <strong>Shroud {webVersion()}</strong>
+            <span>{build ? `Build ${build.slice(0, 12)}` : "Development build"}</span>
+          </span>
+        </div>
         <div className="set-row about-status">
           <span className={`set-ico ${shown.tile}`} aria-hidden="true">
             {shown.icon}

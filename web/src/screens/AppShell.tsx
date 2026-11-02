@@ -170,7 +170,7 @@ function preloadSettings(): () => void {
 /** Settings' chunk didn't download: the browser keeps that failure until the page reloads. */
 function SettingsUnavailable() {
   return (
-    <main className="settings" aria-label="Settings">
+    <section className="pane" aria-label="Settings">
       <div className="pane-failed" role="alert">
         <strong>Settings couldn’t load</strong>
         <p>Check your connection, then reload the page.</p>
@@ -178,7 +178,7 @@ function SettingsUnavailable() {
           Reload
         </button>
       </div>
-    </main>
+    </section>
   );
 }
 
@@ -2609,7 +2609,7 @@ export function AppShell({ session }: { session: Session }) {
         {tab === "settings" ? (
           <ChunkBoundary fallback={<SettingsUnavailable />}>
             {/* The empty pane holds the layout for the moment the chunk may still be loading. */}
-            <Suspense fallback={<main className="settings" aria-label="Settings" />}>
+            <Suspense fallback={<section className="pane" aria-label="Settings" />}>
               <SettingsPane
                 session={profile}
                 identity={identity}

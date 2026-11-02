@@ -1,18 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, ApiError, sessionEndOf, type Session } from "../api/client";
 import type { WipeReason } from "./DeviceWipeDialog";
 import type { IdentityMaterial } from "../crypto/identity";
+import { displayName } from "../format";
+import { useNotificationPrefs } from "../notifications/prefs";
+import { useThemePref } from "../theme";
+import { Avatar } from "./Avatar";
 import { LogoutDialog } from "./LogoutDialog";
 import { AboutView, LicensesView } from "./settings/AboutView";
+import { AccountView } from "./settings/AccountView";
 import { DeleteAccountView } from "./settings/DeleteAccountView";
-import { DevicesView } from "./settings/DevicesView";
-import { NotificationsView, type MutedChat } from "./settings/NotificationsView";
-import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
+import { notificationsSummary, NotificationsView, type MutedChat } from "./settings/NotificationsView";
+import { AppearanceView, DataStorageView, ServerView, themeLabel } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
-import { SettingsHome } from "./settings/SettingsHome";
-import { SETTINGS_INTROS, SETTINGS_PARENTS, SETTINGS_TITLES, type SettingsRoute } from "./settings/routes";
+import {
+  SETTINGS_INTROS,
+  SETTINGS_PARENTS,
+  SETTINGS_SECTIONS,
+  SETTINGS_TITLES,
+  sectionOf,
+  type SettingsRoute,
+  type SettingsSection,
+} from "./settings/routes";
 
+const PHONE = "(max-width: 900px)";
+
+/**
+ * Settings as a list and a page, like the chats: the sections down the pane, the open one on
+ * the right. On a phone the list comes first and a section opens over it with Back.
+ */
 export function SettingsPane({
   session,
   identity,
@@ -30,7 +47,7 @@ export function SettingsPane({
   session: Session;
   identity: IdentityMaterial | null;
   shareLink: string;
-  /** Confirmed "Log Out": the shell clears this browser. */
+  /** Confirmed "Log out": the shell clears this browser. */
   onLogout: () => void;
   /** The server no longer accepts the session: the same clearing, without asking. */
   onSessionEnded: (reason?: WipeReason) => void;
@@ -39,19 +56,24 @@ export function SettingsPane({
   onCacheCleared: () => void;
   /** Settings → Privacy made a new share code: the QR code and invite link change with it. */
   onShareCodeChanged: (shareCode: string) => void;
-  /** For Notifications and Sounds: the chats muted now, and a way to unmute one. */
+  /** For Notifications and sounds: the chats muted now, and a way to unmute one. */
   mutedChats: MutedChat[];
   onUnmute: (peerId: string) => Promise<void>;
-  /** Delete Account is running: the shell must not switch away from settings. */
+  /** Delete account is running: the shell must not switch away from settings. */
   onDismissLocked: (locked: boolean) => void;
 }) {
-  const [route, setRoute] = useState<SettingsRoute | null>(null);
+  const [route, setRoute] = useState<SettingsRoute>("account");
+  /* A phone shows the list until a section is picked, and again after Back. */
+  const [listShown, setListShown] = useState(() => window.matchMedia(PHONE).matches);
   const [deviceCount, setDeviceCount] = useState<number | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
-  /** Delete Account's request is in flight: Back and Escape must not leave the screen.
+  /** Delete account's request is in flight: Back and Escape must not leave the screen.
    * The ref updates in the same turn as the request, before React disables the button. */
   const [dismissLocked, setDismissLocked] = useState(false);
   const dismissLockedRef = useRef(false);
+  const pref = useThemePref();
+  // Re-renders the Notifications row's line when it changes.
+  useNotificationPrefs();
 
   const forceLogout = useCallback(
     (err?: unknown) => onSessionEnded(err instanceof ApiError ? sessionEndOf(err) : "ended"),
@@ -60,8 +82,9 @@ export function SettingsPane({
   const forceLogoutRef = useRef(forceLogout);
   forceLogoutRef.current = forceLogout;
 
+  /* The device count for the Account row's line, while the Account page is not open to count them. */
   useEffect(() => {
-    if (route !== null) return;
+    if (route === "account") return;
     let cancelled = false;
     api
       .devices(session.token)
@@ -77,11 +100,17 @@ export function SettingsPane({
     };
   }, [session.token, route]);
 
+  const open = useCallback((section: SettingsSection) => {
+    setRoute(section);
+    setListShown(false);
+  }, []);
+  const parent = SETTINGS_PARENTS[route];
+  /* Back: up to the section a page sits under, else (on a phone) to the list. */
   const back = useCallback(() => {
     if (dismissLockedRef.current) return;
-    setRoute((current) => (current && SETTINGS_PARENTS[current]) ?? null);
-  }, []);
-  const parent = route ? SETTINGS_PARENTS[route] : undefined;
+    if (parent) setRoute(parent);
+    else setListShown(true);
+  }, [parent]);
 
   const lockDismiss = useCallback(
     (locked: boolean) => {
@@ -103,91 +132,140 @@ export function SettingsPane({
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       // The logout dialog handles its own Escape; never leave the page behind it.
-      // Delete Account swallows Escape while its request runs.
+      // Delete account swallows Escape while its request runs.
       if (confirmLogout || dismissLockedRef.current) return;
-      if (route) back();
+      if (parent || window.matchMedia(PHONE).matches) back();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [route, back, confirmLogout]);
+  }, [parent, back, confirmLogout]);
+
+  const lines: Record<SettingsSection, string> = {
+    account: deviceCount === null ? "Username, devices, log out" : `@${session.user.username}, ${deviceCount} of 5 devices`,
+    notifications: notificationsSummary(),
+    appearance: `${themeLabel(pref)} theme`,
+    privacy: "Keys, safety numbers, who sees you",
+    data: "What this browser keeps",
+    server: window.location.host,
+  };
+  const active = sectionOf(route);
+  const intro = SETTINGS_INTROS[route];
 
   return (
-    <main className="settings" aria-label="Settings">
-      {route ? (
-        <>
-          <header className="set-nav">
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={back}
-              disabled={dismissLocked}
-              aria-label={parent ? `Back to ${SETTINGS_TITLES[parent]}` : "Back to settings"}
-            >
-              <ChevronLeft size={20} />
-            </button>
+    <>
+      <section className={`pane${listShown ? "" : " hidden-mobile"}`} aria-label="Settings">
+        <header className="pane-head">
+          <div className="pane-title-row">
             <h1>Settings</h1>
-          </header>
-          {/* Keyed: a page opened from another one starts at its top. */}
-          <div className="set-body" key={route}>
-            {SETTINGS_INTROS[route] ? (
-              <div className="set-head">
-                <h2>{SETTINGS_TITLES[route]}</h2>
-                <p>{SETTINGS_INTROS[route]}</p>
-              </div>
-            ) : null}
-            {route === "notifications" ? (
-              <NotificationsView
-                session={session}
-                mutedChats={mutedChats}
-                onUnmute={onUnmute}
-                onUnauthorized={forceLogout}
-              />
-            ) : null}
-            {route === "devices" ? (
-              <DevicesView
-                session={session}
-                onUnauthorized={forceLogout}
-                onCount={setDeviceCount}
-              />
-            ) : null}
-            {route === "privacy" ? (
-              <PrivacyView
-                session={session}
-                onLockNow={onLockNow}
-                onShareCodeChanged={onShareCodeChanged}
-                onUnauthorized={forceLogout}
-                onDeleteAccount={() => setRoute("delete-account")}
-              />
-            ) : null}
-            {route === "delete-account" ? (
-              <DeleteAccountView
-                session={session}
-                onCancel={back}
-                onAccountDeleted={() => onSessionEnded("accountDeleted")}
-                onUnauthorized={forceLogout}
-                onBusyChange={lockDismiss}
-              />
-            ) : null}
-            {route === "data" ? <DataStorageView onCleared={onCacheCleared} /> : null}
-            {route === "appearance" ? <AppearanceView /> : null}
-            {route === "server" ? <ServerView /> : null}
-            {route === "about" ? <AboutView onNavigate={setRoute} /> : null}
-            {route === "licenses" ? <LicensesView /> : null}
           </div>
-        </>
-      ) : (
-        <div className="set-body">
-          <SettingsHome
-            session={session}
-            identity={identity}
-            shareLink={shareLink}
-            deviceCount={deviceCount}
-            onNavigate={setRoute}
-            onLogout={() => setConfirmLogout(true)}
-            onShowQr={onShowQr}
-          />
+        </header>
+        <div className="rows" role="list">
+          <div className="row set-list-me" role="listitem">
+            <Avatar name={displayName(session.user.username)} seed={session.user.id} size="md" />
+            <span className="row-copy">
+              <strong>
+                <span>{displayName(session.user.username)}</span>
+              </strong>
+              <span>@{session.user.username}</span>
+            </span>
+          </div>
+          {SETTINGS_SECTIONS.map(({ id, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="listitem"
+              className={`row row-button${active === id && !listShown ? " active" : ""}`}
+              aria-current={active === id ? "page" : undefined}
+              onClick={() => open(id)}
+            >
+              <span className="set-list-ico" aria-hidden="true">
+                <Icon size={18} />
+              </span>
+              <span className="row-copy">
+                <strong>
+                  <span>{SETTINGS_TITLES[id]}</span>
+                </strong>
+                <span>{lines[id]}</span>
+              </span>
+              <ChevronRight size={16} className="set-chevron" aria-hidden="true" />
+            </button>
+          ))}
         </div>
-      )}
+      </section>
+
+      <main className={`set-view${listShown ? " hidden-mobile" : ""}`} aria-label={SETTINGS_TITLES[route]}>
+        <header className="thread-head">
+          <button
+            type="button"
+            className={parent ? "icon-btn" : "icon-btn back-mobile"}
+            onClick={back}
+            disabled={dismissLocked}
+            aria-label={parent ? `Back to ${SETTINGS_TITLES[parent]}` : "Back to settings"}
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <div className="thread-peer">
+            <strong>
+              <span>Settings</span>
+            </strong>
+          </div>
+        </header>
+        {/* Keyed: a page opened from another one starts at its top. */}
+        <div className="set-body" key={route}>
+          {intro ? (
+            <div className="set-head">
+              <h2>{SETTINGS_TITLES[route]}</h2>
+              <p>{intro}</p>
+            </div>
+          ) : null}
+          {route === "account" ? (
+            <AccountView
+              session={session}
+              identity={identity}
+              shareLink={shareLink}
+              onShowQr={onShowQr}
+              onLogout={() => setConfirmLogout(true)}
+              onUnauthorized={forceLogout}
+              onDeviceCount={setDeviceCount}
+            />
+          ) : null}
+          {route === "notifications" ? (
+            <NotificationsView
+              session={session}
+              mutedChats={mutedChats}
+              onUnmute={onUnmute}
+              onUnauthorized={forceLogout}
+            />
+          ) : null}
+          {route === "appearance" ? <AppearanceView /> : null}
+          {route === "privacy" ? (
+            <PrivacyView
+              session={session}
+              onLockNow={onLockNow}
+              onShareCodeChanged={onShareCodeChanged}
+              onUnauthorized={forceLogout}
+              onDeleteAccount={() => setRoute("delete-account")}
+            />
+          ) : null}
+          {route === "delete-account" ? (
+            <DeleteAccountView
+              session={session}
+              onCancel={back}
+              onAccountDeleted={() => onSessionEnded("accountDeleted")}
+              onUnauthorized={forceLogout}
+              onBusyChange={lockDismiss}
+            />
+          ) : null}
+          {route === "data" ? <DataStorageView onCleared={onCacheCleared} /> : null}
+          {route === "server" ? (
+            <>
+              <ServerView />
+              <AboutView onNavigate={setRoute} />
+            </>
+          ) : null}
+          {route === "licenses" ? <LicensesView /> : null}
+        </div>
+      </main>
 
       {confirmLogout ? (
         <LogoutDialog
@@ -198,6 +276,6 @@ export function SettingsPane({
           }}
         />
       ) : null}
-    </main>
+    </>
   );
 }
