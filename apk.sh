@@ -334,20 +334,48 @@ load_config() {
   LAST_APK="${LAST_APK:-}"
 }
 
+java_major() {
+  local home="$1" line
+  [[ -x "$home/bin/java" ]] || return 1
+  line=$("$home/bin/java" -version 2>&1 || true)
+  line=${line%%$'\n'*}
+  printf '%s\n' "$line" | sed -n 's/.* version "\([0-9][0-9]*\).*/\1/p'
+}
+
 detect_java() {
-  local candidate="/Users/nvorberg/Library/Java/JavaVirtualMachines/ms-21.0.11/Contents/Home"
-  if [[ -x "$candidate/bin/java" ]]; then
+  local candidate home major base dir
+  candidate="/Users/nvorberg/Library/Java/JavaVirtualMachines/ms-21.0.11/Contents/Home"
+  major=$(java_major "$candidate" || true)
+  if [[ "$major" == "21" ]]; then
     printf '%s' "$candidate"
     return
   fi
-  if [[ -n "${JAVA_HOME:-}" && -x "${JAVA_HOME}/bin/java" ]]; then
+  major=$(java_major "${JAVA_HOME:-}" || true)
+  if [[ "$major" == "21" ]]; then
     printf '%s' "$JAVA_HOME"
     return
   fi
-  if /usr/libexec/java_home -v 21 >/dev/null 2>&1; then
-    /usr/libexec/java_home -v 21
-    return
+  # -v is a minimum, and without --failfast macOS prints the default JVM when
+  # nothing matches. Only a JDK whose version is 21 is accepted.
+  if home=$(/usr/libexec/java_home -v 21 --failfast 2>/dev/null); then
+    major=$(java_major "$home" || true)
+    if [[ "$major" == "21" ]]; then
+      printf '%s' "$home"
+      return
+    fi
   fi
+  for base in "$HOME/Library/Java/JavaVirtualMachines" /Library/Java/JavaVirtualMachines; do
+    [[ -d "$base" ]] || continue
+    for dir in "$base"/*.jdk; do
+      [[ -d "$dir" ]] || continue
+      home="$dir/Contents/Home"
+      major=$(java_major "$home" || true)
+      if [[ "$major" == "21" ]]; then
+        printf '%s' "$home"
+        return
+      fi
+    done
+  done
   printf ''
 }
 
@@ -533,7 +561,7 @@ run_wizard() {
     die "the setup questions need an interactive terminal.
   Run ./apk.sh --init from a terminal, or write android/.apk.env and re-run."
   fi
-  if [[ -z "${JAVA_HOME:-}" || ! -x "${JAVA_HOME}/bin/java" ]]; then
+  if [[ "$(java_major "${JAVA_HOME:-}" || true)" != "21" ]]; then
     JAVA_HOME=$(detect_java)
   fi
   [[ -n "$JAVA_HOME" ]] || die "JDK 21 was not found. Install it, then run ./apk.sh --edit."
