@@ -13,7 +13,8 @@ import { saveDeviceName } from "../../deviceNaming";
 import { fullTimestamp, listTimestamp } from "../../format";
 import { DEVICE_LIMIT } from "../../deviceLimit";
 import { CopyButton } from "../CopyButton";
-import { DeviceTile, deviceKind } from "../DeviceTile";
+import { deviceKind } from "../DeviceTile";
+import { Modal } from "../Modal";
 import { PasswordField } from "../auth/Fields";
 import { DELETE_ACCOUNT_COPY } from "./deleteAccount";
 import { mapRemoveDeviceAnswer, REMOVE_DEVICE_PROMPT } from "./removeDevice";
@@ -316,46 +317,41 @@ export function DevicesView({
   const full = count >= DEVICE_LIMIT;
   const left = DEVICE_LIMIT - count;
 
+  /* Every row opens the device; removing is in there. */
   function deviceRow(device: Device) {
     const mine = isCurrent(device);
     const busy = revoking.has(device.id) || revokingAll;
+    const { Icon } = deviceKind(labelOf(device));
     return (
-      <div key={device.id} className="set-row dev-row">
-        <button
-          type="button"
-          className="dev-row-main"
-          onClick={() => setDetail(device)}
-          aria-label={`${nameOf(device)}, ${mine ? "this browser, active now" : lastActiveLabel(device)}. Show details`}
-        >
-          <DeviceTile label={labelOf(device)} />
-          <span className="set-row-copy">
-            <strong>{nameOf(device)}</strong>
-            {mine ? (
-              <span className="dev-active">
-                <i className="dev-dot" aria-hidden="true" />
-                Active now · This browser
-              </span>
-            ) : (
-              <span>{lastActiveLabel(device)}</span>
-            )}
-          </span>
-          {mine ? <ChevronRight size={16} className="set-chevron" aria-hidden="true" /> : null}
-        </button>
-        {!mine ? (
-          busy ? (
-            <span className="dev-spinner dev-busy" role="status" aria-label="Removing" />
+      <button
+        key={device.id}
+        type="button"
+        className="set-row set-row-button"
+        onClick={() => setDetail(device)}
+        disabled={busy}
+        aria-label={`${nameOf(device)}, ${mine ? "this browser, active now" : lastActiveLabel(device)}. Show details`}
+      >
+        <span className="set-ico" aria-hidden="true">
+          <Icon size={20} />
+        </span>
+        <span className="set-row-copy">
+          <strong>{nameOf(device)}</strong>
+          {mine ? (
+            <span className="dev-active">
+              <i className="dev-dot" aria-hidden="true" />
+              Active now
+            </span>
           ) : (
-            <button
-              type="button"
-              className="dev-link danger"
-              onClick={() => setConfirming(device)}
-              aria-label={`Remove ${nameOf(device)}`}
-            >
-              Remove
-            </button>
-          )
-        ) : null}
-      </div>
+            <span>{lastActiveLabel(device)}</span>
+          )}
+        </span>
+        {mine ? <span className="set-aside">This browser</span> : null}
+        {busy ? (
+          <span className="dev-spinner" role="status" aria-label="Removing" />
+        ) : (
+          <ChevronRight size={16} className="set-chevron" aria-hidden="true" />
+        )}
+      </button>
     );
   }
 
@@ -379,8 +375,8 @@ export function DevicesView({
               onClick={() => setConfirmingAll(true)}
               disabled={revokingAll || revoking.size > 0}
             >
-              <span className="set-tile" style={{ background: "var(--danger-bg)" }} aria-hidden="true">
-                <Hand size={15} />
+              <span className="set-ico danger" aria-hidden="true">
+                <Hand size={20} />
               </span>
               <span className="set-row-copy">
                 <strong className="danger">
@@ -638,114 +634,105 @@ function DeviceDetail({
     else setDraft(null);
   }
 
+  const { Icon } = kind;
+  const status = isCurrent ? "This browser, active now" : lastActiveLabel(device);
+  function stopRenaming() {
+    setDraft(null);
+    setRenameError(null);
+  }
   return (
-    <div className="modal-scrim" onMouseDown={onClose}>
-      <div
-        className="modal dev-detail"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="dev-detail-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="info-sheet">
-          <DeviceTile label={label} size={64} />
-          <strong id="dev-detail-title">{deviceDisplayName(label)}</strong>
-          <span className={isCurrent ? "dev-active" : undefined}>
-            {isCurrent ? "This browser · Active now" : lastActiveLabel(device)}
-          </span>
-        </div>
-
-        <div className="set-card">
-          <div className="set-row dev-info">
-            <span>Type</span>
-            <span>{kind.label}</span>
-          </div>
-          <div className="set-row dev-info">
-            <span>Linked</span>
-            <span>{fullTimestamp(device.created_at)}</span>
-          </div>
-          <div className="set-row dev-info">
-            <span>Last active</span>
-            <span>
-              {isCurrent
-                ? "Now"
-                : device.last_seen_at
-                  ? fullTimestamp(device.last_seen_at)
-                  : "Never"}
-            </span>
-          </div>
-          <div className="set-row dev-info">
-            <span>Device ID</span>
-            <code>{deviceId}</code>
-            <CopyButton value={deviceId} label="device ID" />
-          </div>
-        </div>
-
-        {draft !== null ? (
-          <form className="dev-rename" onSubmit={submitRename}>
-            <label htmlFor="dev-rename-input">Device name</label>
-            <input
-              id="dev-rename-input"
-              className="afield-input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              maxLength={DEVICE_NAME_MAX_BYTES}
-              autoComplete="off"
-              spellCheck={false}
-              autoFocus
-            />
-            {renameError ? <p className="dev-rename-error" role="alert">{renameError}</p> : null}
-            <p>Encrypted — only your devices can read it.</p>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setDraft(null);
-                  setRenameError(null);
-                }}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="btn btn-primary" disabled={!cleaned || saving}>
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </form>
-        ) : null}
-
-        {isCurrent ? (
-          <p>
-            To remove this browser from your account, use Log Out in Settings. It also erases
-            everything Shroud keeps here.
-          </p>
-        ) : null}
-
-        <div className="modal-actions" hidden={draft !== null}>
-          <button type="button" className="btn btn-secondary" onClick={onClose} autoFocus>
-            Done
-          </button>
-          {renamable ? (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setDraft(label?.name ?? "")}
-            >
-              Rename
-            </button>
-          ) : null}
-          {!isCurrent ? (
-            <button
-              type="button"
-              className="btn btn-destructive"
-              onClick={onRevoke}
-              disabled={isRevoking}
-            >
-              {isRevoking ? "Removing…" : "Remove Device"}
-            </button>
-          ) : null}
-        </div>
+    <Modal title={deviceDisplayName(label)} onClose={onClose} className="dev-detail">
+      <div className="dev-head">
+        <span className="dev-tile-line" aria-hidden="true">
+          <Icon size={26} />
+        </span>
+        <span className="dev-head-text">
+          <strong>{deviceDisplayName(label)}</strong>
+          <span className={isCurrent ? "dev-active" : undefined}>{status}</span>
+        </span>
       </div>
-    </div>
+      <dl className="qr-facts dev-facts">
+        <div>
+          <dt>Type</dt>
+          <dd>{kind.label}</dd>
+        </div>
+        <div>
+          <dt>Linked</dt>
+          <dd>{fullTimestamp(device.created_at)}</dd>
+        </div>
+        <div>
+          <dt>Last active</dt>
+          <dd>{isCurrent ? "Now" : device.last_seen_at ? fullTimestamp(device.last_seen_at) : "Never"}</dd>
+        </div>
+        <div>
+          <dt>Device ID</dt>
+          <dd className="mono">{deviceId}</dd>
+          <CopyButton value={deviceId} label="device ID" />
+        </div>
+      </dl>
+
+      {draft !== null ? (
+        <form className="dev-rename" id="dev-rename-form" onSubmit={submitRename}>
+          <label htmlFor="dev-rename-input">Device name</label>
+          <input
+            id="dev-rename-input"
+            className="afield-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            maxLength={DEVICE_NAME_MAX_BYTES}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+          />
+          {renameError ? (
+            <p className="dev-rename-error" role="alert">
+              {renameError}
+            </p>
+          ) : null}
+          <p>Encrypted: only your devices can read it.</p>
+        </form>
+      ) : isCurrent ? (
+        <p className="dev-note">
+          To remove this browser from your account, use Log out in Settings. It also erases everything Shroud keeps
+          here.
+        </p>
+      ) : null}
+
+      <div className="dialog-foot">
+        {draft !== null ? (
+          <>
+            <button type="button" className="btn-text" onClick={stopRenaming}>
+              Cancel
+            </button>
+            <span className="dialog-foot-gap" />
+            <button
+              type="submit"
+              form="dev-rename-form"
+              className="btn btn-primary dialog-primary"
+              disabled={!cleaned || saving}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </>
+        ) : (
+          <>
+            {!isCurrent ? (
+              <button type="button" className="btn-text danger" onClick={onRevoke} disabled={isRevoking}>
+                {isRevoking ? "Removing…" : "Remove device"}
+              </button>
+            ) : null}
+            {renamable ? (
+              <button type="button" className="btn-text" onClick={() => setDraft(label?.name ?? "")}>
+                Rename
+              </button>
+            ) : null}
+            <span className="dialog-foot-gap" />
+            <button type="button" className="btn btn-secondary dialog-primary" onClick={onClose} autoFocus>
+              Done
+            </button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }

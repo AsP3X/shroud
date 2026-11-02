@@ -119,7 +119,6 @@ export function DataStorageView({ onCleared }: { onCleared?: () => void }) {
           title={cleared ? "Local cache cleared" : "Clear local cache"}
           subtitle="Removes saved messages and previews from this browser. Messages stay on the server."
           Icon={Trash2}
-          tint="var(--danger-bg)"
           onClick={stats.messages + stats.previews > 0 ? clear : undefined}
         />
       </SettingsCard>

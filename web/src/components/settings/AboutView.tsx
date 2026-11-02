@@ -40,11 +40,11 @@ export function useUpdateSnapshot() {
 }
 
 const STATUS: Record<UpdateStatus, { text: string; tile: string; icon: ReactNode }> = {
-  idle: { text: "Updates are checked automatically", tile: "set-tile-muted", icon: <RefreshCw size={15} /> },
+  idle: { text: "Updates are checked automatically", tile: "set-tile-muted", icon: <RefreshCw size={20} /> },
   checking: { text: "Checking for updates…", tile: "set-tile-muted", icon: <span className="dev-spinner" /> },
-  current: { text: "Shroud is up to date", tile: "about-tile-ok", icon: <Check size={15} /> },
-  available: { text: "A new version is available", tile: "about-tile-accent", icon: <Download size={15} /> },
-  failed: { text: "Couldn’t check for updates", tile: "about-tile-failed", icon: <TriangleAlert size={15} /> },
+  current: { text: "Shroud is up to date", tile: "about-tile-ok", icon: <Check size={20} /> },
+  available: { text: "A new version is available", tile: "about-tile-accent", icon: <Download size={20} /> },
+  failed: { text: "Couldn’t check for updates", tile: "about-tile-failed", icon: <TriangleAlert size={20} /> },
 };
 
 export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) => void }) {
@@ -64,7 +64,7 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
 
       <SettingsGroup title="Updates">
         <div className="set-row about-status">
-          <span className={`set-tile ${shown.tile}`} aria-hidden="true">
+          <span className={`set-ico ${shown.tile}`} aria-hidden="true">
             {shown.icon}
           </span>
           {/* Read out as it changes: a check started here ends here. */}
@@ -80,7 +80,6 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
         <SettingsRow
           title="Check for Updates"
           Icon={RefreshCw}
-          tint="var(--accent)"
           // A build without an id (`npm run dev`) has nothing to compare.
           disabled={!build}
           onClick={() => checkForUpdate("manual")}
@@ -104,8 +103,8 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
 
       <SettingsGroup title="Privacy">
         <div className="set-row about-privacy">
-          <span className="set-tile" style={{ background: "#2fa85b" }} aria-hidden="true">
-            <Lock size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <Lock size={20} />
           </span>
           <p>
             Messages, media and calls are end-to-end encrypted. They’re sealed on your devices, so
@@ -116,8 +115,8 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
 
       <SettingsGroup title="More">
         <a className="set-row set-row-button" href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
-          <span className="set-tile" style={{ background: "var(--text-tertiary)" }} aria-hidden="true">
-            <CodeXml size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <CodeXml size={20} />
           </span>
           <span className="set-row-copy">
             <strong>Source Code</strong>
@@ -128,7 +127,6 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
         <SettingsRow
           title="Open-Source Licenses"
           Icon={ScrollText}
-          tint="#f76b1c"
           onClick={() => onNavigate("licenses")}
         />
       </SettingsGroup>

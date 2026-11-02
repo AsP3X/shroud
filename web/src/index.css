@@ -2276,6 +2276,10 @@ button.reply-quote { cursor: pointer; }
   border-bottom: 1px solid var(--separator);
 }
 .set-nav h1 { margin: 0; font-size: var(--fs-lg); font-weight: 650; }
+/* Each page opens with its name and one line on what it is for. */
+.set-head { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 2px; }
+.set-head h2 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; }
+.set-head p { margin: 0; max-width: 48ch; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); }
 .set-body {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 20px 20px 56px;
@@ -2297,20 +2301,19 @@ button.reply-quote { cursor: pointer; }
 .set-group { display: flex; flex-direction: column; gap: 8px; }
 .set-group > h2 {
   margin: 0 4px;
-  font-size: var(--fs-2xs); font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--text-tertiary);
+  font-size: var(--fs-sm); font-weight: 600;
+  color: var(--text-secondary);
 }
 .set-card {
-  background: var(--surface-2);
+  background: var(--surface-1);
   border: 1px solid var(--separator);
-  border-radius: var(--radius);
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 
 .set-row {
   display: flex; align-items: center; gap: 12px;
-  width: 100%; padding: 11px 14px;
+  width: 100%; min-height: 52px; padding: 8px 14px;
   border: 0; border-top: 1px solid var(--separator);
   background: transparent; color: inherit; text-align: left;
   font-size: var(--fs-base);
@@ -2321,14 +2324,26 @@ button.reply-quote { cursor: pointer; }
 .set-row-button:active { background: var(--pressed); }
 .set-row[aria-disabled="true"] { opacity: 0.55; }
 
+/* The glyph before a row: quiet, one colour, never a tile. Danger rows carry their colour. */
+.set-ico {
+  width: 24px; display: grid; place-items: center; flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.set-ico.danger { color: var(--danger); }
+.set-ico.set-tile-muted { color: var(--text-tertiary); }
+.set-ico.about-tile-ok { color: var(--ok-text); }
+.set-ico.about-tile-accent { color: var(--accent-text); }
+.set-ico.about-tile-failed { color: var(--danger); }
+/* Who is signed in: the real avatar, not a glyph. */
+.set-me .avatar { flex-shrink: 0; }
+.set-me strong { font-size: var(--fs-lg); font-weight: 600; }
+/* A note at the row's end, before the chevron ("This browser"). */
+.set-aside { font-size: var(--fs-xs); color: var(--text-tertiary); flex-shrink: 0; }
+/* The device-limit dialog on sign-in still draws its coloured tile (DeviceTile). */
 .set-tile {
   width: 30px; height: 30px; border-radius: var(--r-xs);
   display: grid; place-items: center; flex-shrink: 0;
   color: #fff;
-}
-.set-tile-muted {
-  background: color-mix(in srgb, var(--text-primary) 10%, var(--surface-2));
-  color: var(--text-secondary);
 }
 .set-row-copy { flex: 1; min-width: 0; }
 .set-row-copy strong {
@@ -2349,13 +2364,6 @@ button.reply-quote { cursor: pointer; }
 }
 .set-row-value { font-size: var(--fs-md); color: var(--text-secondary); flex-shrink: 0; }
 .set-chevron { color: var(--text-tertiary); flex-shrink: 0; }
-.set-soon {
-  font-size: var(--fs-2xs); font-weight: 600;
-  padding: 3px 8px; border-radius: var(--r-full);
-  background: color-mix(in srgb, var(--text-primary) 8%, var(--surface-2));
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
 .set-chip {
   font-size: var(--fs-2xs); font-weight: 600;
   padding: 2px 7px; border-radius: var(--r-full);
@@ -2463,14 +2471,6 @@ button.reply-quote { cursor: pointer; }
 .set-confirm-actions { display: flex; gap: 8px; }
 .set-confirm-actions .btn { width: auto; flex: 1; height: 40px; font-size: var(--fs-md); }
 
-.set-logout {
-  width: 100%; height: 48px;
-  border: 1px solid var(--separator); border-radius: var(--radius);
-  background: var(--surface-2); color: var(--danger);
-  font-size: 16px; font-weight: 600;
-  transition: background 0.15s ease;
-}
-.set-logout:hover { background: var(--danger-soft); border-color: var(--danger); }
 /* "Update available" after a row's value (About Shroud). */
 .set-dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -2480,10 +2480,7 @@ button.reply-quote { cursor: pointer; }
 /* About Shroud and its Open-Source Licenses page (settings/AboutView.tsx). */
 .about-hero { padding-top: 16px; }
 .about-hero > svg { margin-bottom: 4px; }
-.about-tile-ok { background: #2fa85b; }
-.about-tile-accent { background: var(--accent); }
-.about-tile-failed { background: var(--danger-bg); }
-.set-tile .dev-spinner { width: 14px; height: 14px; }
+.set-ico .dev-spinner { width: 16px; height: 16px; }
 .about-value {
   flex-shrink: 1; min-width: 0; max-width: 60%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2507,28 +2504,14 @@ button.reply-quote { cursor: pointer; }
 }
 .lic-text:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* Devices — same sections as the iOS screen (DevicesView.swift). */
-.dev-row { padding: 0; }
+/* Devices — same sections as the iOS screen (DevicesView.swift). Every row opens its device;
+   renaming this browser and removing another happen in that dialog. */
 .set-row-button:disabled { cursor: default; opacity: 0.6; }
 .set-row-button:disabled:hover { background: transparent; }
-.dev-row-main {
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 12px;
-  padding: 11px 14px;
-  border: 0; background: transparent; color: inherit; text-align: left;
-  font: inherit; cursor: pointer;
-}
-/* The whole row lights up, Remove column included — the name area is what opens details. */
-.dev-row { transition: background 0.12s ease; }
-.dev-row:has(.dev-row-main:hover) { background: var(--hover); }
-.dev-row:has(.dev-row-main:active) { background: var(--pressed); }
-.dev-row-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.dev-row > .dev-link, .dev-row > .dev-busy { margin-right: 14px; }
-.set-row-copy > span.dev-active, .info-sheet > span.dev-active {
+.set-row-copy > span.dev-active, .dev-head-text > span.dev-active {
   display: flex; align-items: center; gap: 6px;
-  color: var(--accent-text);
+  color: var(--online);
 }
-.info-sheet > span.dev-active { justify-content: center; }
 .dev-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
   background: var(--online);
@@ -2563,21 +2546,26 @@ button.reply-quote { cursor: pointer; }
 .dev-meter i { flex: 1; height: 5px; border-radius: var(--r-full); background: var(--separator); }
 .dev-meter i.on { background: var(--accent); }
 .dev-meter i.on.full { background: #d08a0e; }
-.dev-detail .info-sheet strong { font-size: 22px; font-weight: 700; margin-top: 4px; }
-.dev-detail .set-card { background: var(--surface-1); }
-.set-row.dev-info { justify-content: space-between; align-items: baseline; }
-.set-row.dev-info > span:first-child { flex-shrink: 0; }
-.set-row.dev-info > span:last-child { color: var(--text-secondary); text-align: right; }
-.set-row.dev-info code {
-  flex: 1; min-width: 0; text-align: right;
-  font-family: var(--font-mono); font-size: var(--fs-xs);
-  color: var(--text-secondary); word-break: break-all;
+/* One device: what the server knows about it, then its actions in the dialog's foot. */
+.modal.dev-detail { width: min(440px, 100%); gap: 14px; }
+.dev-head { display: flex; align-items: center; gap: 14px; padding: 2px 0 4px; }
+.dev-tile-line {
+  width: 56px; height: 56px; flex-shrink: 0;
+  border-radius: 14px; border: 1px solid var(--separator);
+  background: var(--surface-1); color: var(--text-secondary);
+  display: grid; place-items: center;
 }
-.set-row.dev-info .copy-pill { align-self: center; }
+.dev-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dev-head-text strong { font-size: var(--fs-lg); font-weight: 600; }
+.dev-head-text > span { font-size: var(--fs-sm); color: var(--text-secondary); }
+.dev-facts dd.mono { font-size: var(--fs-sm); letter-spacing: 0.02em; word-break: break-all; }
 .dev-rename { display: flex; flex-direction: column; gap: 8px; }
-.dev-rename label { font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
+.dev-rename label { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
 .dev-rename p { margin: 0; font-size: var(--fs-xs); color: var(--text-tertiary); }
-.dev-rename p.dev-rename-error { color: var(--danger); }
+.dev-rename .dev-rename-error { color: var(--danger); }
+.dev-note { margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); }
+.btn-text.danger { color: var(--danger); }
+.dialog-foot .btn-text:disabled { opacity: 0.5; cursor: default; }
 .set-toast {
   /* Centred with auto margins, not a transform, so the `modal-in` entrance can own transform. */
   position: fixed; left: 16px; right: 16px; bottom: 28px; z-index: 90;
@@ -4510,18 +4498,18 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   --call-tint: #6464f2;
   --call-glass: rgba(255, 255, 255, 0.14);
   --call-glass-hover: rgba(255, 255, 255, 0.24);
-  --call-disc: 62px;
-  --call-ring-disc: 70px;
+  --call-disc: 50px;
+  --call-ring-disc: 62px;
   /* The small pictures down the right side: ours, theirs beside a shared screen, our own screen. */
-  --tile-w: 200px;
-  --tile-h: calc(var(--tile-w) * 10 / 16);
-  --tiles-top: calc(66px + env(safe-area-inset-top));
+  --tile-w: 160px;
+  --tile-h: calc(var(--tile-w) * 3 / 4);
+  --tiles-top: calc(58px + env(safe-area-inset-top));
   position: fixed; inset: 0; z-index: 88;
   display: flex; flex-direction: column; align-items: center;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   overflow: hidden;
   color: #fff; color-scheme: dark;
-  background: #09090d;
+  background: #0a0a0e;
   outline: none;
   animation: call-in 0.32s var(--ease);
 }
@@ -4529,12 +4517,10 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   from { opacity: 0; transform: scale(0.985); }
   to { opacity: 1; transform: none; }
 }
-/* A quiet dark gradient with a faint wash of the peer's avatar colour behind the face. */
+/* Flat dark, with a faint wash of the peer's avatar colour behind the face. */
 .call-backdrop {
   position: absolute; inset: 0;
-  background:
-    radial-gradient(70% 50% at 50% 32%, color-mix(in srgb, var(--call-tint) 13%, transparent), transparent 70%),
-    linear-gradient(180deg, #141420 0%, #0c0c13 60%, #08080c 100%);
+  background: radial-gradient(60% 50% at 50% 40%, color-mix(in srgb, var(--call-tint) 10%, transparent), transparent 70%);
 }
 .call-ended .call-backdrop { filter: saturate(0.5) brightness(0.8); transition: filter 0.6s ease; }
 /* Their picture is there for the whole call. Once its first frame arrives (a camera switched on
@@ -4598,23 +4584,19 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 }
 .call-e2e {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 12px; border-radius: var(--r-full);
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  height: 30px; padding: 0 10px 0 9px; border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.08);
   font-size: var(--fs-xs); font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
+  color: rgba(255, 255, 255, 0.78);
 }
 .call-icon-btn {
-  width: 40px; height: 40px; flex-shrink: 0;
-  border: 0; border-radius: var(--r-full);
-  background: rgba(255, 255, 255, 0.12); color: #fff;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  width: 36px; height: 36px; flex-shrink: 0;
+  border: 0; border-radius: var(--r-sm);
+  background: transparent; color: rgba(255, 255, 255, 0.78);
   display: grid; place-items: center;
-  transition: background 0.15s ease, transform 0.12s ease;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
 }
-.call-icon-btn:hover { background: rgba(255, 255, 255, 0.22); }
+.call-icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
 .call-icon-btn:active { transform: scale(0.92); }
 .call-icon-btn.is-on, .call-icon-btn.is-on:hover { background: #fff; color: #111; }
 .call-top-actions { display: flex; align-items: center; gap: 8px; }
@@ -4673,27 +4655,24 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   border-radius: 50%;
   transition: transform 0.4s var(--ease), opacity 0.4s ease;
 }
-.call-avatar .avatar { width: 128px; height: 128px; font-size: 46px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
-/* Ringing out or connecting, the face breathes so the screen never looks frozen. */
-.call.is-ringing .call-avatar { animation: call-breathe 2.2s ease-in-out infinite; }
-@keyframes call-breathe {
-  0%, 100% { transform: scale(0.985); }
-  50% { transform: scale(1.02); }
-}
-/* A ring coming in pulses outwards from the caller's face. */
+.call-avatar .avatar { width: 112px; height: 112px; font-size: 46px; }
+/* While it rings, out or in, two rings breathe out of the face so the screen never looks frozen. */
+.call.is-ringing .call-avatar::before,
+.call.is-ringing .call-avatar::after,
 .call-avatar.ringing::before,
 .call-avatar.ringing::after {
   content: "";
   position: absolute; inset: 0;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.32);
-  animation: call-pulse 2.4s var(--ease) infinite;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  animation: call-pulse 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
   pointer-events: none;
 }
-.call-avatar.ringing::after { animation-delay: 1.2s; }
+.call.is-ringing .call-avatar::after,
+.call-avatar.ringing::after { animation-delay: 0.7s; }
 @keyframes call-pulse {
-  from { transform: scale(1); opacity: 0.85; }
-  to { transform: scale(1.7); opacity: 0; }
+  from { transform: scale(1); opacity: 0.8; }
+  to { transform: scale(1.9); opacity: 0; }
 }
 /* Their picture opens out of the face: the face swells and gives way at once as the circle grows
    from its edge. Closing, it comes straight back in front while the circle shrinks behind it, and
@@ -4724,19 +4703,19 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call-id-main { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 100%; }
 .call-name {
   margin: 0; max-width: 100%;
-  font-size: 28px; font-weight: 650; letter-spacing: -0.02em;
+  font-size: 28px; font-weight: 700; letter-spacing: -0.02em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .call-status {
   margin: 0; min-height: 1.4em;
   display: grid;
-  font-size: var(--fs-base);
-  color: rgba(255, 255, 255, 0.74);
+  font-size: var(--fs-xl);
+  color: #a6a6b0;
   font-variant-numeric: tabular-nums;
-  transition: font-size 0.3s var(--ease), color 0.3s ease;
+  transition: color 0.3s ease;
 }
-/* The running time is what a call screen is looked at for: a size up, and steady. */
-.call-status.is-clock { font-size: var(--fs-xl); font-weight: 500; color: rgba(255, 255, 255, 0.9); letter-spacing: 0.01em; }
+/* The running time is what a call screen is looked at for: steady, the same size as the status. */
+.call-status.is-clock { font-weight: 500; letter-spacing: 0.01em; }
 /* A new kind of status (ringing to connecting to the clock) fades in over the old. */
 .call-status-text { grid-area: 1 / 1; animation: call-status-in 0.3s var(--ease); }
 @keyframes call-status-in {
@@ -4762,12 +4741,8 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
    little while the mic is quiet. */
 .call-mic {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-radius: var(--r-full);
-  background: rgba(0, 0, 0, 0.38);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  color: #fff;
+  padding: 0;
+  color: #a6a6b0;
   opacity: 0.72;
   transition: opacity 0.25s ease;
   animation: call-status-in 0.3s var(--ease);
@@ -4775,8 +4750,8 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call-mic[data-live="true"] { opacity: 1; }
 .call-mic-bars { display: inline-flex; align-items: center; gap: 2px; height: 16px; }
 .call-mic-bar {
-  display: block; width: 3px; height: 16px; border-radius: 2px;
-  background: #fff;
+  display: block; width: 3px; height: 14px; border-radius: 1.5px;
+  background: currentColor;
   transform: scaleY(0.1875);
   transform-origin: center;
   will-change: transform;
@@ -4812,27 +4787,23 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
    number below it. Nothing on the stage moves for it. */
 .call-safety-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
 .call-e2e.is-unverified {
-  border: 1px solid rgba(255, 196, 110, 0.35);
-  padding: 6px 11px;
-  background: rgba(255, 176, 64, 0.16);
-  color: #ffd9a8;
+  border: 0;
+  color: #f5c76a;
   font: inherit; font-size: var(--fs-xs); font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, opacity 0.3s ease;
   -webkit-tap-highlight-color: transparent;
 }
 .call-e2e.is-unverified:hover,
-.call-e2e.is-unverified.is-open { background: rgba(255, 176, 64, 0.26); }
+.call-e2e.is-unverified.is-open { background: rgba(255, 255, 255, 0.14); }
 .call-safety-panel {
-  position: absolute; top: calc(100% + 10px); left: 0; z-index: 2;
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 2;
   width: min(300px, calc(100vw - 32px)); padding: 14px;
   display: grid; gap: 10px;
-  border-radius: 20px;
-  background: rgba(24, 24, 34, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-radius: 14px;
+  background: #17171d;
+  border: 1px solid #2a2a31;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
   color: #fff; text-align: left;
   animation: call-safety-in 0.2s var(--ease);
 }
@@ -4844,21 +4815,20 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call-safety-text { margin: 0; font-size: var(--fs-xs); line-height: 1.45; color: rgba(255, 255, 255, 0.7); }
 /* Twelve groups of five, four to a row, so each is easy to find again while reading them out. */
 .call-safety-num {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 4px;
-  padding: 10px 8px; border-radius: 12px;
-  background: rgba(255, 255, 255, 0.08);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px; font-weight: 500; letter-spacing: 0.04em; text-align: center;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm); letter-spacing: 0.06em; text-align: center;
+  color: #e6e6ee;
   font-variant-numeric: tabular-nums;
 }
 .call-safety-confirm {
-  height: 36px; border: 0; border-radius: var(--r-full);
-  background: #fff; color: #111;
-  font: inherit; font-size: var(--fs-sm); font-weight: 650;
+  height: 38px; border: 0; border-radius: var(--r-sm);
+  background: var(--accent); color: #fff;
+  font: inherit; font-size: var(--fs-sm); font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.12s ease;
+  transition: background 0.15s ease, transform 0.12s ease;
 }
-.call-safety-confirm:hover { opacity: 0.9; }
+.call-safety-confirm:hover { background: var(--accent-hover); }
 .call-safety-confirm:active { transform: scale(0.97); }
 .thread-banner-action {
   display: inline-block; margin-left: 8px;
@@ -4885,14 +4855,15 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call.has-screen .call-id-main,
 .call.self-full .call-id-main {
   flex-direction: row; align-items: baseline; gap: 10px;
-  padding: 8px 16px; border-radius: var(--r-full);
-  background: rgba(0, 0, 0, 0.36);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  height: 34px; padding: 0 14px; border-radius: var(--r-full);
+  background: rgba(10, 10, 14, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: var(--fs-sm);
 }
 .call.has-video .call-name,
 .call.has-screen .call-name,
-.call.self-full .call-name { font-size: var(--fs-base); font-weight: 600; letter-spacing: 0; }
+.call.self-full .call-name { font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; }
 /* The self view sits in the top corner. A centred name must stop before it. */
 @media (min-width: 901px) {
   .call.has-video .call-id,
@@ -4900,7 +4871,7 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 }
 .call.has-video .call-status,
 .call.has-screen .call-status,
-.call.self-full .call-status { font-size: var(--fs-sm); font-weight: 400; color: rgba(255, 255, 255, 0.74); min-height: 0; }
+.call.self-full .call-status { font-size: var(--fs-sm); font-weight: 400; color: #a6a6b0; min-height: 0; }
 
 /* Our own camera: the whole screen while the call is placed, then the top corner (as on iOS),
    over their picture or their face. Video on grows it out of the corner; off shrinks it back. */
@@ -4909,10 +4880,10 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   position: absolute; z-index: 2;
   top: calc(var(--tiles-top) + var(--slot, 0) * (var(--tile-h) + 10px)); right: 16px;
   width: var(--tile-w); height: var(--tile-h);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   overflow: hidden;
   background: #1b1b22;
-  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
   display: grid; place-items: center;
   opacity: 0;
   transform: scale(0.86);
@@ -4986,13 +4957,12 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   max-width: 100%;
   display: flex; align-items: flex-start; justify-content: center;
   gap: clamp(12px, 3vw, 22px);
-  padding: 14px 20px 12px;
-  border-radius: 34px;
-  background: rgba(24, 24, 34, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  padding: 10px 18px 8px;
+  border-radius: 28px;
+  background: rgba(23, 23, 29, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   animation: call-bar-in 0.45s var(--ease);
 }
 @keyframes call-bar-in {
@@ -5000,13 +4970,13 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   to { opacity: 1; transform: none; }
 }
 /* Ringing in: only the two answers, far apart, and larger. */
-.call-bar-ring { gap: clamp(44px, 14vw, 88px); padding: 16px 30px 14px; }
+.call-bar-ring { gap: clamp(44px, 14vw, 88px); padding: 12px 30px 10px; }
 .call-bar-ring .call-ctl-disc { width: var(--call-ring-disc); height: var(--call-ring-disc); }
 
 .call-ctl {
-  min-width: var(--call-disc); padding: 0;
+  min-width: 56px; padding: 0;
   border: 0; background: none; color: #fff;
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
   -webkit-tap-highlight-color: transparent;
 }
 .call-ctl-disc {
@@ -5024,13 +4994,12 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call-ctl:active:not(:disabled) .call-ctl-disc { transform: scale(0.9); }
 .call-ctl.is-on .call-ctl-disc,
 .call-ctl.is-on:hover:not(:disabled) .call-ctl-disc { background: #fff; color: #111; }
-.call-ctl-end .call-ctl-disc,
-.call-ctl-end:hover:not(:disabled) .call-ctl-disc { background: var(--call-red); }
+.call-ctl-end .call-ctl-disc { background: #e5484d; }
+.call-ctl-end:hover:not(:disabled) .call-ctl-disc { background: #f05b60; }
 .call-ctl-accept .call-ctl-disc,
 .call-ctl-accept:hover:not(:disabled) .call-ctl-disc { background: var(--call-green); }
-.call-ctl-end:hover:not(:disabled) .call-ctl-disc,
 .call-ctl-accept:hover:not(:disabled) .call-ctl-disc { filter: brightness(1.1); }
-.call-ctl-label { font-size: var(--fs-xs); font-weight: 600; color: rgba(255, 255, 255, 0.86); white-space: nowrap; }
+.call-ctl-label { font-size: var(--fs-xs); font-weight: 500; color: #fff; white-space: nowrap; }
 .call-ctl:disabled,
 .call-ctl.is-unavailable { opacity: 0.4; cursor: default; }
 .call-ctl.is-unavailable:hover .call-ctl-disc { background: var(--call-glass); }
@@ -5114,18 +5083,18 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 @media (max-width: 900px) {
   /* Four buttons in a phone's chat header: closer together, so the name keeps some room. */
   .thread-head .icon-btn:not(.back-mobile) + .icon-btn { margin-left: -6px; }
-  .call { --call-disc: 58px; --call-ring-disc: 68px; }
+  .call { --call-disc: 50px; --call-ring-disc: 62px; }
   .call-top { padding: 10px 12px 0 14px; }
   /* Under the name pill and a status chip, so neither runs into the picture. */
-  .call { --tile-w: 104px; --tile-h: calc(var(--tile-w) * 4 / 3); --tiles-top: calc(156px + env(safe-area-inset-top)); }
+  .call { --tile-w: 110px; --tile-h: calc(var(--tile-w) * 4 / 3); --tiles-top: calc(100px + env(safe-area-inset-top)); }
   .call-self, .call-tile { right: 12px; }
-  .call-avatar .avatar { width: 116px; height: 116px; font-size: 42px; }
+  .call-avatar .avatar { width: 112px; height: 112px; font-size: 42px; }
   .call-name { font-size: 26px; }
   .call-dock { padding: 10px 12px 18px; gap: 12px; }
   /* Two lines at most: the name, clock and a chip under the centred avatar need the room. */
   .call-captions { min-height: 62px; max-height: 92px; padding: 10px 14px; border-radius: 18px; }
   .call-id { top: calc(100% + 14px); }
-  .call-bar { gap: 14px; padding: 12px 16px 10px; border-radius: 30px; }
+  .call-bar { gap: 14px; padding: 8px 12px 6px; border-radius: 28px; }
   .call-bar-ring { gap: clamp(40px, 12vw, 72px); padding: 14px 26px 12px; }
 }
 /* Shorter windows: the name and clock under the avatar must clear the dock, so the centre moves
@@ -5138,7 +5107,7 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   .call.self-full .call-stage { padding-bottom: 0; }
 }
 @media (max-height: 560px) {
-  .call { --call-disc: 54px; --call-ring-disc: 60px; }
+  .call { --call-disc: 46px; --call-ring-disc: 56px; }
   .call-avatar .avatar { width: 84px; height: 84px; font-size: 30px; }
   .call-stage { padding-bottom: 96px; }
   .call-name { font-size: 22px; }
@@ -5286,9 +5255,9 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   left: calc(var(--rail-w) + 12px); bottom: 14px;
   width: calc(var(--pane-w) - 24px);
   display: flex; align-items: center; gap: 6px;
-  padding: 6px;
-  border-radius: var(--r-full);
-  background: #187a3c; color: #fff;
+  height: 52px; padding: 0 6px 0 14px;
+  border-radius: var(--r-lg);
+  background: #1f7a3f; color: #fff;
   box-shadow: var(--shadow-md);
   animation: modal-in 0.2s var(--ease);
 }
@@ -5304,7 +5273,7 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call-pill-dot {
   width: 8px; height: 8px; flex-shrink: 0;
   border-radius: 50%;
-  background: #8dffb4;
+  background: #7ddea0;
   animation: call-live 1.6s ease-in-out infinite;
 }
 .call-pill.is-ended .call-pill-dot { display: none; }
@@ -5317,15 +5286,16 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 .call-pill-status { font-size: var(--fs-xs); opacity: 0.88; font-variant-numeric: tabular-nums; }
 .call-pill-expand { margin-left: auto; flex-shrink: 0; opacity: 0.8; }
 .call-pill-btn {
-  width: 36px; height: 36px; flex-shrink: 0;
+  width: 32px; height: 32px; flex-shrink: 0;
   border: 0; border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18); color: #fff;
+  background: transparent; color: #fff;
   display: grid; place-items: center;
   transition: background 0.15s ease;
 }
-.call-pill-btn:hover { background: rgba(255, 255, 255, 0.28); }
-.call-pill-btn.is-on, .call-pill-btn.is-on:hover { background: #fff; color: #187a3c; }
-.call-pill-btn.end, .call-pill-btn.end:hover { background: #e0352b; }
+.call-pill-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.call-pill-btn.is-on, .call-pill-btn.is-on:hover { background: #fff; color: #1f7a3f; }
+.call-pill-btn.end { background: rgba(0, 0, 0, 0.25); }
+.call-pill-btn.end:hover { background: rgba(0, 0, 0, 0.4); }
 .call-pill-btn.is-sharing, .call-pill-btn.is-sharing:hover { background: #fff; color: #c42b22; }
 .call-pill :focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: var(--r-full); }
 /* …and a bar across the top of the app on phones, pushing it down rather than covering it. */
@@ -5344,7 +5314,7 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
 @media (prefers-reduced-motion: reduce) {
   .call, .call-pill, .call-backdrop, .call-who, .call-bar, .call-sound, .call-status-text,
   .call-chip, .call-notice, .call-safety, .call-ctl-glyph, .call-remote, .call-captions, .call-captions p { animation: none; }
-  .call.is-ringing .call-avatar,
+  .call.is-ringing .call-avatar::before, .call.is-ringing .call-avatar::after,
   .call-stage .call-avatar.is-opening,
   .call-stage .call-avatar.is-closing,
   .call-who.is-leaving .call-id { animation: none; }

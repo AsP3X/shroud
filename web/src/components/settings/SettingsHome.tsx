@@ -1,22 +1,4 @@
-import {
-  AudioWaveform,
-  Bell,
-  Bookmark,
-  Database,
-  Folder,
-  Globe,
-  Info,
-  Key,
-  Languages,
-  Laptop,
-  Link2,
-  Lock,
-  Palette,
-  Phone,
-  QrCode,
-  Server,
-  User,
-} from "lucide-react";
+import { Bell, Database, Globe, Info, Key, Laptop, Link2, Lock, LogOut, Palette, QrCode, Server, User } from "lucide-react";
 import type { Session } from "../../api/client";
 import { webVersion } from "../../appVersion";
 import { bytesToB64 } from "../../crypto/bytes";
@@ -32,6 +14,10 @@ import { themeLabel } from "./PreferencesViews";
 import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
 import type { SettingsRoute } from "./routes";
 
+/**
+ * The settings list: who is signed in, the account (code, link, QR code, devices), the pages,
+ * the identity key, and the way out. Each page says what it is for at its top (SettingsPane).
+ */
 export function SettingsHome({
   session,
   identity,
@@ -57,28 +43,29 @@ export function SettingsHome({
 
   return (
     <>
-      <header className="set-hero">
-        <Avatar name={displayName(session.user.username)} seed={session.user.id} size="lg" />
-        <h1>{displayName(session.user.username)}</h1>
-        <p>{handle}</p>
-      </header>
-
       <SettingsCard>
+        <div className="set-row set-me">
+          <Avatar name={displayName(session.user.username)} seed={session.user.id} size="md" />
+          <span className="set-row-copy">
+            <strong>{displayName(session.user.username)}</strong>
+            <span>{handle}</span>
+          </span>
+        </div>
+      </SettingsCard>
+
+      <SettingsGroup title="Account">
         <div className="set-row">
-          <span className="set-tile" style={{ background: "#ff6b6b" }} aria-hidden="true">
-            <User size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <User size={20} />
           </span>
           <span className="set-row-copy">
             <strong>Signed in as {handle}</strong>
             <code>{session.user.id}</code>
           </span>
         </div>
-      </SettingsCard>
-
-      <SettingsGroup title="Invite">
         <div className="set-row">
-          <span className="set-tile" style={{ background: "#2e8fe0" }} aria-hidden="true">
-            <Key size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <Key size={20} />
           </span>
           <span className="set-row-copy">
             <strong>Share code</strong>
@@ -87,8 +74,8 @@ export function SettingsHome({
           <CopyButton value={session.user.share_code} label="share code" />
         </div>
         <div className="set-row">
-          <span className="set-tile" style={{ background: "#4ac7fa" }} aria-hidden="true">
-            <Link2 size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <Link2 size={20} />
           </span>
           <span className="set-row-copy">
             <strong>Invite link</strong>
@@ -96,64 +83,54 @@ export function SettingsHome({
           </span>
           <CopyButton value={shareLink} label="invite link" />
         </div>
-        <SettingsRow title="Show QR code" Icon={QrCode} tint="#6b6bf2" onClick={onShowQr} />
+        <SettingsRow title="Show QR code" Icon={QrCode} onClick={onShowQr} />
+        <SettingsRow
+          title="Devices"
+          subtitle={deviceCount === null ? undefined : `${deviceCount} of 5 signed in`}
+          Icon={Laptop}
+          onClick={() => onNavigate("devices")}
+        />
       </SettingsGroup>
 
       <SettingsCard>
-        <SettingsRow title="Saved Messages" Icon={Bookmark} tint="#2e8fe0" soon />
-        <SettingsRow title="Recent Calls" Icon={Phone} tint="#2fa85b" soon />
         <SettingsRow
-          title="Devices"
-          value={deviceCount === null ? undefined : `${deviceCount}`}
-          Icon={Laptop}
-          tint="#f76b1c"
-          onClick={() => onNavigate("devices")}
-        />
-        <SettingsRow title="Chat Folders" Icon={Folder} tint="#4ac7fa" soon />
-      </SettingsCard>
-
-      <SettingsCard>
-        <SettingsRow
-          title="Notifications and Sounds"
-          value={notificationsSummary()}
+          title="Notifications and sounds"
+          subtitle={notificationsSummary()}
           Icon={Bell}
-          tint="#e64a72"
           onClick={() => onNavigate("notifications")}
         />
         <SettingsRow
-          title="Privacy and Security"
+          title="Appearance"
+          subtitle={`${themeLabel(pref)} theme`}
+          Icon={Palette}
+          onClick={() => onNavigate("appearance")}
+        />
+        <SettingsRow
+          title="Privacy and security"
+          subtitle="Keys, safety numbers, who sees you"
           Icon={Lock}
-          tint="var(--text-tertiary)"
           onClick={() => onNavigate("privacy")}
         />
         <SettingsRow
-          title="Data and Storage"
+          title="Data and storage"
+          subtitle="What this browser keeps"
           Icon={Database}
-          tint="#2fa85b"
           onClick={() => onNavigate("data")}
         />
+        <SettingsRow title="Server" subtitle={window.location.host} Icon={Server} onClick={() => onNavigate("server")} />
         <SettingsRow
-          title="Appearance"
-          value={themeLabel(pref)}
-          Icon={Palette}
-          tint="var(--accent)"
-          onClick={() => onNavigate("appearance")}
-        />
-        <SettingsRow title="Language" value="English" Icon={Languages} tint="#9b4ae6" soon />
-        <SettingsRow title="Transcription" Icon={AudioWaveform} tint="#2e8fe0" soon />
-        <SettingsRow
-          title="Server"
-          subtitle={window.location.host}
-          Icon={Server}
-          tint="var(--accent)"
-          onClick={() => onNavigate("server")}
+          title="About Shroud"
+          value={webVersion()}
+          dot={update.status === "available" ? "Update available" : undefined}
+          Icon={Info}
+          onClick={() => onNavigate("about")}
         />
       </SettingsCard>
 
       <SettingsGroup title="Encryption">
         <div className="set-row">
-          <span className="set-tile" style={{ background: "#2fa85b" }} aria-hidden="true">
-            <Globe size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <Globe size={20} />
           </span>
           <span className="set-row-copy">
             <strong>{identity ? "This device’s identity key" : "No identity keys here"}</strong>
@@ -172,20 +149,13 @@ export function SettingsHome({
 
       <SettingsCard>
         <SettingsRow
-          title="About Shroud"
-          value={webVersion()}
-          dot={update.status === "available" ? "Update available" : undefined}
-          Icon={Info}
-          tint="#2e8fe0"
-          onClick={() => onNavigate("about")}
+          title="Log out"
+          subtitle="Keys and messages on this browser are erased"
+          Icon={LogOut}
+          danger
+          onClick={onLogout}
         />
       </SettingsCard>
-
-      <div className="set-group">
-        <button type="button" className="set-logout" onClick={onLogout}>
-          Log Out
-        </button>
-      </div>
     </>
   );
 }

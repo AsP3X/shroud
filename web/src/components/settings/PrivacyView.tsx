@@ -160,7 +160,6 @@ export function PrivacyView({
           title="Lock chats now"
           subtitle="Leave chats until you enter your PIN again."
           Icon={Lock}
-          tint="var(--danger-bg)"
           onClick={onLockNow}
         />
       </SettingsCard>
@@ -194,7 +193,6 @@ export function PrivacyView({
           title="Reset QR code"
           subtitle="Makes a new QR code and invite link. The old ones stop working."
           Icon={QrCode}
-          tint="var(--danger-bg)"
           danger
           onClick={resetting ? undefined : () => setConfirmingReset(true)}
         />
@@ -287,7 +285,6 @@ export function PrivacyView({
           title={DELETE_ACCOUNT_COPY.rowTitle}
           subtitle={DELETE_ACCOUNT_COPY.rowSubtitle}
           Icon={Trash2}
-          tint="var(--danger-bg)"
           danger
           wrapSubtitle
           onClick={onDeleteAccount}

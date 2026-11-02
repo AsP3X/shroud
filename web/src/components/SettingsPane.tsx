@@ -11,7 +11,7 @@ import { NotificationsView, type MutedChat } from "./settings/NotificationsView"
 import { AppearanceView, DataStorageView, ServerView } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
 import { SettingsHome } from "./settings/SettingsHome";
-import { SETTINGS_PARENTS, SETTINGS_TITLES, type SettingsRoute } from "./settings/routes";
+import { SETTINGS_INTROS, SETTINGS_PARENTS, SETTINGS_TITLES, type SettingsRoute } from "./settings/routes";
 
 export function SettingsPane({
   session,
@@ -125,10 +125,16 @@ export function SettingsPane({
             >
               <ChevronLeft size={20} />
             </button>
-            <h1>{SETTINGS_TITLES[route]}</h1>
+            <h1>Settings</h1>
           </header>
           {/* Keyed: a page opened from another one starts at its top. */}
           <div className="set-body" key={route}>
+            {SETTINGS_INTROS[route] ? (
+              <div className="set-head">
+                <h2>{SETTINGS_TITLES[route]}</h2>
+                <p>{SETTINGS_INTROS[route]}</p>
+              </div>
+            ) : null}
             {route === "notifications" ? (
               <NotificationsView
                 session={session}

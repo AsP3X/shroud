@@ -221,8 +221,8 @@ export function NotificationsView({
           disabled={!on || testing || openOnly || pushMissing}
           onClick={() => void sendTest()}
         >
-          <span className="set-tile" style={{ background: "#2e8fe0" }} aria-hidden="true">
-            <Send size={15} />
+          <span className="set-ico" aria-hidden="true">
+            <Send size={20} />
           </span>
           <span className="set-row-copy">
             <strong>{testing ? "Sending…" : "Send a test notification"}</strong>

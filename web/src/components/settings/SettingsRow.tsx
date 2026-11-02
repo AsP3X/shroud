@@ -3,15 +3,13 @@ import { ChevronRight } from "lucide-react";
 
 type IconProps = { size?: number };
 
-/** Colour-tiled row, the shared vocabulary of the iOS settings list. */
+/** A settings row: a quiet glyph, the title and its line, then the value, a switch or a chevron. */
 export function SettingsRow({
   title,
   subtitle,
   value,
   Icon,
-  tint,
   onClick,
-  soon = false,
   danger = false,
   disabled = false,
   dot,
@@ -21,9 +19,7 @@ export function SettingsRow({
   subtitle?: string;
   value?: string;
   Icon: ComponentType<IconProps>;
-  tint: string;
   onClick?: () => void;
-  soon?: boolean;
   danger?: boolean;
   /** Shown but not usable right now (dimmed, still a button). */
   disabled?: boolean;
@@ -32,11 +28,11 @@ export function SettingsRow({
   /** The subtitle may wrap. Other rows stay on one line. */
   wrapSubtitle?: boolean;
 }) {
-  const interactive = Boolean(onClick) && !soon;
+  const interactive = Boolean(onClick);
   const body = (
     <>
-      <span className="set-tile" style={{ background: tint }} aria-hidden="true">
-        <Icon size={15} />
+      <span className={danger ? "set-ico danger" : "set-ico"} aria-hidden="true">
+        <Icon size={20} />
       </span>
       <span className="set-row-copy">
         <strong className={danger ? "danger" : undefined}>{title}</strong>
@@ -44,17 +40,12 @@ export function SettingsRow({
       </span>
       {value ? <span className="set-row-value">{value}</span> : null}
       {dot ? <span className="set-dot" role="img" aria-label={dot} /> : null}
-      {soon ? <span className="set-soon">Soon</span> : null}
       {interactive ? <ChevronRight size={16} className="set-chevron" aria-hidden="true" /> : null}
     </>
   );
 
   if (!interactive) {
-    return (
-      <div className="set-row" aria-disabled={soon ? "true" : undefined}>
-        {body}
-      </div>
-    );
+    return <div className="set-row">{body}</div>;
   }
   return (
     <button type="button" className="set-row set-row-button" onClick={onClick} disabled={disabled}>
