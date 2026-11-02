@@ -1,0 +1,1813 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Shroud</title>
+  <meta name="description" content="Working proposal for the reworked chat screen of the Shroud web client: every control responds, and what would need the server is simulated in the page." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ------------------------------------------------------------- tokens --
+       The web client's palette (web/src/index.css), plus the outgoing bubble roles
+       this proposal adds. Everything else is unchanged. */
+    :root {
+      color-scheme: light dark;
+      --font: Inter, system-ui, -apple-system, sans-serif;
+      --fs-2xs: 11px; --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px;
+      --fs-base: 15px; --fs-lg: 17px; --fs-xl: 20px; --fs-2xl: 24px;
+      --r-xs: 8px; --r-sm: 10px; --r-md: 12px; --r-lg: 16px; --r-full: 999px;
+      --rail-w: 76px; --pane-w: 340px;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+      --bg: #000000; --surface-1: #0a0a0e; --surface-2: #17171d; --surface-3: #22222a; --canvas: #0e0e14;
+      --hover: rgba(255, 255, 255, 0.055); --pressed: rgba(255, 255, 255, 0.09);
+      --separator: #2a2a31;
+      --text-primary: #ffffff; --text-secondary: #a6a6b0; --text-tertiary: #8a8a99;
+      --accent: #6464f2; --accent-hover: #7878f6; --accent-soft: #23234a; --accent-text: #a7a7fa; --on-accent: #ffffff;
+      --bubble-in: #22222a; --bubble-border: transparent;
+      --bubble-out: color-mix(in srgb, var(--accent) 24%, var(--canvas));
+      --bubble-out-text: var(--text-primary); --bubble-out-meta: var(--accent-text);
+      --danger: #ff6b61; --danger-soft: #3a1512; --online: #34c759;
+      --ok-bg: #14331c; --ok-text: #7ddea0;
+      --scrim: rgba(0, 0, 0, 0.66);
+      --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.6);
+    }
+    :root[data-theme="light"] {
+      --bg: #ffffff; --surface-1: #f7f7fa; --surface-2: #ffffff; --surface-3: #ffffff; --canvas: #f1f1f6;
+      --hover: rgba(10, 10, 25, 0.045); --pressed: rgba(10, 10, 25, 0.08);
+      --separator: #e2e2e8;
+      --text-primary: #0b0b12; --text-secondary: #555562; --text-tertiary: #6c6c7a;
+      --accent: #5e5ce6; --accent-hover: #4b49d6; --accent-soft: #ececfc; --accent-text: #4b49d6;
+      --bubble-in: #ffffff; --bubble-border: #e5e5ec;
+      --bubble-out: color-mix(in srgb, var(--accent) 13%, #ffffff);
+      --danger: #d02a1b; --danger-soft: #fdecea; --online: #1b7e3f;
+      --ok-bg: #e4f7ea; --ok-text: #1d7a3e;
+      --scrim: rgba(18, 18, 30, 0.34);
+      --shadow-md: 0 14px 40px rgba(15, 15, 30, 0.16);
+    }
+    :root[data-out="solid"] { --bubble-out: var(--accent); --bubble-out-text: var(--on-accent); --bubble-out-meta: rgba(255, 255, 255, 0.82); }
+
+    /* --------------------------------------------------------------- base -- */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body { font-family: var(--font); font-size: var(--fs-base); line-height: 1.4; background: var(--bg); color: var(--text-primary); -webkit-font-smoothing: antialiased; overflow: hidden; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    a { color: var(--accent-text); }
+    svg { display: block; }
+    .ico { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .ico-18 { width: 18px; height: 18px; } .ico-16 { width: 16px; height: 16px; } .ico-14 { width: 14px; height: 14px; } .ico-13 { width: 13px; height: 13px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs); }
+    .hidden { display: none !important; }
+    mark { background: var(--accent-soft); color: var(--accent-text); border-radius: 3px; padding: 0 1px; }
+
+    .icon-btn { width: 36px; height: 36px; border-radius: var(--r-sm); border: 0; background: transparent; color: var(--text-secondary); display: grid; place-items: center; flex-shrink: 0; transition: background 0.15s ease, color 0.15s ease; }
+    .icon-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+    @media (hover: hover) { .icon-btn:hover { background: var(--hover); color: var(--text-primary); } }
+    .btn { height: 44px; padding: 0 18px; border-radius: 12px; border: 0; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: var(--fs-base); font-weight: 600; background: var(--accent); color: var(--on-accent); }
+    .btn.secondary { background: var(--surface-3); color: var(--text-primary); border: 1px solid var(--separator); }
+    .btn.danger { background: var(--danger); color: #fff; }
+    .btn.text { background: transparent; color: var(--accent-text); padding: 0 8px; }
+    @media (hover: hover) { .btn:hover { filter: brightness(1.08); } }
+    .field { width: 100%; height: 42px; border-radius: var(--r-sm); border: 1px solid var(--separator); background: var(--surface-2); color: var(--text-primary); padding: 0 12px; font: inherit; font-size: var(--fs-base); outline: none; }
+    .field:focus { border-color: var(--accent); }
+
+    .avatar { position: relative; flex-shrink: 0; width: 44px; height: 44px; border-radius: var(--r-full); background: linear-gradient(180deg, var(--av-top, #7c7aff), var(--av-bottom, #5e5ce6)); color: #fff; display: grid; place-items: center; font-size: var(--fs-base); font-weight: 600; letter-spacing: 0.01em; user-select: none; }
+    .avatar-sm { width: 32px; height: 32px; font-size: var(--fs-xs); }
+    .avatar-xs { width: 22px; height: 22px; font-size: 9px; }
+    .avatar-lg { width: 72px; height: 72px; font-size: 26px; }
+    .avatar.avatar-xl { width: 112px; height: 112px; font-size: 46px; }
+    .avatar-dot { position: absolute; right: 0; bottom: 0; width: 11px; height: 11px; border-radius: 50%; background: var(--online); box-shadow: 0 0 0 2px var(--surface-1); }
+    .avatar-lg .avatar-dot { width: 16px; height: 16px; right: 3px; bottom: 3px; }
+    .av-orange { --av-top: #ff9f5a; --av-bottom: #f76b1c; } .av-pink { --av-top: #ff7a9e; --av-bottom: #e64a72; } .av-blue { --av-top: #4ac7fa; --av-bottom: #2e8fe0; }
+    .av-green { --av-top: #5ad97c; --av-bottom: #2fa85b; } .av-violet { --av-top: #c77cff; --av-bottom: #9b4ae6; } .av-yellow { --av-top: #ffc65a; --av-bottom: #e69a1c; } .av-grey { --av-top: #8e8e93; --av-bottom: #5f5f66; }
+
+    /* -------------------------------------------------------------- shell -- */
+    .shell { display: flex; height: 100%; background: var(--bg); }
+    .shell-body { display: flex; flex: 1; min-height: 0; min-width: 0; }
+    .rail { width: var(--rail-w); flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 18px 0; border-right: 1px solid var(--separator); }
+    .rail-mark { width: 36px; height: 36px; margin-bottom: 12px; }
+    .rail-mark svg { width: 36px; height: 36px; border-radius: 22.5%; }
+    .rail-tabs { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .rail-btn { position: relative; width: 46px; height: 46px; border-radius: var(--r-md); border: 0; background: transparent; color: var(--text-secondary); display: grid; place-items: center; }
+    .rail-btn.active { background: var(--accent-soft); color: var(--accent-text); }
+    @media (hover: hover) { .rail-btn:not(.active):hover { background: var(--hover); color: var(--text-primary); } }
+    .rail-badge { position: absolute; top: 4px; right: 4px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--r-full); background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 17px; text-align: center; box-shadow: 0 0 0 2px var(--bg); }
+    .rail-me { border: 0; background: transparent; padding: 2px; border-radius: var(--r-full); display: grid; }
+    .rail-me[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--accent); }
+
+    /* --------------------------------------------------------------- pane -- */
+    .pane { width: var(--pane-w); flex-shrink: 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface-1); border-right: 1px solid var(--separator); }
+    .pane-head { padding: 16px 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+    .pane-title-row { display: flex; justify-content: space-between; align-items: center; padding-left: 4px; }
+    .pane-title-row h1 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; }
+    .search { height: 36px; border-radius: var(--r-sm); background: var(--surface-2); display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--text-tertiary); font-size: var(--fs-md); border: 1px solid transparent; transition: border-color 0.15s ease; }
+    :root[data-theme="light"] .search { border-color: var(--separator); }
+    .search:focus-within { border-color: var(--accent); }
+    .search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--text-primary); font: inherit; font-size: var(--fs-md); }
+    .search input::placeholder { color: var(--text-tertiary); }
+    .search input::-webkit-search-cancel-button { display: none; }
+    .search-clear { border: 0; background: transparent; color: var(--text-tertiary); display: grid; place-items: center; padding: 2px; border-radius: var(--r-full); }
+    .pane-notice { display: flex; align-items: center; gap: 10px; margin: 0 14px 6px; padding: 8px 2px 10px; border-bottom: 1px solid var(--separator); font-size: var(--fs-sm); color: var(--text-secondary); }
+    .pane-notice > .ico { color: var(--accent-text); }
+    .pane-notice span { flex: 1; min-width: 0; }
+    .pane-notice a { color: var(--accent-text); font-weight: 600; text-decoration: none; white-space: nowrap; }
+    .pane-notice .icon-btn { width: 28px; height: 28px; margin: -4px -6px -4px 0; }
+    .rows { flex: 1; overflow-y: auto; padding: 2px 8px 12px; }
+    .rows-empty { padding: 28px 16px; color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.5; }
+    .rows-empty strong { display: block; font-size: var(--fs-base); color: var(--text-primary); margin-bottom: 4px; }
+    .list-label { margin: 10px 8px 4px; font-size: var(--fs-2xs); font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; }
+    .row { display: flex; gap: 12px; align-items: center; width: 100%; padding: 9px 10px; border-radius: var(--r-md); border: 0; background: transparent; color: inherit; text-align: left; transition: background 0.12s ease; }
+    @media (hover: hover) { .row:not(.active):hover { background: var(--hover); } }
+    .row.active { background: var(--accent-soft); }
+    .row-copy { flex: 1; min-width: 0; }
+    .row-copy strong { font-size: var(--fs-base); font-weight: 600; display: flex; align-items: center; gap: 5px; min-width: 0; }
+    .row-copy strong > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-copy strong .ico { color: var(--text-tertiary); }
+    .row-copy > span { display: block; margin-top: 1px; font-size: var(--fs-sm); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row.unread .row-copy > span { color: var(--text-primary); }
+    .row-copy .typing { color: var(--accent-text); font-weight: 500; }
+    .typing-dots { display: inline-flex; gap: 2px; margin-left: 3px; vertical-align: 1px; }
+    .typing-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: typing-dot 1.35s cubic-bezier(0.45, 0, 0.35, 1) infinite both; }
+    .typing-dots i:nth-child(2) { animation-delay: 0.17s; } .typing-dots i:nth-child(3) { animation-delay: 0.34s; }
+    @keyframes typing-dot { 0%, 56%, 100% { translate: 0 0; opacity: 0.4; } 24% { translate: 0 -2.5px; opacity: 1; } }
+    .row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; align-self: stretch; padding-top: 3px; }
+    .row-time { font-size: var(--fs-2xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+    .row.unread .row-time { color: var(--accent-text); font-weight: 600; }
+    .row-badges { display: flex; align-items: center; gap: 4px; }
+    .row-unread { min-width: 20px; height: 20px; padding: 0 6px; display: grid; place-items: center; border-radius: var(--r-full); background: var(--accent); color: var(--on-accent); font-size: var(--fs-2xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .row-unread.muted { background: var(--text-tertiary); color: var(--bg); }
+    .row-reaction { width: 20px; height: 20px; display: grid; place-items: center; border-radius: var(--r-full); background: var(--accent); color: var(--on-accent); }
+    .row-reaction .ico { width: 11px; height: 11px; fill: currentColor; }
+    .row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .mini-btn { height: 27px; padding: 0 11px; border-radius: var(--r-xs); border: 0; background: var(--accent); color: var(--on-accent); font-size: var(--fs-xs); font-weight: 600; }
+    .mini-btn.ghost { background: var(--surface-3); color: var(--text-primary); border: 1px solid var(--separator); }
+    @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: none; } }
+
+    /* ------------------------------------------------------------- thread -- */
+    .thread { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--canvas); position: relative; }
+    .thread-head { height: 64px; flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 16px; background: var(--bg); border-bottom: 1px solid var(--separator); }
+    .thread-head .avatar-dot { box-shadow: 0 0 0 2px var(--bg); }
+    .thread-head .peer-btn { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; border: 0; background: transparent; padding: 0; text-align: left; }
+    .thread-peer { flex: 1; min-width: 0; }
+    .thread-peer strong { display: flex; align-items: center; gap: 6px; font-size: var(--fs-lg); font-weight: 600; white-space: nowrap; }
+    .thread-peer strong > span { overflow: hidden; text-overflow: ellipsis; }
+    .thread-peer strong .ico { color: var(--accent-text); }
+    .thread-peer > span { display: block; font-size: var(--fs-xs); color: var(--text-secondary); }
+    .thread-peer > span.online { color: var(--online); }
+    .thread-peer > span.typing { color: var(--accent-text); font-weight: 500; }
+    .back-mobile { display: none; }
+    .thread-actions { display: flex; gap: 2px; }
+    .search-wrap { flex-shrink: 0; }
+    .thread-search { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 16px; background: var(--bg); border-bottom: 1px solid var(--separator); color: var(--text-tertiary); }
+    .fly-glyph { pointer-events: none; }
+    .thread-search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: var(--text-primary); font: inherit; font-size: 16px; }
+    .thread-search input::placeholder { color: var(--text-tertiary); }
+    .thread-search-count { font-size: var(--fs-xs); color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; }
+    .thread-empty { margin: auto; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px; }
+    .thread-empty strong { font-size: var(--fs-lg); }
+    .thread-empty p { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
+
+    .messages { flex: 1; min-height: 0; overflow-y: auto; }
+    .messages-inner { min-height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; padding: 20px 24px 22px; }
+    .day-sep { display: flex; justify-content: center; margin: 18px 0 8px; }
+    .day-sep span { font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); }
+    .msg-row { position: relative; display: flex; align-items: flex-end; gap: 4px; -webkit-touch-callout: none; }
+    .msg-row.mine { justify-content: flex-end; }
+    .msg-row.first { margin-top: 10px; }
+    .msg-row.flash::before { content: ""; position: absolute; inset: -2px -24px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 22%, transparent); animation: reply-flash 1.4s var(--ease) forwards; pointer-events: none; }
+    @keyframes reply-flash { 0% { opacity: 0; } 12% { opacity: 1; } 62% { opacity: 1; } 100% { opacity: 0; } }
+    .hover-actions { display: flex; align-items: flex-end; opacity: 0; transition: opacity 0.12s var(--ease); }
+    .msg-row.mine .hover-actions { order: -1; }
+    .hover-actions .icon-btn { width: 30px; height: 30px; color: var(--text-tertiary); }
+    @media (hover: hover) { .msg-row:hover .hover-actions, .msg-row.menu-open .hover-actions { opacity: 1; } }
+    .bubble { position: relative; max-width: min(560px, 74%); padding: 7px 13px; display: flex; align-items: flex-end; gap: 9px; font-size: var(--fs-base); line-height: 1.4; border-radius: var(--r-lg); }
+    .msg-row.is-new .bubble { animation: bubble-in 0.22s var(--ease); }
+    @keyframes bubble-in { from { opacity: 0; transform: translateY(6px); } }
+    .bubble p { margin: 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .bubble-meta { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-2xs); line-height: 1; padding-bottom: 1px; font-variant-numeric: tabular-nums; }
+    .bubble.in { background: var(--bubble-in); border: 1px solid var(--bubble-border); border-bottom-left-radius: var(--r-xs); }
+    .msg-row:not(.first) .bubble.in { border-top-left-radius: var(--r-xs); }
+    .bubble.in .bubble-meta { color: var(--text-secondary); }
+    .bubble.out { background: var(--bubble-out); color: var(--bubble-out-text); border-bottom-right-radius: var(--r-xs); }
+    .msg-row:not(.first) .bubble.out { border-top-right-radius: var(--r-xs); }
+    .bubble.out .bubble-meta { color: var(--bubble-out-meta); }
+    .bubble.pending { opacity: 0.68; }
+    .bubble.deleted { opacity: 0.6; font-style: italic; }
+    .receipt-read { color: var(--accent-text); }
+    :root[data-out="solid"] .bubble.out .receipt-read { color: #fff; }
+    .bubble.col { flex-direction: column; align-items: stretch; gap: 5px; }
+    .bubble-body { display: flex; align-items: flex-end; gap: 9px; min-width: 0; }
+    .bubble-meta-row { display: flex; justify-content: flex-end; margin-top: -1px; }
+    .msg-link { color: var(--accent-text); text-decoration: none; overflow-wrap: anywhere; }
+    :root[data-out="solid"] .bubble.out .msg-link { color: var(--on-accent); text-decoration: underline; text-underline-offset: 2px; }
+    @media (hover: hover) { .msg-link:hover { text-decoration: underline; } }
+    .quote { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 4px 8px 5px 9px; border: 0; border-left: 3px solid var(--accent-text); border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); font: inherit; font-size: var(--fs-md); line-height: 1.3; text-align: left; text-decoration: none; color: inherit; cursor: pointer; }
+    :root[data-out="solid"] .bubble.out .quote { border-left-color: var(--on-accent); background: rgba(0, 0, 0, 0.12); }
+    :root[data-out="solid"] .bubble.out .quote strong, :root[data-out="solid"] .bubble.out .quote em, :root[data-out="solid"] .bubble.out .quote small { color: var(--on-accent); }
+    .quote-lines { display: flex; flex-direction: column; min-width: 0; }
+    .quote strong { font-weight: 600; color: var(--accent-text); }
+    .quote em { font-style: normal; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .quote small { font-size: var(--fs-sm); color: var(--text-secondary); }
+    .quote-thumb { position: relative; flex: 0 0 auto; width: 44px; height: 44px; border-radius: 5px; overflow: hidden; background: linear-gradient(160deg, #2b4a6f 0%, #5f8fb8 55%, #d6c08a 100%); }
+    .quote-thumb img, .quote-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .quote-thumb .media-play { width: 20px; height: 20px; background: rgba(11, 11, 18, 0.6); }
+    .quote-thumb .media-dur { display: none; }
+    .bubble.voice { flex-direction: column; align-items: stretch; gap: 0; padding: 8px 10px; }
+    .voice-row { display: flex; align-items: center; gap: 10px; }
+    .voice-play { width: 36px; height: 36px; flex-shrink: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; }
+    .voice-play .ico { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+    .voice-play .ico.play { transform: translateX(1px); }
+    .voice-body { display: flex; flex-direction: column; gap: 5px; min-width: 170px; }
+    .wave { display: flex; align-items: center; gap: 2px; height: 26px; cursor: pointer; }
+    .wave i { flex: 1 1 0; border-radius: 2px; background: color-mix(in srgb, var(--accent) 28%, transparent); }
+    .wave i.played { background: var(--accent); }
+    .voice-foot { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .voice-foot .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .voice-foot .bubble-meta { margin-left: auto; }
+    .bubble.photo-msg { padding: 0; overflow: hidden; border-radius: var(--r-lg); }
+    .photo { position: relative; display: block; width: 260px; max-width: 100%; aspect-ratio: 4 / 3; border: 0; padding: 0; background: linear-gradient(160deg, #2b4a6f 0%, #5f8fb8 55%, #d6c08a 100%); cursor: zoom-in; }
+    .photo img, .photo video { display: block; width: 100%; height: 100%; object-fit: cover; }
+    .media-play { position: absolute; inset: 0; margin: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(11, 11, 18, 0.55); color: #fff; display: grid; place-items: center; pointer-events: none; }
+    .media-play .ico { fill: currentColor; stroke: none; transform: translateX(1px); }
+    .media-play.big { width: 72px; height: 72px; pointer-events: auto; cursor: pointer; }
+    .media-play.big .ico { width: 30px; height: 30px; }
+    .playing .media-play.big { opacity: 0; }
+    .media-dur { position: absolute; left: 8px; bottom: 8px; padding: 3px 7px; border-radius: var(--r-full); background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
+    .media-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, 0.25); }
+    .media-progress i { display: block; height: 100%; width: 0; background: #fff; }
+    .playing .media-progress i { animation: media-progress var(--d, 10s) linear forwards; }
+    @keyframes media-progress { to { width: 100%; } }
+    .viewer .photo video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .photo .bubble-meta { position: absolute; right: 8px; bottom: 8px; padding: 3px 7px; border-radius: var(--r-full); background: rgba(0, 0, 0, 0.45); color: #fff; }
+    .bubble.file-msg { gap: 10px; align-items: center; }
+    .file-icon { width: 40px; height: 40px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-text); display: grid; place-items: center; flex-shrink: 0; }
+    :root[data-out="solid"] .bubble.out .file-icon { background: rgba(255, 255, 255, 0.2); color: #fff; }
+    .file-lines { display: flex; flex-direction: column; min-width: 0; }
+    .file-lines strong { font-weight: 600; font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-lines span { font-size: var(--fs-xs); opacity: 0.75; }
+    .reaction-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 3px; }
+    .reaction-chip { display: inline-flex; align-items: center; min-height: 28px; padding: 0 4px 0 6px; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--accent) 16%, transparent); font-size: 16px; line-height: 1; color: inherit; transition: transform 0.08s var(--ease); }
+    .reaction-chip:active { transform: scale(0.9); }
+    .reaction-chip.mine { background: var(--accent); color: #fff; }
+    .reaction-chip .avatar-xs { margin-left: 4px; box-shadow: 0 0 0 1.5px var(--accent); }
+    .reaction-chip .avatar-xs + .avatar-xs { margin-left: -8px; }
+    .reaction-strip .bubble-meta { margin-left: auto; padding-left: 6px; }
+    .typing-bubble { padding: 8px 13px 9px; }
+    .typing-ink { display: flex; align-items: center; gap: 5px; width: 40px; height: 20px; justify-content: center; }
+    .typing-ink i { width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 42%, var(--bubble-in)); animation: typing-ink 1.35s cubic-bezier(0.45, 0, 0.35, 1) infinite both; }
+    .typing-ink i:nth-child(2) { animation-delay: 0.17s; } .typing-ink i:nth-child(3) { animation-delay: 0.34s; }
+    @keyframes typing-ink { 0%, 56%, 100% { transform: translateY(0) scale(0.85); } 24% { transform: translateY(-4px) scale(1.2); background: var(--accent); } }
+    .jump-latest { position: absolute; right: 22px; bottom: 76px; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--r-full); border: 1px solid var(--separator); background: var(--surface-2); color: var(--text-primary); font-size: var(--fs-xs); font-weight: 600; box-shadow: var(--shadow-md); animation: bubble-in 0.2s var(--ease); }
+    .jump-latest .count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--r-full); background: var(--accent); color: #fff; font-size: 10px; display: grid; place-items: center; }
+
+    /* ----------------------------------------------------------- composer -- */
+    .compose-shell { flex-shrink: 0; background: var(--bg); border-top: 1px solid var(--separator); }
+    /* Replying: the message itself, small, above the field. The arrow sits over the attach
+       buttons, the miniature over the text field, the close button over the mic. */
+    .reply-bar { display: flex; align-items: center; gap: 4px; padding: 8px 12px 0; animation: reply-in 0.22s var(--ease); }
+    .reply-bar-icon { width: 76px; display: flex; justify-content: center; color: var(--accent-text); flex-shrink: 0; }
+    .reply-bar-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; margin: 0 4px; }
+    .reply-bar-label { font-size: var(--fs-xs); color: var(--text-secondary); display: flex; align-items: baseline; gap: 6px; }
+    .reply-bar-label b { font-weight: 600; color: var(--text-primary); }
+    .reply-bar-label time { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+    .reply-bar-msg { display: flex; align-items: flex-end; gap: 6px; max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .reply-mini { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 5px 11px; border-radius: 12px; border-bottom-left-radius: 4px; background: var(--bubble-in); border: 1px solid var(--bubble-border); font-size: var(--fs-sm); line-height: 1.35; color: var(--text-primary); transform-origin: left bottom; animation: mini-in 0.26s cubic-bezier(0.2, 0.9, 0.25, 1.15) both; animation-delay: 40ms; }
+    .reply-mini > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .reply-mini em { font-style: italic; color: var(--text-secondary); }
+    .reply-mini .ico { color: var(--accent-text); }
+    .reply-mini .ico.fill { fill: currentColor; stroke: none; }
+    .reply-mini.out { background: var(--bubble-out); color: var(--bubble-out-text); border-bottom-left-radius: 12px; border-bottom-right-radius: 4px; }
+    :root[data-out="solid"] .reply-mini.out .ico { color: var(--on-accent); }
+    /* Pictures and videos: the frame is the miniature, with the bubble's corners. */
+    .reply-mini.media { padding: 0; background: transparent; border: 0; overflow: visible; }
+    .reply-mini-pic { position: relative; width: 84px; height: 63px; border-radius: 12px; border-bottom-left-radius: 4px; overflow: hidden; flex-shrink: 0; background: linear-gradient(160deg, #2b4a6f 0%, #5f8fb8 55%, #d6c08a 100%); box-shadow: 0 1px 0 var(--bubble-border); }
+    .reply-mini.out .reply-mini-pic { border-bottom-left-radius: 12px; border-bottom-right-radius: 4px; }
+    .reply-mini-pic img, .reply-mini-pic video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .reply-mini-pic .media-play { width: 26px; height: 26px; background: rgba(11, 11, 18, 0.6); }
+    .reply-mini-pic .media-dur { left: 5px; bottom: 5px; padding: 2px 5px; font-size: 10px; }
+    .reply-mini-cap { align-self: center; margin-left: 4px; font-size: var(--fs-sm); color: var(--text-secondary); }
+    @media (hover: hover) { .reply-bar-msg:hover .reply-mini { filter: brightness(1.12); } }
+    .reply-bar .icon-btn { width: 34px; height: 34px; align-self: flex-end; }
+    @keyframes mini-in { from { opacity: 0; transform: scale(0.85) translateY(4px); } }
+    @keyframes reply-in { from { opacity: 0; transform: translateY(8px); } }
+    .thread-banner { margin: 0; padding: 8px 16px; font-size: var(--fs-sm); text-align: center; background: var(--accent-soft); color: var(--accent-text); }
+    .compose { display: flex; gap: 4px; align-items: flex-end; padding: 8px 12px; }
+    .compose .icon-btn { width: 34px; height: 34px; margin-bottom: 1px; }
+    .compose-plus { display: none; }
+    .compose-grow { flex: 1; min-width: 0; margin: 0 4px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid transparent; transition: border-color 0.15s ease; }
+    :root[data-theme="light"] .compose-grow { border-color: var(--separator); }
+    .compose-grow:focus-within { border-color: var(--accent); }
+    .compose-field { display: block; width: 100%; min-height: 34px; max-height: 160px; padding: 7px 12px; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--fs-base); line-height: 1.35; outline: none; resize: none; }
+    .compose-field::placeholder { color: var(--text-tertiary); }
+    .compose-mic { color: var(--accent-text); touch-action: none; user-select: none; -webkit-user-select: none; }
+    .send { width: 34px; height: 34px; border-radius: var(--r-full); border: 0; background: var(--accent); color: var(--on-accent); display: none; place-items: center; margin-bottom: 1px; transition: transform 0.12s ease; }
+    .send:active { transform: scale(0.94); }
+    .compose.has-draft .send { display: grid; }
+    .compose.has-draft .compose-mic { display: none; }
+    /* Recording: the bin takes the attach buttons' place, the capsule the field's, send the mic's.
+       The capsule's parts slide in one after another; the buttons pop in with a little overshoot. */
+    .compose.recording .compose-wide, .compose.recording .compose-plus, .compose.recording .compose-grow, .compose.recording .compose-mic { display: none; }
+    .rec-discard { display: none; color: var(--danger); }
+    .compose.recording .rec-discard { display: grid; animation: pop-in 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) 60ms both; }
+    @media (hover: hover) { .rec-discard:hover { background: var(--danger-soft); color: var(--danger); } }
+    .compose.recording .send { display: grid; animation: pop-in 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) 120ms both; }
+    @keyframes pop-in { from { opacity: 0; scale: 0.4; } }
+    .rec-capsule { display: none; flex: 1; min-width: 0; height: 34px; margin: 0 4px 1px; align-items: center; gap: 10px; padding: 0 12px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+    .compose.recording .rec-capsule { display: flex; animation: capsule-in 0.26s var(--ease) both; }
+    @keyframes capsule-in { from { opacity: 0; scale: 0.96; } }
+    .rec-capsule > * { animation: part-in 0.3s var(--ease) both; }
+    .rec-capsule > :nth-child(2) { animation-delay: 60ms; } .rec-capsule > :nth-child(3) { animation-delay: 120ms; }
+    @keyframes part-in { from { opacity: 0; translate: -8px 0; } }
+    .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex-shrink: 0; animation: rec-pulse 1.4s ease-in-out infinite; }
+    @keyframes rec-pulse { 50% { opacity: 0.3; } }
+    .rec-time { min-width: 40px; font-size: var(--fs-base); font-weight: 500; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+    .rec-wave { flex: 1; min-width: 0; height: 22px; overflow: hidden; display: flex; justify-content: flex-end; }
+    .rec-wave.scrolling { -webkit-mask-image: linear-gradient(90deg, transparent, #000 32px); mask-image: linear-gradient(90deg, transparent, #000 32px); }
+    .rec-wave-track { display: flex; align-items: center; gap: 2px; height: 100%; }
+    .rec-wave-track i { flex: 0 0 3px; border-radius: 2px; background: var(--accent); animation: bar-in 0.22s var(--ease) both; }
+    @keyframes bar-in { from { scale: 1 0.25; opacity: 0.35; } }
+    /* Send: everything lifts away together. Discard: the capsule retracts into the bin, which catches it. */
+    .compose[data-close="send"] :is(.rec-capsule > *, .rec-discard, .send) { opacity: 0; translate: 0 -6px; transition: opacity 0.14s ease, translate 0.2s var(--ease); animation: none; }
+    .compose[data-close="discard"] .rec-capsule { clip-path: inset(0 100% 0 0 round 12px); transition: clip-path 0.22s cubic-bezier(0.45, 0, 0.8, 0.35); box-shadow: none; }
+    .compose[data-close="discard"] .rec-capsule > * { opacity: 0; transition: opacity 0.1s ease; animation: none; }
+    .compose[data-close="discard"] .send { opacity: 0; scale: 0.6; transition: opacity 0.14s ease, scale 0.2s ease-in; animation: none; }
+    .compose[data-close="discard"] .rec-discard { animation: bin-catch 0.28s ease-in-out 0.16s; }
+    @keyframes bin-catch { 35% { rotate: -14deg; scale: 1.12; } 70% { rotate: 9deg; } }
+
+    /* -------------------------------------------------------------- menus -- */
+    .ctx-menu { position: fixed; z-index: 70; min-width: 200px; max-width: 300px; padding: 6px; display: flex; flex-direction: column; gap: 2px; background: var(--surface-2); border: 1px solid var(--separator); border-radius: var(--r-md); box-shadow: var(--shadow-md); will-change: clip-path, opacity; animation: ctx-in 0.22s var(--ease) both; }
+    .ctx-menu.closing { animation: ctx-out 0.12s ease-in both; pointer-events: none; }
+    .account-menu, .account-menu.closing { animation: none; min-width: 236px; padding: 6px; border-radius: 14px; }
+    .acct-head { display: flex; align-items: center; gap: 12px; padding: 10px 10px 12px; margin-bottom: 4px; border-bottom: 1px solid var(--separator); }
+    .acct-head .avatar { width: 40px; height: 40px; font-size: var(--fs-md); }
+    .acct-head .avatar-dot { box-shadow: 0 0 0 2px var(--surface-2); }
+    .acct-head-text { display: flex; flex-direction: column; min-width: 0; }
+    .acct-head-text strong { font-size: var(--fs-base); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .acct-head-text span { font-size: var(--fs-xs); color: var(--text-secondary); }
+    .fly-avatar { pointer-events: none; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+    /* A chat's menu: the pane dims, the row lifts off the list, the menu unfolds from its edge. */
+    .chat-menu-layer { position: fixed; inset: 0; z-index: 69; }
+    .chat-menu-scrim { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 55%, transparent); }
+    .chat-menu-row { position: fixed; z-index: 1; background: var(--surface-2); border-radius: var(--r-md); pointer-events: none; will-change: transform; }
+    :root[data-theme="light"] .chat-menu-row { background: #fff; }
+    .chat-menu-row.active { background: var(--accent-soft); }
+    .chat-menu { position: fixed; z-index: 2; min-width: 232px; max-width: 280px; padding: 6px; border-radius: 14px; animation: none; transform-origin: top left; }
+    .chat-menu.closing { animation: none; }
+    .chat-menu.opens-up { transform-origin: bottom left; }
+    .chat-menu .ctx-menu-item { animation: none; }
+    .menu-body { display: flex; flex-direction: column; gap: 2px; }
+    .chat-menu-group { display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 10px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-tertiary); letter-spacing: 0.02em; }
+    .chat-menu-group .ico { color: var(--text-secondary); }
+    .ctx-menu-item.sub { padding-left: 38px; height: 34px; font-weight: 500; }
+    .row.menu-open { visibility: hidden; }
+    .rail-me[aria-expanded="true"] { box-shadow: none; }
+    /* Menus reveal with a clip and a fade; nothing holding text is scaled or moved by fractions, so it never shimmers. */
+    @keyframes ctx-in { from { opacity: 0; clip-path: inset(0 0 40% 0 round 12px); } to { opacity: 1; clip-path: inset(0 0 0 0 round 12px); } }
+    @keyframes ctx-out { to { opacity: 0; } }
+    .ctx-menu { transform: translateZ(0); backface-visibility: hidden; }
+    .ctx-menu .ctx-menu-item { animation: none; }
+    .ctx-menu-item { display: flex; align-items: center; gap: 12px; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--text-primary); font-size: var(--fs-md); font-weight: 500; text-align: left; }
+    .ctx-menu-item:hover, .ctx-menu-item:focus-visible { background: var(--hover); outline: none; }
+    .ctx-menu-item.danger { color: var(--danger); }
+    .ctx-menu-sep { height: 1px; margin: 3px 8px; border: 0; background: var(--separator); }
+    .ctx-menu-header { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; margin-bottom: 3px; border-bottom: 1px solid var(--separator); }
+    .ctx-menu-who { display: flex; flex-direction: column; min-width: 0; }
+    .ctx-menu-who strong { font-size: var(--fs-md); font-weight: 600; }
+    .ctx-menu-who span { font-size: var(--fs-xs); color: var(--text-secondary); }
+    .reaction-picker { display: flex; align-items: center; gap: 2px; padding: 4px 4px 8px; margin-bottom: 3px; border-bottom: 1px solid var(--separator); }
+    .reaction-pick { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: var(--r-full); background: transparent; font-size: 21px; line-height: 1; transition: transform 0.08s var(--ease); animation: pick-in 0.2s ease-out both; animation-delay: calc(40ms + var(--i, 0) * 18ms); }
+    @keyframes pick-in { from { opacity: 0; } }
+    .reaction-pick:hover { transform: scale(1.18); }
+    .reaction-pick.selected { background: var(--accent-soft); }
+
+    /* ---------------------------------------------------- modals, sheets --- */
+    .scrim { position: fixed; inset: 0; z-index: 60; background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: 20px; animation: fade-in 0.15s ease; }
+    @keyframes fade-in { from { opacity: 0; } }
+    /* Dialogs: 260 ms, y 12 → 0, scale .98 → 1; a bottom sheet on phones (Motion — My QR code). */
+    .modal { position: relative; width: min(420px, 100%); background: var(--surface-2); border: 1px solid var(--separator); border-radius: var(--r-lg); box-shadow: var(--shadow-md); padding: 20px; animation: modal-in 0.26s var(--ease) both; }
+    .modal-content { display: flex; flex-direction: column; gap: 12px; }
+    .modal.is-morphing { overflow: hidden; }
+    .modal-ghost { position: absolute; top: 0; left: 0; padding: 20px; pointer-events: none; }
+    @keyframes modal-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } }
+    .dialog-head { display: flex; align-items: center; justify-content: space-between; margin: -6px -8px 0 0; }
+    .dialog-head .icon-btn { width: 32px; height: 32px; }
+    .modal-wide { width: min(520px, 100%); }
+    .btn:disabled { opacity: 0.45; cursor: default; }
+    .lookup { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 12px 0 14px; border-radius: var(--r-md); background: var(--surface-1); border: 1px solid var(--separator); color: var(--text-tertiary); transition: border-color 0.15s ease; }
+    .lookup:focus-within { border-color: var(--accent); }
+    .lookup input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: var(--text-primary); font: inherit; font-size: var(--fs-base); }
+    .lookup input::placeholder { color: var(--text-tertiary); }
+    .lookup-result { min-height: 64px; display: flex; align-items: center; }
+    .lookup-hint, .lookup-none { margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); text-wrap: pretty; }
+    .lookup-none b { font-weight: 600; color: var(--text-primary); }
+    .lookup-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 6px 2px; animation: part-in 0.22s var(--ease) both; }
+    .lookup-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .lookup-lines strong { font-size: var(--fs-base); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lookup-lines small { font-size: var(--fs-sm); color: var(--text-secondary); display: flex; align-items: center; gap: 4px; }
+    .lookup-lines small .ico { color: var(--accent-text); }
+    .lookup-status { font-size: var(--fs-xs); color: var(--text-tertiary); white-space: nowrap; }
+    .skeleton { display: block; border-radius: var(--r-xs); background: linear-gradient(90deg, var(--hover), var(--pressed), var(--hover)); background-size: 200% 100%; animation: skeleton-sweep 1.4s ease-in-out infinite; }
+    .avatar.skeleton { background-image: none; background: var(--hover); border-radius: var(--r-full); animation: none; }
+    .lookup-lines i.skeleton { height: 11px; }
+    @keyframes skeleton-sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+    .dialog-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--separator); }
+    .dialog-foot .btn { height: 40px; gap: 8px; }
+    /* My QR code: the code on a white tile beside the identity it carries. One object, read left to right. */
+    .qr-layout { display: flex; gap: 22px; align-items: flex-start; padding: 6px 0 4px; }
+    .qr-side { display: flex; flex-direction: column; gap: 10px; flex-shrink: 0; }
+    .qr-tile { position: relative; width: 196px; padding: 12px; border-radius: 12px; background: #fff; border: 1px solid var(--separator); overflow: hidden; transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease); }
+    :root[data-theme="dark"] .qr-tile { border-color: transparent; }
+    @media (hover: hover) { .qr-tile:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3); } }
+    .qr-tile .qr { display: block; width: 172px; height: 172px; }
+    .qr-caption { font-size: var(--fs-xs); color: var(--text-tertiary); padding-left: 2px; }
+    .qr .qm { fill: #0b0b12; } .qr .qf { fill: #5e5ce6; }
+    /* Reveal: the mark pops first, then the modules in rings around it, 380 ms each. */
+    .qr .qm, .qr .qf { transform-box: fill-box; transform-origin: center; animation: qr-ring 0.38s var(--ease) both; animation-delay: calc(var(--qr-wait, 0ms) + 160ms + var(--r, 0) * 40ms); }
+    @keyframes qr-ring { from { opacity: 0; transform: scale(0.6); } }
+    .qr-mark { overflow: visible; transform-box: fill-box; transform-origin: center; animation: mark-pop 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: var(--qr-wait, 0ms); }
+    @keyframes mark-pop { from { opacity: 0; transform: scale(0.4); } }
+    /* Then a soft accent band crosses the code twice and stops. */
+    .qr-sweep { position: absolute; left: 0; right: 0; top: 0; height: 36%; pointer-events: none; background: linear-gradient(180deg, transparent, color-mix(in srgb, #5e5ce6 26%, transparent) 50%, transparent); transform: translateY(-110%); animation: qr-sweep 1.6s ease-in-out 2 both; animation-delay: calc(var(--qr-wait, 0ms) + 0.9s); }
+    @keyframes qr-sweep { to { transform: translateY(300%); } }
+    .qr-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .qr-name { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; }
+    .qr-name span { display: flex; flex-direction: column; min-width: 0; }
+    .qr-name strong { font-size: var(--fs-lg); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .qr-name small { font-size: var(--fs-sm); color: var(--text-secondary); }
+    .qr-facts { margin: 0; border-top: 1px solid var(--separator); }
+    .qr-facts > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--separator); }
+    .qr-facts dt { grid-column: 1; font-size: var(--fs-xs); color: var(--text-tertiary); }
+    .qr-facts dd { grid-column: 1; margin: 0; font-size: var(--fs-sm); font-weight: 500; color: var(--text-primary); overflow-wrap: normal; word-break: keep-all; }
+    .qr-facts dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-md); letter-spacing: 0.06em; }
+    .qr-facts .copy-btn { grid-column: 2; grid-row: 1 / 3; }
+    .copy-btn { width: 30px; height: 30px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-secondary); display: grid; place-items: center; transition: background 0.15s ease, color 0.15s ease; }
+    @media (hover: hover) { .copy-btn:hover:not(.is-done) { background: var(--hover); color: var(--text-primary); } }
+    .copy-btn.is-done { background: var(--ok-bg); color: var(--ok-text); }
+    .btn.is-done { background: var(--ok-bg); color: var(--ok-text); }
+    .qr-note { margin: 12px 0 0; font-size: var(--fs-xs); line-height: 1.5; color: var(--text-tertiary); text-wrap: pretty; }
+    @media (max-width: 900px) {
+      .scrim { align-items: flex-end; padding: 0; }
+      .modal { width: 100%; border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: 28px; animation: sheet-in 0.32s var(--ease) both; }
+      .qr-layout { flex-direction: column; align-items: center; gap: 16px; }
+      .qr-side { align-items: center; }
+      .qr-who { width: 100%; }
+      @keyframes sheet-in { from { transform: translateY(100%); } }
+    }
+    @media (prefers-reduced-motion: reduce) { .qr .qm, .qr .qf, .qr-mark, .qr-sweep, .modal { animation: none; } .qr-tile:hover { transform: none; } }
+    .modal h2 { margin: 0; font-size: var(--fs-lg); font-weight: 700; }
+    .modal p { margin: 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+    .sheet { width: min(360px, 100%); }
+    .sheet-head { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 8px 0 4px; }
+    .sheet-head strong { font-size: var(--fs-xl); font-weight: 700; }
+    .sheet-head span { font-size: var(--fs-sm); color: var(--text-secondary); }
+    .sheet-list { display: flex; flex-direction: column; border-top: 1px solid var(--separator); }
+    .sheet-item { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 4px; border: 0; border-bottom: 1px solid var(--separator); background: transparent; color: var(--text-primary); font-size: var(--fs-base); text-align: left; width: 100%; }
+    .sheet-item .ico { color: var(--text-secondary); }
+    .sheet-item > span { flex: 1; }
+    .sheet-item small { font-size: var(--fs-xs); color: var(--text-tertiary); }
+    .sheet-item.danger { color: var(--danger); } .sheet-item.danger .ico { color: var(--danger); }
+    .switch { width: 40px; height: 24px; border-radius: 12px; border: 0; background: var(--surface-3); border: 1px solid var(--separator); position: relative; flex-shrink: 0; transition: background 0.15s ease; }
+    .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.15s var(--ease); }
+    .switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+    .switch[aria-checked="true"]::after { transform: translateX(16px); }
+    .safety { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-sm); letter-spacing: 0.08em; line-height: 1.7; text-align: center; color: var(--text-secondary); padding: 10px; border-radius: var(--r-sm); background: var(--surface-1); }
+    .ok-note { padding: 10px 12px; border-radius: var(--r-sm); background: var(--ok-bg); color: var(--ok-text); font-size: var(--fs-sm); font-weight: 600; display: flex; gap: 7px; align-items: center; }
+    .viewer { position: fixed; inset: 0; z-index: 65; background: rgba(0, 0, 0, 0.92); display: flex; align-items: center; justify-content: center; animation: fade-in 0.15s ease; }
+    .viewer .photo { width: min(90vw, 900px); aspect-ratio: 4 / 3; border-radius: 4px; cursor: zoom-out; }
+    .viewer .icon-btn { position: absolute; top: 16px; right: 16px; color: #fff; }
+    .viewer figcaption { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; color: rgba(255,255,255,0.8); font-size: var(--fs-sm); }
+    .toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); z-index: 80; padding: 10px 16px; border-radius: var(--r-full); background: var(--surface-3); border: 1px solid var(--separator); color: var(--text-primary); font-size: var(--fs-sm); font-weight: 500; box-shadow: var(--shadow-md); animation: bubble-in 0.2s var(--ease); white-space: nowrap; }
+
+    /* ---------------------------------------------------------------- calls -- */
+    .call { position: fixed; inset: 0; z-index: 66; background: #0a0a0e; color: #fff; overflow: hidden; display: flex; flex-direction: column; }
+    .call::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 50% at 50% 40%, rgba(100, 100, 242, 0.1), transparent 70%); pointer-events: none; }
+    .call-top { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; align-items: flex-start; justify-content: space-between; z-index: 3; }
+    .call-badge { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 9px; border: 0; border-radius: var(--r-full); background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.78); font-size: var(--fs-xs); font-weight: 600; }
+    .call-badge.warn { color: #f5c76a; }
+    .call-badge .ico { color: currentColor; }
+    .call-safety { position: absolute; top: 38px; left: 0; width: 300px; padding: 14px; border-radius: 14px; background: #17171d; border: 1px solid #2a2a31; box-shadow: var(--shadow-md); display: flex; flex-direction: column; gap: 10px; color: #fff; text-align: left; }
+    .call-safety strong { font-size: var(--fs-md); }
+    .call-safety p { margin: 0; font-size: var(--fs-xs); line-height: 1.5; color: #a6a6b0; }
+    .safety-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--fs-sm); letter-spacing: 0.06em; text-align: center; color: #e6e6ee; }
+    .call-min { color: rgba(255, 255, 255, 0.78); }
+    .call-min:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+    .call-centre { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding-bottom: 60px; }
+    .call-face { position: relative; margin-bottom: 14px; }
+    .avatar-xl { width: 112px; height: 112px; font-size: 46px; }
+    .call-face .ring { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(100, 100, 242, 0.5); opacity: 0; pointer-events: none; }
+    .call-face.ringing .ring { animation: call-ring 2s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+    .call-face.ringing .ring:nth-child(3) { animation-delay: 0.7s; }
+    @keyframes call-ring { 0% { transform: scale(1); opacity: 0.8; } 100% { transform: scale(1.9); opacity: 0; } }
+    .call-name { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .call-status { font-size: var(--fs-xl); color: #a6a6b0; font-variant-numeric: tabular-nums; min-height: 28px; }
+    .mic-meter { display: inline-flex; align-items: center; gap: 2px; height: 14px; margin-top: 6px; color: #a6a6b0; }
+    .mic-meter i { width: 3px; height: 100%; border-radius: 1.5px; background: currentColor; animation: rec-bar 1s ease-in-out infinite; }
+    .mic-meter i:nth-child(2) { animation-duration: 0.8s; } .mic-meter i:nth-child(3) { animation-duration: 1.2s; } .mic-meter i:nth-child(4) { animation-duration: 0.9s; } .mic-meter i:nth-child(5) { animation-duration: 1.1s; }
+    .call-remote { position: absolute; inset: 0; display: grid; place-items: center; }
+    .call-remote-pic { position: relative; width: 100%; height: 100%; background: linear-gradient(160deg, #3a2f2a 0%, #6b5747 35%, #c9a27a 70%, #e9d6b7 100%); }
+    .call-remote-pic::after { content: ""; position: absolute; inset: 0; background: radial-gradient(70% 60% at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.45) 100%); }
+    .call-remote.contain .call-remote-pic { width: min(100%, calc((100vh - 0px) * 16 / 9)); aspect-ratio: 16 / 9; height: auto; max-height: 100%; }
+    .call-remote.cover .call-remote-pic { width: 100%; height: 100%; }
+    .call-topbar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 14px; border-radius: var(--r-full); background: rgba(10, 10, 14, 0.62); backdrop-filter: blur(10px); font-size: var(--fs-sm); }
+    .call-topbar strong { font-weight: 600; }
+    .call-topbar .call-clock { color: #a6a6b0; font-variant-numeric: tabular-nums; }
+    .call-topbar .mic-meter { margin: 0; height: 12px; }
+    .call-self { position: absolute; top: 58px; right: 14px; width: 160px; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; background: linear-gradient(160deg, #2a2a2e, #4a4a52); border: 1px solid rgba(255, 255, 255, 0.12); display: flex; align-items: flex-end; padding: 8px; z-index: 3; }
+    .call-self span { font-size: var(--fs-2xs); font-weight: 600; color: rgba(255, 255, 255, 0.8); background: rgba(0, 0, 0, 0.4); padding: 2px 7px; border-radius: var(--r-full); }
+    .call-dock { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 3; display: flex; gap: 22px; padding: 10px 18px 8px; border-radius: 28px; background: rgba(23, 23, 29, 0.85); border: 1px solid rgba(255, 255, 255, 0.08); backdrop-filter: blur(10px); }
+    .dock-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: transparent; color: #fff; font-size: var(--fs-xs); font-weight: 500; padding: 0; width: 56px; }
+    .dock-btn > span { width: 50px; height: 50px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.14); transition: background 0.15s ease, color 0.15s ease; }
+    .dock-btn > span .ico { width: 22px; height: 22px; }
+    .dock-btn.on > span { background: #fff; color: #0b0b12; }
+    .dock-btn.end > span { background: #e5484d; }
+    @media (hover: hover) { .dock-btn:not(.on):not(.end):hover > span { background: rgba(255, 255, 255, 0.22); } .dock-btn.end:hover > span { background: #f05b60; } }
+    .call-pill { position: fixed; z-index: 67; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; background: #1f7a3f; color: #fff; box-shadow: var(--shadow-md); }
+    :root[data-theme="light"] .call-pill { background: #1b7e3f; }
+    .call-pill .live { width: 8px; height: 8px; border-radius: 50%; background: #7ddea0; animation: rec-pulse 1.6s ease-in-out infinite; flex-shrink: 0; }
+    .pill-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+    .pill-who strong { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pill-who .call-clock { font-size: var(--fs-xs); color: rgba(255, 255, 255, 0.78); font-variant-numeric: tabular-nums; }
+    .call-pill .icon-btn { width: 32px; height: 32px; color: #fff; }
+    .call-pill .icon-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+    .call-pill .pill-end { background: rgba(0, 0, 0, 0.25); border-radius: var(--r-full); }
+    @media (max-width: 900px) {
+      .call-remote.contain .call-remote-pic { width: 100%; height: 100%; aspect-ratio: auto; }
+      .call-topbar { top: 56px; }
+      .call-topbar strong { white-space: nowrap; }
+      .call-self { width: 110px; top: 100px; }
+      .call-dock { gap: 14px; padding: 8px 12px 6px; bottom: 22px; }
+      .dock-btn { width: 52px; }
+      .call-pill { padding-left: 16px; }
+    }
+    @media (prefers-reduced-motion: reduce) { .call-face.ringing .ring, .mic-meter i, .call-pill .live { animation: none; } }
+
+    /* ------------------------------------------------------------- settings -- */
+    .set-view { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--canvas); }
+    .set-body { flex: 1; overflow-y: auto; padding: 24px 32px 48px; }
+    .set-body h2 { margin: 0 0 6px; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; }
+    .set-body > p { margin: 0 0 20px; color: var(--text-secondary); font-size: var(--fs-sm); max-width: 48ch; line-height: 1.5; }
+    .set-group { max-width: 560px; border: 1px solid var(--separator); border-radius: var(--r-md); background: var(--surface-1); overflow: hidden; margin-bottom: 18px; }
+    .set-row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 14px; border-bottom: 1px solid var(--separator); }
+    .set-row:last-child { border-bottom: 0; }
+    .set-row .copy { flex: 1; min-width: 0; }
+    .set-row .copy strong { display: block; font-size: var(--fs-base); font-weight: 600; }
+    .set-row .copy span { display: block; font-size: var(--fs-sm); color: var(--text-secondary); }
+    .set-row .ico { color: var(--text-secondary); }
+    .seg { display: inline-flex; background: var(--surface-3); border: 1px solid var(--separator); border-radius: var(--r-full); padding: 2px; }
+    .seg button { border: 0; background: transparent; color: var(--text-secondary); padding: 5px 12px; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 600; }
+    .seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+    .set-row .btn.text { height: 32px; }
+    .set-row-button { width: 100%; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+    @media (hover: hover) { .set-row-button:hover { background: var(--hover); } }
+    .set-note { font-size: var(--fs-xs); color: var(--text-tertiary); }
+    .dev-head { display: flex; align-items: center; gap: 14px; padding: 2px 0 4px; }
+    .dev-tile { width: 56px; height: 56px; border-radius: 14px; background: var(--surface-1); border: 1px solid var(--separator); display: grid; place-items: center; color: var(--text-secondary); flex-shrink: 0; }
+    .dev-tile .ico { width: 26px; height: 26px; }
+    .dev-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .dev-head-text strong { font-size: var(--fs-lg); font-weight: 600; }
+    .dev-head-text span { font-size: var(--fs-sm); color: var(--text-secondary); }
+    .dev-head-text span.dev-active { color: var(--online); }
+    .dev-facts dd.mono { font-size: var(--fs-sm); letter-spacing: 0.02em; }
+    .dev-rename { display: flex; flex-direction: column; gap: 8px; }
+    .dev-rename label { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-xs); color: var(--text-secondary); }
+    .btn.text.danger-text { color: var(--danger); }
+
+    /* ------------------------------------------- proposal controls (not UI) -- */
+    .proposal { position: fixed; right: 16px; bottom: 68px; z-index: 9; display: flex; align-items: center; gap: 14px; padding: 8px 8px 8px 14px; border-radius: var(--r-full); background: var(--surface-2); border: 1px solid var(--separator); box-shadow: var(--shadow-md); font-size: var(--fs-xs); color: var(--text-secondary); }
+    .proposal label { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* ------------------------------------------------------------ mobile --- */
+    .tab-bar { display: none; }
+    @media (max-width: 900px) {
+      .rail { display: none; }
+      .shell { flex-direction: column; }
+      .pane { width: 100%; border-right: 0; }
+      .pane.hidden-mobile, .thread.hidden-mobile, .set-view.hidden-mobile { display: none; }
+      .tab-bar { display: flex; flex-shrink: 0; height: 62px; border-top: 1px solid var(--separator); background: var(--bg); }
+      .tab-bar button { flex: 1; border: 0; background: transparent; color: var(--text-secondary); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px; font-weight: 600; position: relative; }
+      .tab-bar button.active { color: var(--accent-text); }
+      .tab-bar .rail-badge { top: 6px; right: calc(50% - 22px); }
+      .thread-head { height: 58px; padding: 0 8px 0 4px; gap: 10px; }
+      .thread-head .avatar { width: 38px; height: 38px; font-size: var(--fs-sm); }
+      .back-mobile { display: grid; }
+      .thread-actions .icon-btn:nth-child(n + 3) { display: none; }
+      .messages-inner { padding: 14px 12px 16px; }
+      .bubble { max-width: 84%; }
+      .compose { padding: 7px 8px; }
+      .compose-wide { display: none; }
+      .compose-plus { display: grid; }
+      .reply-bar-icon { width: 38px; }
+      .hover-actions { display: none; }
+      .jump-latest { right: 14px; bottom: 70px; }
+      .set-body { padding: 16px 12px 48px; }
+      .call-self { right: 12px; bottom: 140px; width: 110px; }
+      .proposal { right: 8px; bottom: 132px; padding: 5px 5px 5px 10px; gap: 8px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; } }
+
+  </style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="bm-bg" x1="0.15" y1="0" x2="0.85" y2="1"><stop offset="0" stop-color="#7D7BFA"/><stop offset="0.55" stop-color="#5E5CE6"/><stop offset="1" stop-color="#3432B8"/></linearGradient>
+      <radialGradient id="bm-glow" cx="0.5" cy="0.3" r="0.6"><stop offset="0" stop-color="#fff" stop-opacity="0.18"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+      <linearGradient id="bm-cloth" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E4E3FF"/></linearGradient>
+      <linearGradient id="bm-fold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4B49D8" stop-opacity="0"/><stop offset="1" stop-color="#4B49D8" stop-opacity="0.24"/></linearGradient>
+      <linearGradient id="bm-side" x1="0" y1="0" x2="1" y2="0"><stop offset="0.7" stop-color="#4B49D8" stop-opacity="0"/><stop offset="1" stop-color="#4B49D8" stop-opacity="0.12"/></linearGradient>
+      <filter id="bm-shadow" x="-20%" y="-20%" width="140%" height="150%"><feGaussianBlur stdDeviation="22"/></filter>
+      <clipPath id="bm-tile"><rect width="1024" height="1024" rx="230"/></clipPath>
+      <clipPath id="bm-veil"><path d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z"/></clipPath>
+      <g id="bm"><g clip-path="url(#bm-tile)"><rect width="1024" height="1024" fill="url(#bm-bg)"/><rect width="1024" height="1024" fill="url(#bm-glow)"/><g transform="translate(512 518) scale(0.9) translate(-512 -528)"><path d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="#0A0930" opacity="0.35" filter="url(#bm-shadow)" transform="translate(0 26)"/><path d="M512 204C686 204 788 330 792 500C795 612 806 690 818 752C826 792 806 818 776 818C742 818 720 752 684 752C646 752 628 824 590 824C552 824 532 758 494 758C446 758 400 790 340 818C300 836 250 850 206 852C236 820 242 776 236 720C230 650 230 580 232 500C236 330 338 204 512 204Z" fill="url(#bm-cloth)"/><g clip-path="url(#bm-veil)"><rect x="200" y="200" width="620" height="660" fill="url(#bm-side)"/><path d="M596 430C640 530 676 640 684 752C704 790 730 812 760 830C748 690 690 530 596 430Z" fill="url(#bm-fold)"/><path d="M424 440C468 540 490 650 494 758C512 790 540 816 572 836C562 690 510 540 424 440Z" fill="url(#bm-fold)"/></g></g></g></g>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+      <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M17 17H4a1 1 0 0 1-.74-1.673C4.59 13.956 6 12.499 6 8a6 6 0 0 1 .258-1.742"/><path d="m2 2 20 20"/><path d="M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.707 6.05"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></symbol>
+      <symbol id="i-video" viewBox="0 0 24 24"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></symbol>
+      <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+      <symbol id="i-check2" viewBox="0 0 24 24"><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"/></symbol>
+      <symbol id="i-reply" viewBox="0 0 24 24"><path d="M20 20v-7a4 4 0 0 0-4-4H4"/><path d="M9 14 4 9l5-5"/></symbol>
+      <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24"><line x1="2" x2="22" y1="2" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><line x1="12" x2="12" y1="19" y2="22"/></symbol>
+      <symbol id="i-phone-off" viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="22" x2="2" y1="2" y2="22"/></symbol>
+      <symbol id="i-video-off" viewBox="0 0 24 24"><path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+      <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+      <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+      <symbol id="i-smartphone" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></symbol>
+      <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></symbol>
+      <symbol id="i-qr" viewBox="0 0 24 24"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></symbol>
+    </defs>
+  </svg>
+  <div class="shell">
+    <nav class="rail" aria-label="Main">
+      <div class="rail-tabs">
+        <div class="rail-mark" aria-hidden="true"><svg viewBox="0 0 1024 1024"><use href="#bm"/></svg></div>
+        <button class="rail-btn" data-tab="chats" aria-label="Chats"><svg class="ico"><use href="#i-chat"/></svg><span class="rail-badge" data-badge="chats"></span></button>
+        <button class="rail-btn" data-tab="contacts" aria-label="Contacts"><svg class="ico"><use href="#i-users"/></svg><span class="rail-badge" data-badge="contacts"></span></button>
+        <button class="rail-btn" data-tab="settings" aria-label="Settings"><svg class="ico"><use href="#i-settings"/></svg></button>
+      </div>
+      <button class="rail-me" id="rail-me" aria-label="Account" aria-haspopup="menu" aria-expanded="false"><span class="avatar avatar-sm av-pink">NV</span></button>
+    </nav>
+    <div class="shell-body">
+      <section class="pane" id="pane" aria-label="Chats"></section>
+      <main class="thread" id="thread"></main>
+      <section class="set-view hidden" id="set-view"></section>
+    </div>
+    <nav class="tab-bar" aria-label="Main">
+      <button data-tab="chats"><svg class="ico"><use href="#i-chat"/></svg>Chats<span class="rail-badge" data-badge="chats"></span></button>
+      <button data-tab="contacts"><svg class="ico"><use href="#i-users"/></svg>Contacts<span class="rail-badge" data-badge="contacts"></span></button>
+      <button data-tab="settings"><svg class="ico"><use href="#i-settings"/></svg>Settings</button>
+    </nav>
+  </div>
+  <div id="layer"></div>
+  <input type="file" id="file-picker" class="hidden" />
+  <input type="file" id="photo-picker" class="hidden" accept="image/*,video/*" />
+
+  <div class="proposal" role="group" aria-label="Proposal controls">
+    <label>Outgoing <span class="seg" data-attr="data-out"><button type="button" data-value="tinted" aria-pressed="true">Tinted</button><button type="button" data-value="solid" aria-pressed="false">Solid (today)</button></span></label>
+    <label>Theme <span class="seg" data-attr="data-theme"><button type="button" data-value="dark" aria-pressed="true">Dark</button><button type="button" data-value="light" aria-pressed="false">Light</button></span></label>
+  </div>
+
+  <script>
+  (function () {
+    "use strict";
+    /* ------------------------------------------------------------- data --
+       A browser's worth of state. What a real client gets from the server or the
+       OS (delivery, the other side, recording, calls, notifications) is played
+       back here with timers. */
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const icon = (name, size = "") => `<svg class="ico ${size}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+    const now = () => new Date();
+    const at = (daysAgo, h, m) => { const d = now(); d.setDate(d.getDate() - daysAgo); d.setHours(h, m, 0, 0); return d; };
+    const ago = (minutes) => new Date(Date.now() - minutes * 60e3);
+    let nextId = 1;
+    const mid = () => "m" + nextId++;
+
+    const me = { id: "me", name: "Niklas Vorberg", username: "niklas", initials: "NV", av: "av-pink" };
+    const QUICK = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+    const msg = (o) => Object.assign({ id: mid(), type: "text", mine: false, status: "read", reactions: {} }, o);
+    const chats = [
+      { id: "mara", name: "Mara Lindqvist", username: "mara.l", initials: "ML", av: "", online: true, muted: false, unread: 0, typing: false, verified: true,
+        replies: ["Almost there, 2 min", "Got a coffee for you too ☕", "Platform changed to 6, hurry", "Train's here. Where are you?"],
+        messages: [
+          msg({ text: "Found a cheaper connection for Friday, want me to book it?", time: at(1, 21, 18) }),
+          msg({ mine: true, text: "Yes please, the 18:40 one if it’s still there", time: at(1, 21, 24) }),
+          msg({ text: "Did you get the tickets?", time: ago(16) }),
+          msg({ mine: true, text: "Yes, both. Sent them to your phone too", time: ago(13) }),
+          msg({ mine: true, text: "Here’s the connection https://bahn.de/v/4821-berlin-hamburg", time: ago(13), link: { url: "https://bahn.de/v/4821-berlin-hamburg", site: "DB Navigator", title: "Berlin Hbf → Hamburg Hbf, 18:40", desc: "ICE 1532 · 1 h 45 min · Platform 4" } }),
+          msg({ type: "voice", duration: 42, time: ago(9) }),
+          msg({ text: "Perfect. Train’s at 18:40, platform 4", time: ago(5), reactions: { "👍": ["me"] } }),
+          msg({ text: "I’ll be at the kiosk by the entrance", time: ago(5) }),
+        ] },
+      { id: "jonas", name: "Jonas Reinholt", username: "jonasr", initials: "JR", av: "av-orange", online: false, muted: false, unread: 1, verified: false,
+        replies: ["Haha yes", "Let me check", "Sounds good to me", "Can we talk tomorrow?"],
+        messages: [
+          msg({ mine: true, text: "How did the move go?", time: ago(130) }),
+          msg({ text: "Done by three. The sofa was the fun part", time: ago(118) }),
+          msg({ type: "photo", time: ago(115), status: "read" }),
+          msg({ type: "video", duration: 12, time: ago(112), status: "read" }),
+        ] },
+      { id: "priya", name: "Priya Natarajan", username: "priya", initials: "PN", av: "av-green", online: true, muted: false, unread: 2, verified: true,
+        replies: ["Thanks, that one opens", "Perfect, sending it to the team", "One more thing: is page 3 final?"],
+        messages: [
+          msg({ mine: true, type: "file", fileName: "Q3 invoice.pdf", fileSize: "184 KB", time: ago(200) }),
+          msg({ text: "Thanks!", time: ago(180) }),
+          msg({ text: "Can you resend the PDF? The first one didn’t open", time: ago(170) }),
+        ] },
+      { id: "tomasz", name: "Tomasz Wierzbicki", username: "tomasz.w", initials: "TW", av: "av-yellow", online: false, muted: false, unread: 0, newReactions: true, verified: false,
+        replies: ["👍", "Will do", "Let's see on Thursday"],
+        messages: [
+          msg({ mine: true, text: "Sent you the recording from the rehearsal", time: at(1, 19, 2), reactions: { "❤️": ["tomasz"] } }),
+          msg({ type: "voice", duration: 42, time: at(1, 19, 30) }),
+        ] },
+      { id: "elif", name: "Elif Demir", username: "elif", initials: "ED", av: "av-blue", online: false, muted: true, unread: 4, verified: true,
+        replies: ["ok", "see you", "👋"],
+        messages: [
+          msg({ text: "Are we still on for 7?", time: at(1, 12, 4) }), msg({ text: "I can do 7:30 too", time: at(1, 12, 5) }),
+          msg({ text: "Let me know", time: at(1, 12, 5) }), msg({ text: "ok, see you there", time: at(1, 18, 40) }),
+        ] },
+      { id: "soren", name: "Søren Kjær", username: "soren", initials: "SK", av: "av-violet", online: false, muted: false, unread: 0, verified: false,
+        replies: ["Any time", "Next week works"],
+        messages: [ msg({ mine: true, text: "Thanks for the lift", time: at(2, 9, 12) }), msg({ text: "Thanks again for yesterday", time: at(2, 9, 40) }) ] },
+      { id: "anneliese", name: "Anneliese Bachmann-Hoffmeister", username: "a.bachmann", initials: "AB", av: "av-grey", online: false, muted: false, unread: 0, verified: false,
+        replies: ["Got it, thanks", "The new phone works"],
+        messages: [ msg({ text: "New phone, can you send the invite again?", time: at(3, 11, 2) }), msg({ mine: true, text: "Sent the invite to your new phone", time: at(3, 11, 20) }) ] },
+      { id: "lucia", name: "Lucía Fernández", username: "lucia.f", initials: "LF", av: "av-pink", online: false, muted: false, unread: 0, verified: false,
+        replies: ["🎉🎉", "Gracias!"],
+        messages: [ msg({ text: "I got the job!!", time: at(4, 20, 1) }), msg({ mine: true, text: "🎉", time: at(4, 20, 3) }) ] },
+      { id: "hiroshi", name: "Hiroshi Okada", username: "hokada", initials: "HO", av: "av-blue", online: false, muted: false, unread: 0, verified: true,
+        replies: ["Let me read it", "Looks good overall"],
+        messages: [ msg({ type: "file", fileName: "Q4 roadmap.pdf", fileSize: "2.1 MB", time: at(5, 10, 20) }) ] },
+    ];
+    const contactsExtra = [{ id: "req1", name: "Dana Whitfield", username: "dana.w", initials: "DW", av: "av-green", request: true }];
+    const devices = [
+      { id: "d1", name: "iPhone 15", kind: "smartphone", type: "iPhone", when: "Active now", linked: "12 Mar 2026, 09:14", last: "Now", current: false, uid: "7f3a9c2e-5b1d-4e8a-9c0f-2d6b8a1e4f73" },
+      { id: "d2", name: "Safari on MacBook Pro", kind: "monitor", type: "Web browser", when: "This browser", linked: "2 Nov 2026, 13:48", last: "Now", current: true, uid: "c41e2b7a-8d93-4f06-b2a1-6e5d0c9f8a21" },
+      { id: "d3", name: "Firefox on Linux", kind: "monitor", type: "Web browser", when: "3 days ago", linked: "18 Oct 2026, 20:02", last: "30 Oct 2026, 18:41", current: false, uid: "9b2d6e4f-1a7c-4d35-8e90-f3c2b1a0d5e6" },
+    ];
+    const state = { tab: "chats", chatId: "mara", filter: "", replyTo: null, searchOpen: false, query: "", menu: null, notice: true, notifications: false, sounds: true, logo: "detailed", mobileList: false, settingsSection: "appearance", unseenBelow: 0 };
+
+    /* ---------------------------------------------------------- QR code --
+       A small QR encoder (byte mode, versions 1–10, error correction H so the
+       mark can sit in the middle). Returns the module grid and which modules
+       are finder patterns, so the page can draw and animate them itself. */
+    function qrEncode(text, eclName = "H") {
+      const ECL = { L: [1, 0], M: [0, 1], Q: [3, 2], H: [2, 3] }[eclName];
+      const ECC_PER_BLOCK = [
+        [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+        [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+        [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+        [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30]];
+      const BLOCKS = [
+        [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+        [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+        [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+        [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81]];
+      const bytes = Array.from(new TextEncoder().encode(text));
+      const rawModules = (v) => { let r = (16 * v + 128) * v + 64; if (v >= 2) { const a = Math.floor(v / 7) + 2; r -= (25 * a - 10) * a - 55; if (v >= 7) r -= 36; } return r; };
+      const capacityBytes = (v) => Math.floor(rawModules(v) / 8) - ECC_PER_BLOCK[ECL[1]][v] * BLOCKS[ECL[1]][v];
+      let ver = 1;
+      while (ver < 40 && (4 + (ver <= 9 ? 8 : 16) + bytes.length * 8) > capacityBytes(ver) * 8) ver++;
+      const size = ver * 4 + 17;
+      const bits = [];
+      const push = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+      push(4, 4); push(bytes.length, ver <= 9 ? 8 : 16); bytes.forEach((b) => push(b, 8));
+      const cap = capacityBytes(ver) * 8;
+      push(0, Math.min(4, cap - bits.length)); while (bits.length % 8) bits.push(0);
+      for (let pad = 0xec; bits.length < cap; pad ^= 0xec ^ 0x11) push(pad, 8);
+      const data = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(""), 2));
+      const gfMul = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z; };
+      const rsGen = (deg) => { let r = Array(deg).fill(0); r[deg - 1] = 1; let root = 1; for (let i = 0; i < deg; i++) { for (let j = 0; j < deg; j++) { r[j] = gfMul(r[j], root); if (j + 1 < deg) r[j] ^= r[j + 1]; } root = gfMul(root, 2); } return r; };
+      const rsRem = (dat, gen) => { const r = Array(gen.length).fill(0); for (const b of dat) { const f = b ^ r.shift(); r.push(0); gen.forEach((g, i) => { r[i] ^= gfMul(g, f); }); } return r; };
+      const numBlocks = BLOCKS[ECL[1]][ver], eccLen = ECC_PER_BLOCK[ECL[1]][ver], rawCw = Math.floor(rawModules(ver) / 8);
+      const shortBlocks = numBlocks - (rawCw % numBlocks), shortLen = Math.floor(rawCw / numBlocks);
+      const gen = rsGen(eccLen), blocks = [];
+      for (let i = 0, k = 0; i < numBlocks; i++) { const len = shortLen - eccLen + (i < shortBlocks ? 0 : 1); const dat = data.slice(k, k + len); k += len; const ecc = rsRem(dat, gen); if (i < shortBlocks) dat.push(0); blocks.push(dat.concat(ecc)); }
+      const codewords = [];
+      for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - eccLen || j >= shortBlocks) codewords.push(b[i]); });
+      const grid = Array.from({ length: size }, () => Array(size).fill(false));
+      const isFn = Array.from({ length: size }, () => Array(size).fill(false));
+      const finder = Array.from({ length: size }, () => Array(size).fill(false));
+      const set = (x, y, dark) => { if (x >= 0 && y >= 0 && x < size && y < size) { grid[y][x] = dark; isFn[y][x] = true; } };
+      const drawFinder = (cx, cy) => { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d = Math.max(Math.abs(dx), Math.abs(dy)); set(cx + dx, cy + dy, d !== 2 && d !== 4); if (cx + dx >= 0 && cy + dy >= 0 && cx + dx < size && cy + dy < size && d <= 3) finder[cy + dy][cx + dx] = true; } };
+      const drawAlign = (cx, cy) => { for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(cx + dx, cy + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); };
+      for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+      drawFinder(3, 3); drawFinder(size - 4, 3); drawFinder(3, size - 4);
+      const alignPos = (() => { if (ver === 1) return []; const n = Math.floor(ver / 7) + 2; const step = ver === 32 ? 26 : Math.ceil((ver * 4 + 4) / (n * 2 - 2)) * 2; const r = [6]; for (let pos = size - 7; r.length < n; pos -= step) r.splice(1, 0, pos); return r; })();
+      alignPos.forEach((px, i) => alignPos.forEach((py, j) => { if (!((i === 0 && j === 0) || (i === 0 && j === alignPos.length - 1) || (i === alignPos.length - 1 && j === 0))) drawAlign(px, py); }));
+      const drawFormat = (mask) => {
+        const d = (ECL[0] << 3) | mask; let rem = d; for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+        const f = ((d << 10) | rem) ^ 0x5412; const bit = (i) => ((f >>> i) & 1) === 1;
+        for (let i = 0; i <= 5; i++) set(8, i, bit(i)); set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+        for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+        for (let i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+        for (let i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+        set(8, size - 8, true);
+      };
+      drawFormat(0);
+      if (ver >= 7) { let rem = ver; for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1f25); const v = (ver << 12) | rem; for (let i = 0; i < 18; i++) { const b = ((v >>> i) & 1) === 1, a = size - 11 + (i % 3), c = Math.floor(i / 3); set(a, c, b); set(c, a, b); } }
+      let i = 0;
+      for (let right = size - 1; right >= 1; right -= 2) { if (right === 6) right = 5; for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) { const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - vert : vert; if (!isFn[y][x] && i < codewords.length * 8) { grid[y][x] = ((codewords[i >>> 3] >>> (7 - (i & 7))) & 1) === 1; i++; } } }
+      const MASKS = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => (x * y) % 2 + (x * y) % 3 === 0, (x, y) => ((x * y) % 2 + (x * y) % 3) % 2 === 0, (x, y) => ((x + y) % 2 + (x * y) % 3) % 2 === 0];
+      const applyMask = (m) => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!isFn[y][x] && MASKS[m](x, y)) grid[y][x] = !grid[y][x]; };
+      /* The standard mask score: runs, 2 × 2 blocks, finder look-alikes, dark balance. */
+      const penalty = () => {
+        let p = 0;
+        const countPatterns = (h) => { const n = h[1]; const core = n > 0 && h[2] === n && h[3] === n * 3 && h[4] === n && h[5] === n; return (core && h[0] >= n * 4 && h[6] >= n ? 1 : 0) + (core && h[6] >= n * 4 && h[0] >= n ? 1 : 0); };
+        const addRun = (h, run) => { if (h[0] === 0) run += size; h.pop(); h.unshift(run); };
+        const finish = (color, run, h) => { if (color) { addRun(h, run); run = 0; } run += size; addRun(h, run); return countPatterns(h); };
+        for (let y = 0; y < size; y++) { let color = false, run = 0; const h = [0, 0, 0, 0, 0, 0, 0]; for (let x = 0; x < size; x++) { if (grid[y][x] === color) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else { addRun(h, run); if (!color) p += countPatterns(h) * 40; color = grid[y][x]; run = 1; } } p += finish(color, run, h) * 40; }
+        for (let x = 0; x < size; x++) { let color = false, run = 0; const h = [0, 0, 0, 0, 0, 0, 0]; for (let y = 0; y < size; y++) { if (grid[y][x] === color) { run++; if (run === 5) p += 3; else if (run > 5) p++; } else { addRun(h, run); if (!color) p += countPatterns(h) * 40; color = grid[y][x]; run = 1; } } p += finish(color, run, h) * 40; }
+        for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = grid[y][x]; if (c === grid[y][x + 1] && c === grid[y + 1][x] && c === grid[y + 1][x + 1]) p += 3; }
+        let dark = 0; grid.forEach((r) => r.forEach((c) => { if (c) dark++; })); const k = Math.ceil(Math.abs(dark * 20 - size * size * 10) / (size * size)) - 1; return p + k * 10;
+      };
+      let best = 0, bestScore = Infinity;
+      for (let m = 0; m < 8; m++) { drawFormat(m); applyMask(m); const sc = penalty(); if (sc < bestScore) { bestScore = sc; best = m; } applyMask(m); }
+      drawFormat(best); applyMask(best);
+      return { size, version: ver, grid, finder, mask: best };
+    }
+
+    /* The code as SVG: every dark module a square with its ring index for the reveal, the finder
+       patterns in the accent, the mark on a white knock-out in the middle (error correction H
+       covers it). */
+    const INVITE_CODE = "NIKLAS7Q2X", INVITE_LINK = "https://shroud.corespace.de/u/NIKLAS7Q2X";
+    function qrSvg(text) {
+      const q = qrEncode(text, "H"); const n = q.size, mid = (n - 1) / 2, hole = Math.round(n * 0.3);
+      const inHole = (x, y) => Math.abs(x - mid) <= hole / 2 && Math.abs(y - mid) <= hole / 2;
+      let rects = "";
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (q.grid[y][x] && !inHole(x, y)) {
+        const ring = Math.round(Math.hypot(x - mid, y - mid) / 2.5);
+        rects += `<rect class="${q.finder[y][x] ? "qf" : "qm"}" x="${x}" y="${y}" width="1" height="1" rx="0.18" style="--r:${ring}"/>`;
+      }
+      const m = n * 0.24, mx = mid + 0.5 - m / 2;
+      return `<svg class="qr" viewBox="0 0 ${n} ${n}" role="img" aria-label="QR code for ${esc(text)}" shape-rendering="geometricPrecision">${rects}<svg class="qr-mark" x="${mx}" y="${mx}" width="${m}" height="${m}" viewBox="0 0 1024 1024"><use href="#bm"/></svg></svg>`;
+    }
+    /* Add contact: the field understands a username, a share code or an invite link, looks it
+       up (simulated, 400 ms) and shows who that is before anything is sent. */
+    const shareCodeOf = (c) => c.username.replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 5) + "9K2X";
+    function addContactDialog(morph = false) { (morph ? morphDialog : modal)(addContactHtml(), "modal"); lookup.state = null; }
+    function addContactHtml() {
+      return (`<div class="dialog-head"><h2>Add contact</h2><button class="icon-btn" data-act="close-layer" aria-label="Close">${icon("x", "ico-18")}</button></div>
+        <label class="lookup">${icon("search", "ico-18")}<input id="add-username" type="text" placeholder="Username, share code or invite link" autocomplete="off" autocapitalize="off" spellcheck="false" data-1p-ignore autofocus /></label>
+        <div class="lookup-result" id="lookup-result" aria-live="polite">${lookupHint()}</div>
+        <div class="dialog-foot"><button class="btn text" data-act="show-my-qr">${icon("qr", "ico-16")}Show my QR code</button><span style="flex:1"></span><button class="btn" id="lookup-go" data-act="send-request" disabled>Send request</button></div>`);
+    }
+    const lookupHint = () => `<p class="lookup-hint">Ask them for their username or share code, paste an invite link, or scan their code with the phone app. They get the request on their devices.</p>`;
+    const lookup = { timer: null, state: null };
+    function parseLookup(raw) {
+      const v = raw.trim();
+      if (!v) return null;
+      const link = v.match(/^(?:https?:\/\/)?([^/\s]+)\/u\/([A-Za-z0-9]+)\/?$/);
+      if (link) return link[1].toLowerCase() === "shroud.corespace.de" ? { kind: "code", code: link[2].toUpperCase() } : { kind: "badlink", host: link[1] };
+      if (/^https?:\/\//i.test(v)) return { kind: "badlink", host: v.replace(/^https?:\/\//i, "").split("/")[0] };
+      if (/^[A-Z0-9]{8,12}$/.test(v)) return { kind: "code", code: v };
+      return { kind: "user", name: v.replace(/^@/, "").toLowerCase() };
+    }
+    function runLookup(raw) {
+      const box = $("#lookup-result"), go = $("#lookup-go"); if (!box) return;
+      clearTimeout(lookup.timer); lookup.state = null; go.disabled = true; go.textContent = "Send request";
+      const q = parseLookup(raw);
+      if (!q) { box.innerHTML = lookupHint(); return; }
+      if (q.kind === "badlink") { box.innerHTML = `<p class="lookup-none">${esc(q.host)} isn’t a Shroud invite link. Invite links start with shroud.corespace.de/u/.</p>`; return; }
+      box.innerHTML = `<div class="lookup-row is-loading"><span class="avatar skeleton"></span><span class="lookup-lines"><i class="skeleton" style="width:140px"></i><i class="skeleton" style="width:84px"></i></span></div>`;
+      lookup.timer = setTimeout(() => {
+        let who = null, pending = null;
+        if (q.kind === "code") { if (q.code === INVITE_CODE) who = "me"; else { who = chats.find((c) => shareCodeOf(c) === q.code) || null; pending = contactsExtra.find((c) => c.request && shareCodeOf(c) === q.code) || null; } }
+        else { if (q.name === me.username) who = "me"; else { who = chats.find((c) => c.username === q.name) || null; pending = contactsExtra.find((c) => c.request && c.username === q.name) || null; if (!who && !pending && q.name.length >= 3) who = chats.find((c) => c.username.startsWith(q.name) || c.name.toLowerCase().startsWith(q.name)) || null; } }
+        if (who === "me") { box.innerHTML = `<div class="lookup-row">${avatar(me)}<span class="lookup-lines"><strong>${esc(me.name)}</strong><small>@${esc(me.username)}</small></span><span class="lookup-status">That’s you</span></div>`; return; }
+        if (pending) { lookup.state = { pending }; box.innerHTML = `<div class="lookup-row">${avatar(pending)}<span class="lookup-lines"><strong>${esc(pending.name)}</strong><small>@${esc(pending.username)}</small></span><span class="lookup-status">Sent you a request</span></div>`; go.disabled = false; go.textContent = "Accept"; return; }
+        if (!who) { box.innerHTML = `<p class="lookup-none">${q.kind === "code" ? `No one on shroud.corespace.de has the share code <b>${esc(q.code)}</b>.` : `No one on shroud.corespace.de is called <b>@${esc(q.name)}</b>.`}</p>`; return; }
+        const known = !who.isNew;
+        lookup.state = { who, known };
+        box.innerHTML = `<div class="lookup-row">${avatar(who, "", who.online)}<span class="lookup-lines"><strong>${esc(who.name)}</strong><small>@${esc(who.username)}${who.verified ? ` · ${icon("shield", "ico-13")} verified` : ""}</small></span><span class="lookup-status">${known ? "In your contacts" : "Not in your contacts"}</span></div>`;
+        go.disabled = false; go.textContent = known ? "Open chat" : "Send request";
+      }, 400);
+    }
+    function myQrDialog(morph = false) { (morph ? morphDialog : modal)(myQrHtml(), "modal modal-wide"); }
+    function myQrHtml() {
+      const code = INVITE_CODE.replace(/^(.{6})(.+)$/, "$1 $2");
+      return (`<div class="dialog-head"><h2>My QR code</h2><button class="icon-btn" data-act="close-layer" aria-label="Close">${icon("x", "ico-18")}</button></div>
+        <div class="qr-layout">
+          <div class="qr-side">
+            <div class="qr-tile" tabindex="0">${qrSvg(INVITE_LINK)}<span class="qr-sweep" aria-hidden="true"></span></div>
+            <span class="qr-caption">Scan with Shroud on your phone</span>
+          </div>
+          <div class="qr-who">
+            <div class="qr-name">${avatar(me, "avatar-sm")}<span><strong>${esc(me.name)}</strong><small>@${esc(me.username)}</small></span></div>
+            <dl class="qr-facts">
+              <div><dt>Share code</dt><dd class="mono">${code}</dd><button class="copy-btn" data-act="copy-text" data-copy="${INVITE_CODE}" aria-label="Copy share code" title="Copy">${icon("copy", "ico-14")}</button></div>
+              <div><dt>Invite link</dt><dd>${INVITE_LINK.replace(/^https?:\/\//, "").replace("/u/", "/u/<wbr>")}</dd><button class="copy-btn" data-act="copy-text" data-copy="${INVITE_LINK}" aria-label="Copy invite link" title="Copy">${icon("copy", "ico-14")}</button></div>
+            </dl>
+            <p class="qr-note">Both carry your username and your current identity key. A contact who adds you this way sees a verified safety number from the start.</p>
+          </div>
+        </div>
+        <div class="dialog-foot"><button class="btn text" data-act="add-contact-morph">${icon("user-plus", "ico-16")}Add a contact</button><span style="flex:1"></span><button class="btn" data-act="share-invite">${icon("share", "ico-16")}Share invite</button></div>`);
+    }
+    /* One device: what the server knows about it and its actions. This browser can be renamed;
+       another device can be removed, which asks for the password. */
+    function deviceDialog(d) {
+      modal(`<div class="dialog-head"><h2>${esc(d.name)}</h2><button class="icon-btn" data-act="close-layer" aria-label="Close">${icon("x", "ico-18")}</button></div>
+        <div class="dev-head"><span class="dev-tile">${icon(d.kind)}</span><span class="dev-head-text"><strong>${esc(d.name)}</strong><span class="${d.current ? "dev-active" : ""}">${d.current ? "This browser · Active now" : d.last === "Now" ? "Active now" : "Last active " + esc(d.last)}</span></span></div>
+        <dl class="qr-facts dev-facts">
+          <div><dt>Type</dt><dd>${esc(d.type)}</dd></div>
+          <div><dt>Linked</dt><dd>${esc(d.linked)}</dd></div>
+          <div><dt>Last active</dt><dd>${esc(d.last)}</dd></div>
+          <div><dt>Device ID</dt><dd class="mono">${d.uid.slice(0, 8)}…${d.uid.slice(-4)}</dd><button class="copy-btn" data-act="copy-text" data-copy="${d.uid}" aria-label="Copy device ID" title="Copy">${icon("copy", "ico-14")}</button></div>
+        </dl>
+        ${d.current ? `<form class="dev-rename hidden" id="dev-rename"><label>Device name<input class="field" id="dev-name" value="${esc(d.name)}" maxlength="64" autocomplete="off" /></label><p class="qr-note" style="margin:0">Encrypted — only your devices can read it.</p></form>` : ""}
+        <div class="dialog-foot">${d.current ? `<button class="btn text" data-act="dev-rename" data-id="${d.id}">Rename</button><span style="flex:1"></span><button class="btn hidden" id="dev-save" data-act="dev-save" data-id="${d.id}">Save</button>` : `<button class="btn text danger-text" data-act="remove-device" data-id="${d.id}">Remove device</button><span style="flex:1"></span><button class="btn secondary" data-act="close-layer">Done</button>`}</div>`);
+    }
+    function morph(btn, label) { if (btn.dataset.busy) return; btn.dataset.busy = "1"; const was = btn.innerHTML; btn.classList.add("is-done"); btn.innerHTML = btn.classList.contains("copy-btn") ? icon("check", "ico-14") : `${icon("check", "ico-13")}${label}`; setTimeout(() => { btn.innerHTML = was; btn.classList.remove("is-done"); delete btn.dataset.busy; }, 1600); }
+
+    /* ------------------------------------------------------- formatting -- */
+    const pad = (n) => String(n).padStart(2, "0");
+    const clock = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const dayKey = (d) => d.toDateString();
+    const daysBetween = (a, b) => Math.round((new Date(b.toDateString()) - new Date(a.toDateString())) / 864e5);
+    const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const dayLabel = (d) => { const n = daysBetween(d, now()); return n === 0 ? "Today" : n === 1 ? "Yesterday" : n < 7 ? WEEKDAYS[d.getDay()] : `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+    const rowTime = (d) => { const n = daysBetween(d, now()); return n === 0 ? clock(d) : n === 1 ? "Yesterday" : n < 7 ? WEEKDAYS[d.getDay()] : `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+    const dur = (s) => `${Math.floor(s / 60)}:${pad(Math.round(s % 60))}`;
+    const preview = (m) => m.deleted ? "Message deleted" : m.type === "photo" ? "Photo" : m.type === "video" ? "Video" : m.type === "voice" ? `Voice message · ${dur(m.duration)}` : m.type === "file" ? `Document · ${m.fileName}` : m.text;
+    const chat = () => chats.find((c) => c.id === state.chatId);
+    const avatar = (c, size = "", online = false) => `<span class="avatar ${size} ${c.av}">${esc(c.initials)}${online ? '<span class="avatar-dot"></span>' : ""}</span>`;
+    const highlight = (text) => {
+      const t = esc(text);
+      if (!state.query) return t;
+      const q = esc(state.query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return t.replace(new RegExp(q, "gi"), (m) => `<mark>${m}</mark>`);
+    };
+    const linkify = (text) => highlight(text).replace(/https?:\/\/[^\s<]+/g, (u) => `<a class="msg-link" href="${u}" data-link>${u.replace(/^https?:\/\//, "")}</a>`);
+
+    /* ----------------------------------------------------------- render -- */
+    function badges() {
+      const unread = chats.reduce((n, c) => n + (c.muted ? 0 : c.unread), 0);
+      const requests = contactsExtra.filter((c) => c.request).length;
+      $$('[data-badge="chats"]').forEach((b) => { b.textContent = unread || ""; b.classList.toggle("hidden", !unread); });
+      $$('[data-badge="contacts"]').forEach((b) => { b.textContent = requests || ""; b.classList.toggle("hidden", !requests); });
+      $$("[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
+      document.title = unread ? `(${unread}) Shroud` : "Shroud";
+    }
+
+    function renderPane() {
+      const pane = $("#pane");
+      if (state.tab === "chats") {
+        const list = chats.filter((c) => !state.filter || c.name.toLowerCase().includes(state.filter) || preview(c.messages[c.messages.length - 1] || { text: "" }).toLowerCase().includes(state.filter))
+          .sort((a, b) => b.messages[b.messages.length - 1].time - a.messages[a.messages.length - 1].time);
+        pane.innerHTML = `
+          <div class="pane-head">
+            <div class="pane-title-row"><h1>Chats</h1><button class="icon-btn" data-act="new-chat" aria-label="New chat" title="New chat">${icon("pen")}</button></div>
+            <label class="search">${icon("search", "ico-16")}<input type="search" id="pane-search" placeholder="Search chats" aria-label="Search chats" value="${esc(state.filter)}" />${state.filter ? `<button class="search-clear" data-act="clear-filter" aria-label="Clear search">${icon("x", "ico-16")}</button>` : ""}</label>
+          </div>
+          ${state.notice && !state.notifications ? `<div class="pane-notice">${icon("bell", "ico-16")}<span>Get notified of new messages, even when this tab is closed. <a href="#" data-act="notify-on">Turn on</a></span><button class="icon-btn" data-act="notice-off" aria-label="Dismiss">${icon("x", "ico-16")}</button></div>` : ""}
+          <div class="rows" role="list">
+            ${list.length ? list.map((c) => {
+              const last = c.messages[c.messages.length - 1];
+              const sub = c.typing ? `<span class="typing">typing<span class="typing-dots"><i></i><i></i><i></i></span></span>` : `<span>${esc((last.mine ? "You: " : "") + preview(last))}</span>`;
+              return `<button class="row ${c.id === state.chatId && !state.mobileList ? "active" : ""} ${c.unread ? "unread" : ""}" data-chat="${c.id}" role="listitem">
+                ${avatar(c, "", c.online)}
+                <span class="row-copy"><strong><span>${esc(c.name)}</span>${c.muted ? icon("bell-off", "ico-13") : ""}</strong>${sub}</span>
+                <span class="row-side"><span class="row-time">${rowTime(last.time)}</span>${c.unread || c.newReactions ? `<span class="row-badges">${c.newReactions ? `<span class="row-reaction" title="New reactions">${icon("heart")}</span>` : ""}${c.unread ? `<span class="row-unread ${c.muted ? "muted" : ""}">${c.unread}</span>` : ""}</span>` : ""}</span>
+              </button>`; }).join("") : `<div class="rows-empty"><strong>No chats match</strong>Try another name, or start a new chat.</div>`}
+          </div>`;
+      } else if (state.tab === "contacts") {
+        const list = [...chats].sort((a, b) => a.name.localeCompare(b.name)).filter((c) => !state.filter || c.name.toLowerCase().includes(state.filter));
+        const reqs = contactsExtra.filter((c) => c.request);
+        pane.innerHTML = `
+          <div class="pane-head">
+            <div class="pane-title-row"><h1>Contacts</h1><div style="display:flex;gap:2px"><button class="icon-btn" data-act="my-qr" aria-label="My QR code" title="My QR code">${icon("qr")}</button><button class="icon-btn" data-act="add-contact" aria-label="Add contact" title="Add contact">${icon("user-plus")}</button></div></div>
+            <label class="search">${icon("search", "ico-16")}<input type="search" id="pane-search" placeholder="Search contacts" aria-label="Search contacts" value="${esc(state.filter)}" /></label>
+          </div>
+          <div class="rows">
+            ${reqs.length ? `<div class="list-label">Requests</div>` + reqs.map((c) => `<div class="row">${avatar(c)}<span class="row-copy"><strong><span>${esc(c.name)}</span></strong><span>@${esc(c.username)} wants to connect</span></span><span class="row-actions"><button class="mini-btn" data-act="accept" data-id="${c.id}">Accept</button><button class="mini-btn ghost" data-act="decline" data-id="${c.id}">Decline</button></span></div>`).join("") + `<div class="list-label">All contacts</div>` : ""}
+            ${list.map((c) => `<button class="row" data-contact="${c.id}">${avatar(c, "", c.online)}<span class="row-copy"><strong><span>${esc(c.name)}</span>${c.verified ? icon("shield", "ico-13") : ""}</strong><span>@${esc(c.username)}</span></span></button>`).join("")}
+          </div>`;
+      } else {
+        const sections = [["account", "user", "Account", "Username, devices, log out"], ["notifications", "bell", "Notifications and sounds", state.notifications ? "On" : "Off"], ["appearance", "palette", "Appearance", "Theme, logo, outgoing bubbles"], ["privacy", "lock", "Privacy and security", "Keys, safety numbers"], ["data", "database", "Data and storage", "Media, cache"], ["server", "server", "Server", "shroud.example.org"]];
+        pane.innerHTML = `
+          <div class="pane-head"><div class="pane-title-row"><h1>Settings</h1></div></div>
+          <div class="rows">
+            <div class="row" style="margin-bottom:6px">${avatar(me, "")}<span class="row-copy"><strong><span>${esc(me.name)}</span></strong><span>@${esc(me.username)}</span></span></div>
+            ${sections.map(([id, ic, title, sub]) => `<button class="row ${state.settingsSection === id && !state.mobileList ? "active" : ""}" data-section="${id}"><span class="file-icon" style="width:36px;height:36px">${icon(ic, "ico-18")}</span><span class="row-copy"><strong><span>${esc(title)}</span></strong><span>${esc(sub)}</span></span>${icon("chevron-right", "ico-16")}</button>`).join("")}
+          </div>`;
+      }
+      const s = $("#pane-search");
+      if (s && document.activeElement !== s && state.filterFocus) { s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+    }
+
+    function receipt(m) {
+      if (!m.mine || m.deleted) return "";
+      if (m.status === "pending") return "";
+      return m.status === "read" ? `<svg class="ico ico-13 receipt-read" aria-label="Read"><use href="#i-check2"/></svg>` : `<svg class="ico ico-13" aria-label="Sent"><use href="#i-check"/></svg>`;
+    }
+    const meta = (m) => `<span class="bubble-meta"><time>${clock(m.time)}</time>${receipt(m)}</span>`;
+
+    function reactionStrip(c, m) {
+      const entries = Object.entries(m.reactions).filter(([, who]) => who.length);
+      if (!entries.length) return "";
+      return `<div class="reaction-strip">${entries.map(([e, who]) => `<button class="reaction-chip ${who.includes("me") ? "mine" : ""}" data-react="${e}" aria-label="${who.includes("me") ? "You reacted" : esc(c.name) + " reacted"} ${e}">${e}${who.map((w) => w === "me" ? `<span class="avatar avatar-xs ${me.av}">${me.initials}</span>` : `<span class="avatar avatar-xs ${c.av}">${esc(c.initials)}</span>`).join("")}</button>`).join("")}${meta(m)}</div>`;
+    }
+
+    /* The picture or the poster frame, with the play badge and length on a video. */
+    function mediaFrame(m, small = false) {
+      const pic = m.src ? (m.type === "video" ? `<video src="${m.src}" muted playsinline preload="metadata"></video>` : `<img src="${m.src}" alt="" />`) : "";
+      return pic + (m.type === "video" ? `<span class="media-play">${icon("play", (small ? "ico-13" : "ico-18") + " fill")}</span><span class="media-dur">${dur(m.duration)}</span>` : "");
+    }
+    function quoteOf(c, id, asButton = true) {
+      const q = c.messages.find((m) => m.id === id);
+      const who = !q ? "" : q.mine ? "You" : c.name;
+      const text = !q ? "Message deleted" : q.deleted ? "Message deleted" : preview(q);
+      const thumb = q && !q.deleted && (q.type === "photo" || q.type === "video") ? `<span class="quote-thumb">${mediaFrame(q, true)}</span>` : "";
+      return `<${asButton ? "button" : "div"} class="quote" ${asButton ? `data-jump="${id}"` : ""}>${thumb}<span class="quote-lines"><strong>${esc(who)}</strong><em>${esc(text)}</em></span></${asButton ? "button" : "div"}>`;
+    }
+
+    function bubble(c, m) {
+      const side = m.mine ? "out" : "in";
+      const reacted = Object.values(m.reactions).some((w) => w.length);
+      const quote = m.replyTo ? quoteOf(c, m.replyTo) : "";
+      const cls = `bubble ${side} ${m.status === "pending" ? "pending" : ""} ${m.deleted ? "deleted" : ""}`;
+      if (m.deleted) return `<div class="${cls}"><p>Message deleted</p>${meta(m)}</div>`;
+      if (m.type === "photo" || m.type === "video") return `<div class="${cls} photo-msg col" style="gap:0"><button class="photo ${m.type}" data-photo="${m.id}" aria-label="Open ${m.type}">${mediaFrame(m)}${reacted ? "" : meta(m)}</button>${reacted ? `<div style="padding:6px 8px 8px">${reactionStrip(c, m)}</div>` : ""}</div>`;
+      if (m.type === "file") return `<div class="${cls} file-msg ${reacted ? "col" : ""}"><div class="bubble-body" style="align-items:center;gap:10px"><span class="file-icon">${icon("file")}</span><span class="file-lines"><strong>${esc(m.fileName)}</strong><span>${esc(m.fileSize)} · PDF</span></span>${reacted ? "" : meta(m)}</div>${reactionStrip(c, m)}</div>`;
+      if (m.type === "voice") {
+        /* Playback state is not in the markup: patchVoice paints it after every render, so a
+           re-render never replaces a playing note. */
+        const bars = Array.from({ length: 30 }, (_, i) => `<i style="height:${6 + Math.abs(Math.sin(i * 1.7 + m.duration)) * 19}px"></i>`).join("");
+        return `<div class="${cls} voice">${quote ? `<div style="margin-bottom:6px">${quote}</div>` : ""}<div class="voice-row"><button class="voice-play" data-play="${m.id}" aria-label="Play voice message">${icon("play", "play")}</button><div class="voice-body"><div class="wave" data-seek="${m.id}" aria-hidden="true">${bars}</div><div class="voice-foot"><span>${dur(m.duration)}</span>${!m.mine ? '<span class="dot"></span>' : ""}${reacted ? "" : meta(m)}</div></div></div>${reactionStrip(c, m)}</div>`;
+      }
+      if (m.link || quote || reacted) {
+        return `<div class="${cls} col">${quote}<div class="bubble-body"><p>${linkify(m.text)}</p>${m.link || reacted ? "" : meta(m)}</div>${m.link ? `<a class="quote" href="${m.link.url}" data-link><span class="quote-lines"><strong>${esc(m.link.site)}</strong><em>${esc(m.link.title)}</em><small>${esc(m.link.desc)}</small></span></a>${reacted ? "" : `<div class="bubble-meta-row">${meta(m)}</div>`}` : ""}${reactionStrip(c, m)}</div>`;
+      }
+      return `<div class="${cls}"><p>${linkify(m.text)}</p>${meta(m)}</div>`;
+    }
+
+    let shellChat = null, lastHead = "", lastSearch = "", lastCompose = "";
+    const rendered = new Set();
+    function renderThread(keepScroll = false) {
+      const c = chat();
+      const el = $("#thread");
+      if (!c) { el.innerHTML = `<div class="thread-empty"><strong>Pick a chat</strong><p>Your messages are end-to-end encrypted. Start with someone on the left.</p></div>`; shellChat = null; return; }
+      let fresh = false;
+      if (shellChat !== c.id) {
+        el.innerHTML = `<header class="thread-head"></header><div class="search-slot"></div><div class="messages"><div class="messages-inner"></div></div><div class="compose-shell"></div>`;
+        shellChat = c.id; lastHead = ""; lastSearch = ""; lastCompose = ""; rendered.clear(); fresh = true;
+        $(".messages", el).addEventListener("scroll", onScroll);
+        $$(".jump-latest", el).forEach((j) => j.remove());
+      }
+      renderHead(c);
+      renderSearchBar(c);
+      renderMessages(c, fresh ? false : keepScroll, !fresh);
+      renderCompose(c);
+      updateJump();
+    }
+    function renderHead(c) {
+      const html = `
+          <button class="icon-btn back-mobile" data-act="back" aria-label="Back to chats">${icon("back")}</button>
+          <button class="peer-btn" data-act="info" aria-label="Contact info">${avatar(c, "", c.online)}<div class="thread-peer"><strong><span>${esc(c.name)}</span>${c.verified ? `<svg class="ico ico-14" role="img" aria-label="End-to-end encrypted, safety number verified"><use href="#i-shield"/></svg>` : `<svg class="ico ico-14" role="img" aria-label="End-to-end encrypted"><use href="#i-lock"/></svg>`}</strong>${c.typing ? `<span class="typing">typing<span class="typing-dots"><i></i><i></i><i></i></span></span>` : c.online ? `<span class="online">online</span>` : `<span>last seen ${rowTime(c.messages[c.messages.length - 1]?.time || now()).toLowerCase()}</span>`}</div></button>
+          <div class="thread-actions">
+            <button class="icon-btn" data-act="search" aria-label="Search in chat" aria-pressed="${state.searchOpen}">${icon("search")}</button>
+            <button class="icon-btn" data-act="call" data-kind="voice" aria-label="Voice call">${icon("phone")}</button>
+            <button class="icon-btn" data-act="call" data-kind="video" aria-label="Video call">${icon("video")}</button>
+            <button class="icon-btn" data-act="info" aria-label="Contact info">${icon("info")}</button>
+          </div>`;
+      if (html !== lastHead) { $("#thread .thread-head").innerHTML = html; lastHead = html; }
+    }
+    function renderSearchBar(c) {
+      const slot = $("#thread .search-slot");
+      const matches = state.searchOpen && state.query ? c.messages.filter((m) => (m.text || "").toLowerCase().includes(state.query.toLowerCase())).length : 0;
+      const count = state.query ? (matches ? `${Math.min(state.searchPos || 1, matches)} of ${matches}` : "No matches") : "";
+      const key = String(state.searchOpen);
+      if (key !== lastSearch) {
+        if (state.searchOpen) {
+          slot.innerHTML = `<div class="search-wrap"><div class="thread-search">${icon("search", "ico-16")}<input id="chat-search" type="search" placeholder="Search in this conversation" value="${esc(state.query)}" aria-label="Search in this conversation" /><span class="thread-search-count"></span><button class="icon-btn" data-act="search-prev" aria-label="Previous match">${icon("up", "ico-16")}</button><button class="icon-btn" data-act="search-next" aria-label="Next match">${icon("down", "ico-16")}</button><button class="icon-btn" data-act="search-close" aria-label="Close search">${icon("x", "ico-16")}</button></div></div>`;
+          searchMorph(true);
+        } else searchMorph(false);
+        lastSearch = key;
+      }
+      const cnt = $(".thread-search-count", slot); if (cnt) cnt.textContent = count;
+      if (state.searchOpen && state.query) jumpToMatch();
+    }
+    /* The search bar unfolds from its button: the row grows into place, the bar reveals from the
+       button's side, and the button's glyph travels into the bar's own glyph slot. Closing runs
+       it backwards. */
+    function searchMorph(open) {
+      const slot = $("#thread .search-slot"); const wrap = $(".search-wrap", slot); if (!wrap) return;
+      const btn = $('#thread [data-act="search"]'); const btnIcon = $("svg", btn);
+      const bar = $(".thread-search", wrap); const glyph = $(":scope > .ico", bar); const input = $("#chat-search", wrap);
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduce) { if (open) input.focus(); else slot.innerHTML = ""; return; }
+      const h = bar.offsetHeight;
+      const from = btnIcon.getBoundingClientRect(), to = glyph.getBoundingClientRect();
+      const fly = glyph.cloneNode(true); fly.classList.add("fly-glyph");
+      const place = (r) => `position:fixed;left:${Math.round(r.left)}px;top:${Math.round(r.top)}px;width:${r.width}px;height:${r.height}px;z-index:71`;
+      const dx = Math.round(to.left - from.left), dy = Math.round(to.top - from.top);
+      $("#layer").appendChild(fly);
+      if (open) {
+        wrap.style.overflow = "hidden";
+        fly.style.cssText = place(from); fly.style.color = getComputedStyle(btnIcon).color;
+        btnIcon.style.opacity = "0"; glyph.style.opacity = "0";
+        wrap.animate([{ height: "0px" }, { height: h + "px" }], { duration: 260, easing: EASE_OUT, fill: "both" }).onfinish = () => { wrap.style.overflow = ""; };
+        bar.animate([{ clipPath: "inset(0 0 0 100% round 12px)" }, { clipPath: "inset(0 0 0 0 round 0)" }], { duration: 320, easing: EASE_OUT, fill: "both" });
+        $$("input, .thread-search-count, .icon-btn", bar).forEach((n) => n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, delay: 140, easing: "ease-out", fill: "backwards" }));
+        fly.animate([{ transform: "none", color: getComputedStyle(btnIcon).color }, { transform: `translate(${dx}px, ${dy}px)`, color: getComputedStyle(glyph).color }], { duration: 320, easing: EASE_OUT, fill: "forwards" }).onfinish = () => { fly.remove(); glyph.style.opacity = ""; btnIcon.style.opacity = ""; input.focus(); input.setSelectionRange(input.value.length, input.value.length); };
+      } else {
+        wrap.style.overflow = "hidden";
+        fly.style.cssText = place(to); fly.style.color = getComputedStyle(glyph).color;
+        glyph.style.opacity = "0"; btnIcon.style.opacity = "0";
+        $$("input, .thread-search-count, .icon-btn", bar).forEach((n) => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 100, easing: "ease-out", fill: "forwards" }));
+        bar.animate([{ clipPath: "inset(0 0 0 0 round 0)" }, { clipPath: "inset(0 0 0 100% round 12px)" }], { duration: 260, delay: 40, easing: EASE_OUT, fill: "forwards" });
+        wrap.animate([{ height: h + "px" }, { height: "0px" }], { duration: 240, delay: 80, easing: EASE_OUT, fill: "forwards" }).onfinish = () => { slot.innerHTML = ""; };
+        fly.animate([{ transform: "none" }, { transform: `translate(${-dx}px, ${-dy}px)`, color: getComputedStyle(btnIcon).color }], { duration: 280, easing: EASE_OUT, fill: "forwards" }).onfinish = () => { fly.remove(); btnIcon.style.opacity = ""; };
+      }
+    }
+    /* Rows are keyed by message id. A row whose markup is unchanged is left alone, so playback,
+       typing dots and hover states keep running; only new rows get the entrance animation. */
+    function renderMessages(c, keepScroll, animateNew) {
+      const inner = $("#thread .messages-inner");
+      const scroller = $("#thread .messages");
+      const stuck = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+      const items = [];
+      let lastDay = "", prev = null;
+      for (const m of c.messages) {
+        if (dayKey(m.time) !== lastDay) { items.push({ key: "day:" + dayKey(m.time), html: `<div class="day-sep"><span>${dayLabel(m.time)}</span></div>` }); lastDay = dayKey(m.time); prev = null; }
+        const first = !prev || prev.mine !== m.mine || m.time - prev.time > 5 * 60e3;
+        items.push({ key: m.id, html: `<div class="msg-row ${m.mine ? "mine" : ""} ${first ? "first" : ""}" data-msg="${m.id}">${bubble(c, m)}<div class="hover-actions"><button class="icon-btn" data-act="react-menu" aria-label="React">${icon("smile", "ico-16")}</button><button class="icon-btn" data-act="reply" aria-label="Reply">${icon("reply", "ico-16")}</button></div></div>` });
+        prev = m;
+      }
+      if (c.typing) items.push({ key: "typing", html: `<div class="msg-row first"><div class="bubble in typing-bubble" aria-label="${esc(c.name)} is typing"><div class="typing-ink"><i></i><i></i><i></i></div></div></div>` });
+      if (!items.length) items.push({ key: "empty", html: `<div class="thread-empty"><strong>${esc(c.name)}</strong><p>No messages yet. Everything you send is sealed for ${esc(c.name)}’s devices only.</p></div>` });
+      const existing = new Map(); for (const ch of Array.from(inner.children)) existing.set(ch.dataset.key, ch);
+      items.forEach((it, idx) => {
+        let node = existing.get(it.key);
+        if (!node || node.__html !== it.html) {
+          const t = document.createElement("template"); t.innerHTML = it.html;
+          const n = t.content.firstElementChild; n.dataset.key = it.key; n.__html = it.html;
+          if (!node && animateNew && !rendered.has(it.key)) n.classList.add("is-new");
+          if (node) node.replaceWith(n); node = n;
+        }
+        rendered.add(it.key);
+        if (inner.children[idx] !== node) inner.insertBefore(node, inner.children[idx] || null);
+        existing.delete(it.key);
+      });
+      existing.forEach((n) => n.remove());
+      c.messages.forEach((m) => { if (m.type === "voice" && (m.played || m.playing)) patchVoice(m); });
+      if (!keepScroll || stuck) scroller.scrollTop = scroller.scrollHeight;
+    }
+    function renderCompose(c) {
+      const key = `${c.id}|${state.replyTo || ""}`;
+      if (key === lastCompose) return;
+      const hadFocus = document.activeElement === $("#field") || !!state.replyTo;
+      lastCompose = key;
+      const q = state.replyTo ? c.messages.find((m) => m.id === state.replyTo) : null;
+      const media = q && !q.deleted && (q.type === "photo" || q.type === "video");
+      const mini = !q ? "" : q.deleted ? `<em>Message deleted</em>` : media ? `<span class="reply-mini-pic">${mediaFrame(q, true)}</span>` : q.type === "voice" ? `${icon("play", "ico-13 fill")}<span>Voice message · ${dur(q.duration)}</span>` : q.type === "file" ? `${icon("file", "ico-14")}<span>${esc(q.fileName)}</span>` : `<span>${esc(q.text)}</span>`;
+      const replyBar = q ? `<div class="reply-bar" role="status">
+            <span class="reply-bar-icon">${icon("reply", "ico-18")}</span>
+            <div class="reply-bar-body">
+              <span class="reply-bar-label">Replying to <b>${q.mine ? "yourself" : esc(c.name)}</b><time>${clock(q.time)}</time></span>
+              <button type="button" class="reply-bar-msg" data-jump="${q.id}" title="Show the message">${q.mine ? avatar(me, "avatar-xs") : avatar(c, "avatar-xs")}<span class="reply-mini ${q.mine ? "out" : "in"} ${media ? "media" : ""}">${mini}</span>${media ? `<span class="reply-mini-cap">${q.type === "video" ? `Video · ${dur(q.duration)}` : "Photo"}</span>` : ""}</button>
+            </div>
+            <button type="button" class="icon-btn" data-act="reply-cancel" aria-label="Cancel reply" title="Cancel reply (Esc)">${icon("x", "ico-16")}</button>
+          </div>` : "";
+      $("#thread .compose-shell").innerHTML = `${replyBar}
+          <form class="compose" id="compose">
+            <button type="button" class="icon-btn compose-plus" data-act="attach-menu" aria-label="Attach">${icon("plus")}</button>
+            <button type="button" class="icon-btn compose-wide" data-act="attach-file" aria-label="Attach a file" title="Attach a file">${icon("clip", "ico-18")}</button>
+            <button type="button" class="icon-btn compose-wide" data-act="attach-photo" aria-label="Send photos or videos" title="Send photos or videos">${icon("image", "ico-18")}</button>
+            <div class="compose-grow"><textarea class="compose-field" id="field" rows="1" placeholder="${q ? `Reply to ${esc(q.mine ? "yourself" : c.name.split(" ")[0])}` : "Message"}" aria-label="Message">${esc(c.draft || "")}</textarea></div>
+            <button type="button" class="icon-btn rec-discard" data-act="rec-discard" aria-label="Discard recording" title="Discard (Esc)">${icon("trash", "ico-18")}</button>
+            <div class="rec-capsule" role="status" aria-live="off"><span class="rec-dot"></span><span class="rec-time" id="rec-time">0:00</span><span class="rec-wave" id="rec-wave"><span class="rec-wave-track"></span></span></div>
+            <button type="button" class="icon-btn compose-mic" data-act="mic" aria-label="Record a voice message" title="Record a voice message">${icon("mic", "ico-18")}</button>
+            <button type="submit" class="send" aria-label="Send">${icon("send", "ico-16")}</button>
+          </form>`;
+      const f = $("#field");
+      f.addEventListener("input", onDraft); onDraft();
+      if (hadFocus) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+    }
+
+    function renderSettings() {
+      const v = $("#set-view");
+      const s = state.settingsSection;
+      const row = (ic, title, sub, control) => `<div class="set-row">${ic ? icon(ic) : ""}<div class="copy"><strong>${title}</strong>${sub ? `<span>${sub}</span>` : ""}</div>${control || ""}</div>`;
+      const seg = (name, options, current) => `<span class="seg" data-setting="${name}">${options.map(([v, l]) => `<button type="button" data-value="${v}" aria-pressed="${v === current}">${l}</button>`).join("")}</span>`;
+      const sw = (name, on) => `<button class="switch" role="switch" aria-checked="${on}" data-setting="${name}" aria-label="${name}"></button>`;
+      let body = "";
+      if (s === "appearance") body = `<h2>Appearance</h2><p>How the client looks on this device. The theme follows the system unless you pin one.</p>
+        <div class="set-group">${row("palette", "Theme", "Dark is the base; light follows the OS", seg("theme", [["dark", "Dark"], ["light", "Light"]], document.documentElement.dataset.theme))}
+        ${row("chat", "Outgoing bubbles", "The proposal's tint, or today's solid accent", seg("out", [["tinted", "Tinted"], ["solid", "Solid"]], document.documentElement.dataset.out || "tinted"))}
+        ${row("image", "Logo", "The app icon with its folds, or the flat veil", seg("logo", [["detailed", "Detailed"], ["simple", "Simple"]], state.logo))}</div>`;
+      else if (s === "notifications") body = `<h2>Notifications and sounds</h2><p>Delivered by the browser while this tab is closed or locked. Turning them on asks the browser for permission; here that is simulated.</p>
+        <div class="set-group">${row("bell", "Notifications", state.notifications ? "On for new messages" : "Off", sw("notifications", state.notifications))}${row(null, "Sounds", "A short tone for new messages", sw("sounds", state.sounds))}${row(null, "Count muted chats", "Include muted chats in the badge", sw("countMuted", !!state.countMuted))}</div>`;
+      else if (s === "account") body = `<h2>Account</h2><p>Your username and the devices signed in to it. Up to five devices share the account.</p>
+        <div class="set-group">${row("user", esc(me.name), "@" + esc(me.username), `<button class="btn text" data-act="profile">Edit</button>`)}</div>
+        <div class="set-group">${devices.map((d) => `<button class="set-row set-row-button" data-act="device" data-id="${d.id}">${icon(d.kind)}<div class="copy"><strong>${esc(d.name)}</strong><span>${esc(d.when)}</span></div>${d.current ? `<span class="set-note">This device</span>` : ""}${icon("chevron-right", "ico-16")}</button>`).join("")}</div>
+        <div class="set-group">${row("qr", "Invite", `Share code ${INVITE_CODE}`, `<button class="btn text" data-act="my-qr">Show QR code</button>`)}</div>
+        <div class="set-group">${row("logout", "Log out", "Keys on this device are erased", `<button class="btn text" data-act="logout" style="color:var(--danger)">Log out</button>`)}</div>`;
+      else if (s === "privacy") body = `<h2>Privacy and security</h2><p>Messages decrypt only on your devices. Compare safety numbers in person before you trust a change.</p>
+        <div class="set-group">${row("key", "Encryption phrase", "12 words. The only way back in.", `<button class="btn text" data-act="show-phrase">Show</button>`)}${row("lock", "Lock after", "When this tab is idle", seg("lock", [["1", "1 min"], ["5", "5 min"], ["never", "Never"]], state.lockAfter || "5"))}${row("shield", "Verified contacts", `${chats.filter((c) => c.verified).length} of ${chats.length}`, "")}</div>`;
+      else if (s === "data") body = `<h2>Data and storage</h2><p>Media is held encrypted in this browser until you clear it.</p>
+        <div class="set-group">${row("database", "Cached media", state.cacheCleared ? "0 B" : "412 MB", `<button class="btn text" data-act="clear-cache">Clear</button>`)}${row("image", "Download media", "Automatically on Wi‑Fi", sw("autoMedia", state.autoMedia !== false))}</div>`;
+      else body = `<h2>Server</h2><p>The relay this client talks to. It only ever sees ciphertext.</p>
+        <div class="set-group">${row("server", "shroud.example.org", "Connected · 24 ms", `<span class="ok-note" style="padding:4px 10px">${icon("check", "ico-14")}OK</span>`)}${row("monitor", "Web client", "v2.8.0 · up to date", "")}</div>`;
+      v.innerHTML = `<header class="thread-head"><button class="icon-btn back-mobile" data-act="back" aria-label="Back to settings">${icon("back")}</button><div class="thread-peer"><strong><span>Settings</span></strong></div></header><div class="set-body">${body}</div>`;
+    }
+
+    function renderAll(keepScroll) {
+      badges();
+      renderPane();
+      const inSettings = state.tab === "settings";
+      $("#thread").classList.toggle("hidden", inSettings);
+      $("#set-view").classList.toggle("hidden", !inSettings);
+      if (inSettings) renderSettings(); else renderThread(keepScroll);
+      const mobile = window.matchMedia("(max-width: 900px)").matches;
+      $("#pane").classList.toggle("hidden-mobile", mobile && !state.mobileList);
+      $("#thread").classList.toggle("hidden-mobile", mobile && state.mobileList);
+      $("#set-view").classList.toggle("hidden-mobile", mobile && state.mobileList);
+    }
+
+    /* ---------------------------------------------------------- actions -- */
+    function toast(text, ms = 2200) { $$(".toast").forEach((t) => t.remove()); const t = document.createElement("div"); t.className = "toast"; t.textContent = text; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
+    function closeLayer() {
+      const layer = $("#layer");
+      $$(".chat-menu-layer:not(.closing)", layer).forEach((w) => { w.classList.add("closing"); closeChatMenu(w); });
+      $$(".ctx-menu:not(.closing)", layer).forEach((m) => { if (m.closest(".chat-menu-layer")) return; m.classList.add("closing"); if (m.classList.contains("account-menu")) closeAccountMenu(m); else setTimeout(() => m.remove(), 140); });
+      $$(".scrim, .viewer", layer).forEach((n) => n.remove());
+      $$(".msg-row.menu-open").forEach((r) => r.classList.remove("menu-open"));
+      $("#rail-me").setAttribute("aria-expanded", "false");
+    }
+    function modal(html, cls = "modal") { closeLayer(); $("#layer").innerHTML = `<div class="scrim" data-act="close-layer"><div class="${cls}" role="dialog" aria-modal="true"><div class="modal-content">${html}</div></div></div>`; focusFirst(); }
+    function focusFirst() { const f = $(".modal [autofocus]"); if (f) f.focus(); }
+    /* One dialog becomes another: the box stays where it is and grows or shrinks to the new
+       content, the old content fades out, the new one settles in. A QR code inside waits for the
+       box to stop before it reveals. */
+    const EASE_OUT = "cubic-bezier(0.16, 1, 0.3, 1)";
+    function morphDialog(html, cls = "modal") {
+      const el = $(".modal");
+      if (!el || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { if (el) { el.className = cls; el.innerHTML = `<div class="modal-content">${html}</div>`; focusFirst(); } else modal(html, cls); return; }
+      const from = el.getBoundingClientRect();
+      const old = $(".modal-content", el);
+      const ghost = document.createElement("div"); ghost.className = "modal-ghost"; ghost.style.width = from.width + "px"; ghost.appendChild(old);
+      el.className = cls + " is-morphing";
+      const fresh = document.createElement("div"); fresh.className = "modal-content"; fresh.innerHTML = html;
+      el.appendChild(fresh); el.appendChild(ghost);
+      const to = el.getBoundingClientRect();
+      const pad = parseFloat(getComputedStyle(el).paddingLeft) * 2 + 2;
+      fresh.style.width = (to.width - pad) + "px";
+      $$(".qr-tile", fresh).forEach((t) => t.style.setProperty("--qr-wait", "300ms"));
+      el.animate([{ width: from.width + "px", height: from.height + "px" }, { width: to.width + "px", height: to.height + "px" }], { duration: 400, easing: EASE_OUT }).onfinish = () => { el.classList.remove("is-morphing"); fresh.style.width = ""; ghost.remove(); focusFirst(); };
+      ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-out", fill: "forwards" });
+      fresh.animate([{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], { duration: 280, delay: 120, easing: EASE_OUT, fill: "backwards" });
+    }
+
+    function openChat(id) { state.chatId = id; state.replyTo = null; state.searchOpen = false; state.query = ""; state.mobileList = false; const c = chat(); c.unread = 0; c.newReactions = false; renderAll(); }
+    function onDraft() { const f = $("#field"); if (!f) return; const c = chat(); if (c) c.draft = f.value; $("#compose").classList.toggle("has-draft", f.value.trim().length > 0); if (!f.value) { f.style.height = ""; return; } f.style.height = "auto"; f.style.height = Math.min(160, f.scrollHeight) + "px"; }
+    function onScroll() { updateJump(); }
+    function updateJump() {
+      const sc = $("#thread .messages"); if (!sc) return;
+      const away = sc.scrollHeight - sc.scrollTop - sc.clientHeight > 240;
+      let j = $("#thread .jump-latest");
+      if (away && !j) { j = document.createElement("button"); j.className = "jump-latest"; j.dataset.act = "jump-latest"; j.innerHTML = `${icon("arrow-down", "ico-14")}Latest${state.unseenBelow ? `<span class="count">${state.unseenBelow}</span>` : ""}`; $("#thread").appendChild(j); }
+      if (!away) { state.unseenBelow = 0; if (j) j.remove(); } else if (j) { const cnt = $(".count", j); if (state.unseenBelow) { if (cnt) cnt.textContent = state.unseenBelow; else j.insertAdjacentHTML("beforeend", `<span class="count">${state.unseenBelow}</span>`); } }
+    }
+
+    function deliver(m) {
+      setTimeout(() => { m.status = "sent"; renderAll(true); }, 500 + Math.random() * 500);
+      const c = chat();
+      setTimeout(() => { if (c.online) { m.status = "read"; renderAll(true); } }, 1400 + Math.random() * 800);
+    }
+    function simulateReply(c) {
+      if (!c.online || c.replyTimer) return;
+      c.replyTimer = setTimeout(() => {
+        c.typing = true; renderAll(true);
+        setTimeout(() => {
+          c.typing = false; c.replyTimer = null;
+          const text = c.replies[(c.replyIndex = ((c.replyIndex || 0) + 1) % c.replies.length)];
+          const m = msg({ text, time: now(), status: "read" });
+          c.messages.push(m);
+          if (state.chatId !== c.id) { c.unread++; if (state.notifications) toast(`${c.name}: ${text}`); }
+          else { const sc = $("#thread .messages"); if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 240) state.unseenBelow++; }
+          renderAll(true);
+        }, 1600 + text_len(c) * 40);
+      }, 900 + Math.random() * 900);
+    }
+    const text_len = (c) => (c.replies[((c.replyIndex || 0) + 1) % c.replies.length] || "").length;
+
+    function send(extra) {
+      const c = chat(); const f = $("#field");
+      const text = f ? f.value.trim() : "";
+      if (!extra && !text) return;
+      const m = msg(Object.assign({ mine: true, text, time: now(), status: "pending", replyTo: state.replyTo }, extra || {}));
+      if (m.type === "text") { const u = (text.match(/https?:\/\/[^\s]+/) || [])[0]; if (u) m.link = { url: u, site: new URL(u).hostname.replace(/^www\./, ""), title: "Link preview", desc: "Fetched by the sender, sealed for the recipient" }; }
+      c.messages.push(m); c.draft = ""; state.replyTo = null;
+      renderAll(); deliver(m); simulateReply(c);
+      $("#field").focus();
+    }
+
+    function openMenu(x, y, items, header = "") {
+      closeLayer();
+      const menu = document.createElement("div"); menu.className = "ctx-menu"; menu.setAttribute("role", "menu");
+      menu.innerHTML = header + items.map((it) => it === "-" ? `<hr class="ctx-menu-sep" />` : `<button class="ctx-menu-item ${it.danger ? "danger" : ""}" role="menuitem" data-menu="${it.id}" ${it.data ? `data-id="${it.data}"` : ""}>${icon(it.icon, "ico-16")}${it.label}</button>`).join("");
+      $("#layer").appendChild(menu);
+      const r = menu.getBoundingClientRect();
+      const flipX = x + r.width + 8 > window.innerWidth, flipY = y + r.height + 8 > window.innerHeight;
+      menu.style.left = Math.round(Math.max(8, flipX ? x - r.width : x)) + "px";
+      menu.style.top = Math.round(Math.max(8, flipY ? y - r.height : y)) + "px";
+      menu.style.transformOrigin = `${flipY ? "bottom" : "top"} ${flipX ? "right" : "left"}`;
+      $$(".reaction-pick", menu).forEach((b, i) => b.style.setProperty("--i", i));
+      return menu;
+    }
+    function messageMenu(m, x, y, row) {
+      const c = chat();
+      row.classList.add("menu-open");
+      const picker = `<div class="reaction-picker">${QUICK.map((e) => `<button class="reaction-pick ${m.reactions[e]?.includes("me") ? "selected" : ""}" data-react="${e}" aria-label="React ${e}">${e}</button>`).join("")}<button class="reaction-pick" data-menu="more-reactions" aria-label="More reactions" style="font-size:14px;background:var(--hover);width:26px;height:26px">${icon("more", "ico-14")}</button></div>`;
+      const items = m.deleted ? [{ id: "delete", icon: "trash", label: "Delete for me", danger: true }] : [
+        { id: "reply", icon: "reply", label: "Reply" },
+        ...(m.type === "text" ? [{ id: "copy", icon: "copy", label: "Copy" }] : []),
+        ...(m.link ? [{ id: "copy-link", icon: "copy", label: "Copy link" }] : []),
+        ...(m.type === "file" || m.type === "photo" || m.type === "video" ? [{ id: "download", icon: "arrow-down", label: "Save" }] : []),
+        "-", { id: "delete", icon: "trash", label: m.mine ? "Delete for everyone" : "Delete for me", danger: true }];
+      const menu = openMenu(x, y, items, m.deleted ? "" : picker);
+      menu.dataset.msg = m.id;
+    }
+    function toggleReaction(m, e, who = "me") {
+      m.reactions[e] = m.reactions[e] || [];
+      const i = m.reactions[e].indexOf(who);
+      if (i >= 0) m.reactions[e].splice(i, 1); else { if (who === "me") for (const k of Object.keys(m.reactions)) m.reactions[k] = m.reactions[k].filter((w) => w !== "me"); m.reactions[e].push(who); }
+      renderAll(true);
+      if (i < 0 && who === "me" && !m.mine && chat().online && Math.random() < 0.5) setTimeout(() => { const mm = chat().messages.find((x) => x.mine); if (mm) { toggleReaction(mm, e === "👍" ? "❤️" : "👍", chat().id); } }, 1800);
+    }
+    function jumpTo(id) { const row = $(`[data-msg="${id}"]`); if (!row) { toast("That message is no longer here"); return; } row.scrollIntoView({ block: "center", behavior: "smooth" }); row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash"); }
+    function jumpToMatch() {
+      const c = chat(); const ids = c.messages.filter((m) => (m.text || "").toLowerCase().includes(state.query.toLowerCase())).map((m) => m.id);
+      if (!ids.length) return; const pos = ((state.searchPos || 1) - 1 + ids.length) % ids.length; const row = $(`[data-msg="${ids[ids.length - 1 - pos]}"]`); if (row) row.scrollIntoView({ block: "center" });
+    }
+
+    let playTimer = null;
+    function patchVoice(m) {
+      const btn = $(`[data-play="${m.id}"]`); const wave = $(`[data-seek="${m.id}"]`);
+      if (!btn || !wave) { renderAll(true); return; }
+      btn.innerHTML = m.playing ? icon("pause") : icon("play", "play");
+      btn.setAttribute("aria-label", `${m.playing ? "Pause" : "Play"} voice message`);
+      const p = m.played || 0;
+      Array.from(wave.children).forEach((bar, i) => bar.classList.toggle("played", i / 30 < p));
+      const t = wave.parentElement.querySelector(".voice-foot > span:first-child");
+      if (t) t.textContent = `${p ? dur(p * m.duration) + " / " : ""}${dur(m.duration)}`;
+      const dot = wave.parentElement.querySelector(".voice-foot .dot"); if (dot && p) dot.remove();
+    }
+    function togglePlay(m) {
+      const c = chat();
+      if (m.playing) { m.playing = false; clearInterval(playTimer); playTimer = null; patchVoice(m); return; }
+      c.messages.forEach((x) => { if (x.playing) { x.playing = false; patchVoice(x); } }); clearInterval(playTimer);
+      m.playing = true; m.played = m.played >= 0.999 ? 0 : m.played || 0; patchVoice(m);
+      playTimer = setInterval(() => { m.played = Math.min(1, (m.played || 0) + 0.25 / m.duration); if (m.played >= 1) { m.playing = false; clearInterval(playTimer); playTimer = null; } patchVoice(m); }, 250);
+    }
+
+    /* Recording takes the text field's place: bin, a capsule with the clock and a live wave, send.
+       The wave is simulated: a level every 100 ms, old bars dropped once the track is full. */
+    let rec = null;
+    function startRecording() {
+      if (rec) return;
+      const form = $("#compose"); form.removeAttribute("data-close"); form.classList.add("recording");
+      const track = $("#rec-wave .rec-wave-track"); track.innerHTML = "";
+      let level = 0.3;
+      rec = { start: Date.now(), timer: setInterval(() => {
+        const s = Math.floor((Date.now() - rec.start) / 1000); const t = $("#rec-time"); if (t) t.textContent = dur(s);
+      }, 200), wave: setInterval(() => {
+        level = Math.max(0.08, Math.min(1, level + (Math.random() - 0.5) * 0.5));
+        const bar = document.createElement("i"); bar.style.height = `${4 + level * 18}px`; track.appendChild(bar);
+        const wave = $("#rec-wave"); const fit = Math.floor(wave.clientWidth / 5);
+        while (track.children.length > fit) track.firstChild.remove();
+        wave.classList.toggle("scrolling", track.children.length >= fit);
+      }, 100) };
+    }
+    function stopRecording(sendIt) {
+      if (!rec) return;
+      const secs = Math.max(1, Math.round((Date.now() - rec.start) / 1000)); clearInterval(rec.timer); clearInterval(rec.wave); rec = null;
+      const form = $("#compose"); form.dataset.close = sendIt ? "send" : "discard";
+      setTimeout(() => { form.classList.remove("recording"); form.removeAttribute("data-close"); if (sendIt) send({ type: "voice", duration: secs, text: "" }); else toast("Recording discarded"); }, sendIt ? 220 : 420);
+    }
+
+    /* Calls: an always-dark stage. Encryption badge top-left (amber "Not verified" opens the
+       safety number), minimise top-right, the face with breathing rings while it rings, name,
+       clock and a live mic meter, and a dock of labelled round controls. Video opens out of
+       the face as a growing circle. Minimised, the call is a green pill over the chat list. */
+    let call = null;
+    const callClock = () => dur(call.secs).padStart(5, "0");
+    function callStageHtml() {
+      const c = call.c, connected = call.phase === "connected";
+      const status = call.phase === "calling" ? "Calling…" : call.phase === "ringing" ? "Ringing…" : `<span class="call-clock">${callClock()}</span>`;
+      const meter = connected && !call.muted ? `<span class="mic-meter" aria-label="Your microphone"><i></i><i></i><i></i><i></i><i></i></span>` : "";
+      const badge = c.verified ? `<button class="call-badge" data-call="safety">${icon("shield", "ico-14")}End-to-end encrypted</button>` : `<button class="call-badge warn" data-call="safety">${icon("shield", "ico-14")}Not verified</button>`;
+      const video = call.kind === "video" && connected && call.remoteCam !== false;
+      return `
+        <div class="call-top">${badge}<span class="call-safety hidden" id="call-safety"></span><button class="icon-btn call-min" data-call="minimize" aria-label="Minimise call" title="Minimise">${icon("down", "ico-18")}</button></div>
+        ${video ? `<div class="call-remote ${call.fit}" aria-label="${esc(c.name)}’s camera"><div class="call-remote-pic"></div></div>
+        <div class="call-topbar"><strong>${esc(c.name)}</strong><span class="call-clock">${callClock()}</span>${meter}</div>
+        ${call.cam ? `<div class="call-self" aria-label="Your camera"><span>You</span></div>` : ""}` : `
+        <div class="call-centre">
+          <div class="call-face ${connected ? "" : "ringing"}">${avatar(c, "avatar-xl")}<i class="ring"></i><i class="ring"></i></div>
+          <strong class="call-name">${esc(c.name)}</strong>
+          <span class="call-status">${status}</span>
+          ${meter}
+        </div>`}
+        <div class="call-dock" role="group" aria-label="Call controls">
+          <button class="dock-btn ${call.muted ? "on" : ""}" data-call="mute" aria-pressed="${call.muted}"><span>${icon(call.muted ? "mic-off" : "mic")}</span>${call.muted ? "Unmute" : "Mute"}</button>
+          <button class="dock-btn ${call.cam ? "on" : ""}" data-call="cam" aria-pressed="${call.cam}"><span>${icon(call.cam ? "video" : "video-off")}</span>Video</button>
+          ${video ? `<button class="dock-btn" data-call="fit"><span>${icon("monitor")}</span>${call.fit === "contain" ? "Fill" : "Center"}</button>` : ""}
+          <button class="dock-btn end" data-call="end"><span>${icon("phone-off")}</span>End</button>
+        </div>`;
+    }
+    function paintCall() { if (!call?.el) return; const panel = $("#call-safety"); const open = panel ? !panel.classList.contains("hidden") : false; call.el.innerHTML = callStageHtml(); if (open) toggleSafety(true); }
+    function paintClock() { $$(".call-clock").forEach((n) => { n.textContent = callClock(); }); }
+    function startCall(kind) {
+      if (call) { expandCall(); return; }
+      const c = chat(); closeLayer();
+      call = { c, kind, phase: "calling", secs: 0, muted: false, cam: kind === "video", fit: "contain", minimized: false, timers: [] };
+      const el = document.createElement("div"); el.className = "call"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", `${kind} call with ${c.name}`);
+      call.el = el; $("#layer").appendChild(el); paintCall();
+      el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease-out" });
+      el.addEventListener("click", onCallClick);
+      call.timers.push(setTimeout(() => { call.phase = "ringing"; paintCall(); }, 1200));
+      call.timers.push(setTimeout(() => { call.phase = "connected"; if (call.kind === "video") revealVideo(); else paintCall(); }, 3200));
+      call.tick = setInterval(() => { if (call && call.phase === "connected") { call.secs++; paintClock(); } }, 1000);
+    }
+    /* Their picture opens out of their face as a growing circle. */
+    function revealVideo() {
+      const face = $(".call-face .avatar", call.el); const r = face ? face.getBoundingClientRect() : null;
+      paintCall();
+      const remote = $(".call-remote", call.el); if (!remote || !r || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      remote.animate([{ clipPath: `circle(${r.width / 2}px at ${cx}px ${cy}px)` }, { clipPath: `circle(${Math.hypot(window.innerWidth, window.innerHeight)}px at ${cx}px ${cy}px)` }], { duration: 520, easing: EASE_OUT, fill: "both" });
+      $$(".call-topbar, .call-self, .call-dock", call.el).forEach((n) => n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, delay: 200, easing: "ease-out", fill: "backwards" }));
+    }
+    function toggleSafety(force) {
+      const panel = $("#call-safety"); if (!panel) return;
+      const open = force ?? panel.classList.contains("hidden");
+      if (!open) { panel.classList.add("hidden"); return; }
+      const c = call.c; const digits = Array.from({ length: 12 }, (_, i) => String(((i + 7) * 9973 * (c.name.length + 3)) % 100000).padStart(5, "0"));
+      panel.classList.remove("hidden");
+      panel.innerHTML = `<strong>Safety number</strong><p>Compare it with ${esc(c.name)}: read it out on this call, or check it in person. If it matches, mark it as verified.</p><div class="safety-grid">${digits.map((d) => `<span>${d}</span>`).join("")}</div>${c.verified ? `<span class="ok-note">${icon("check", "ico-14")}Verified on this device</span>` : `<button class="btn" data-call="verify" style="height:38px">Mark as verified</button>`}`;
+      panel.animate([{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: EASE_OUT });
+    }
+    function pillRect() {
+      const mobile = window.matchMedia("(max-width: 900px)").matches;
+      if (mobile) return { left: 0, top: 0, width: window.innerWidth, height: 48, radius: 0 };
+      const pane = $("#pane").getBoundingClientRect();
+      return { left: Math.round(pane.left + 8), top: Math.round(window.innerHeight - 12 - 52), width: Math.round(pane.width - 16), height: 52, radius: 16 };
+    }
+    function pillHtml() { return `<span class="live" aria-hidden="true"></span><span class="pill-who"><strong>${esc(call.c.name)}</strong><span class="call-clock">${call.phase === "connected" ? callClock() : "Ringing…"}</span></span><button class="icon-btn" data-call="expand" aria-label="Back to the call">${icon("up", "ico-16")}</button><button class="icon-btn" data-call="mute" aria-label="${call.muted ? "Unmute" : "Mute"}" aria-pressed="${call.muted}">${icon(call.muted ? "mic-off" : "mic", "ico-16")}</button><button class="icon-btn pill-end" data-call="end" aria-label="End call">${icon("phone-off", "ico-16")}</button>`; }
+    function minimizeCall() {
+      if (!call || call.minimized) return; call.minimized = true;
+      const pr = pillRect(); const el = call.el;
+      const pill = document.createElement("div"); pill.className = "call-pill"; pill.innerHTML = pillHtml();
+      pill.style.cssText = `left:${pr.left}px;top:${pr.top}px;width:${pr.width}px;height:${pr.height}px;border-radius:${pr.radius}px`;
+      pill.addEventListener("click", onCallClick); call.pill = pill;
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduce) { el.classList.add("hidden"); $("#layer").appendChild(pill); return; }
+      $$(".call-top, .call-centre, .call-dock, .call-topbar, .call-self", el).forEach((n) => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: "ease-out", fill: "forwards" }));
+      el.animate([{ clipPath: "inset(0 0 0 0 round 0)" }, { clipPath: `inset(${pr.top}px ${window.innerWidth - pr.left - pr.width}px ${window.innerHeight - pr.top - pr.height}px ${pr.left}px round ${pr.radius}px)` }], { duration: 340, easing: EASE_OUT, fill: "forwards" }).onfinish = () => {
+        el.classList.add("hidden"); $("#layer").appendChild(pill);
+        pill.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: "ease-out" });
+      };
+    }
+    function expandCall() {
+      if (!call || !call.minimized) return; call.minimized = false;
+      const pr = pillRect(); const el = call.el; const pill = call.pill; call.pill = null;
+      if (pill) pill.remove();
+      el.classList.remove("hidden"); paintCall();
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      el.animate([{ clipPath: `inset(${pr.top}px ${window.innerWidth - pr.left - pr.width}px ${window.innerHeight - pr.top - pr.height}px ${pr.left}px round ${pr.radius}px)` }, { clipPath: "inset(0 0 0 0 round 0)" }], { duration: 360, easing: EASE_OUT, fill: "both" });
+      $$(".call-top, .call-centre, .call-dock, .call-topbar, .call-self", el).forEach((n) => n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, delay: 160, easing: "ease-out", fill: "backwards" }));
+    }
+    function endCall() {
+      if (!call) return;
+      const summary = call.phase === "connected" ? `Call ended · ${callClock()}` : "Call cancelled";
+      call.timers.forEach(clearTimeout); clearInterval(call.tick);
+      const nodes = [call.el, call.pill].filter(Boolean); call = null;
+      nodes.forEach((n) => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: "ease-out", fill: "forwards" }).onfinish = () => n.remove());
+      toast(summary);
+    }
+    function onCallClick(e) {
+      const b = e.target.closest("[data-call]");
+      if (!b) { if (!e.target.closest("#call-safety") && !$("#call-safety")?.classList.contains("hidden")) toggleSafety(false); return; }
+      const act = b.dataset.call;
+      if (act === "mute") { call.muted = !call.muted; if (call.minimized) call.pill.innerHTML = pillHtml(); else paintCall(); }
+      else if (act === "cam") { call.cam = !call.cam; if (call.kind === "voice" && call.cam) { call.kind = "video"; if (call.phase === "connected") { revealVideo(); return; } } paintCall(); }
+      else if (act === "fit") { call.fit = call.fit === "contain" ? "cover" : "contain"; paintCall(); }
+      else if (act === "safety") toggleSafety();
+      else if (act === "verify") { call.c.verified = true; toggleSafety(false); paintCall(); renderAll(true); toast(`${call.c.name} marked as verified`); }
+      else if (act === "minimize") minimizeCall();
+      else if (act === "expand") expandCall();
+      else if (act === "end") endCall();
+    }
+    function infoSheet(c) {
+      modal(`<div class="sheet">
+        <div class="sheet-head">${avatar(c, "avatar-lg", c.online)}<strong>${esc(c.name)}</strong><span>@${esc(c.username)} · ${c.online ? "online" : "offline"}</span></div>
+        <div class="sheet-list">
+          <button class="sheet-item" data-act="safety">${icon("shield")}<span>Safety number</span><small>${c.verified ? "Verified" : "Not verified"}</small>${icon("chevron-right", "ico-16")}</button>
+          <div class="sheet-item">${icon("bell-off")}<span>Mute</span><button class="switch" role="switch" aria-checked="${c.muted}" data-act="mute" aria-label="Mute"></button></div>
+          <button class="sheet-item" data-act="search-from-info">${icon("search")}<span>Search in chat</span>${icon("chevron-right", "ico-16")}</button>
+          <button class="sheet-item danger" data-act="clear-chat">${icon("trash")}<span>Clear chat</span></button>
+        </div>
+        <div class="modal-actions"><button class="btn secondary" data-act="close-layer">Done</button></div></div>`);
+    }
+    function safetySheet(c) {
+      const digits = Array.from({ length: 12 }, (_, i) => String(((i + 7) * 9973 * (c.name.length + 3)) % 100000).padStart(5, "0")).join(" ");
+      modal(`<h2>Safety number</h2><p>Compare these numbers with ${esc(c.name)} in person or on a call you trust. They change only when one of you gets new keys.</p><div class="safety">${digits.match(/.{1,23}/g).join("<br>")}</div>
+        ${c.verified ? `<div class="ok-note">${icon("check", "ico-14")}Verified on this device</div>` : ""}
+        <div class="modal-actions"><button class="btn secondary" data-act="close-layer">Close</button><button class="btn" data-act="${c.verified ? "unverify" : "verify"}">${c.verified ? "Clear verification" : "Mark as verified"}</button></div>`);
+    }
+    function confirm(title, body, label, onOk, danger = true) {
+      modal(`<h2>${title}</h2><p>${body}</p><div class="modal-actions"><button class="btn secondary" data-act="close-layer">Cancel</button><button class="btn ${danger ? "danger" : ""}" id="confirm-ok">${label}</button></div>`);
+      $("#confirm-ok").addEventListener("click", () => { closeLayer(); onOk(); });
+    }
+
+    /* ----------------------------------------------------------- events -- */
+    document.addEventListener("click", (e) => {
+      const t = e.target;
+      const act = t.closest("[data-act]")?.dataset.act;
+      const tab = t.closest("[data-tab]"); if (tab) { state.tab = tab.dataset.tab; state.filter = ""; state.mobileList = true; renderAll(); return; }
+      const rowChat = t.closest(".row[data-chat]"); if (rowChat) { openChat(rowChat.dataset.chat); return; }
+      const contact = t.closest("[data-contact]"); if (contact) { state.tab = "chats"; openChat(contact.dataset.contact); return; }
+      const section = t.closest("[data-section]"); if (section) { state.settingsSection = section.dataset.section; state.mobileList = false; renderAll(); return; }
+      const seg = t.closest(".seg button"); if (seg) {
+        const s = seg.parentElement; $$("button", s).forEach((b) => b.setAttribute("aria-pressed", String(b === seg)));
+        const name = s.dataset.setting || s.dataset.attr; const v = seg.dataset.value;
+        if (name === "theme" || name === "data-theme") { document.documentElement.setAttribute("data-theme", v); syncProposal(); }
+        else if (name === "out" || name === "data-out") { document.documentElement.setAttribute("data-out", v); syncProposal(); }
+        else if (name === "logo") { state.logo = v; toast(v === "simple" ? "Flat veil in the rail and the tab" : "Detailed icon in the rail and the tab"); }
+        else if (name === "lock") { state.lockAfter = v; toast(v === "never" ? "Won't lock on its own" : `Locks after ${v} min idle`); }
+        return;
+      }
+      const sw = t.closest(".switch"); if (sw) {
+        const on = sw.getAttribute("aria-checked") !== "true"; sw.setAttribute("aria-checked", String(on));
+        const name = sw.dataset.setting;
+        if (name === "notifications") { state.notifications = on; toast(on ? "Browser permission granted (simulated)" : "Notifications off"); setTimeout(() => renderAll(true), 300); }
+        else if (name === "sounds") state.sounds = on; else if (name === "countMuted") state.countMuted = on; else if (name === "autoMedia") state.autoMedia = on;
+        else if (sw.dataset.act === "mute") { const c = chat(); c.muted = on; renderPane(); toast(on ? `${c.name} muted` : `${c.name} unmuted`); }
+        return;
+      }
+      const menuItem = t.closest("[data-menu]");
+      if (menuItem) {
+        const id = menuItem.dataset.menu; const mId = menuItem.closest(".ctx-menu")?.dataset.msg; const m = mId && chat().messages.find((x) => x.id === mId);
+        const chatMenuId = menuItem.closest(".chat-menu")?.dataset.chat;
+        closeLayer();
+        if (chatMenuId) { const cc = chats.find((x) => x.id === chatMenuId); if (cc) chatMenuAction(cc, id); return; }
+        if (id === "reply" && m) { state.replyTo = m.id; renderAll(true); $("#field").focus(); }
+        else if (id === "copy" && m) { navigator.clipboard?.writeText(m.text).catch(() => {}); toast("Copied"); }
+        else if (id === "copy-link" && m) { navigator.clipboard?.writeText(m.link.url).catch(() => {}); toast("Link copied"); }
+        else if (id === "download") toast("Saved to Downloads (simulated)");
+        else if (id === "more-reactions") { const r = $(`[data-msg="${mId}"]`).getBoundingClientRect(); openMenu(r.left, r.top, []); const menu = $(".ctx-menu"); menu.dataset.msg = mId; menu.innerHTML = `<div class="reaction-picker" style="flex-wrap:wrap;width:258px;border:0;margin:0;padding:4px">${"👍❤️😂😮😢🙏🔥🎉👀✅🤔😍🥳💯🙌👏🤝🫡💪🍻☕🚀🥲😅🤷".match(/\p{Emoji}️?(?:‍\p{Emoji}️?)*/gu).map((e) => `<button class="reaction-pick ${m.reactions[e]?.includes("me") ? "selected" : ""}" data-react="${e}">${e}</button>`).join("")}</div>`; }
+        else if (id === "delete" && m) confirm(m.mine ? "Delete for everyone?" : "Delete for you?", m.mine ? `${chat().name} will see that a message was deleted.` : "The message is removed from this device only.", "Delete", () => { if (m.mine) { m.deleted = true; } else { const c = chat(); c.messages.splice(c.messages.indexOf(m), 1); } renderAll(true); });
+        else if (id === "profile") modal(`<h2>Profile</h2><div class="sheet-head">${avatar(me, "avatar-lg")}<strong>${esc(me.name)}</strong><span>@${esc(me.username)}</span></div><label style="font-size:13px;color:var(--text-secondary)">Display name<input class="field" id="profile-name" value="${esc(me.name)}" style="margin-top:6px" /></label><div class="modal-actions"><button class="btn secondary" data-act="close-layer">Cancel</button><button class="btn" data-act="save-profile">Save</button></div>`);
+        else if (id === "settings") { state.tab = "settings"; state.mobileList = true; renderAll(); }
+        else if (id === "logout") confirm("Log out?", "Your keys and chats on this device are erased. Log in again with your username and phrase to get them back.", "Log out", () => { document.body.innerHTML = `<div class="thread-empty" style="height:100%;justify-content:center"><strong>Logged out</strong><p>This browser has been wiped. Reload the page to start the demo again.</p><button class="btn" onclick="location.reload()">Reload</button></div>`; });
+        return;
+      }
+      const react = t.closest("[data-react]");
+      if (react) { const mId = react.closest(".ctx-menu")?.dataset.msg || react.closest("[data-msg]")?.dataset.msg; const m = chat().messages.find((x) => x.id === mId); if (m) { closeLayer(); toggleReaction(m, react.dataset.react); } return; }
+      const jump = t.closest("[data-jump]"); if (jump) { jumpTo(jump.dataset.jump); return; }
+      const link = t.closest("[data-link]"); if (link) { e.preventDefault(); toast(`Opens ${link.getAttribute("href").replace(/^https?:\/\//, "")} in a new tab`); return; }
+      const play = t.closest("[data-play]"); if (play) { togglePlay(chat().messages.find((x) => x.id === play.dataset.play)); return; }
+      const seek = t.closest("[data-seek]"); if (seek) { const m = chat().messages.find((x) => x.id === seek.dataset.seek); const r = seek.getBoundingClientRect(); m.played = (e.clientX - r.left) / r.width; patchVoice(m); return; }
+      const photo = t.closest("[data-photo]"); if (photo && !photo.closest(".viewer")) { const m = chat().messages.find((x) => x.id === photo.dataset.photo); closeLayer(); const body = m.type === "video" ? (m.src ? `<video src="${m.src}" controls autoplay playsinline></video>` : `<span class="media-play big" data-act="sim-play">${icon("play", "fill")}</span><span class="media-progress" style="--d:${m.duration}s"><i></i></span><span class="media-dur">${dur(m.duration)}</span>`) : (m.src ? `<img src="${m.src}" alt="" />` : ""); $("#layer").innerHTML = `<figure class="viewer" data-act="close-layer" style="margin:0"><div class="photo ${m.type}" data-photo="${m.id}" data-act="stop">${body}</div><button class="icon-btn" data-act="close-layer" aria-label="Close">${icon("x")}</button><figcaption>${m.mine ? "You" : esc(chat().name)} · ${dayLabel(m.time)} ${clock(m.time)}${m.type === "video" ? ` · ${dur(m.duration)}` : ""}</figcaption></figure>`; return; }
+      const simPlay = t.closest("[data-act='sim-play']"); if (simPlay) { simPlay.closest(".photo").classList.toggle("playing"); return; }
+
+      if (!act) { if (!t.closest(".ctx-menu") && !t.closest(".modal") && !t.closest(".call") && !t.closest(".call-pill")) closeLayer(); return; }
+      const c = chat();
+      switch (act) {
+        case "stop": break;
+        case "close-layer": if (t.closest(".modal") && !t.closest("[data-act='close-layer']").classList.contains("btn") && !t.closest(".icon-btn")) return; closeLayer(); break;
+        case "back": state.mobileList = true; renderAll(); break;
+        case "new-chat": modal(`<h2>New chat</h2><p>Enter a username. Shroud has no phone numbers or email addresses to look up.</p><input class="field" id="new-username" placeholder="username" autofocus /><div class="modal-actions"><button class="btn secondary" data-act="close-layer">Cancel</button><button class="btn" data-act="start-chat">Start chat</button></div>`); break;
+        case "start-chat": { const u = $("#new-username").value.trim().replace(/^@/, ""); if (!u) { $("#new-username").focus(); return; } const existing = chats.find((x) => x.username === u); closeLayer(); if (existing) { openChat(existing.id); break; } const nc = { id: "new" + Date.now(), name: u, username: u, initials: u.slice(0, 2).toUpperCase(), av: "av-grey", online: false, muted: false, unread: 0, verified: false, replies: ["Hi! Who is this?", "Oh hey, how did you find me here?"], messages: [], isNew: true }; nc.messages.push(msg({ mine: true, type: "text", text: "", time: now(), deleted: false, system: true })); nc.messages.pop(); chats.unshift(nc); state.tab = "chats"; state.chatId = nc.id; state.mobileList = false; renderAll(); break; }
+        case "add-contact": addContactDialog(); break;
+        case "show-my-qr": myQrDialog(true); break;
+        case "add-contact-morph": addContactDialog(true); break;
+        case "copy-text": { const b = t.closest("[data-copy]"); navigator.clipboard?.writeText(b.dataset.copy).catch(() => {}); morph(b, "Copied"); break; }
+        case "share-invite": { const b = t.closest("button"); if (navigator.share) navigator.share({ title: "Shroud", text: `Message me on Shroud: ${INVITE_LINK}`, url: INVITE_LINK }).catch(() => {}); else { navigator.clipboard?.writeText(INVITE_LINK).catch(() => {}); morph(b, "Link copied"); } break; }
+        case "send-request": { const st = lookup.state; if (!st) { $("#add-username")?.focus(); return; } closeLayer(); if (st.pending) { st.pending.request = false; chats.push({ ...st.pending, online: false, muted: false, unread: 1, verified: false, replies: ["Thanks for accepting!", "Nice to meet you here"], messages: [msg({ text: "Hi! Thanks for accepting", time: now() })] }); toast(`${st.pending.name} added`); renderAll(); } else if (st.known) { state.tab = "chats"; openChat(st.who.id); } else { toast(`Request sent to ${st.who.name}`); } break; }
+        case "my-qr": myQrDialog(); break;
+        case "accept": { const r = contactsExtra.find((x) => x.id === t.closest("[data-id]").dataset.id); r.request = false; chats.push({ ...r, online: false, muted: false, unread: 0, verified: false, replies: ["Thanks for accepting!", "Nice to meet you here"], messages: [msg({ text: "Hi! Thanks for accepting", time: now() })] }); chats[chats.length - 1].unread = 1; toast(`${r.name} added`); renderAll(); break; }
+        case "decline": { const r = contactsExtra.find((x) => x.id === t.closest("[data-id]").dataset.id); r.request = false; toast("Request declined"); renderAll(); break; }
+        case "clear-filter": state.filter = ""; renderPane(); break;
+        case "notify-on": e.preventDefault(); state.notifications = true; toast("Browser permission granted (simulated)"); renderAll(true); break;
+        case "notice-off": state.notice = false; renderPane(); break;
+        case "search": state.searchOpen = !state.searchOpen; state.query = ""; state.searchPos = 1; renderThread(true); break;
+        case "search-close": state.searchOpen = false; state.query = ""; renderThread(true); break;
+        case "search-next": state.searchPos = (state.searchPos || 1) + 1; renderThread(true); break;
+        case "search-prev": state.searchPos = Math.max(1, (state.searchPos || 1) - 1); renderThread(true); break;
+        case "call": startCall(t.closest("[data-kind]").dataset.kind); break;
+        case "info": infoSheet(c); break;
+        case "safety": safetySheet(c); break;
+        case "verify": c.verified = true; closeLayer(); toast(`${c.name} marked as verified`); renderAll(true); break;
+        case "unverify": c.verified = false; closeLayer(); toast("Verification cleared"); renderAll(true); break;
+        case "search-from-info": closeLayer(); state.searchOpen = true; state.query = ""; renderThread(true); break;
+        case "clear-chat": confirm("Clear this chat?", "Messages are removed from this device. Other devices keep theirs.", "Clear", () => { c.messages = []; renderAll(); }); break;
+        case "reply": { const m = c.messages.find((x) => x.id === t.closest("[data-msg]").dataset.msg); state.replyTo = m.id; renderThread(true); $("#field").focus(); break; }
+        case "reply-cancel": state.replyTo = null; renderThread(true); $("#field").focus(); break;
+        case "react-menu": { const row = t.closest("[data-msg]"); const m = c.messages.find((x) => x.id === row.dataset.msg); const r = t.closest("button").getBoundingClientRect(); messageMenu(m, r.left, r.bottom + 4, row); break; }
+        case "mic": startRecording(); $(".send").focus(); break;
+        case "rec-discard": stopRecording(false); break;
+        case "attach-file": $("#file-picker").click(); break;
+        case "attach-photo": $("#photo-picker").click(); break;
+        case "attach-menu": { const r = t.closest("button").getBoundingClientRect(); openMenu(r.left, r.top - 90, [{ id: "pick-file", icon: "file", label: "File" }, { id: "pick-photo", icon: "image", label: "Photo or video" }]); $("[data-menu='pick-file']").onclick = () => { closeLayer(); $("#file-picker").click(); }; $("[data-menu='pick-photo']").onclick = () => { closeLayer(); $("#photo-picker").click(); }; break; }
+        case "jump-latest": { const sc = $("#thread .messages"); sc.scrollTo({ top: sc.scrollHeight, behavior: "smooth" }); state.unseenBelow = 0; break; }
+        case "device": deviceDialog(devices.find((x) => x.id === t.closest("[data-id]").dataset.id)); break;
+        case "dev-rename": { $("#dev-rename").classList.remove("hidden"); $("#dev-save").classList.remove("hidden"); t.closest("button").classList.add("hidden"); const f = $("#dev-name"); f.focus(); f.select(); break; }
+        case "dev-save": { const d = devices.find((x) => x.id === t.closest("[data-id]").dataset.id); const name = $("#dev-name").value.trim(); if (!name) { $("#dev-name").focus(); return; } d.name = name; closeLayer(); renderSettings(); toast("Device renamed"); break; }
+        case "remove-device": { const d = devices.find((x) => x.id === t.closest("[data-id]").dataset.id); modal(`<h2>Remove ${esc(d.name)}?</h2><p>It is logged out and its keys stop working. It can log in again with the phrase. Enter your password to confirm.</p><input class="field" id="dev-pass" type="password" placeholder="Password" autocomplete="current-password" autofocus /><div class="modal-actions"><button class="btn secondary" data-act="close-layer">Cancel</button><button class="btn danger" data-act="remove-device-go" data-id="${d.id}" disabled>Remove</button></div>`); break; }
+        case "remove-device-go": { const d = devices.find((x) => x.id === t.closest("[data-id]").dataset.id); const b = t.closest("button"); b.disabled = true; b.textContent = "Removing…"; setTimeout(() => { devices.splice(devices.indexOf(d), 1); closeLayer(); renderSettings(); toast(`${d.name} removed`); }, 700); break; }
+        case "logout": confirm("Log out?", "Your keys and chats on this device are erased. Log in again with your username and phrase to get them back.", "Log out", () => { document.body.innerHTML = `<div class="thread-empty" style="height:100%;justify-content:center"><strong>Logged out</strong><p>This browser has been wiped. Reload the page to start the demo again.</p><button class="btn" onclick="location.reload()">Reload</button></div>`; }); break;
+        case "show-phrase": confirm("Show your encryption phrase?", "Anyone who sees these 12 words can open your account. Make sure nobody is looking.", "Show", () => { modal(`<h2>Encryption phrase</h2><div class="safety" style="letter-spacing:0;font-family:inherit;font-size:15px;line-height:1.8">lantern · orbit · velvet · marble<br>cactus · ripple · bishop · tundra<br>copper · ember · fossil · meadow</div><p>Write it down. It is the only way back in.</p><div class="modal-actions"><button class="btn secondary" data-act="close-layer">Done</button></div>`); }, false); break;
+        case "clear-cache": state.cacheCleared = true; renderSettings(); toast("Cached media cleared"); break;
+        case "profile": modal(`<h2>Profile</h2><div class="sheet-head">${avatar(me, "avatar-lg")}<strong>${esc(me.name)}</strong><span>@${esc(me.username)}</span></div><label style="font-size:13px;color:var(--text-secondary)">Display name<input class="field" id="profile-name" value="${esc(me.name)}" style="margin-top:6px" /></label><div class="modal-actions"><button class="btn secondary" data-act="close-layer">Cancel</button><button class="btn" data-act="save-profile">Save</button></div>`); break;
+        case "save-profile": me.name = $("#profile-name").value.trim() || me.name; closeLayer(); renderAll(true); toast("Profile saved"); break;
+      }
+    });
+
+    document.addEventListener("contextmenu", (e) => {
+      const chatRow = e.target.closest(".row[data-chat]"); if (chatRow) { e.preventDefault(); openChatMenu(chatRow); return; }
+      const row = e.target.closest("[data-msg]"); if (!row) return; e.preventDefault(); const m = chat().messages.find((x) => x.id === row.dataset.msg); messageMenu(m, e.clientX, e.clientY, row);
+    });
+    document.addEventListener("input", (e) => {
+      if (e.target.id === "pane-search") { state.filter = e.target.value.toLowerCase(); state.filterFocus = true; renderPane(); state.filterFocus = false; }
+      if (e.target.id === "add-username") runLookup(e.target.value);
+      if (e.target.id === "dev-pass") { const go = $("[data-act='remove-device-go']"); if (go) go.disabled = !e.target.value; }
+      if (e.target.id === "chat-search") { state.query = e.target.value; state.searchPos = 1; renderThread(true); }
+      if (e.target.id === "field" && chat()?.online && e.target.value.trim()) { const c = chat(); clearTimeout(c.myTypingTimer); c.myTypingTimer = setTimeout(() => {}, 1000); }
+    });
+    document.addEventListener("submit", (e) => { if (e.target.id === "compose") { e.preventDefault(); if (rec) stopRecording(true); else send(); } });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && rec && !e.shiftKey) { e.preventDefault(); stopRecording(true); return; }
+      if (e.key === "Escape") { if (call && !$("#call-safety")?.classList.contains("hidden")) { toggleSafety(false); return; } if (rec) { stopRecording(false); return; } if ($("#layer").querySelector(":not(.closing)")) { closeLayer(); return; } if (state.searchOpen) { state.searchOpen = false; state.query = ""; renderThread(true); return; } if (state.replyTo) { state.replyTo = null; renderThread(true); } }
+      if (e.target.id === "field" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.target.id === "dev-name" && e.key === "Enter") { e.preventDefault(); $("#dev-save")?.click(); }
+      if (e.target.id === "dev-pass" && e.key === "Enter") { e.preventDefault(); const go = $("[data-act='remove-device-go']"); if (go && !go.disabled) go.click(); }
+      if (e.target.id === "add-username" && e.key === "Enter") { e.preventDefault(); const go = $("#lookup-go"); if (go && !go.disabled) go.click(); }
+      if (e.target.id === "chat-search" && e.key === "Enter") { e.preventDefault(); state.searchPos = (state.searchPos || 1) + (e.shiftKey ? -1 : 1); if (state.searchPos < 1) state.searchPos = 1; renderThread(true); }
+      if (e.key === "ArrowUp" && e.target.id === "field" && !e.target.value) { const mine = [...chat().messages].reverse().find((m) => m.mine && m.type === "text" && !m.deleted); if (mine) { e.target.value = mine.text; onDraft(); } }
+    });
+    $("#file-picker").addEventListener("change", (e) => { const f = e.target.files[0]; if (!f) return; send({ type: "file", fileName: f.name, fileSize: f.size > 1048576 ? (f.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(f.size / 1024)) + " KB", text: "" }); e.target.value = ""; });
+    $("#photo-picker").addEventListener("change", (e) => {
+      const f = e.target.files[0]; if (!f) return; e.target.value = "";
+      const src = URL.createObjectURL(f);
+      if (!f.type.startsWith("video/")) { send({ type: "photo", src, text: "" }); return; }
+      const probe = document.createElement("video"); probe.preload = "metadata"; probe.src = src;
+      probe.onloadedmetadata = () => send({ type: "video", src, duration: Math.max(1, Math.round(probe.duration || 1)), text: "" });
+      probe.onerror = () => send({ type: "video", src, duration: 1, text: "" });
+    });
+    /* The account menu grows out of the rail avatar: the card unfolds from the avatar's circle
+       while the avatar itself lifts into the card's header. Closing folds it back the same way. */
+    function openAccountMenu() {
+      const btn = $("#rail-me"); const src = $(".avatar", btn); const r = src.getBoundingClientRect();
+      closeLayer();
+      const menu = document.createElement("div"); menu.className = "ctx-menu account-menu"; menu.setAttribute("role", "menu");
+      menu.innerHTML = `<div class="acct-head">${avatar(me, "", true)}<span class="acct-head-text"><strong>${esc(me.name)}</strong><span>@${esc(me.username)} · ${devices.length} devices</span></span></div>
+        <div class="menu-body">
+        <button class="ctx-menu-item" role="menuitem" data-menu="profile">${icon("user", "ico-16")}Profile</button>
+        <button class="ctx-menu-item" role="menuitem" data-menu="settings">${icon("settings", "ico-16")}Settings</button>
+        <hr class="ctx-menu-sep" />
+        <button class="ctx-menu-item danger" role="menuitem" data-menu="logout">${icon("logout", "ico-16")}Log out</button>
+        </div>`;
+      $("#layer").appendChild(menu);
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      const left = Math.round(Math.max(8, r.left - 8)), top = Math.round(Math.max(8, r.bottom + 8 - mh));
+      menu.style.left = left + "px"; menu.style.top = top + "px";
+      btn.setAttribute("aria-expanded", "true");
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const target = $(".acct-head .avatar", menu); const tr = target.getBoundingClientRect();
+      const circle = `inset(${r.top - top}px ${left + mw - r.right}px ${top + mh - r.bottom}px ${r.left - left}px round 18px)`;
+      menu.__circle = circle; menu.__rail = r;
+      if (reduce) return;
+      menu.animate([{ clipPath: circle }, { clipPath: "inset(0 0 0 0 round 14px)" }], { duration: 380, easing: EASE_OUT, fill: "both" });
+      $$(".acct-head-text, .menu-body", menu).forEach((n, i) => n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 150 + i * 60, easing: "ease-out", fill: "backwards" }));
+      target.style.opacity = "0"; src.style.opacity = "0";
+      const fly = src.cloneNode(true); fly.classList.add("fly-avatar");
+      fly.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:71;margin:0;transform-origin:top left;font-size:${getComputedStyle(src).fontSize}`;
+      $("#layer").appendChild(fly);
+      fly.animate([{ transform: "none" }, { transform: `translate(${tr.left - r.left}px, ${tr.top - r.top}px) scale(${tr.width / r.width})` }], { duration: 380, easing: EASE_OUT, fill: "forwards" }).onfinish = () => { target.style.opacity = ""; fly.remove(); };
+    }
+    /* A chat's own menu (right-click its row): the row becomes the menu's header where it is,
+       and the actions unfold beneath it, or above it when there is no room below. */
+    const MUTE_CHOICES = [[3600, "Mute for 1 hour"], [28800, "Mute for 8 hours"], [86400, "Mute for 1 day"], [null, "Mute until I turn it back on"]];
+    function openChatMenu(rowEl) {
+      const c = chats.find((x) => x.id === rowEl.dataset.chat); if (!c) return;
+      closeLayer();
+      const r = rowEl.getBoundingClientRect();
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const items = [];
+      if (c.unread > 0) items.push(`<button class="ctx-menu-item" role="menuitem" data-menu="read">${icon("check2", "ico-16")}Mark as read</button>`);
+      if (c.muted) items.push(`<button class="ctx-menu-item" role="menuitem" data-menu="unmute">${icon("bell", "ico-16")}Unmute</button>`);
+      else {
+        if (items.length) items.push(`<hr class="ctx-menu-sep" />`);
+        items.push(`<div class="chat-menu-group">${icon("bell-off", "ico-16")}Mute</div>`);
+        MUTE_CHOICES.forEach(([secs, label]) => items.push(`<button class="ctx-menu-item sub" role="menuitem" data-menu="mute:${secs === null ? "forever" : secs}">${label.replace("Mute ", "").replace(/^f/, "F").replace(/^u/, "U")}</button>`));
+      }
+      const wrap = document.createElement("div"); wrap.className = "chat-menu-layer"; wrap.dataset.chat = c.id;
+      wrap.innerHTML = `<div class="chat-menu-scrim"></div><div class="row chat-menu-row ${rowEl.classList.contains("active") ? "active" : ""} ${rowEl.classList.contains("unread") ? "unread" : ""}">${rowEl.innerHTML}</div><div class="ctx-menu chat-menu" role="menu" data-chat="${c.id}"><div class="menu-body">${items.join("")}</div></div>`;
+      $("#layer").appendChild(wrap);
+      const lifted = $(".chat-menu-row", wrap), menu = $(".chat-menu", wrap);
+      lifted.style.cssText = `left:${Math.round(r.left)}px;top:${Math.round(r.top)}px;width:${Math.round(r.width)}px;height:${Math.round(r.height)}px`;
+      const mh = menu.offsetHeight;
+      const below = r.bottom + 6 + mh <= window.innerHeight - 8;
+      menu.classList.toggle("opens-up", !below);
+      menu.style.left = Math.round(r.left) + "px"; menu.style.top = Math.round(below ? r.bottom + 6 : r.top - 6 - mh) + "px";
+      rowEl.classList.add("menu-open");
+      wrap.__row = rowEl; wrap.__below = below;
+      if (reduce) return;
+      $(".chat-menu-scrim", wrap).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out", fill: "both" });
+      lifted.animate([{ transform: "translateY(0)", boxShadow: "0 0 0 rgba(0,0,0,0)" }, { transform: "translateY(-2px)", boxShadow: "0 12px 32px rgba(0,0,0,0.35)" }], { duration: 240, easing: EASE_OUT, fill: "both" });
+      menu.animate([{ clipPath: below ? "inset(0 0 100% 0 round 14px)" : "inset(100% 0 0 0 round 14px)" }, { clipPath: "inset(0 0 0 0 round 14px)" }], { duration: 320, delay: 40, easing: EASE_OUT, fill: "both" });
+      $(".menu-body", menu).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 120, easing: "ease-out", fill: "backwards" });
+    }
+    function closeChatMenu(wrap) {
+      const done = () => { wrap.remove(); wrap.__row?.classList.remove("menu-open"); };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
+      const below = wrap.__below, menu = $(".chat-menu", wrap), lifted = $(".chat-menu-row", wrap);
+      $(".menu-body", menu).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 100, easing: "ease-out", fill: "forwards" });
+      menu.animate([{ clipPath: "inset(0 0 0 0 round 14px)" }, { clipPath: below ? "inset(0 0 100% 0 round 14px)" : "inset(100% 0 0 0 round 14px)" }], { duration: 220, easing: EASE_OUT, fill: "forwards" });
+      lifted.animate([{ transform: "translateY(-2px)", boxShadow: "0 12px 32px rgba(0,0,0,0.35)" }, { transform: "translateY(0)", boxShadow: "0 0 0 rgba(0,0,0,0)" }], { duration: 220, delay: 40, easing: EASE_OUT, fill: "forwards" });
+      $(".chat-menu-scrim", wrap).animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, delay: 40, easing: "ease-out", fill: "forwards" }).onfinish = done;
+    }
+    function chatMenuAction(c, id) {
+      if (id === "read") { c.unread = 0; toast("Marked as read"); }
+      else if (id === "unmute") { c.muted = false; toast(`${c.name} unmuted`); }
+      else if (id.startsWith("mute:")) { c.muted = true; const secs = id.slice(5); const label = MUTE_CHOICES.find(([v]) => String(v === null ? "forever" : v) === secs)?.[1] || "Muted"; toast(`${c.name} · ${label.replace("Mute", "muted")}`); }
+      renderAll(true);
+    }
+    function closeAccountMenu(menu) {
+      const btn = $("#rail-me"); const src = $(".avatar", btn); btn.setAttribute("aria-expanded", "false");
+      const done = () => { menu.remove(); src.style.opacity = ""; };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { done(); return; }
+      const target = $(".acct-head .avatar", menu); const tr = target.getBoundingClientRect(); const r = menu.__rail;
+      target.style.opacity = "0";
+      const fly = target.cloneNode(true); fly.classList.add("fly-avatar");
+      fly.style.cssText = `position:fixed;left:${tr.left}px;top:${tr.top}px;width:${tr.width}px;height:${tr.height}px;z-index:71;margin:0;opacity:1;transform-origin:top left;font-size:${getComputedStyle(target).fontSize}`;
+      $("#layer").appendChild(fly);
+      fly.animate([{ transform: "none" }, { transform: `translate(${r.left - tr.left}px, ${r.top - tr.top}px) scale(${r.width / tr.width})` }], { duration: 300, easing: EASE_OUT, fill: "forwards" }).onfinish = () => { fly.remove(); src.style.opacity = ""; };
+      $$(".acct-head-text, .menu-body", menu).forEach((n) => n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 110, easing: "ease-out", fill: "forwards" }));
+      menu.animate([{ clipPath: "inset(0 0 0 0 round 14px)" }, { clipPath: menu.__circle }], { duration: 300, easing: EASE_OUT, fill: "forwards" }).onfinish = done;
+    }
+    $("#rail-me").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if ($("#rail-me").getAttribute("aria-expanded") === "true") { closeLayer(); return; }
+      openAccountMenu();
+    });
+    function syncProposal() { $$(".proposal .seg").forEach((s) => { const cur = document.documentElement.getAttribute(s.dataset.attr) || (s.dataset.attr === "data-out" ? "tinted" : "dark"); $$("button", s).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.value === cur))); }); if (state.tab === "settings") renderSettings(); }
+    window.addEventListener("resize", () => { if (window.matchMedia("(max-width: 900px)").matches && !state.wasMobile) { state.wasMobile = true; state.mobileList = true; } renderAll(true); });
+
+    /* --------------------------------------------------- the first minute -- */
+    document.documentElement.setAttribute("data-theme", window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.setAttribute("data-out", "tinted");
+    state.mobileList = state.wasMobile = window.matchMedia("(max-width: 900px)").matches;
+    syncProposal();
+    renderAll();
+    const mara = chats[0];
+    setTimeout(() => { mara.typing = true; renderAll(true); }, 1500);
+    setTimeout(() => { mara.typing = false; mara.messages.push(msg({ text: "Almost there, 2 min", time: now() })); if (state.chatId !== "mara") mara.unread++; mara.replyIndex = 0; renderAll(true); }, 4200);
+    setTimeout(() => { const j = chats.find((c) => c.id === "jonas"); j.online = true; j.messages.push(msg({ text: "Are you around later?", time: now() })); if (state.chatId !== "jonas") { j.unread++; if (state.notifications) toast("Jonas Reinholt: Are you around later?"); } renderAll(true); }, 26000);
+  })();
+  </script>
+</body>
+</html>
