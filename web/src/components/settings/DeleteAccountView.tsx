@@ -112,6 +112,7 @@ export function DeleteAccountView({
 
   return (
     <div className="delete-account">
+      {/* The page's bar says "Delete account"; the question is the card's heading. */}
       <h2 className="delete-account-title">{DELETE_ACCOUNT_COPY.title}</h2>
       <SettingsCard>
         <ul className="delete-account-list">

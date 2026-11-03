@@ -1,7 +1,17 @@
 import type { ComponentType } from "react";
-import { Bell, Database, Info, Lock, MonitorSmartphone, Palette, User } from "lucide-react";
+import {
+  Bell,
+  Database,
+  Info,
+  Lock,
+  MonitorSmartphone,
+  Palette,
+  ScrollText,
+  Trash2,
+  User,
+} from "lucide-react";
 
-/** The seven sections in the settings list, and the pages that open under one of them. */
+/** The seven sections of settings, and the pages that open under one of them. */
 export type SettingsSection =
   | "account"
   | "devices"
@@ -24,16 +34,30 @@ export const SETTINGS_TITLES: Record<SettingsRoute, string> = {
   licenses: "Open-source licenses",
 };
 
-/** The line under each page's title. Delete account carries its own. */
-export const SETTINGS_INTROS: Partial<Record<SettingsRoute, string>> = {
-  account: "Who you are signed in as, how people add you, and the way out.",
-  devices: "The devices signed in to your account. Up to five share it.",
-  notifications: "Delivered by the browser while this tab is closed or locked, and by the page while it is open.",
-  appearance: "How the client looks on this device. The theme follows the system unless you pin one.",
-  privacy: "What your contacts see of you, and what keeps this browser's chats sealed.",
-  data: "Messages and previews are held encrypted in this browser until you clear them.",
-  about: "This client, its updates, and the server it talks to. The server only ever sees ciphertext.",
+/** The line under a page's name in its bar: one short sentence, since the bar never wraps. */
+export const SETTINGS_INTROS: Record<SettingsRoute, string> = {
+  account: "Who you are, how people add you, and the way out.",
+  devices: "Everything signed in to your account. Up to five share it.",
+  notifications: "What reaches you while Shroud is open, closed or locked.",
+  appearance: "Theme and logo, on this browser only.",
+  privacy: "Locking, what contacts see of you, and this browser’s keys.",
+  data: "What this browser keeps, sealed under your PIN.",
+  about: "This client, its updates, and the server it talks to.",
+  "delete-account": "This cannot be undone. Your password confirms it.",
   licenses: "The open-source software this client is built from.",
+};
+
+/** The glyph in a page's bar, and in the list for a section. */
+export const SETTINGS_ICONS: Record<SettingsRoute, ComponentType<{ size?: number }>> = {
+  account: User,
+  devices: MonitorSmartphone,
+  notifications: Bell,
+  appearance: Palette,
+  privacy: Lock,
+  data: Database,
+  about: Info,
+  "delete-account": Trash2,
+  licenses: ScrollText,
 };
 
 /** Pages under a section: Back goes there, and the section stays lit in the list. */
@@ -42,14 +66,14 @@ export const SETTINGS_PARENTS: Partial<Record<SettingsRoute, SettingsSection>> =
   "delete-account": "account",
 };
 
-export const SETTINGS_SECTIONS: { id: SettingsSection; Icon: ComponentType<{ size?: number }> }[] = [
-  { id: "account", Icon: User },
-  { id: "devices", Icon: MonitorSmartphone },
-  { id: "notifications", Icon: Bell },
-  { id: "appearance", Icon: Palette },
-  { id: "privacy", Icon: Lock },
-  { id: "data", Icon: Database },
-  { id: "about", Icon: Info },
+/** The sections listed as rows. Account is the profile card above them. */
+export const SETTINGS_SECTIONS: SettingsSection[] = [
+  "devices",
+  "notifications",
+  "appearance",
+  "privacy",
+  "data",
+  "about",
 ];
 
 export function sectionOf(route: SettingsRoute): SettingsSection {

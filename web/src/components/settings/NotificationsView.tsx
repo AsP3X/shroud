@@ -212,7 +212,7 @@ export function NotificationsView({
                 : "This browser cannot show notifications."
               : blocked
                 ? "Blocked for this site. Allow notifications in your browser's site settings, then turn this on."
-                : "New messages notify you while Shroud is open and, through your browser's push service, while it is closed or locked. The push service only sees that something arrived."
+                : "While Shroud is open, and through your browser’s push service while it is closed or locked."
           }
         />
         <button
@@ -229,7 +229,11 @@ export function NotificationsView({
           </span>
         </button>
       </SettingsGroup>
-      {testResult ? <SettingsNote>{testResult}</SettingsNote> : null}
+      {testResult ? (
+        <SettingsNote>{testResult}</SettingsNote>
+      ) : (
+        <SettingsNote>The push service only ever learns that something arrived, never what.</SettingsNote>
+      )}
       {on && (openOnly || pushMissing) ? (
         <SettingsNote>
           This browser cannot receive notifications while Shroud is closed. On iPhone and iPad, add
@@ -250,9 +254,12 @@ export function NotificationsView({
           disabled={!on}
           onChange={(next) => change("showPreview", next)}
           label="Show message text"
-          description="Only in notifications this tab shows while Shroud is unlocked: your system may keep them in its notification centre, outside Shroud's encrypted storage. Notifications that arrive while Shroud is closed never contain text — the server cannot read it."
+          description="Only while this tab is unlocked. Your system may keep the text in its notification centre, outside Shroud’s sealed storage."
         />
       </SettingsGroup>
+      <SettingsNote>
+        Notifications that arrive while Shroud is closed never carry text: the server cannot read it.
+      </SettingsNote>
 
       <SettingsGroup title="Also notify me about">
         <Switch

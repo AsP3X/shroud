@@ -71,6 +71,37 @@ export function SettingsNote({ children }: { children: ReactNode }) {
   return <p className="set-note">{children}</p>;
 }
 
+/**
+ * The card a page opens with: who or what it is about, large, with its actions underneath.
+ * `figure` is the avatar or the mark; `actions` are `set-action` buttons.
+ */
+export function SettingsHero({
+  figure,
+  title,
+  lines,
+  actions,
+}: {
+  figure: ReactNode;
+  title: string;
+  lines: ReactNode[];
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="set-card set-hero-card">
+      <div className="set-hero">
+        {figure}
+        <div className="set-hero-copy">
+          <strong>{title}</strong>
+          {lines.map((line, i) => (
+            <span key={i}>{line}</span>
+          ))}
+        </div>
+      </div>
+      {actions ? <div className="set-hero-actions">{actions}</div> : null}
+    </div>
+  );
+}
+
 export function Switch({
   checked,
   onChange,

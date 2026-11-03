@@ -121,7 +121,7 @@ export function PrivacyView({
             setLockOnHidden(next);
           }}
           label="Lock chats in background"
-          description="Leaving this tab for more than a few seconds locks Shroud and asks for your PIN when you come back. Reloading the page does not. Five minutes of inactivity still locks even if this is off."
+          description="Leaving this tab for a few seconds locks Shroud until you enter your PIN. Five idle minutes lock it either way."
         />
         <SettingsRow
           title="Lock chats now"
@@ -160,7 +160,7 @@ export function PrivacyView({
             setGeneratesLinkPreviews(next);
           }}
           label="Link previews"
-          description="When you send a link, this browser loads the page to build a preview and seals it into the message. The page is fetched end to end encrypted through the Shroud server, which sees only the website's name — not the link or the page; the website sees the server, not you. People you send it to never contact the website."
+          description="A preview of each link you send, sealed into the message. The page is fetched through the Shroud server, which sees only the website’s name."
         />
         <Switch
           checked={relayCalls}
@@ -169,17 +169,23 @@ export function PrivacyView({
             setAlwaysRelaysCalls(next);
           }}
           label="Always relay calls"
-          description="Calls from this browser go through the Shroud server's relay, so the person you call never sees your IP address. Calls may lag slightly. If the server has no relay, calls won't connect until you turn this off."
+          description="Calls go through the server’s relay, so the other side never sees your IP address. They may lag slightly."
         />
       </SettingsGroup>
+      <SettingsNote>
+        Previews are fetched end to end encrypted: the website sees the server, not you, and the
+        people you send it to never contact the website. Without a relay on the server, calls
+        won’t connect until relaying is off.
+      </SettingsNote>
 
       <SettingsGroup title="Chats">
         {serverSwitch(
           "allow_peer_chat_delete",
           "Let contacts clear chats for me",
-          "When a contact deletes a chat for both of you, your copy is deleted too. Leave this off to keep your own messages — theirs are replaced with “Message deleted” either way. You stay contacts.",
+          "When a contact deletes a chat for both of you, your copy goes too. Off, you keep your own messages; theirs read “Message deleted” either way.",
         )}
       </SettingsGroup>
+      <SettingsNote>You stay contacts either way.</SettingsNote>
 
       <SettingsGroup title="Blocked contacts">
         {blocked.length === 0 ? (
@@ -205,7 +211,7 @@ export function PrivacyView({
         )}
       </SettingsGroup>
       <SettingsNote>
-        Blocking someone is done from their profile in the iOS app; this list is where you undo it.
+        Block someone from their profile in the iOS app. This list is where you undo it.
       </SettingsNote>
 
       <SettingsGroup title="Encryption">
@@ -229,9 +235,9 @@ export function PrivacyView({
           Encrypted on this device
         </strong>
         <p>
-          Chat history is sealed with a key derived from your 12-word encryption phrase. The same
-          X25519 identity as on iOS comes from that phrase, which itself is never stored here. The
-          server only ever holds ciphertext.
+          Your chats are sealed with a key derived from your 12-word phrase, which is never
+          stored here. The same identity as on iOS comes from that phrase. The server only ever
+          holds ciphertext.
         </p>
       </div>
 

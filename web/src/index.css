@@ -2262,54 +2262,71 @@ button.reply-quote { cursor: pointer; }
 .placeholder-card > svg { margin-bottom: 4px; }
 
 /* ------------------------------------------------------------- settings -- */
-/* Settings is a list and a page (components/SettingsPane.tsx): the sections down the pane with
-   a line each, and the open section where the thread goes. */
-.set-list-me { margin-bottom: 6px; }
+/* Settings is a list and a page (components/SettingsPane.tsx): you, then the sections down the
+   pane, and the open section where the thread goes, under a bar that names it like a chat's. */
+.set-list-me {
+  margin: 2px 0 10px; padding: 12px 10px 12px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--separator);
+}
 .set-list-me .row-copy strong { font-size: var(--fs-base); }
+.set-list-me.active { border-color: transparent; }
+.set-list-me .set-chevron { margin-right: 2px; }
 .set-list-ico {
   width: 36px; height: 36px; flex-shrink: 0;
-  border-radius: var(--r-sm); background: var(--surface-2);
+  border-radius: var(--r-sm); background: var(--surface-3);
   display: grid; place-items: center;
   color: var(--text-secondary);
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.row-button.active .set-list-ico { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-text); }
+.row-button.active .set-list-ico { background: var(--accent); color: var(--on-accent); }
 .set-view {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column;
   overflow: hidden;
   background: var(--canvas);
 }
-/* Each page opens with its name and one line on what it is for. */
-.set-head { display: flex; flex-direction: column; gap: 6px; padding: 0 0 4px; }
-.set-head h2 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; }
-.set-head p { margin: 0; max-width: 48ch; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-secondary); }
+/* The page's bar: a tile where a chat's avatar goes, the page's name, and one line on what it
+   is for. Delete account's tile carries its colour. */
+.set-bar-ico {
+  width: 40px; height: 40px; flex-shrink: 0;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-text);
+  display: grid; place-items: center;
+}
+.set-bar-ico.danger { background: var(--danger-soft); color: var(--danger); }
 .set-body {
   flex: 1; min-height: 0; overflow-y: auto;
-  padding: 24px 32px 48px;
-  display: flex; flex-direction: column; gap: 16px;
-  --set-width: 560px;
+  padding: 24px 32px 56px;
+  display: flex; flex-direction: column; gap: 22px;
+  --set-width: 680px;
 }
 .set-body > * { width: min(var(--set-width), 100%); flex-shrink: 0; }
 /* Overlays rendered inside a settings page are fixed to the viewport, not the column. */
 .set-body > .modal-scrim { width: auto; margin-inline: 0; }
 .set-body > .set-toast { width: max-content; }
 
+/* A group: its label like the chat list's, then one card. A note under a card belongs to it. */
 .set-group { display: flex; flex-direction: column; gap: 8px; }
 .set-group > h2 {
-  margin: 0 4px;
-  font-size: var(--fs-sm); font-weight: 600;
-  color: var(--text-secondary);
+  margin: 0 0 0 4px;
+  font-size: var(--fs-2xs); font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.06em;
 }
 .set-card {
   background: var(--surface-1);
   border: 1px solid var(--separator);
-  border-radius: var(--r-md);
+  border-radius: var(--radius);
   overflow: hidden;
 }
+/* On the canvas the cards sit above it, like bubbles; in a dialog they sit below its fill. */
+.set-body .set-card { background: var(--surface-2); }
+.set-group + .set-note, .set-card + .set-note, .set-hero-card + .set-note { margin-top: -12px; }
 
 .set-row {
-  display: flex; align-items: center; gap: 12px;
-  width: 100%; min-height: 52px; padding: 8px 14px;
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; min-height: 54px; padding: 10px 16px;
   border: 0; border-top: 1px solid var(--separator);
   background: transparent; color: inherit; text-align: left;
   font-size: var(--fs-base);
@@ -2326,10 +2343,6 @@ button.reply-quote { cursor: pointer; }
   color: var(--text-secondary);
 }
 .set-ico.danger { color: var(--danger); }
-.set-ico.set-tile-muted { color: var(--text-tertiary); }
-.set-ico.about-tile-ok { color: var(--ok-text); }
-.set-ico.about-tile-accent { color: var(--accent-text); }
-.set-ico.about-tile-failed { color: var(--danger); }
 /* Who is signed in: the real avatar, not a glyph. */
 .set-me .avatar { flex-shrink: 0; }
 .set-me strong { font-size: var(--fs-lg); font-weight: 600; }
@@ -2366,10 +2379,44 @@ button.reply-quote { cursor: pointer; }
   background: var(--accent-soft); color: var(--accent-text);
 }
 
+/* The card a page opens with (SettingsHero): who or what it is about, and its actions. */
+.set-hero { display: flex; align-items: center; gap: 16px; padding: 18px 18px 16px; }
+.set-hero-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.set-hero-copy strong {
+  font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.set-hero-copy > span { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.4; }
+.set-hero-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 18px; }
+.set-hero-mark {
+  width: 72px; height: 72px; flex-shrink: 0;
+  border-radius: 18px;
+  background: var(--accent-soft);
+  display: grid; place-items: center;
+}
+/* A short state line in a hero: "Up to date", "A new version is ready". */
+.set-status { display: inline-flex; align-items: center; gap: 6px; }
+.set-status.ok { color: var(--ok-text); }
+.set-status.accent { color: var(--accent-text); }
+.set-status.failed { color: var(--danger); }
+.set-status .dev-spinner { width: 14px; height: 14px; }
+.set-action {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 14px; border-radius: var(--r-sm);
+  border: 1px solid var(--separator); background: var(--surface-3);
+  color: var(--text-primary);
+  font-size: var(--fs-sm); font-weight: 600; white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.set-action:hover:not(:disabled) { background: var(--hover); }
+.set-action:disabled { opacity: 0.5; cursor: default; }
+.set-action.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+.set-action.primary:hover:not(:disabled) { background: var(--accent-hover); }
+
 .set-toggle {
   position: relative;
-  display: flex; align-items: flex-start; gap: 14px;
-  padding: 13px 14px;
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 16px;
   border-top: 1px solid var(--separator);
   cursor: pointer;
 }
@@ -2385,7 +2432,6 @@ button.reply-quote { cursor: pointer; }
   background: color-mix(in srgb, var(--text-primary) 22%, var(--surface-2));
   border: 1px solid transparent;
   transition: background 0.18s var(--ease), border-color 0.18s ease;
-  margin-top: 1px;
 }
 .set-switch::after {
   content: ""; position: absolute;
@@ -2400,24 +2446,27 @@ button.reply-quote { cursor: pointer; }
 .set-toggle input:focus-visible ~ .set-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .set-note {
-  margin-block: -4px 0; padding-inline: 4px;
+  margin: 0; padding-inline: 4px; max-width: 64ch;
   font-size: var(--fs-xs); color: var(--text-tertiary); line-height: 1.55;
 }
 .set-error {
   margin-block: 0; padding: 10px 12px; border-radius: var(--r-sm);
   background: var(--danger-soft); color: var(--danger); font-size: var(--fs-sm);
 }
-.set-placeholder { margin: 0; padding: 16px 14px; font-size: var(--fs-sm); color: var(--text-secondary); }
+.set-placeholder { margin: 0; padding: 16px; font-size: var(--fs-sm); color: var(--text-secondary); }
 
+/* A short piece on how the page's subject is protected: a card with an accent edge. */
 .set-explainer {
-  background: var(--accent-soft);
+  background: var(--surface-2);
+  border: 1px solid var(--separator); border-left: 3px solid var(--accent);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 14px 16px;
 }
 .set-explainer strong {
-  display: flex; align-items: center; gap: 7px;
-  font-size: var(--fs-md); color: var(--accent-text);
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--fs-md); font-weight: 600; color: var(--text-primary);
 }
+.set-explainer strong svg { color: var(--accent-text); flex-shrink: 0; }
 .set-explainer p { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; }
 
 /* Delete Account, the last card on Privacy and Security and its own page. */
@@ -2475,10 +2524,6 @@ button.reply-quote { cursor: pointer; }
 
 /* About Shroud and its Open-Source Licenses page (settings/AboutView.tsx). */
 .set-ico .dev-spinner { width: 16px; height: 16px; }
-.about-value {
-  flex-shrink: 1; min-width: 0; max-width: 60%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .set-card > .lic-item:first-child > .set-row { border-top: 0; }
 .lic-chevron { transition: transform 0.18s var(--ease); }
 .set-row[aria-expanded="true"] .lic-chevron { transform: rotate(180deg); }
@@ -4170,7 +4215,11 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   .shell { flex-direction: column; }
   .pane { width: 100%; border-right: 0; }
   .pane.hidden-mobile, .thread.hidden-mobile, .set-view.hidden-mobile { display: none; }
-  .set-body { padding: 16px 12px 48px; }
+  .set-body { padding: 14px 12px 48px; gap: 18px; }
+  .set-hero { gap: 14px; padding: 16px 14px 12px; }
+  .set-hero-actions { padding: 0 14px 14px; }
+  .set-hero-actions .set-action { flex: 1; justify-content: center; }
+  .set-bar .thread-peer span { white-space: normal; }
   .tab-bar { display: flex; }
   /* Clear the tab bar (62px) instead of landing on it. */
   .set-toast { bottom: 78px; }
@@ -4189,7 +4238,6 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   .compose.has-draft .compose-mic { display: none; }
   .compose:not(.has-draft) .send { display: none; }
   .jump-latest { right: 14px; bottom: calc(100% + 16px); }
-  .set-body { padding: 16px 12px 48px; }
   .pane-head { padding: 14px 12px 10px; }
   .rows { padding: 2px 6px 12px; }
 }
@@ -5220,16 +5268,15 @@ button.file-row:focus-visible .file-tile { box-shadow: 0 0 0 3px var(--accent-te
   font-size: var(--fs-sm); font-weight: 500; line-height: 1.35;
   color: var(--text-primary);
 }
-.update-banner-reload, .about-reload {
+.update-banner-reload {
   height: 32px; padding: 0 14px; flex-shrink: 0;
   border: 0; border-radius: var(--r-full);
   background: var(--accent); color: var(--on-accent);
   font-size: var(--fs-sm); font-weight: 600;
   transition: background 0.15s ease;
 }
-.update-banner-reload:hover, .about-reload:hover { background: var(--accent-hover); }
+.update-banner-reload:hover { background: var(--accent-hover); }
 /* In a settings row: no taller than the row's 30px tile. */
-.about-reload { height: 30px; }
 .update-banner-close.icon-btn { width: 32px; height: 32px; }
 @media (max-width: 900px) {
   .update-banner { top: calc(10px + env(safe-area-inset-top)); }

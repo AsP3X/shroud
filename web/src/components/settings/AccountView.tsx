@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
-import { Key, Link2, LogOut, QrCode, RotateCcw, Trash2, User } from "lucide-react";
+import { AtSign, Hash, Key, Link2, LogOut, QrCode, RotateCcw, Trash2 } from "lucide-react";
 import { api, ApiError, type Session } from "../../api/client";
+import { displayName } from "../../format";
 import { saveShareCode } from "../../session";
+import { Avatar } from "../Avatar";
 import { CopyButton } from "../CopyButton";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DELETE_ACCOUNT_COPY } from "./deleteAccount";
-import { SettingsCard, SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
+import { SettingsGroup, SettingsHero, SettingsNote, SettingsRow } from "./SettingsRow";
 
 /**
- * Account: who is signed in, how people add you (share code, invite link, QR code and its
- * reset), and the two ways out — logging this browser out, or deleting the account.
+ * Account: you, large, with the two things people do with their profile; then what identifies
+ * you, how people add you (share code, invite link, QR code and its reset), and the two ways
+ * out — logging this browser out, or deleting the account.
  */
 export function AccountView({
   session,
@@ -28,11 +31,13 @@ export function AccountView({
   onDeleteAccount: () => void;
   onUnauthorized: (err?: unknown) => void;
 }) {
+  const name = displayName(session.user.username);
   const handle = `@${session.user.username}`;
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   useEffect(() => {
     if (!confirmingReset) return;
@@ -42,6 +47,21 @@ export function AccountView({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [confirmingReset]);
+
+  useEffect(() => {
+    if (!copiedLink) return;
+    const timer = window.setTimeout(() => setCopiedLink(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copiedLink]);
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      setCopiedLink(true);
+    } catch {
+      /* clipboard blocked: the link stays selectable in the row below */
+    }
+  }
 
   async function resetShareCode() {
     setConfirmingReset(false);
@@ -66,23 +86,42 @@ export function AccountView({
 
   return (
     <>
-      <SettingsCard>
+      <SettingsHero
+        figure={<Avatar name={name} seed={session.user.id} size="lg" />}
+        title={name}
+        lines={[handle, "End-to-end encrypted on every device"]}
+        actions={
+          <>
+            <button type="button" className="set-action primary" onClick={onShowQr}>
+              <QrCode size={16} aria-hidden="true" />
+              Show QR code
+            </button>
+            <button type="button" className="set-action" onClick={() => void copyLink()}>
+              <Link2 size={16} aria-hidden="true" />
+              {copiedLink ? "Link copied" : "Copy invite link"}
+            </button>
+          </>
+        }
+      />
+
+      <SettingsGroup title="Identity">
+        <SettingsRow title="Username" Icon={AtSign} value={handle} />
         <div className="set-row">
           <span className="set-ico" aria-hidden="true">
-            <User size={20} />
+            <Hash size={20} />
           </span>
           <span className="set-row-copy">
-            <strong>Signed in as {handle}</strong>
+            <strong>Account ID</strong>
             <code>{session.user.id}</code>
           </span>
+          <CopyButton value={session.user.id} label="account ID" />
         </div>
-      </SettingsCard>
+      </SettingsGroup>
       <SettingsNote>
         Your username is shared only with people you have both added. The server never sees it.
       </SettingsNote>
 
       <SettingsGroup title="How people add you">
-        <SettingsRow title="Show QR code" Icon={QrCode} onClick={onShowQr} />
         <div className="set-row">
           <span className="set-ico" aria-hidden="true">
             <Key size={20} />
@@ -105,9 +144,8 @@ export function AccountView({
         </div>
         <SettingsRow
           title={resetting ? "Resetting…" : "Reset QR code"}
-          subtitle="Makes a new QR code, share code and invite link. The old ones stop working."
+          subtitle="A new QR code, share code and invite link. The old ones stop working."
           Icon={RotateCcw}
-          danger
           wrapSubtitle
           disabled={resetting}
           onClick={() => setConfirmingReset(true)}
@@ -115,20 +153,17 @@ export function AccountView({
       </SettingsGroup>
       <SettingsNote>
         {notice ??
-          "All three open the same door: anyone with one of them can send you a contact request. Your contacts keep working after a reset."}
+          "The QR code, share code and link open the same door: anyone holding one can send you a contact request. Existing contacts keep working after a reset."}
       </SettingsNote>
 
-      <SettingsCard>
+      <SettingsGroup title="Leaving">
         <SettingsRow
           title="Log out"
-          subtitle="Keys and messages on this browser are erased. Your account and other devices stay."
+          subtitle="Erases the keys and messages on this browser. Your account and other devices stay."
           Icon={LogOut}
           wrapSubtitle
           onClick={onLogout}
         />
-      </SettingsCard>
-
-      <SettingsCard>
         <SettingsRow
           title={DELETE_ACCOUNT_COPY.rowTitle}
           subtitle={DELETE_ACCOUNT_COPY.rowSubtitle}
@@ -137,7 +172,7 @@ export function AccountView({
           wrapSubtitle
           onClick={onDeleteAccount}
         />
-      </SettingsCard>
+      </SettingsGroup>
 
       {error ? <p className="set-error">{error}</p> : null}
 

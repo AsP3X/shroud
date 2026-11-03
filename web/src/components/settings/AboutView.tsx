@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
+  Cable,
   Check,
   ChevronDown,
   CodeXml,
@@ -8,6 +9,7 @@ import {
   RefreshCw,
   ScrollText,
   Server,
+  Tag,
   TriangleAlert,
 } from "lucide-react";
 import {
@@ -19,7 +21,7 @@ import {
 } from "../../appVersion";
 import { apiBase, webBuild } from "../../config";
 import { BrandMark } from "../BrandMark";
-import { SettingsGroup, SettingsNote, SettingsRow } from "./SettingsRow";
+import { SettingsGroup, SettingsHero, SettingsNote, SettingsRow } from "./SettingsRow";
 import type { SettingsRoute } from "./routes";
 
 const SOURCE_URL = "https://github.com/AsP3X/shroud";
@@ -45,12 +47,12 @@ export function useUpdateSnapshot() {
   return useSyncExternalStore(subscribeUpdate, updateSnapshot);
 }
 
-const STATUS: Record<UpdateStatus, { text: string; tile: string; icon: ReactNode }> = {
-  idle: { text: "Updates are checked automatically", tile: "set-tile-muted", icon: <RefreshCw size={20} /> },
-  checking: { text: "Checking for updates…", tile: "set-tile-muted", icon: <span className="dev-spinner" /> },
-  current: { text: "Shroud is up to date", tile: "about-tile-ok", icon: <Check size={20} /> },
-  available: { text: "A new version is available", tile: "about-tile-accent", icon: <Download size={20} /> },
-  failed: { text: "Couldn’t check for updates", tile: "about-tile-failed", icon: <TriangleAlert size={20} /> },
+const STATUS: Record<UpdateStatus, { text: string; tone: string; icon: ReactNode }> = {
+  idle: { text: "Updates are checked automatically", tone: "", icon: <RefreshCw size={14} /> },
+  checking: { text: "Checking for updates…", tone: "", icon: <span className="dev-spinner" /> },
+  current: { text: "Up to date", tone: "ok", icon: <Check size={14} /> },
+  available: { text: "A new version is ready", tone: "accent", icon: <Download size={14} /> },
+  failed: { text: "Couldn’t check for updates", tone: "failed", icon: <TriangleAlert size={14} /> },
 };
 
 export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) => void }) {
@@ -60,38 +62,41 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
 
   return (
     <>
-      <SettingsGroup title="Updates">
-        <div className="set-row">
-          <span className="set-ico" aria-hidden="true">
-            <BrandMark size={20} />
+      <SettingsHero
+        figure={
+          <span className="set-hero-mark" aria-hidden="true">
+            <BrandMark size={40} />
           </span>
-          <span className="set-row-copy">
-            <strong>Shroud {webVersion()}</strong>
-            <span>{build ? `Build ${build.slice(0, 12)}` : "Development build"}</span>
-          </span>
-        </div>
-        <div className="set-row about-status">
-          <span className={`set-ico ${shown.tile}`} aria-hidden="true">
+        }
+        title={`Shroud ${webVersion()}`}
+        lines={[
+          build ? `Build ${build.slice(0, 12)}` : "Development build",
+          /* Read out as it changes: a check started here ends here. */
+          <span key="status" className={`set-status ${shown.tone}`} role="status">
             {shown.icon}
-          </span>
-          {/* Read out as it changes: a check started here ends here. */}
-          <span className="set-row-copy" role="status">
-            <strong>{shown.text}</strong>
-          </span>
-          {status === "available" ? (
-            <button type="button" className="about-reload" onClick={() => window.location.reload()}>
-              Reload
+            {shown.text}
+          </span>,
+        ]}
+        actions={
+          status === "available" ? (
+            <button type="button" className="set-action primary" onClick={() => window.location.reload()}>
+              <RefreshCw size={16} aria-hidden="true" />
+              Reload to update
             </button>
-          ) : null}
-        </div>
-        <SettingsRow
-          title="Check for Updates"
-          Icon={RefreshCw}
-          // A build without an id (`npm run dev`) has nothing to compare.
-          disabled={!build}
-          onClick={() => checkForUpdate("manual")}
-        />
-      </SettingsGroup>
+          ) : (
+            <button
+              type="button"
+              className="set-action"
+              // A build without an id (`npm run dev`) has nothing to compare.
+              disabled={!build || status === "checking"}
+              onClick={() => checkForUpdate("manual")}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+              Check for updates
+            </button>
+          )
+        }
+      />
 
       <SettingsGroup title="Server">
         <div className="set-row">
@@ -103,24 +108,16 @@ export function AboutView({ onNavigate }: { onNavigate: (route: SettingsRoute) =
             <code>{serverEndpoint()}</code>
           </span>
         </div>
-        <div className="set-row">
-          <span className="set-row-copy">
-            <strong>Server version</strong>
-          </span>
-          <span className="set-row-value about-value">{serverVersion ?? "—"}</span>
-        </div>
-        <div className="set-row">
-          <span className="set-row-copy">
-            <strong>Connection</strong>
-          </span>
-          <span className="set-row-value about-value">
-            {apiBase().startsWith("/") ? "Same origin, reverse proxied" : "Configured origin"}
-          </span>
-        </div>
+        <SettingsRow title="Server version" Icon={Tag} value={serverVersion ?? "—"} />
+        <SettingsRow
+          title="Connection"
+          Icon={Cable}
+          value={apiBase().startsWith("/") ? "Same origin, reverse proxied" : "Configured origin"}
+        />
       </SettingsGroup>
       <SettingsNote>
-        The web client talks to whichever server served this page and cannot switch from here.
-        Point it elsewhere by deploying it against a different API.
+        The server only ever sees ciphertext. This client talks to whichever server served the
+        page; to use another, deploy it against that server’s API.
       </SettingsNote>
 
       <SettingsGroup title="More">

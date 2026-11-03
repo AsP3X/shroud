@@ -18,6 +18,7 @@ import { notificationsSummary, NotificationsView, type MutedChat } from "./setti
 import { AppearanceView, DataStorageView, themeLabel } from "./settings/PreferencesViews";
 import { PrivacyView } from "./settings/PrivacyView";
 import {
+  SETTINGS_ICONS,
   SETTINGS_INTROS,
   SETTINGS_PARENTS,
   SETTINGS_SECTIONS,
@@ -30,8 +31,9 @@ import {
 const PHONE = "(max-width: 900px)";
 
 /**
- * Settings as a list and a page, like the chats: the sections down the pane, the open one on
- * the right. On a phone the list comes first and a section opens over it with Back.
+ * Settings as a list and a page, like the chats: you, then the sections down the pane, and the
+ * open one on the right under a bar that names it the way a chat's bar names the peer. On a
+ * phone the list comes first and a section opens over it with Back.
  */
 export function SettingsPane({
   session,
@@ -145,16 +147,19 @@ export function SettingsPane({
   }, [parent, back, confirmLogout]);
 
   const lines: Record<SettingsSection, string> = {
-    account: `@${session.user.username}`,
-    devices: deviceCount === null ? "Signed in to your account" : `${deviceCount} of ${DEVICE_LIMIT} in use`,
+    account: "Account, invite link, log out",
+    devices:
+      deviceCount === null ? "Signed in to your account" : `${deviceCount} of ${DEVICE_LIMIT} signed in`,
     notifications: notificationsSummary(),
     appearance: `${themeLabel(pref)} theme`,
-    privacy: "Locking, what contacts see, blocked",
-    data: "What this browser keeps",
+    privacy: "Locking, visibility, blocked contacts",
+    data: "Messages kept on this browser",
     about: updateStatus === "available" ? "Update available" : `Shroud ${webVersion()} · ${serverHost()}`,
   };
   const active = sectionOf(route);
-  const intro = SETTINGS_INTROS[route];
+  const lit = (section: SettingsSection) => active === section && !listShown;
+  const BarIcon = SETTINGS_ICONS[route];
+  const name = displayName(session.user.username);
 
   return (
     <>
@@ -165,41 +170,52 @@ export function SettingsPane({
           </div>
         </header>
         <div className="rows" role="list">
-          <div className="row set-list-me" role="listitem">
-            <Avatar name={displayName(session.user.username)} seed={session.user.id} size="md" />
+          <button
+            type="button"
+            role="listitem"
+            className={`row row-button set-list-me${lit("account") ? " active" : ""}`}
+            aria-current={active === "account" ? "page" : undefined}
+            onClick={() => open("account")}
+          >
+            <Avatar name={name} seed={session.user.id} size="md" />
             <span className="row-copy">
               <strong>
-                <span>{displayName(session.user.username)}</span>
+                <span>{name}</span>
               </strong>
-              <span>@{session.user.username}</span>
+              <span>{lines.account}</span>
             </span>
-          </div>
-          {SETTINGS_SECTIONS.map(({ id, Icon }) => (
-            <button
-              key={id}
-              type="button"
-              role="listitem"
-              className={`row row-button${active === id && !listShown ? " active" : ""}`}
-              aria-current={active === id ? "page" : undefined}
-              onClick={() => open(id)}
-            >
-              <span className="set-list-ico" aria-hidden="true">
-                <Icon size={18} />
-              </span>
-              <span className="row-copy">
-                <strong>
-                  <span>{SETTINGS_TITLES[id]}</span>
-                </strong>
-                <span>{lines[id]}</span>
-              </span>
-              <ChevronRight size={16} className="set-chevron" aria-hidden="true" />
-            </button>
-          ))}
+            <ChevronRight size={16} className="set-chevron" aria-hidden="true" />
+          </button>
+          {SETTINGS_SECTIONS.map((id) => {
+            const Icon = SETTINGS_ICONS[id];
+            return (
+              <button
+                key={id}
+                type="button"
+                role="listitem"
+                className={`row row-button${lit(id) ? " active" : ""}`}
+                aria-current={active === id ? "page" : undefined}
+                onClick={() => open(id)}
+              >
+                <span className="set-list-ico" aria-hidden="true">
+                  <Icon size={18} />
+                </span>
+                <span className="row-copy">
+                  <strong>
+                    <span>{SETTINGS_TITLES[id]}</span>
+                  </strong>
+                  <span>{lines[id]}</span>
+                </span>
+                <ChevronRight size={16} className="set-chevron" aria-hidden="true" />
+              </button>
+            );
+          })}
         </div>
       </section>
 
       <main className={`set-view${listShown ? " hidden-mobile" : ""}`} aria-label={SETTINGS_TITLES[route]}>
-        <header className="thread-head">
+        {/* Keyed with the body: a page opened from another one starts fresh, at its top. */}
+        <header className="thread-head set-bar" key={`bar-${route}`}>
           <button
             type="button"
             className={parent ? "icon-btn" : "icon-btn back-mobile"}
@@ -209,20 +225,17 @@ export function SettingsPane({
           >
             <ChevronLeft size={20} />
           </button>
+          <span className={route === "delete-account" ? "set-bar-ico danger" : "set-bar-ico"} aria-hidden="true">
+            <BarIcon size={20} />
+          </span>
           <div className="thread-peer">
             <strong>
-              <span>Settings</span>
+              <span>{SETTINGS_TITLES[route]}</span>
             </strong>
+            <span>{SETTINGS_INTROS[route]}</span>
           </div>
         </header>
-        {/* Keyed: a page opened from another one starts at its top. */}
         <div className="set-body" key={route}>
-          {intro ? (
-            <div className="set-head">
-              <h2>{SETTINGS_TITLES[route]}</h2>
-              <p>{intro}</p>
-            </div>
-          ) : null}
           {route === "account" ? (
             <AccountView
               session={session}
