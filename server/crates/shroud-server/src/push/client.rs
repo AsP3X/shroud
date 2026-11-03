@@ -442,6 +442,8 @@ z5A6B7C8D9E0F1G2H3I4J5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1
     #[test]
     fn mint_jwt_with_openssl_generated_key_if_possible() {
         // Generate ephemeral P-256 key with openssl when present so we don't ship a fake PEM.
+        // Apple's .p8 keys name the curve by OID; LibreSSL (macOS) would otherwise write the
+        // curve out as explicit parameters, which no PKCS#8 decoder for ES256 accepts.
         let output = std::process::Command::new("openssl")
             .args([
                 "genpkey",
@@ -449,6 +451,8 @@ z5A6B7C8D9E0F1G2H3I4J5K6L7M8N9O0P1Q2R3S4T5U6V7W8X9Y0Z1
                 "EC",
                 "-pkeyopt",
                 "ec_paramgen_curve:P-256",
+                "-pkeyopt",
+                "ec_param_enc:named_curve",
             ])
             .output();
 
