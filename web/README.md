@@ -6,6 +6,7 @@ Vite + React SPA. Tokens and layout follow `design/webclient.pen`.
 npm install
 npm run dev          # http://localhost:5173 — proxies /api to :8080
 npm run build
+npm test             # every *.selftest.ts under Node (`npm test -- ratchet` runs a subset)
 npm run build:tls    # link-preview TLS module (optional locally, see below)
 ```
 

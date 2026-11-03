@@ -11,6 +11,13 @@ import {
   setPreferredLanguageTags,
 } from "./language";
 
+/*
+ * The language memory itself, on its in-memory store. With `localStorage` (`npm test` gives
+ * every selftest one) it is sealed in the vault, which a locked vault refuses; the vault has its
+ * own selftest.
+ */
+Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });
+
 function check(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
 }

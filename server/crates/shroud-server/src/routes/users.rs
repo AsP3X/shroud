@@ -24,14 +24,27 @@ async fn limit_user_lookup(state: &AppState, ip: &str) -> Result<(), AppError> {
 #[derive(Debug, Serialize, FromRow)]
 pub struct UserCard {
     pub id: Uuid,
-    pub share_code: String,
+    /// Only on the caller's own card, and on a lookup by that very code. Anyone holding an id
+    /// (a former contact, a blocked user, whoever resolved a leaked code once) would otherwise
+    /// read the new code straight after a rotation, and a rotation would retire nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_code: Option<String>,
+}
+
+impl UserCard {
+    fn for_viewer(mut self, viewer: Uuid) -> Self {
+        if self.id != viewer {
+            self.share_code = None;
+        }
+        self
+    }
 }
 
 /// `GET /users/:user_id` — minimal public profile by UUID.
 pub async fn get_user(
     State(state): State<AppState>,
     ClientIp(ip): ClientIp,
-    _auth: AuthContext,
+    auth: AuthContext,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<UserCard>, AppError> {
     limit_user_lookup(&state, &ip).await?;
@@ -46,7 +59,7 @@ pub async fn get_user(
     .map_err(|err| AppError::Internal(format!("user lookup failed: {err}")))?
     .ok_or_else(|| AppError::not_found("User not found."))?;
 
-    Ok(Json(row))
+    Ok(Json(row.for_viewer(auth.user_id)))
 }
 
 #[derive(Debug, Serialize)]

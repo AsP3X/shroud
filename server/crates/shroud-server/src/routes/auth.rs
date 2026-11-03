@@ -265,6 +265,20 @@ pub async fn login(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
+    // The password was checked outside this transaction (argon2 is slow). A change that
+    // committed meanwhile revoked every other session before this one existed, so it would
+    // survive with the old password. Hold the user row and make sure the hash is still the one
+    // verified; a change waits for this login and then revokes its session like any other.
+    let current_hash: Option<String> =
+        sqlx::query_scalar(r#"SELECT password_hash FROM users WHERE id = $1 FOR UPDATE"#)
+            .bind(user.id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|err| AppError::Internal(format!("login recheck failed: {err}")))?;
+    if current_hash.as_deref() != Some(user.password_hash.as_str()) {
+        return Err(AppError::invalid_credentials());
+    }
+
     // Move a SHA-256 row onto the slow digest only after the password checks out, and inside
     // this transaction, so a device-limit refusal rolls the move back. When another account
     // already holds the slow digest, the row keeps the legacy one and signs in through it; the

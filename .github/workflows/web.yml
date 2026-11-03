@@ -15,8 +15,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: type-check / self-tests
+  test:
+    name: typecheck / selftests / build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,21 +31,15 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # Install scripts only fetch onnxruntime-node's native binary, which the browser build never uses.
       - name: npm ci
         run: npm ci --ignore-scripts
 
-      - name: Type-check
-        run: npx tsc -b
+      - name: Typecheck
+        run: npm run typecheck
 
-      # Every self-test that runs in Node. boxAuth, ratchet and reactionsCrypto need a browser's
-      # localStorage and are run in one by hand.
-      - name: Self-tests
-        run: |
-          for test in $(find src -name '*.selftest.ts' | sort); do
-            case "$test" in
-              */crypto/boxAuth.selftest.ts | */crypto/ratchet.selftest.ts | */crypto/reactionsCrypto.selftest.ts) continue ;;
-            esac
-            echo "::group::$test"
-            npx --yes tsx@4.23.15 "$test"
-            echo "::endgroup::"
-          done
+      - name: Selftests
+        run: npm test
+
+      - name: Build
+        run: npm run build
