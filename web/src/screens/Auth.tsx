@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { api, ApiError, type Session } from "../api/client";
 import { generateMnemonic, PhraseError, validateMnemonic, WORD_COUNT } from "../crypto/bip39";
@@ -15,6 +15,7 @@ import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, TextField } from "../components/auth/Fields";
 import { PhraseDisplay, PhraseEntry } from "../components/auth/Phrase";
 import { DeviceLimitDialog, DevicePickerDialog } from "../components/auth/DeviceLimitDialog";
+import { LandingLink, useLandingNavigate } from "../components/landing/transition";
 import { hasIdentity, loadIdentity, loadPlaintextIdentity, saveIdentity } from "../crypto/store";
 import { hasVault, isVaultOpen, openVaultWithPhrase } from "../crypto/vault";
 import { hasPin, needsPhrase, sealLegacyStorage } from "../crypto/vaultAccess";
@@ -57,6 +58,8 @@ async function assertMatchesPublishedIdentity(
 
 export function Auth() {
   const navigate = useNavigate();
+  // Back to the welcome page, with the transition that brought this page in.
+  const go = useLandingNavigate();
   const location = useLocation();
   const existing = loadSession();
   const [phase, setPhase] = useState<"credentials" | "phrase">(
@@ -231,10 +234,10 @@ export function Auth() {
         subtitle="Use the same username and password as on your phone."
         step={1}
         steps={2}
-        onBack={() => navigate("/")}
+        onBack={() => go("/", { direction: "back" })}
         footer={
           <>
-            New to Shroud? <Link to="/signup">Create an account</Link>
+            New to Shroud? <LandingLink to="/signup">Create an account</LandingLink>
           </>
         }
       >

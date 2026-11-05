@@ -171316,6 +171316,4007 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "NvgWE",
+      "x": 10160,
+      "y": 1991,
+      "name": "Motion — Welcome → Log in",
+      "context": "The route change between the web welcome page and Log in / Sign up runs as a browser view transition (web/src/components/landing/transition.ts; the brand-mark and auth-* rules in index.css). The pages themselves are unchanged: Desktop — Welcome, Desktop — Log in and Desktop — Sign up. Stages here are 1:5 schematics; the mark is drawn larger than scale so the travel reads.",
+      "theme": {
+        "mode": "dark"
+      },
+      "clip": true,
+      "width": 1440,
+      "fill": "$bg",
+      "layout": "vertical",
+      "gap": 36,
+      "padding": [
+        56,
+        64
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "Se6D3",
+          "name": "Header",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 8,
+          "children": [
+            {
+              "type": "text",
+              "id": "y4fXS",
+              "name": "H",
+              "fill": "$text-primary",
+              "content": "Motion — Welcome → Log in",
+              "fontFamily": "Inter",
+              "fontSize": 28,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "Hol7Q",
+              "name": "Sub",
+              "fill": "$text-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "Clicking Log in or Create an account on the welcome page, and Back on the form, runs the route change as a view transition. The brand mark is the one thing both pages share, so it carries the eye: it leaves the top bar and grows into the brand column's mark while the column and the card arrive around it. Everything uses ease-out-expo cubic-bezier(0.16, 1, 0.3, 1). A browser without view transitions, or prefers-reduced-motion, simply shows the next page.",
+              "lineHeight": 1.5,
+              "fontFamily": "Inter",
+              "fontSize": 15,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "w3oP6",
+          "name": "1 · WELCOME → LOG IN",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "vFSLd",
+              "name": "title",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "LWG96",
+                  "name": "T",
+                  "fill": "$accent",
+                  "content": "1 · WELCOME → LOG IN",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "AivvF",
+                  "name": "N",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "The welcome page fades out in 200 ms. The brand mark travels from the top bar (28 px) to the brand column's mark (52 px) over 450 ms, growing on the way. The brand column slides in from 32 px to the left over 500 ms; the card rises 28 px over 500 ms, starting 80 ms later. Sign up is the same move with its own card. Total ≈ 580 ms.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "WFuXM",
+              "name": "strip",
+              "width": "fill_container",
+              "gap": 40,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "L9Huc4",
+                  "name": "Key 0 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "l10Do",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "IQTyJ",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "EYl5c",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "L4Chck",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "oDekl",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "jF6ti",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "PTlns",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "hHtst",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "rqtfX",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "UynCO",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "y1ULPg",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "MLjJy",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "KasU3",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "nAWXI",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "IxyO5",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "qI3IE",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "GvwLP",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "DcFqf",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "KggWD",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "GWPcN",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "vyKRe",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "VY5Mk",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "v2oEL7",
+                          "x": -6.4,
+                          "y": 0,
+                          "name": "Brand column",
+                          "opacity": 0,
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "ojusG",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "qjJHa",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "rW3vD",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "nfhu6",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "QCw5X",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "LPCfO",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "WnzZ8",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "vqKA3",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "fyGBm",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "xkUvz",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "TH7OP",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tePUy",
+                          "x": 158,
+                          "y": 51.6,
+                          "name": "Card",
+                          "opacity": 0,
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "HaP0R",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "mr72W",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "lJegy",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "VaYUF",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ejtS7",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "m9Lzf",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "TxiJa",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "sDi9k",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "g2svc",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.8,
+                          "id": "xJbJg",
+                          "x": 38,
+                          "y": 4,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 8,
+                          "height": 8
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "AMdny",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "0 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "c5Pop",
+                  "name": "Key 100 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "NLHFH",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "kkW4v",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "opacity": 0.5,
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "a62QXF",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "HASdm",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "R3xg4v",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "xvwTL",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "N6ZVgL",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "z9ksy",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "C9czZ",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "EPGo8",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "jpB0S",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "U7ZC97",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "vjduV",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "itmum",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "rBSbW",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "rqqNp",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "SQvC6",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "zUAmp",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "h2sQr",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "q1BafB",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "kt6Gd",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "DTjU6",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Gdzva",
+                          "x": -2,
+                          "y": 0,
+                          "name": "Brand column",
+                          "opacity": 0.68,
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "HuLJF",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "fA28k",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "yJeeO",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "A8vAT0",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "xmZw4",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "e0aGzp",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "rZ8eW",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "TdjYL",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "kEu9Y",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "DmFhy",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "yJLyY",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "yHarL",
+                          "x": 158,
+                          "y": 50.5,
+                          "name": "Card",
+                          "opacity": 0.2,
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "I4lLZH",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "CsCFQ",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "yKYnn",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "k8kCj",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "CYgaX",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "HWGYO",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "ZqWgX",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "AfTGM",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Mfcd4",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2.5,
+                          "id": "Hd1U9",
+                          "x": 18.6,
+                          "y": 37.8,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 10.9,
+                          "height": 10.9
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "UZlqa",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "100 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "r8yndd",
+                  "name": "Key 220 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "JgErr",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "UWiDz",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "opacity": 0,
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "yncjn",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "tl1Hg",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "u2iPx3",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "WDXIA",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "RzfGp",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "IffTk",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "bJVfy",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "NQF1a",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "W5556h",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "i8XMO1",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "DCSZW",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "z3Rren",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "qUNT8",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "nBliJ",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "X16v4K",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "LCbsc",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "XbQ3f",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "m2d602",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "UEoeZ",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "drdcy",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "yXYrG",
+                          "x": -0.6,
+                          "y": 0,
+                          "name": "Brand column",
+                          "opacity": 0.9,
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "eBRcA",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "mbcNy",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "HttTm",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "vkmxB",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ENag8",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "ssUKf",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "rkehx",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "n2H0R9",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "XJEb5",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "cJIJZ",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "jWEl2",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "DICrW",
+                          "x": 158,
+                          "y": 47.2,
+                          "name": "Card",
+                          "opacity": 0.78,
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ktKRv",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "rISdV",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "H9OccP",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "hrBbA",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "V1aBZk",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "b3tsZ",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "SVwm1",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "LNQS1",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "R9vvwf",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2.6,
+                          "id": "lYVu0",
+                          "x": 12.9,
+                          "y": 47.7,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 11.7,
+                          "height": 11.7
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "ErUus",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "220 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "k6iVYF",
+                  "name": "Key 580 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "j9UUGr",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "iUvt3",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "opacity": 0,
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "seIya",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "eblRE",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "zeTzm",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "zocXm",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "XcGY4",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "AEaDt",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "fFbcM",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "hoSlW",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "JM6Ni",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "y8pz2",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "pcDX2",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "fICOD",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "td2KG",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "nXBWF",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "K8jDHs",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "hUVOT",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "a8FAR0",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "LCIKi",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "ELwUk",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "KQivw",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "hVmPy",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Brand column",
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "sB834",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "Zgeqv",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "q6d7l",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ra4Zz",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "k6u4M",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "pnOYs",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "v01fb0",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "NQVLr",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "yP0C3",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "lGFEi",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "l4X7S",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "F5AYz3",
+                          "x": 158,
+                          "y": 46,
+                          "name": "Card",
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "JPl6U",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Y1vxW",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "S4yybt",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "PmsHa",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "E3CLf",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "chEDC",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "T6DZY",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "eQ4d8",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "weUFj",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2.7,
+                          "id": "aji8Q",
+                          "x": 11,
+                          "y": 51,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 12,
+                          "height": 12
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "K632cJ",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "580 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KTJYs",
+          "name": "2 · LOG IN → WELCOME (BACK)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "SHWon",
+              "name": "title",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "w5O6gz",
+                  "name": "T",
+                  "fill": "$accent",
+                  "content": "2 · LOG IN → WELCOME (BACK)",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "tQEwX",
+                  "name": "N",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Back and the brand link run it the other way: the card sinks 28 px and fades in 200 ms, the brand column slides out to the left in 240 ms, the mark travels back into the top bar, and the welcome page fades in over 280 ms after a 40 ms delay, at the scroll position it was left at.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "X6UyF",
+              "name": "strip",
+              "width": "fill_container",
+              "gap": 40,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "WUngS",
+                  "name": "Key 0 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "g9XIs",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "W5quXu",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "opacity": 0,
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "IUrQa",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ozWEM",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "mvnvh",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "zWMYd",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "XdkJ4",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "qnu2e",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "i0SBrf",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "s8fOQl",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "X57nzz",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "DHMGX",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "E7BTFO",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "nCWcc",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "O1rhn",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "KIrQI",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "A5eInj",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "CwMaF",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "s9K1Cv",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "C8Oyub",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "tub27",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Y5s0ZU",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "cUkz3",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Brand column",
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "eJb9y",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "k84ob",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "u6AsQ",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "lW9ky",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "UHHKE",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "lkUl0",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "O5jM3u",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "nCb19",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "n1etU",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "tTpPX",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "vsSB7",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "cvq4p",
+                          "x": 158,
+                          "y": 46,
+                          "name": "Card",
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "SYLmD",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "PutuJ",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "LD83a",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "O4Vf8",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "fYiky",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "rmKDx",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "T9T64A",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "k61wRI",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "lxjp5",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2.7,
+                          "id": "lwWOz",
+                          "x": 11,
+                          "y": 51,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 12,
+                          "height": 12
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "nnBYg",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "0 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "WJg2L",
+                  "name": "Key 120 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "LBYjJ",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Eg4RY",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "opacity": 0.3,
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "stvwc",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "m8Kon",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "v0ItmZ",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "DXbC0",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "fVdds",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "z45Tug",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Z3w4Eg",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "k9u1e",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "o1DUDQ",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "Wvw3K",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ZUacM",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "R56vK",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "yuikJ",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "Wk9an",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "P4GUmD",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "MazBp",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "kcFac",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "i5w5G",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "g8PQe5",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "hWXuf",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "MWih4",
+                          "x": -3.2,
+                          "y": 0,
+                          "name": "Brand column",
+                          "opacity": 0.5,
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "HqJK9",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "Xqq7Y",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "z6s534",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "zrHAS",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "YqY3W",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "yPs3A",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ThRBr",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "pMC92",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "j98BE",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "yvvWe",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "mdqGw",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "dcW6O",
+                          "x": 158,
+                          "y": 49.4,
+                          "name": "Card",
+                          "opacity": 0.4,
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "y2NZ5",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "PPQX1",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "zzmEu",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "EHuCA",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "M6UVXO",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "zBNAl",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "M7xEf",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "aoact",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "X8zwY",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2,
+                          "id": "NJvP9",
+                          "x": 32.1,
+                          "y": 14.3,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 8.9,
+                          "height": 8.9
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "U76oR0",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "120 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "p1n7sT",
+                  "name": "Key 480 ms",
+                  "layout": "vertical",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "aN0Sp",
+                      "name": "Stage",
+                      "clip": true,
+                      "width": 288,
+                      "height": 180,
+                      "fill": "$bg",
+                      "cornerRadius": 12,
+                      "stroke": "$separator",
+                      "strokeWidth": 1,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "SAOmC",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Welcome page",
+                          "width": 288,
+                          "height": 180,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "aKalB",
+                              "x": 50,
+                              "y": 6,
+                              "name": "Wordmark",
+                              "fill": "$text-primary",
+                              "width": 36,
+                              "height": 5
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "mfHjD",
+                              "x": 90,
+                              "y": 7,
+                              "name": "Host",
+                              "fill": "$text-tertiary",
+                              "width": 26,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "t33LeG",
+                              "x": 236,
+                              "y": 6,
+                              "name": "Nav",
+                              "fill": "$text-secondary",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "Q09BQ",
+                              "x": 38,
+                              "y": 30,
+                              "name": "H1 a",
+                              "fill": "$text-primary",
+                              "width": 82,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "WCQxK",
+                              "x": 38,
+                              "y": 42,
+                              "name": "H1 b",
+                              "fill": "$text-primary",
+                              "width": 70,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "ts02J",
+                              "x": 38,
+                              "y": 54,
+                              "name": "H1 c",
+                              "fill": "$text-primary",
+                              "width": 56,
+                              "height": 9
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "yL3tn",
+                              "x": 38,
+                              "y": 70,
+                              "name": "Lede a",
+                              "fill": "$text-secondary",
+                              "width": 80,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "LOWnb",
+                              "x": 38,
+                              "y": 77,
+                              "name": "Lede b",
+                              "fill": "$text-secondary",
+                              "width": 74,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "QcHhF",
+                              "x": 38,
+                              "y": 84,
+                              "name": "Lede c",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "b6TRC",
+                              "x": 38,
+                              "y": 96,
+                              "name": "Create button",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Yt8WB",
+                              "x": 84,
+                              "y": 99,
+                              "name": "Log in link",
+                              "fill": "$accent-text",
+                              "width": 14,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 6,
+                              "id": "XXAMb",
+                              "x": 135,
+                              "y": 20,
+                              "name": "Chat",
+                              "fill": "$surface-1",
+                              "width": 115,
+                              "height": 100,
+                              "stroke": "$separator",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "BG58g",
+                              "x": 143,
+                              "y": 40,
+                              "name": "Bubble 1",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "DXEUw",
+                              "x": 205,
+                              "y": 52,
+                              "name": "Bubble 2",
+                              "fill": "$bubble-out",
+                              "width": 38,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "ULIwh",
+                              "x": 143,
+                              "y": 64,
+                              "name": "Bubble 3",
+                              "fill": "$bubble-in",
+                              "width": 46,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "J1E0M",
+                              "x": 143,
+                              "y": 74,
+                              "name": "Bubble 4",
+                              "fill": "$bubble-in",
+                              "width": 40,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "z2voNp",
+                              "x": 215,
+                              "y": 86,
+                              "name": "Bubble 5",
+                              "fill": "$bubble-out",
+                              "width": 28,
+                              "height": 7
+                            },
+                            {
+                              "type": "rectangle",
+                              "id": "kQGHo",
+                              "x": 197,
+                              "y": 20,
+                              "name": "Veil line",
+                              "fill": "$accent",
+                              "width": 1,
+                              "height": 100
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "FaRD4",
+                              "x": 38,
+                              "y": 156,
+                              "name": "Section h2",
+                              "fill": "$text-primary",
+                              "width": 60,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Lu7vC",
+                              "x": 38,
+                              "y": 166,
+                              "name": "Section intro",
+                              "fill": "$text-secondary",
+                              "width": 120,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "lAjDx",
+                          "x": -6.4,
+                          "y": 0,
+                          "name": "Brand column",
+                          "opacity": 0,
+                          "width": 115,
+                          "height": 180,
+                          "fill": "$surface-1",
+                          "stroke": "$separator",
+                          "strokeWidth": {
+                            "right": 1
+                          },
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "p9Wp1P",
+                              "x": -32,
+                              "y": -36,
+                              "name": "Glow",
+                              "opacity": 0.7,
+                              "fill": "$accent-soft",
+                              "width": 152,
+                              "height": 152
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "mHbIo",
+                              "x": 11,
+                              "y": 66,
+                              "name": "Title a",
+                              "fill": "$text-primary",
+                              "width": 63,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "ZwIUS",
+                              "x": 11,
+                              "y": 77,
+                              "name": "Title b",
+                              "fill": "$text-primary",
+                              "width": 50,
+                              "height": 8
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "wcXue",
+                              "x": 11,
+                              "y": 91,
+                              "name": "Sub a",
+                              "fill": "$text-secondary",
+                              "width": 72,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "ntN66",
+                              "x": 11,
+                              "y": 97,
+                              "name": "Sub b",
+                              "fill": "$text-secondary",
+                              "width": 60,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "vGPcs",
+                              "x": 11,
+                              "y": 108,
+                              "name": "Trust icon 1",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "kM8Ee",
+                              "x": 20,
+                              "y": 109,
+                              "name": "Trust text 1",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "r0xn3",
+                              "x": 11,
+                              "y": 120,
+                              "name": "Trust icon 2",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "nLFCd",
+                              "x": 20,
+                              "y": 121,
+                              "name": "Trust text 2",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "f5Aiz",
+                              "x": 11,
+                              "y": 132,
+                              "name": "Trust icon 3",
+                              "fill": "$accent-soft",
+                              "width": 6,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "jtgY3",
+                              "x": 20,
+                              "y": 133,
+                              "name": "Trust text 3",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 4
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "e1K4CO",
+                          "x": 158,
+                          "y": 51.6,
+                          "name": "Card",
+                          "opacity": 0,
+                          "width": 88,
+                          "height": 100,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "z6oQ8j",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Back",
+                              "fill": "$text-secondary",
+                              "width": 10,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "Rfv7o",
+                              "x": 0,
+                              "y": 7,
+                              "name": "Step done",
+                              "fill": "$accent",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "P6wdv",
+                              "x": 13,
+                              "y": 7,
+                              "name": "Step",
+                              "fill": "$separator",
+                              "width": 12,
+                              "height": 2
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 2,
+                              "id": "wRqUP",
+                              "x": 0,
+                              "y": 13,
+                              "name": "Title",
+                              "fill": "$text-primary",
+                              "width": 37,
+                              "height": 6
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "q1l9YI",
+                              "x": 0,
+                              "y": 22,
+                              "name": "Subtitle",
+                              "fill": "$text-secondary",
+                              "width": 88,
+                              "height": 3
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "V61U7",
+                              "x": 0,
+                              "y": 30,
+                              "name": "Field 1",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "BT4hs",
+                              "x": 0,
+                              "y": 42,
+                              "name": "Field 2",
+                              "fill": "$surface-2",
+                              "width": 88,
+                              "height": 9,
+                              "stroke": "$field-border",
+                              "strokeWidth": 1
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "REMb8",
+                              "x": 0,
+                              "y": 56,
+                              "name": "Continue",
+                              "fill": "$accent",
+                              "width": 88,
+                              "height": 10
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 1,
+                              "id": "zQUnX",
+                              "x": 0,
+                              "y": 72,
+                              "name": "Foot",
+                              "fill": "$text-secondary",
+                              "width": 44,
+                              "height": 3
+                            }
+                          ]
+                        },
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 1.8,
+                          "id": "j5dQNR",
+                          "x": 38,
+                          "y": 4,
+                          "name": "Mark",
+                          "fill": "$accent",
+                          "width": 8,
+                          "height": 8
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "bVsxY",
+                      "name": "Time",
+                      "fill": "$text-secondary",
+                      "content": "480 ms",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "P28bq",
+          "name": "3 · LOG IN ↔ SIGN UP",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "LLvfP",
+              "name": "title",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "UWSmi",
+                  "name": "T",
+                  "fill": "$accent",
+                  "content": "3 · LOG IN ↔ SIGN UP",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "Caf9l",
+                  "name": "N",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Between the two forms (New to Shroud? / Already have an account?) the brand column and the mark stay where they are. The old card fades out while lifting 16 px (200 ms); the new one rises in 28 px over 500 ms after 80 ms, exactly as it arrived from the welcome page.",
+                  "lineHeight": 1.5,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "C4d0qY",
+          "name": "4 · BELOW 960 PX",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "firb9",
+              "name": "title",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 4,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "bVjUv",
+                  "name": "T",
+                  "fill": "$accent",
+                  "content": "4 · BELOW 960 PX",
+                  "fontFamily": "Inter",
+                  "fontSize": 13,
+                  "fontWeight": "700",
+                  "letterSpacing": 0.8
+                },
+                {
+                  "type": "text",
+                  "id": "PuJia",
+                  "name": "N",
+                  "fill": "$text-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "The brand column is not shown, so the mark lands in the card's compact mark above the kicker instead; the card and the fade are the same. Below that width the welcome page is already one column (Mobile — Welcome).",
+                  "lineHeight": 1.5,
+                  "fontFamily": "Inter",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "HYMRa",
+          "name": "Footnote",
+          "fill": "$text-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Reduced motion, or a browser without view transitions → the next page appears in place, no travel, no slide. ⌘-click, middle-click and shift-click keep the browser's own behaviour (a new tab or window), without a transition. Stages are 1:5 schematics of 1440 × 900; the mark is drawn larger than scale.",
+          "lineHeight": 1.5,
+          "fontFamily": "Inter",
+          "fontSize": 13,
+          "fontWeight": "normal"
+        }
+      ]
     }
   ],
   "themes": {

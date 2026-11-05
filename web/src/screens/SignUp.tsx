@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api/client";
 import { generateMnemonic, PhraseError, WORD_COUNT } from "../crypto/bip39";
@@ -9,6 +9,7 @@ import { saveIdentity } from "../crypto/store";
 import { AuthLayout } from "../components/auth/AuthLayout";
 import { PasswordField, RuleList, StrengthMeter, TextField } from "../components/auth/Fields";
 import { PhraseDisplay } from "../components/auth/Phrase";
+import { LandingLink, useLandingNavigate } from "../components/landing/transition";
 import { hasPin } from "../crypto/vaultAccess";
 import { markFreshSignIn } from "../deviceNaming";
 import { saveSession } from "../session";
@@ -28,6 +29,8 @@ function pickCheckIndices(): number[] {
 
 export function SignUp() {
   const navigate = useNavigate();
+  // Back to the welcome page, with the transition that brought this page in.
+  const go = useLandingNavigate();
   const location = useLocation();
   const words = useMemo(() => generateMnemonic(), []);
   const checkIndices = useMemo(pickCheckIndices, []);
@@ -85,10 +88,10 @@ export function SignUp() {
         subtitle="Pick a username and a password. No phone number, no email."
         step={1}
         steps={3}
-        onBack={() => navigate("/")}
+        onBack={() => go("/", { direction: "back" })}
         footer={
           <>
-            Already have an account? <Link to="/login">Log in</Link>
+            Already have an account? <LandingLink to="/login">Log in</LandingLink>
           </>
         }
       >

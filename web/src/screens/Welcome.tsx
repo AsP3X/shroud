@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Bell, Image as ImageIcon, Laptop, Lock, Monitor, Phone, Play, Smartphone, Type } from "lucide-react";
 import { Avatar } from "../components/Avatar";
 import { BrandMark } from "../components/BrandMark";
 import { Devices } from "../components/landing/Devices";
+import { LandingLink, useLandingNavigate } from "../components/landing/transition";
 import { Veil, Wave } from "../components/landing/Veil";
 
 /*
@@ -44,14 +45,14 @@ const SAFETY = ["48213", "90714", "22568", "31907", "64120", "07355", "88241", "
 
 /** `signedIn`: the page at /about in a browser that has an account. The actions lead into the app. */
 export function Welcome({ signedIn = false }: { signedIn?: boolean } = {}) {
-  const navigate = useNavigate();
+  const go = useLandingNavigate();
   const [username, setUsername] = useState("");
   const hint = usernameHint(username);
 
   function start(event: FormEvent) {
     event.preventDefault();
     const value = username.trim().toLowerCase();
-    navigate("/signup", USERNAME_RE.test(value) ? { state: { username: value } } : undefined);
+    go("/signup", USERNAME_RE.test(value) ? { state: { username: value } } : undefined);
   }
 
   return (
@@ -59,7 +60,7 @@ export function Welcome({ signedIn = false }: { signedIn?: boolean } = {}) {
       <header className="landing-top landing-wrap">
         <Brand withHost />
         <nav aria-label="Account">
-          {signedIn ? <Link to="/app">Open Shroud</Link> : <Link to="/login">Log in</Link>}
+          {signedIn ? <Link to="/app">Open Shroud</Link> : <LandingLink to="/login">Log in</LandingLink>}
         </nav>
       </header>
 
@@ -79,12 +80,12 @@ export function Welcome({ signedIn = false }: { signedIn?: boolean } = {}) {
                   </Link>
                 ) : (
                   <>
-                    <Link className="btn btn-primary landing-btn" to="/signup">
+                    <LandingLink className="btn btn-primary landing-btn" to="/signup">
                       Create an account
-                    </Link>
-                    <Link className="landing-link" to="/login">
+                    </LandingLink>
+                    <LandingLink className="landing-link" to="/login">
                       Log in
-                    </Link>
+                    </LandingLink>
                   </>
                 )}
               </div>
@@ -393,9 +394,9 @@ export function Welcome({ signedIn = false }: { signedIn?: boolean } = {}) {
                 </p>
                 <p className="landing-start-else">
                   Already on your phone?{" "}
-                  <Link className="landing-link" to="/login">
+                  <LandingLink className="landing-link" to="/login">
                     Log in
-                  </Link>{" "}
+                  </LandingLink>{" "}
                   with the same username and your twelve words, and this browser joins your devices.
                 </p>
               </form>
@@ -429,8 +430,8 @@ export function Welcome({ signedIn = false }: { signedIn?: boolean } = {}) {
               <Link to="/app">Open Shroud</Link>
             ) : (
               <>
-                <Link to="/signup">Create an account</Link>
-                <Link to="/login">Log in</Link>
+                <LandingLink to="/signup">Create an account</LandingLink>
+                <LandingLink to="/login">Log in</LandingLink>
               </>
             )}
             <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">

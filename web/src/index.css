@@ -425,6 +425,31 @@ a { color: var(--accent-text); text-decoration: none; }
 .auth-warn > svg { flex-shrink: 0; margin-top: 1px; }
 .auth-checks { display: grid; gap: 14px; }
 
+/* Welcome page → log in / sign up, and back (components/landing/transition.ts runs the route
+   change as a view transition; it skips it when motion is unwanted). The brand mark is the one
+   thing both pages have: it leaves the welcome page's top bar and grows into the brand column's
+   mark (below 960px, into the card's). Around it the brand column comes in from the left, the
+   card rises from below, and the welcome page fades out; back runs the same the other way.
+   Between log in and sign up the brand column stays and only the card changes hands. */
+.landing-top .landing-brand > svg, .auth-brand .auth-mark, .auth-mark-compact { view-transition-name: brand-mark; }
+.auth-brand { view-transition-name: auth-brand; }
+.auth-card { view-transition-name: auth-card; }
+::view-transition-group(*) { animation-duration: 0.45s; animation-timing-function: var(--ease); }
+::view-transition-old(root) { animation: auth-fade-out 0.2s ease both; }
+::view-transition-new(root) { animation: auth-fade-in 0.28s ease 0.04s both; }
+::view-transition-new(auth-brand):only-child { animation: auth-brand-in 0.5s var(--ease) both; }
+::view-transition-old(auth-brand):only-child { animation: auth-brand-out 0.24s ease both; }
+::view-transition-new(auth-card) { animation: auth-card-in 0.5s var(--ease) 0.08s both; }
+::view-transition-old(auth-card) { animation: auth-card-out 0.2s ease both; }
+:root[data-landing-nav="back"]::view-transition-old(auth-card) { animation-name: auth-card-out-back; }
+@keyframes auth-fade-out { to { opacity: 0; } }
+@keyframes auth-fade-in { from { opacity: 0; } }
+@keyframes auth-brand-in { from { opacity: 0; transform: translateX(-32px); } }
+@keyframes auth-brand-out { to { opacity: 0; transform: translateX(-32px); } }
+@keyframes auth-card-in { from { opacity: 0; transform: translateY(28px); } }
+@keyframes auth-card-out { to { opacity: 0; transform: translateY(-16px); } }
+@keyframes auth-card-out-back { to { opacity: 0; transform: translateY(28px); } }
+
 /* ------------------------------------------------------------- welcome -- */
 /* The page for a browser with no account (screens/Welcome.tsx). The hero is a chat with a veil
    over it (components/landing/Veil.tsx): left of the veil the chat as you see it, right of it
