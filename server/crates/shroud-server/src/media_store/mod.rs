@@ -31,6 +31,10 @@ use crate::metrics::Metrics;
 /// Rows read per page while moving the legacy volume into Nebular.
 const MIGRATION_PAGE: i64 = 200;
 
+/// The longest a publish can take once [`MediaStore::put_stream`]'s `before_publish` said yes:
+/// Nebular's upload with all its retries. A local publish is an fsync and a rename.
+pub const LONGEST_PUBLISH: std::time::Duration = nebular::LONGEST_PUT;
+
 /// A blob's bytes as they stream out of the store.
 pub struct MediaBlob {
     pub size: u64,
@@ -171,9 +175,10 @@ impl MediaStore {
     /// A body over `max_bytes` is refused and not published.
     ///
     /// Human: `before_publish` runs once the body is spooled and checked, right before it is
-    /// published; its value (a row lock, say) is held while the blob is published and handed back
-    /// with the size, and an error stops the publish. An upload can take hours, so whatever the
-    /// caller checked when it started may no longer hold by the end.
+    /// published; its value is handed back with the size, and an error stops the publish. An
+    /// upload can take hours, so whatever the caller checked when it started may no longer hold by
+    /// the end. The publish itself can take up to [`LONGEST_PUBLISH`], so the value should not
+    /// hold a database connection or a lock.
     pub async fn put_stream<S, E, F, Fut, G>(
         &self,
         bucket: &str,

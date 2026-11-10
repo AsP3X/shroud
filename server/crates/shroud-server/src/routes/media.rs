@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use axum::{
     Json,
@@ -24,7 +24,7 @@ use crate::auth::session::AuthContext;
 use crate::error::AppError;
 use futures_util::StreamExt;
 
-use crate::media_store::{BlobSource, MediaStore, MediaStoreError};
+use crate::media_store::{BlobSource, LONGEST_PUBLISH, MediaStore, MediaStoreError};
 use crate::metrics::Metrics;
 use crate::rate_limit::budgets;
 use crate::state::AppState;
@@ -42,6 +42,9 @@ pub(crate) const ORPHAN_GC_INTERVAL_SECS: u64 = 15 * 60;
 pub const MAX_UPLOADS_PER_USER: usize = 8;
 /// An upload that sends nothing for this long is dropped, with its scratch file.
 const UPLOAD_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// A `publishing_at` marker older than this, in seconds, was left by a process that died
+/// mid-publish: no publish runs longer than [`LONGEST_PUBLISH`], so it counts as unset.
+pub(crate) const PUBLISH_MARKER_TTL_SECS: i64 = LONGEST_PUBLISH.as_secs() as i64;
 
 /// The uploads being streamed, per account. Each media object takes one at a time: parallel
 /// PUTs to one id would each spool their own copy of up to 2 GiB.
@@ -56,10 +59,7 @@ impl UploadSlots {
         let mut active = self.active.lock().unwrap_or_else(PoisonError::into_inner);
         let uploads = active.entry(user_id).or_default();
         if uploads.contains(&media_id) {
-            return Err(AppError::conflict(
-                "UPLOAD_IN_PROGRESS",
-                "This media is already being uploaded.",
-            ));
+            return Err(upload_in_progress());
         }
         if uploads.len() >= MAX_UPLOADS_PER_USER {
             return Err(AppError::rate_limited_after(5));
@@ -246,7 +246,7 @@ pub async fn put_content(
         ));
     }
 
-    let _slot = state.uploads.acquire(auth.user_id, media_id)?;
+    let slot = state.uploads.acquire(auth.user_id, media_id)?;
 
     // A body that stops arriving ends the upload, so a stalled client can't hold its slot and
     // scratch file for good (nginx has its own body timeout; the API may be reached without it).
@@ -266,69 +266,13 @@ pub async fn put_content(
             )),
         }
     });
-    // Human: The check above ran when the upload started, which can be hours before its end.
-    // Right before the blob is published the row is checked again and locked until the publish is
-    // done, so a send that links it, or a delete, waits for the blob instead of racing it: a linked
-    // blob can't be replaced, and a deleted row can't get a blob nobody will collect.
-    let pool = state.pool.clone();
-    let publish_check = || async move {
-        let mut tx = pool.begin().await.map_err(|err| {
-            MediaStoreError::Unavailable(format!("begin media publish check: {err}"))
-        })?;
-        let row: Option<Option<Uuid>> =
-            sqlx::query_scalar("SELECT message_id FROM media_objects WHERE id = $1 FOR UPDATE")
-                .bind(media_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|err| {
-                    MediaStoreError::Unavailable(format!("media publish check: {err}"))
-                })?;
-        match row {
-            Some(None) => Ok(tx),
-            _ => Err(MediaStoreError::Withdrawn),
-        }
-    };
-    let (len, publish_lock) = match state
-        .media
-        .put_stream(
-            &media.bucket,
-            &media.object_key,
-            stream,
-            MAX_MEDIA_BYTES as u64,
-            media.size_bytes.map(|n| n as u64),
-            publish_check,
-        )
+    // Human: The upload runs in a task of its own. A client that goes away while its blob is
+    // being published would otherwise cancel this request between setting the publishing marker
+    // and clearing it, and the media could not be linked or uploaded again until it went stale.
+    // Agent: tokio::spawn(store_upload); the task owns the upload slot, freed when the work ends.
+    let len = tokio::spawn(store_upload(state.clone(), media, stream, slot))
         .await
-    {
-        Ok((0, _)) => {
-            return Err(AppError::validation(format!(
-                "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
-            )));
-        }
-        Ok(published) => published,
-        Err(MediaStoreError::Withdrawn) => {
-            // Linked or deleted while the bytes arrived: answer as the check up front would have.
-            load_media(&state, media_id).await?;
-            return Err(AppError::already_exists(
-                "Media is already linked to a message and cannot be overwritten.",
-            ));
-        }
-        Err(err) => {
-            return Err(match err {
-                MediaStoreError::TooLarge => AppError::validation(format!(
-                    "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
-                )),
-                MediaStoreError::SizeMismatch { actual, expected } => AppError::validation(
-                    format!("body size {actual} does not match declared size_bytes {expected}."),
-                ),
-                other => store_error(&state.metrics, media_id, "put", other),
-            });
-        }
-    };
-    publish_lock
-        .commit()
-        .await
-        .map_err(|err| AppError::Internal(format!("end media publish check: {err}")))?;
+        .map_err(|err| AppError::Internal(format!("media upload task failed: {err}")))??;
     state
         .metrics
         .media_puts_total
@@ -341,6 +285,170 @@ pub async fn put_content(
         "media.content_put ok"
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Streams `body` to the store as `media`'s blob and publishes it; returns its size.
+async fn store_upload<S>(
+    state: AppState,
+    media: MediaRow,
+    body: S,
+    _slot: UploadSlot,
+) -> Result<u64, AppError>
+where
+    S: futures_util::Stream<Item = std::io::Result<axum::body::Bytes>> + Send,
+{
+    let media_id = media.id;
+    // Human: put_content's checks ran when the upload started, which can be hours before its end.
+    // Right before the blob is published the row is checked again and marked as publishing, in a
+    // statement of its own. A send that links the media, and a delete, refuse a row with a live
+    // marker, so a linked blob can't be replaced and a deleted row can't get a blob nobody will
+    // collect. No connection or row lock is held while the bytes go to the store: a publish can
+    // take an hour, and holding one per upload let a few slow publishes take the whole pool.
+    // Agent: DB UPDATE media_objects SET publishing_at (mark_publishing) -> store publish ->
+    // finish_publish clears it; `marked` carries the marker's value out of the closure.
+    let marked = OnceLock::new();
+    let publish_check = || async {
+        let at = mark_publishing(&state.pool, media_id).await?;
+        // Set once: the store calls this check at most once.
+        let _ = marked.set(at);
+        Ok(())
+    };
+    let published = state
+        .media
+        .put_stream(
+            &media.bucket,
+            &media.object_key,
+            body,
+            MAX_MEDIA_BYTES as u64,
+            media.size_bytes.map(|n| n as u64),
+            publish_check,
+        )
+        .await;
+    if let Some(&marked_at) = marked.get() {
+        finish_publish(&state, &media, marked_at, published.is_ok()).await?;
+    }
+    match published {
+        Ok((0, ())) => Err(AppError::validation(format!(
+            "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+        ))),
+        Ok((len, ())) => Ok(len),
+        // Linked, deleted or being published by another request while the bytes arrived.
+        Err(MediaStoreError::Withdrawn) => Err(withdrawn_error(&state, media_id).await),
+        Err(MediaStoreError::TooLarge) => Err(AppError::validation(format!(
+            "body size must be between 1 and {MAX_MEDIA_BYTES} bytes."
+        ))),
+        Err(MediaStoreError::SizeMismatch { actual, expected }) => Err(AppError::validation(
+            format!("body size {actual} does not match declared size_bytes {expected}."),
+        )),
+        Err(other) => Err(store_error(&state.metrics, media_id, "put", other)),
+    }
+}
+
+/// The answer for a busy media object: another `PUT` streams to it or publishes it.
+pub(crate) fn upload_in_progress() -> AppError {
+    AppError::conflict(
+        "UPLOAD_IN_PROGRESS",
+        "This media is already being uploaded.",
+    )
+}
+
+/// Marks `media_id` as publishing, right before its blob goes to the store.
+///
+/// Human: Refused (`Withdrawn`) when the row is gone, linked, or carries another upload's live
+/// marker. One statement, so the row lock lasts only as long as the update.
+/// Agent: DB UPDATE media_objects SET publishing_at = now() WHERE unlinked AND marker unset or
+/// stale; RETURNS the marker value, which `finish_publish` matches to clear only its own.
+async fn mark_publishing(pool: &PgPool, media_id: Uuid) -> Result<DateTime<Utc>, MediaStoreError> {
+    sqlx::query_scalar(
+        r#"
+        UPDATE media_objects
+        SET publishing_at = now()
+        WHERE id = $1
+          AND message_id IS NULL
+          AND (publishing_at IS NULL OR publishing_at <= now() - $2 * interval '1 second')
+        RETURNING publishing_at
+        "#,
+    )
+    .bind(media_id)
+    .bind(PUBLISH_MARKER_TTL_SECS)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| MediaStoreError::Unavailable(format!("media publish check: {err}")))?
+    .ok_or(MediaStoreError::Withdrawn)
+}
+
+/// Takes this upload's publishing marker off its row once the store is done with the blob.
+///
+/// Human: After a failed publish the marker only comes off, so the client can retry at once. After
+/// a published one the row decides. Still unlinked is the normal case. A row that is gone was
+/// deleted while the marker already counted as stale, so the blob just published is deleted
+/// again; nothing else would ever collect it. A row linked meanwhile, or whose stale marker
+/// another upload took over, keeps the blob and the request gets the conflict.
+/// Agent: DB UPDATE media_objects SET publishing_at = NULL WHERE publishing_at = `marked_at`;
+/// on no match DB SELECT EXISTS, and CALLS MediaStore::delete when the row is gone.
+async fn finish_publish(
+    state: &AppState,
+    media: &MediaRow,
+    marked_at: DateTime<Utc>,
+    published: bool,
+) -> Result<(), AppError> {
+    let cleared: Result<Option<Option<Uuid>>, sqlx::Error> = sqlx::query_scalar(
+        r#"
+        UPDATE media_objects
+        SET publishing_at = NULL
+        WHERE id = $1 AND publishing_at = $2
+        RETURNING message_id
+        "#,
+    )
+    .bind(media.id)
+    .bind(marked_at)
+    .fetch_optional(&state.pool)
+    .await;
+    if !published {
+        if let Err(err) = cleared {
+            tracing::warn!(
+                error = %err,
+                media_object_id = %media.id,
+                "media publishing marker not cleared after a failed publish; it goes stale on its own"
+            );
+        }
+        return Ok(());
+    }
+    match cleared
+        .map_err(|err| AppError::Internal(format!("clear media publishing marker failed: {err}")))?
+    {
+        Some(None) => Ok(()),
+        Some(Some(_)) => Err(AppError::already_exists(
+            "Media is already linked to a message and cannot be overwritten.",
+        )),
+        None => {
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM media_objects WHERE id = $1)")
+                    .bind(media.id)
+                    .fetch_one(&state.pool)
+                    .await
+                    .map_err(|err| {
+                        AppError::Internal(format!("media publish re-check failed: {err}"))
+                    })?;
+            if exists {
+                return Err(withdrawn_error(state, media.id).await);
+            }
+            delete_blob(&state.media, &state.metrics, media).await;
+            Err(AppError::not_found("Media not found."))
+        }
+    }
+}
+
+/// What an upload whose row said no around its publish answers: what the checks up front would
+/// have said for a gone or linked row, else that another upload is publishing it.
+async fn withdrawn_error(state: &AppState, media_id: Uuid) -> AppError {
+    match load_media(state, media_id).await {
+        Err(err) => err,
+        Ok(media) if media.message_id.is_some() => AppError::already_exists(
+            "Media is already linked to a message and cannot be overwritten.",
+        ),
+        Ok(_) => upload_in_progress(),
+    }
 }
 
 /// `GET /media/:id/content` — stream encrypted blob when authorized.
@@ -522,6 +630,12 @@ pub async fn media_ids_for_messages(
 /// Caller must already have unlinked `messages.media_object_id` / `media_objects.message_id`
 /// so FK order does not block the DELETE. Safe to call with an empty slice. A blob the store
 /// can't delete right now keeps its (unlinked) row, and the orphan GC tries again.
+///
+/// Human: An upload still publishing its blob (live `publishing_at`) is left alone: deleting its
+/// row now would leave the blob it is about to publish with no row. Once the publish ends it is
+/// an unlinked row like any other, which the orphan GC collects. Each row is claimed before its
+/// blob goes (see [`purge_row`]), so no publish can start in between.
+/// Agent: DB SELECT media_objects skips a live marker (PUBLISH_MARKER_TTL_SECS); CALLS purge_row.
 pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64, AppError> {
     if media_ids.is_empty() {
         return Ok(0);
@@ -532,28 +646,86 @@ pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64
         SELECT id, uploader_user_id, bucket, object_key, message_id, size_bytes
         FROM media_objects
         WHERE id = ANY($1)
+          AND (publishing_at IS NULL OR publishing_at <= now() - $2 * interval '1 second')
         "#,
     )
     .bind(media_ids)
+    .bind(PUBLISH_MARKER_TTL_SECS)
     .fetch_all(&state.pool)
     .await
     .map_err(|err| AppError::Internal(format!("load media for purge failed: {err}")))?;
 
     let mut purged = 0_u64;
     for media in rows {
-        if !delete_blob(&state.media, &state.metrics, &media).await {
-            continue;
-        }
-        let result = sqlx::query(r#"DELETE FROM media_objects WHERE id = $1"#)
-            .bind(media.id)
-            .execute(&state.pool)
-            .await
-            .map_err(|err| AppError::Internal(format!("delete media row failed: {err}")))?;
-        if result.rows_affected() > 0 {
+        if purge_row(&state.pool, &state.media, &state.metrics, &media, false).await? {
             purged += 1;
         }
     }
     Ok(purged)
+}
+
+/// Deletes one row's blob, then the row; `true` when both are gone.
+///
+/// Human: The row is claimed first by setting its publishing marker, in the same conditional
+/// update an upload uses ([`mark_publishing`]). While the claim holds, no upload can start
+/// publishing (it answers `UPLOAD_IN_PROGRESS`) and no send can link the row, so the blob deleted
+/// here can't be replaced by one the row would then still name. A row an upload is publishing,
+/// or (with `unlinked_only`) one linked since it was listed, is skipped. When the store can't
+/// delete the blob, the claim comes off again and the row stays for the orphan GC.
+/// Agent: DB UPDATE media_objects SET publishing_at = now() WHERE marker unset or stale
+/// RETURNING it -> CALLS MediaStore::delete -> DB DELETE WHERE publishing_at = claim, or on store
+/// failure DB UPDATE SET publishing_at = NULL WHERE publishing_at = claim.
+async fn purge_row(
+    pool: &PgPool,
+    store: &MediaStore,
+    metrics: &Metrics,
+    row: &MediaRow,
+    unlinked_only: bool,
+) -> Result<bool, AppError> {
+    let claim: Option<DateTime<Utc>> = sqlx::query_scalar(
+        r#"
+        UPDATE media_objects
+        SET publishing_at = now()
+        WHERE id = $1
+          AND (NOT $3 OR message_id IS NULL)
+          AND (publishing_at IS NULL OR publishing_at <= now() - $2 * interval '1 second')
+        RETURNING publishing_at
+        "#,
+    )
+    .bind(row.id)
+    .bind(PUBLISH_MARKER_TTL_SECS)
+    .bind(unlinked_only)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("claim media row for delete failed: {err}")))?;
+    let Some(claim) = claim else {
+        return Ok(false);
+    };
+
+    if !delete_blob(store, metrics, row).await {
+        if let Err(err) = sqlx::query(
+            "UPDATE media_objects SET publishing_at = NULL WHERE id = $1 AND publishing_at = $2",
+        )
+        .bind(row.id)
+        .bind(claim)
+        .execute(pool)
+        .await
+        {
+            tracing::warn!(
+                error = %err,
+                media_object_id = %row.id,
+                "media delete claim not released; it goes stale on its own"
+            );
+        }
+        return Ok(false);
+    }
+    let result = sqlx::query("DELETE FROM media_objects WHERE id = $1 AND publishing_at = $2")
+        .bind(row.id)
+        .bind(claim)
+        .execute(pool)
+        .await
+        .map_err(|err| AppError::Internal(format!("delete media row failed: {err}")))?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Deletes unlinked media older than [`ORPHAN_TTL_MINUTES`]: abandoned uploads, and blobs a
@@ -561,7 +733,9 @@ pub async fn purge_media_ids(state: &AppState, media_ids: &[Uuid]) -> Result<u64
 /// immediately; this pass is the retry.
 ///
 /// The blob goes first and the row only once it is gone, so a store outage leaves the row for
-/// the next pass rather than a blob nothing points at.
+/// the next pass rather than a blob nothing points at. An upload still publishing (live
+/// `publishing_at`) waits for the next pass, and each row is claimed before its blob goes, as in
+/// [`purge_media_ids`].
 pub async fn purge_orphan_media(
     pool: &PgPool,
     media: &MediaStore,
@@ -574,30 +748,19 @@ pub async fn purge_orphan_media(
         FROM media_objects
         WHERE message_id IS NULL
           AND created_at < $1
+          AND (publishing_at IS NULL OR publishing_at <= now() - $2 * interval '1 second')
         "#,
     )
     .bind(cutoff)
+    .bind(PUBLISH_MARKER_TTL_SECS)
     .fetch_all(pool)
     .await
     .map_err(|err| AppError::Internal(format!("list orphan media failed: {err}")))?;
 
     let mut purged = 0_u64;
     for orphan in orphans {
-        if !delete_blob(media, metrics, &orphan).await {
-            continue;
-        }
-        let result = sqlx::query(
-            r#"
-            DELETE FROM media_objects
-            WHERE id = $1 AND message_id IS NULL
-            "#,
-        )
-        .bind(orphan.id)
-        .execute(pool)
-        .await
-        .map_err(|err| AppError::Internal(format!("delete orphan media row failed: {err}")))?;
-
-        if result.rows_affected() > 0 {
+        // Only while still unlinked: a send may have linked it since the list was read.
+        if purge_row(pool, media, metrics, &orphan, true).await? {
             purged += 1;
         }
     }

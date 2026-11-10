@@ -199,16 +199,23 @@ pub async fn send_message(
         struct MediaLock {
             uploader_user_id: Uuid,
             message_id: Option<Uuid>,
+            publishing: bool,
         }
+        // Human: A blob still being published (live `publishing_at`, see media::put_content)
+        // can't be linked: the message would name a blob that is about to be replaced.
+        // Agent: DB SELECT media_objects FOR UPDATE; `publishing` is the marker younger than
+        // media::PUBLISH_MARKER_TTL_SECS.
         let media = sqlx::query_as::<_, MediaLock>(
             r#"
-            SELECT uploader_user_id, message_id
+            SELECT uploader_user_id, message_id,
+                   COALESCE(publishing_at > now() - $2 * interval '1 second', false) AS publishing
             FROM media_objects
             WHERE id = $1
             FOR UPDATE
             "#,
         )
         .bind(media_id)
+        .bind(crate::routes::media::PUBLISH_MARKER_TTL_SECS)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|err| AppError::Internal(format!("load media for message failed: {err}")))?
@@ -223,6 +230,9 @@ pub async fn send_message(
             return Err(AppError::already_exists(
                 "Media is already linked to a message.",
             ));
+        }
+        if media.publishing {
+            return Err(crate::routes::media::upload_in_progress());
         }
     }
 

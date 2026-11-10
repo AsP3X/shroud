@@ -30,6 +30,11 @@ const MAX_RETRY_AFTER: Duration = Duration::from_secs(2);
 /// so the client must not set one shorter than this or a moving upload is aborted early.
 /// A download that goes quiet is cut off separately, per chunk.
 const PUT_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// The longest [`NebularStore::put_file`] can take: every attempt runs into [`PUT_TIMEOUT`]. The
+/// extra minute covers the waits between attempts and reading Nebular's refusal.
+pub(super) const LONGEST_PUT: Duration = PUT_TIMEOUT
+    .saturating_mul(MAX_ATTEMPTS)
+    .saturating_add(Duration::from_secs(60));
 /// Response headers for everything else. A download's body then streams at the client's pace.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// A download body that sends nothing for this long is stalled.
