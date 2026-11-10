@@ -14,7 +14,7 @@ Description:
 | `backlog` | Backlog | none | — | — |
 | `todo` | Todo | agent: [Docker] Development Manager - Henrik (`14fadf41-db2c-4659-a140-d89caca0b458`) | `in_progress` | — |
 | `in_progress` | In Progress | none | `in_review` | `blocked` |
-| `in_review` | In Review | agent: [Macbook] Code Reviewer - Nora (`f437f7bd-f806-4466-919c-b912a84fb037`) | `done` | `in_progress` |
+| `in_review` | In Review | agent: [Docker] Development Manager - Henrik (`14fadf41-db2c-4659-a140-d89caca0b458`) | `done` | `in_progress` |
 | `device_qa` | Device QA | member: the member (workspace owner) (`e13c707b-587b-4b8f-94ec-94714c3e3529`) | `in_review` | `in_progress` |
 | `blocked` | Blocked | agent: [Docker] Development Manager - Henrik (`14fadf41-db2c-4659-a140-d89caca0b458`) | — | `in_progress` |
 | `done` | Done | none | — | — |
@@ -28,6 +28,11 @@ Statuses and use that instead.
 Steps without a handler (`backlog`, `in_progress`, `done`, `cancelled`) start no run: whoever holds
 the card does the work. `in_progress` is held by the engineer Henrik assigned.
 
+`in_review` wakes Henrik, not a reviewer. He reads the author from the delivery comment and assigns
+the card to that squad's reviewer, Nora for a Mac author and Liv for a Demoncore author, with
+`multica issue update <id> --assignee-id <reviewer> --status in_review`. The assignment starts the
+reviewer's run. Henrik does not review the diff.
+
 ## Handoff instructions
 
 Full text of each step's instructions, unchanged. The UUIDs inside are this environment's; the
@@ -39,14 +44,22 @@ Handler: agent: [Docker] Development Manager - Henrik (`14fadf41-db2c-4659-a140-
 
 ~~~~ handoff-todo
 Shroud is an end-to-end encrypted messenger; working branch dev. This card is in todo. Route it by its Owner line. Vera (c7aef5da-c655-4543-98f3-766c9cb6a999, claude-fable-5-2) is not a review step and not yours to call. Assign her only when the member asked for her, mentioned her, or Mika already assigned her. A review return stays with the author. A follow-up from docs/security-audit-2026-10.md that the member did not invoke goes back to backlog, not to Vera. Everything else, including server contracts, migrations, crypto, calls, Android core, and a suite audit across platforms, goes to Jonas (3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070), or Lena (06178866-5778-495a-a831-c5c321fcdd66) if Jonas already has an implementation card. Check the in_progress column first. If the engineer you would pick already has an implementation card, or this card changes visible UI while another UI card is in progress, or it touches a platform directory another in_progress card touches, leave it in todo and write nothing. Otherwise move it with one call: multica issue update <id> --assignee-id <engineer> --status in_progress. Do not start the rest of the backlog. Plan cards stay with the planner.
+
+Two squads. Mac (Jonas, Lena, Nora, Vera, Ida) is the only squad for ios/ or a .pen edit. Demoncore (Soren e4449943-228b-4892-9961-f0d10a1f378d, Freja 717f0bda-5468-4880-97bb-8f2fa66909a2, Liv b0e769fd-b7e9-4cd5-9035-3ee685c8d36b, Saga c29d370f-286b-432b-bb08-79fc4c1d5429, Emil 36dd57c7-0202-4fd7-9e6f-c11fabe74f4b) takes server, admin, web, and Android. One squad per card. If both can do it, pick the squad with fewer in-progress cards. Saga only when the member asked for her, mentioned her, or Mika assigned her. The other squad continues a card only when the owning runtime is offline, the branch is pushed, and the card does not touch ios/ or design/*.pen.
 ~~~~
 
 ### `in_review` — In Review
 
-Handler: agent: [Macbook] Code Reviewer - Nora (`f437f7bd-f806-4466-919c-b912a84fb037`).
+Handler: agent: [Docker] Development Manager - Henrik (`14fadf41-db2c-4659-a140-d89caca0b458`).
 
 ~~~~ handoff-in_review
-You review and test. Do not change product code. Check out the delivered branch, diff it against origin/dev, and run the suite of every platform the diff touches (server with Postgres and Redis containers; admin; web with Node 24 on the default PATH; iOS with xcode-select pointing at Xcode.app; Android with the SDK at ~/Library/Android/sdk). Confirm git ls-remote shows the delivery commit on the feature branch. There is no pull request. Post one verdict comment in your format. Failures, a Blocker or Major, or an unmet criterion, including a later pass on the same card: move to in_progress and assign the author. Do not assign Vera. Clean suites and nothing unbuildable: merge the delivered branch into dev with git and push origin dev. Do not open a pull request and do not push master. Then move to done. Clean suites but something this Mac could not build or run, or the delivery says the Pencil `save` tool was unavailable: move to Device QA and say what the member must do. A UI change whose .pen file is absent from the diff goes back to the author. A judgment the docs do not settle: move to blocked. Do not merge unless this review is a clean approval.
+You dispatch the reviewer. You do not review the diff and you do not merge.
+
+The delivery comment names the author. Mac authors are Jonas (3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070), Lena (06178866-5778-495a-a831-c5c321fcdd66), and Vera (c7aef5da-c655-4543-98f3-766c9cb6a999). Assign Nora (f437f7bd-f806-4466-919c-b912a84fb037). Demoncore authors are Soren (e4449943-228b-4892-9961-f0d10a1f378d), Freja (717f0bda-5468-4880-97bb-8f2fa66909a2), and Saga (c29d370f-286b-432b-bb08-79fc4c1d5429). Assign Liv (b0e769fd-b7e9-4cd5-9035-3ee685c8d36b).
+
+If the diff touches ios/ or a .pen file, assign Nora even if a Demoncore engineer touched the branch. Use `multica issue update <id> --assignee-id <reviewer> --status in_review`.
+
+Do not assign Vera or Saga unless the member asked for that person, mentioned them, or Mika assigned them.
 ~~~~
 
 ### `device_qa` — Device QA
@@ -101,7 +114,7 @@ extract workflow.md handoff-device_qa > device_qa.txt
       "id": "14fadf41-db2c-4659-a140-d89caca0b458",
       "type": "agent"
     },
-    "instructions": "Shroud is an end-to-end encrypted messenger; working branch dev. This card is in todo. Route it by its Owner line. Vera (c7aef5da-c655-4543-98f3-766c9cb6a999, claude-fable-5-2) is not a review step and not yours to call. Assign her only when the member asked for her, mentioned her, or Mika already assigned her. A review return stays with the author. A follow-up from docs/security-audit-2026-10.md that the member did not invoke goes back to backlog, not to Vera. Everything else, including server contracts, migrations, crypto, calls, Android core, and a suite audit across platforms, goes to Jonas (3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070), or Lena (06178866-5778-495a-a831-c5c321fcdd66) if Jonas already has an implementation card. Check the in_progress column first. If the engineer you would pick already has an implementation card, or this card changes visible UI while another UI card is in progress, or it touches a platform directory another in_progress card touches, leave it in todo and write nothing. Otherwise move it with one call: multica issue update <id> --assignee-id <engineer> --status in_progress. Do not start the rest of the backlog. Plan cards stay with the planner.",
+    "instructions": "Shroud is an end-to-end encrypted messenger; working branch dev. This card is in todo. Route it by its Owner line. Vera (c7aef5da-c655-4543-98f3-766c9cb6a999, claude-fable-5-2) is not a review step and not yours to call. Assign her only when the member asked for her, mentioned her, or Mika already assigned her. A review return stays with the author. A follow-up from docs/security-audit-2026-10.md that the member did not invoke goes back to backlog, not to Vera. Everything else, including server contracts, migrations, crypto, calls, Android core, and a suite audit across platforms, goes to Jonas (3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070), or Lena (06178866-5778-495a-a831-c5c321fcdd66) if Jonas already has an implementation card. Check the in_progress column first. If the engineer you would pick already has an implementation card, or this card changes visible UI while another UI card is in progress, or it touches a platform directory another in_progress card touches, leave it in todo and write nothing. Otherwise move it with one call: multica issue update <id> --assignee-id <engineer> --status in_progress. Do not start the rest of the backlog. Plan cards stay with the planner.\n\nTwo squads. Mac (Jonas, Lena, Nora, Vera, Ida) is the only squad for ios/ or a .pen edit. Demoncore (Soren e4449943-228b-4892-9961-f0d10a1f378d, Freja 717f0bda-5468-4880-97bb-8f2fa66909a2, Liv b0e769fd-b7e9-4cd5-9035-3ee685c8d36b, Saga c29d370f-286b-432b-bb08-79fc4c1d5429, Emil 36dd57c7-0202-4fd7-9e6f-c11fabe74f4b) takes server, admin, web, and Android. One squad per card. If both can do it, pick the squad with fewer in-progress cards. Saga only when the member asked for her, mentioned her, or Mika assigned her. The other squad continues a card only when the owning runtime is offline, the branch is pushed, and the card does not touch ios/ or design/*.pen.",
     "next_status_key": "in_progress"
   },
   {
@@ -112,10 +125,10 @@ extract workflow.md handoff-device_qa > device_qa.txt
   {
     "status_key": "in_review",
     "handler": {
-      "id": "f437f7bd-f806-4466-919c-b912a84fb037",
+      "id": "14fadf41-db2c-4659-a140-d89caca0b458",
       "type": "agent"
     },
-    "instructions": "You review and test. Do not change product code. Check out the delivered branch, diff it against origin/dev, and run the suite of every platform the diff touches (server with Postgres and Redis containers; admin; web with Node 24 on the default PATH; iOS with xcode-select pointing at Xcode.app; Android with the SDK at ~/Library/Android/sdk). Confirm git ls-remote shows the delivery commit on the feature branch. There is no pull request. Post one verdict comment in your format. Failures, a Blocker or Major, or an unmet criterion, including a later pass on the same card: move to in_progress and assign the author. Do not assign Vera. Clean suites and nothing unbuildable: merge the delivered branch into dev with git and push origin dev. Do not open a pull request and do not push master. Then move to done. Clean suites but something this Mac could not build or run, or the delivery says the Pencil `save` tool was unavailable: move to Device QA and say what the member must do. A UI change whose .pen file is absent from the diff goes back to the author. A judgment the docs do not settle: move to blocked. Do not merge unless this review is a clean approval.",
+    "instructions": "You dispatch the reviewer. You do not review the diff and you do not merge.\n\nThe delivery comment names the author. Mac authors are Jonas (3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070), Lena (06178866-5778-495a-a831-c5c321fcdd66), and Vera (c7aef5da-c655-4543-98f3-766c9cb6a999). Assign Nora (f437f7bd-f806-4466-919c-b912a84fb037). Demoncore authors are Soren (e4449943-228b-4892-9961-f0d10a1f378d), Freja (717f0bda-5468-4880-97bb-8f2fa66909a2), and Saga (c29d370f-286b-432b-bb08-79fc4c1d5429). Assign Liv (b0e769fd-b7e9-4cd5-9035-3ee685c8d36b).\n\nIf the diff touches ios/ or a .pen file, assign Nora even if a Demoncore engineer touched the branch. Use `multica issue update <id> --assignee-id <reviewer> --status in_review`.\n\nDo not assign Vera or Saga unless the member asked for that person, mentioned them, or Mika assigned them.",
     "next_status_key": "done",
     "back_status_key": "in_progress"
   },

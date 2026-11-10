@@ -35,7 +35,9 @@ Delivery: one issue, one feature branch, one delivery comment, then in_review. N
 The "Mac runtime facts" paragraph describes the member's MacBook: `xcode-select` already points at
 Xcode.app, Node 24 is on the default PATH, the Android SDK is installed at `~/Library/Android/sdk`,
 and the server tests use local Postgres and Redis containers. On a different machine, update that
-paragraph and the matching sections of the engineer and reviewer instructions.
+paragraph and the matching sections of the engineer and reviewer instructions. The description
+does not mention the Windows machine; the Demoncore agents carry its facts in their own
+instructions (see [runtimes.md](runtimes.md)).
 
 ## Restore
 
