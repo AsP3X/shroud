@@ -1,9 +1,10 @@
 # Multica workspace setup
 
 This folder is a snapshot of the Multica workspace that runs Shroud's agent team, taken from the live
-CLI on 2026-11-10, after the Demoncore squad was added. It holds everything needed to rebuild the
-same team on a blank workspace: the twelve agents with their full instructions, models and
-runtimes, the two squads (`Shroud MacBook` and `Shroud Demoncore`), the `Shroud delivery` workflow
+CLI on 2026-11-10, after the Demoncore squad was added and Mika became the superior of both squads.
+It holds everything needed to rebuild the same team on a blank workspace: the twelve agents with
+their full instructions, models and runtimes, the two squads (`Shroud MacBook` and
+`Shroud Demoncore`, both led by Mika), the `Shroud delivery` workflow
 with every handoff text, the `Shroud` project with its repository binding, and the routing the
 instructions encode.
 
@@ -15,7 +16,7 @@ replaces them (step 5).
 | ---- | -------- |
 | [agents/](agents/) | One file per agent: board name, role, description, model, thinking level, runtime kind, concurrency, conversation starters, full instructions, create command |
 | [workflow.md](workflow.md) | Workflow `Shroud delivery`: statuses in board order, handler, next and back, every handoff text, steps file |
-| [squad.md](squad.md) | Squads `Shroud MacBook` and `Shroud Demoncore`: leader, members and roles, full instructions |
+| [squad.md](squad.md) | Squads `Shroud MacBook` and `Shroud Demoncore`: leader (Mika), members and roles, full instructions |
 | [project.md](project.md) | Project `Shroud`: description, status, lead, repository resource, workflow binding |
 | [runtimes.md](runtimes.md) | The five runtime kinds, which agents run on each, and the other runtimes present here |
 | [routing.md](routing.md) | Who takes what, as two diagrams and a checklist for a restored workspace |
@@ -50,8 +51,9 @@ This is the rule the restored texts carry, as the live workspace has it since 20
 - A pull request exists only when the member asks for one, and it is always `dev` → `master`. Only
   the member merges `master`.
 
-Henrik routes both squads, one squad per card; only the Mac squad touches `ios/` or edits
-`design/*.pen` ([routing.md](routing.md#two-squads)). Vera and Saga run only when the member asked
+Mika is the superior of both squads and the leader of each. Henrik routes the board under her, one
+squad per card, and leads neither; only the Mac squad touches `ios/` or edits `design/*.pen`
+([routing.md](routing.md#two-squads)). Vera and Saga run only when the member asked
 for that person or mentioned them, or when Mika assigned them because it is absolutely necessary;
 [routing.md](routing.md#when-vera-and-saga-run) spells that out. Android is built and tested on
 both machines like every other platform the squad owns.
@@ -136,7 +138,8 @@ done | grep -F -f old-ids.txt
 
 ### 6. Squads
 
-Run the block in [squad.md](squad.md#restore). It creates both squads.
+Run the block in [squad.md](squad.md#restore). It creates both squads with Mika as leader and
+superior, and adds Henrik to each as the board router.
 
 ### 7. Workflow
 

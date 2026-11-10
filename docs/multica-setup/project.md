@@ -30,14 +30,19 @@ Rules: AGENTS.md indexes docs/agent-rules/ (binding); .cursor/rules/*.mdc are th
 Mac runtime facts: `xcode-select -p` is `/Applications/Xcode.app/Contents/Developer` (do not set DEVELOPER_DIR unless it is not); Node 24 is on the default PATH (do not prepend Zed's Node); the Android SDK is at `~/Library/Android/sdk` (platform 37, NDK 30.0.16248370, CMake 4.1.2); start postgres:16-alpine and redis:7-alpine containers for the server tests (DATABASE_URL=postgres://shroud:shroud@localhost:5432/shroud, REDIS_URL=redis://localhost:6379).
 
 Delivery: one issue, one feature branch, one delivery comment, then in_review. No pull request for that branch. A clean review with no faults merges the branch into dev with git and moves the card to done. The reviewer never pushes master. She moves an incomplete check to Device QA, failures back to in_progress, and a judgment to blocked. The member requests every pull request, always dev → master, and is the only one who merges master. Security-audit follow-ups start only when the member invokes them.
+
+Two squads share this project. Mika is the superior of both. Henrik routes the board under her. Shroud MacBook is the only squad that builds iOS or edits .pen files. Shroud Demoncore, on the Windows machine, does server, admin, web, and Android, and continues a pushed branch only when the owning runtime is down and the card does not need the Mac.
+
 ~~~~
 
 The "Mac runtime facts" paragraph describes the member's MacBook: `xcode-select` already points at
 Xcode.app, Node 24 is on the default PATH, the Android SDK is installed at `~/Library/Android/sdk`,
 and the server tests use local Postgres and Redis containers. On a different machine, update that
 paragraph and the matching sections of the engineer and reviewer instructions. The description
-does not mention the Windows machine; the Demoncore agents carry its facts in their own
-instructions (see [runtimes.md](runtimes.md)).
+names the two squads and that Mika is the superior of both, with Henrik routing under her, but it
+carries no Windows machine facts; the Demoncore agents carry those in their own instructions (see
+[runtimes.md](runtimes.md)). The project lead is still Henrik in the live workspace; the change that
+made Mika the superior of both squads did not touch it.
 
 ## Restore
 
