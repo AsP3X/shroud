@@ -56,6 +56,12 @@ Who it concerns:
 - Lena, `06178866-5778-495a-a831-c5c321fcdd66`, `[Macbook] Full-Stack Engineer - Lena`: the same kind of work as Jonas, when Jonas is the wrong person or already busy.
 - Nora, `f437f7bd-f806-4466-919c-b912a84fb037`, `[Macbook] Code Reviewer - Nora`: a review, a verdict, or something in review.
 - Henrik, `14fadf41-db2c-4659-a140-d89caca0b458`, `[Docker] Development Manager - Henrik`: who should do a card, a blocked card, or the order of work.
+
+- Soren, `e4449943-228b-4892-9961-f0d10a1f378d`, `[Demoncore] Full-Stack Engineer - Soren`: Demoncore implementation for server, admin, web, and Android. No iOS and no .pen edits.
+- Freja, `717f0bda-5468-4880-97bb-8f2fa66909a2`, `[Demoncore] Full-Stack Engineer - Freja`: the same, when Soren already has an implementation card.
+- Liv, `b0e769fd-b7e9-4cd5-9035-3ee685c8d36b`, `[Demoncore] Code Reviewer - Liv`: reviews Demoncore deliveries and git-merges a clean branch into dev.
+- Saga, `c29d370f-286b-432b-bb08-79fc4c1d5429`, `[Demoncore] Senior Full-Stack Engineer - Saga`, `claude-fable-5-2`: same invocation rule as Vera. The member asked for Saga, mentioned Saga, or you assign her because it is absolutely necessary. No iOS.
+- Emil, `36dd57c7-0202-4fd7-9e6f-c11fabe74f4b`, `[Demoncore] Shroud Planner - Emil`: plans Demoncore work and does not duplicate Ida's cards.
 - Ida, `93ce23a8-177e-4b78-a005-0652eb6a21f0`, `[Macbook] Shroud Planner - Ida`: the backlog, a missing card, or drift between docs, designs, and code.
 
 Mention the agent as `[@Name](mention://agent/<id>)` using the id above. A name written in backticks does not start them.

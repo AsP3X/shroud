@@ -1,15 +1,29 @@
-# Squad `Shroud development team`
+# Squads `Shroud MacBook` and `Shroud Demoncore`
 
-Snapshot of `multica squad get 7f2bdde6-4f27-43a8-86f0-4ef99ee97aab` and `multica squad member list 7f2bdde6-4f27-43a8-86f0-4ef99ee97aab` on 2026-11-10.
+Snapshot of `multica squad get` and `multica squad member list` for both squads on 2026-11-10.
+Henrik leads both. Each card belongs to one squad; [routing.md](routing.md#two-squads) explains how
+Henrik picks it.
+
+| Squad | Machine | Platforms | Reviewer | ID in this environment |
+| ----- | ------- | --------- | -------- | ---------------------- |
+| `Shroud MacBook` | the member's MacBook (Mac Claude, Mac Grok) | every platform; the only squad for `ios/` and `design/*.pen` | Nora | `7f2bdde6-4f27-43a8-86f0-4ef99ee97aab` |
+| `Shroud Demoncore` | the Windows machine DESKTOP-BTQHK4R (Windows Claude, Windows Grok) | `server/`, `admin/`, `web/`, `android/`; no iOS, no `.pen` edits | Liv | `18795066-c2ce-43ef-9a9d-4b685a3dd716` |
+
+Mika is a member of neither squad.
+
+## `Shroud MacBook`
+
+This squad was called `Shroud development team` until the Demoncore squad was added; it kept its ID,
+description and members.
 
 | Field | Value |
 | ----- | ----- |
-| Name | `Shroud development team` |
+| Name | `Shroud MacBook` |
 | Description | Manager-led delivery loop for Shroud: planner → manager → engineers → reviewer → member QA. |
 | Leader | [Docker] Development Manager - Henrik |
 | ID in this environment | `7f2bdde6-4f27-43a8-86f0-4ef99ee97aab` |
 
-## Members
+### Members
 
 | Member | Type | Role (verbatim) | ID in this environment |
 | ------ | ---- | --------------- | ---------------------- |
@@ -21,24 +35,51 @@ Snapshot of `multica squad get 7f2bdde6-4f27-43a8-86f0-4ef99ee97aab` and `multic
 | [Macbook] Shroud Planner - Ida | agent | Planner: writes and orders cards, audits drift; read-only on code | `93ce23a8-177e-4b78-a005-0652eb6a21f0` |
 | the member (workspace owner) | member | Owner: requests the dev → master pull request and merges master, runs Device QA, decides product questions | `e13c707b-587b-4b8f-94ec-94714c3e3529` |
 
-Mika is not a squad member.
+### Instructions
 
-## Instructions
+Full text, unchanged except for the trailing newline the live text ends with (`$(...)` drops it on
+restore). It names agents by first name only.
 
-Full text, unchanged. It names agents by first name only, so it needs no ID replacement.
+~~~~ instructions-macbook
+This is the MacBook squad. You route it, and you also route Shroud Demoncore.
 
-~~~~ instructions
-You lead the Shroud development team. Shroud is an end-to-end encrypted messenger (Rust server, operator console, web, iOS, Android, Pencil designs) at https://github.com/AsP3X/shroud, working branch dev. Coordinate. Do not implement product code.
+Mac members execute on Niklas's MacBook. Only they may touch ios/ or edit design/*.pen. Nora reviews their cards and git-merges a clean branch into dev.
 
-The status loop assigns the work (project "Shroud", workflow "Shroud delivery"):
-- todo: you. Route by the card's Owner line and your brief's routing table: Vera is not a review step and not yours to call. She runs only when the member asked for her, mentioned her, or Mika assigned her. Security-audit follow-ups are not automatic. Everything else goes to Jonas or Lena. Start a card only when that engineer is free, with one `issue update --assignee-id <engineer> --status in_progress` call. Limits: one implementation card per engineer; at most one card in progress that changes visible UI (one Pen.app); never two cards on the same platform directory.
-- in_progress: the engineer does every work item, runs the platform suite, pushes the feature branch, posts one delivery comment, moves the card to in_review. No pull request.
-- in_review: the reviewer runs the suites again. Clean, no faults → she merges the feature branch into dev with git and pushes origin dev, then done. No pull request, and she never pushes master. This Mac could not build it, or the Pencil `save` tool was unavailable → Device QA. Failures, including a later pass, → in_progress, assigned to the author. Judgment → blocked. Do not send a review return to Vera.
-- Device QA: the member. Leave it alone.
-- done: the review gate passed and the feature branch is merged into dev. The member requests any pull request, and the only one is dev → master. The member alone merges master.
-- blocked: you. Resolve it from the docs and rules. Do not call Vera unless the member asked for her, mentioned her, or Mika assigned her. Assign the member only for a real product choice, with a TLDR.
+Demoncore executes server, admin, web, and Android on the Windows machine. Liv reviews those cards. A card belongs to one squad. The other squad continues it only when the owning runtime is offline, the branch is pushed, and the card does not need the Mac.
 
-Do not cancel a live run by reassigning it. Plan-writing stays with the planner. Every delivery is pushed to origin on its task branch before review; a commit that exists only on the Mac is not delivered. No force-push.
+Vera and Saga run only when the member asked for that person, mentioned them, or Mika assigned them. No pull request unless the member asks, and then it is dev → master.
+~~~~
+
+## `Shroud Demoncore`
+
+| Field | Value |
+| ----- | ----- |
+| Name | `Shroud Demoncore` |
+| Description | Windows squad. Server, admin, web, and Android. No iOS and no .pen edits. Henrik routes; the squad executes and reviews its own cards. |
+| Leader | [Docker] Development Manager - Henrik |
+| ID in this environment | `18795066-c2ce-43ef-9a9d-4b685a3dd716` |
+
+### Members
+
+| Member | Type | Role (verbatim) | ID in this environment |
+| ------ | ---- | --------------- | ---------------------- |
+| [Docker] Development Manager - Henrik | agent | leader | `14fadf41-db2c-4659-a140-d89caca0b458` |
+| [Demoncore] Full-Stack Engineer - Soren | agent | Demoncore implementation, primary | `e4449943-228b-4892-9961-f0d10a1f378d` |
+| [Demoncore] Full-Stack Engineer - Freja | agent | Demoncore implementation when Soren has a card | `717f0bda-5468-4880-97bb-8f2fa66909a2` |
+| [Demoncore] Code Reviewer - Liv | agent | Demoncore reviewer. Git-merges a clean branch into dev. No ios. | `b0e769fd-b7e9-4cd5-9035-3ee685c8d36b` |
+| [Demoncore] Senior Full-Stack Engineer - Saga | agent | Demoncore senior. Only when the member asked, mentioned her, or Mika assigned her. No iOS. | `c29d370f-286b-432b-bb08-79fc4c1d5429` |
+| [Demoncore] Shroud Planner - Emil | agent | Demoncore planner. Does not duplicate Ida's cards. | `36dd57c7-0202-4fd7-9e6f-c11fabe74f4b` |
+| the member (workspace owner) | member | Owner. Requests the dev to master pull request, runs Device QA, decides product questions. | `e13c707b-587b-4b8f-94ec-94714c3e3529` |
+
+### Instructions
+
+Full text, unchanged except for the trailing newline. It contains this environment's agent UUIDs;
+the restore replaces them through `ids.sed`.
+
+~~~~ instructions-demoncore
+This is the Demoncore squad on the Windows machine DESKTOP-BTQHK4R. Henrik routes. Soren (e4449943-228b-4892-9961-f0d10a1f378d) and Freja (717f0bda-5468-4880-97bb-8f2fa66909a2) implement. Liv (b0e769fd-b7e9-4cd5-9035-3ee685c8d36b) reviews and git-merges a clean branch into dev. Saga (c29d370f-286b-432b-bb08-79fc4c1d5429) runs only when the member asked for her, mentioned her, or Mika assigned her. Emil (36dd57c7-0202-4fd7-9e6f-c11fabe74f4b) plans work this squad can do and does not duplicate Ida's cards.
+
+No ios/. No .pen edits. No Xcode. If a card needs either, it belongs to Shroud MacBook. Continue a Mac card only when Henrik assigns it because the Mac runtime is offline and the card does not need the Mac. One squad per card. No pull request unless the member asks, and then it is dev → master.
 ~~~~
 
 ## Restore
@@ -48,27 +89,47 @@ environment's; `sed -f ids.sed` turns them into the new ones.
 
 ```sh
 HENRIK_ID=$(echo 14fadf41-db2c-4659-a140-d89caca0b458 | sed -f ids.sed)
-SQUAD_ID=$("$M" squad create --name 'Shroud development team' \
+
+MAC_SQUAD_ID=$("$M" squad create --name 'Shroud MacBook' \
   --description 'Manager-led delivery loop for Shroud: planner → manager → engineers → reviewer → member QA.' \
   --leader "$HENRIK_ID" --output json | jq -r .id)
-"$M" squad update "$SQUAD_ID" --instructions "$(extract squad.md instructions)"
+"$M" squad update "$MAC_SQUAD_ID" --instructions "$(extract squad.md instructions-macbook | sed -f ids.sed)"
+
+WIN_SQUAD_ID=$("$M" squad create --name 'Shroud Demoncore' \
+  --description 'Windows squad. Server, admin, web, and Android. No iOS and no .pen edits. Henrik routes; the squad executes and reviews its own cards.' \
+  --leader "$HENRIK_ID" --output json | jq -r .id)
+"$M" squad update "$WIN_SQUAD_ID" --instructions "$(extract squad.md instructions-demoncore | sed -f ids.sed)"
+
 sed -f ids.sed > members.sh <<'EOF'
-"$M" squad member add "$SQUAD_ID" --member-id c7aef5da-c655-4543-98f3-766c9cb6a999 \
+"$M" squad member add "$MAC_SQUAD_ID" --member-id c7aef5da-c655-4543-98f3-766c9cb6a999 \
   --role 'Optional high-quality pass, or a security review the member invoked. Not a review step'
-"$M" squad member add "$SQUAD_ID" --member-id 3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070 \
+"$M" squad member add "$MAC_SQUAD_ID" --member-id 3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070 \
   --role 'Implementation, including server contracts, migrations, crypto, calls, Android core, and suite audits'
-"$M" squad member add "$SQUAD_ID" --member-id 06178866-5778-495a-a831-c5c321fcdd66 \
+"$M" squad member add "$MAC_SQUAD_ID" --member-id 06178866-5778-495a-a831-c5c321fcdd66 \
   --role 'Same implementation work as Jonas, when Jonas already has an implementation card'
-"$M" squad member add "$SQUAD_ID" --member-id f437f7bd-f806-4466-919c-b912a84fb037 \
+"$M" squad member add "$MAC_SQUAD_ID" --member-id f437f7bd-f806-4466-919c-b912a84fb037 \
   --role 'Reviewer: runs the suites, one verdict per pass, merges a clean branch into dev with git, never pushes master'
-"$M" squad member add "$SQUAD_ID" --member-id 93ce23a8-177e-4b78-a005-0652eb6a21f0 \
+"$M" squad member add "$MAC_SQUAD_ID" --member-id 93ce23a8-177e-4b78-a005-0652eb6a21f0 \
   --role 'Planner: writes and orders cards, audits drift; read-only on code'
-"$M" squad member add "$SQUAD_ID" --member-id e13c707b-587b-4b8f-94ec-94714c3e3529 --type member \
+"$M" squad member add "$MAC_SQUAD_ID" --member-id e13c707b-587b-4b8f-94ec-94714c3e3529 --type member \
   --role 'Owner: requests the dev → master pull request and merges master, runs Device QA, decides product questions'
+"$M" squad member add "$WIN_SQUAD_ID" --member-id e4449943-228b-4892-9961-f0d10a1f378d \
+  --role 'Demoncore implementation, primary'
+"$M" squad member add "$WIN_SQUAD_ID" --member-id 717f0bda-5468-4880-97bb-8f2fa66909a2 \
+  --role 'Demoncore implementation when Soren has a card'
+"$M" squad member add "$WIN_SQUAD_ID" --member-id b0e769fd-b7e9-4cd5-9035-3ee685c8d36b \
+  --role 'Demoncore reviewer. Git-merges a clean branch into dev. No ios.'
+"$M" squad member add "$WIN_SQUAD_ID" --member-id c29d370f-286b-432b-bb08-79fc4c1d5429 \
+  --role 'Demoncore senior. Only when the member asked, mentioned her, or Mika assigned her. No iOS.'
+"$M" squad member add "$WIN_SQUAD_ID" --member-id 36dd57c7-0202-4fd7-9e6f-c11fabe74f4b \
+  --role 'Demoncore planner. Does not duplicate Ida'\''s cards.'
+"$M" squad member add "$WIN_SQUAD_ID" --member-id e13c707b-587b-4b8f-94ec-94714c3e3529 --type member \
+  --role 'Owner. Requests the dev to master pull request, runs Device QA, decides product questions.'
 EOF
-M="$M" SQUAD_ID="$SQUAD_ID" sh members.sh
-"$M" squad member list "$SQUAD_ID" --output json | jq -r '.[] | "\(.role)"'
+M="$M" MAC_SQUAD_ID="$MAC_SQUAD_ID" WIN_SQUAD_ID="$WIN_SQUAD_ID" sh members.sh
+"$M" squad member list "$MAC_SQUAD_ID" --output json | jq -r '.[] | "\(.role)"'
+"$M" squad member list "$WIN_SQUAD_ID" --output json | jq -r '.[] | "\(.role)"'
 ```
 
-`squad create` adds the leader with the role `leader`. If the list does not show it, add Henrik
-with `--role leader`.
+`squad create` adds the leader with the role `leader`. If a list does not show it, add Henrik to
+that squad with `--role leader`.
