@@ -23,7 +23,7 @@ alwaysApply: true
 | **`dev`** | **Integration branch.** Collects completed work from feature branches. |
 | **`feature/<name>`** | **Feature development.** Open from up-to-date **`dev`**. |
 
-**Intended flow:** `feature/...` → **`dev`** → **`master`** (via pull request).
+**Intended flow:** `feature/...` → **`dev`** (merged with git after a clean review; no pull request) → **`master`** (a pull request `dev` → `master`, opened only when the user asks for one).
 
 ## Staging scope
 
