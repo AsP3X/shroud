@@ -12,11 +12,12 @@ Its name, ID and version are this machine's labels and are not portable.
 | Mac Grok | Grok (Niklass-MacBook-Pro.local) | `grok` | Niklass-MacBook-Pro.local · grok 1.0.70 (f50904eaee6c) [stable] | 2 | `[Macbook] Code Reviewer - Nora` | `c3a174ed-3528-4230-beae-0925fdea641e` |
 | Docker Grok | Grok (Docker runner) | `grok` | Docker runner · grok 1.0.77 (50ca579fa996) | unset | `Mika`, `[Docker] Development Manager - Henrik` | `bb1e366e-6c6b-4815-af0a-18c732c93103` |
 
-- **Mac Claude** — Claude Code on the member's MacBook. Needs Xcode, Pen.app with the Pencil MCP
-  server, Docker, the Rust toolchain and Node (see the project description). Every agent that edits
-  code or `.pen` files runs here.
+- **Mac Claude** — Claude Code on the member's MacBook. Needs Xcode (selected with `xcode-select`),
+  Pen.app with the Pencil MCP server, Docker, the Rust toolchain, Node 24 on the default PATH and the
+  Android SDK at `~/Library/Android/sdk` (platform 37, NDK 30.0.16248370, CMake 4.1.2); see the
+  project description. Every agent that edits code or `.pen` files runs here.
 - **Mac Grok** — the Grok CLI on the same MacBook. The reviewer runs here to run the same suites as
-  the engineers; this runtime has no Pencil tools.
+  the engineers, Android included, with the same toolchain; this runtime has no Pencil tools.
 - **Docker Grok** — the Grok CLI in the Docker runner. Mika and Henrik only read and write the board,
   so they need no toolchain.
 

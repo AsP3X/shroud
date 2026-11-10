@@ -25,8 +25,9 @@ replaces them (step 5).
   (`multica login`, then `multica workspace switch <workspace>`).
 - `jq`, `awk` and `sed` on the machine that runs the restore.
 - Three runtimes, each from a daemon on its machine (`multica setup` there):
-  - **Mac Claude** — Claude Code on the Mac that builds Shroud (Xcode, Pen.app with the Pencil MCP
-    server, Docker, Rust, Node). Runs Vera, Jonas, Lena and Ida.
+  - **Mac Claude** — Claude Code on the Mac that builds Shroud (Xcode selected with `xcode-select`,
+    Pen.app with the Pencil MCP server, Docker, Rust, Node 24 on the default PATH, the Android SDK
+    at `~/Library/Android/sdk`). Runs Vera, Jonas, Lena and Ida.
   - **Mac Grok** — the Grok CLI on the same Mac. Runs Nora.
   - **Docker Grok** — the Grok CLI in a Docker runner. Runs Mika and Henrik.
 - Access to `https://github.com/AsP3X/shroud` for the Mac runtimes (`gh auth login`), with `dev` as
@@ -43,8 +44,11 @@ This is the rule the restored texts carry, as the live workspace has it since 20
 - A pull request exists only when the member asks for one, and it is always `dev` → `master`. Only
   the member merges `master`.
 
+Vera runs only when the member asked for her or mentioned her, or when Mika assigned her because it
+is absolutely necessary; [routing.md](routing.md#when-vera-runs) spells that out. Android is built
+and tested on the Mac like every other platform.
 [routing.md](routing.md#where-the-live-texts-still-disagree) lists the places where the live texts
-still mention the earlier pull-request flow.
+still carry an earlier rule.
 
 ## Do not copy
 
@@ -141,9 +145,9 @@ Run the second block of [project.md](project.md#restore).
 - `"$M" project workflow get <project-id>` shows `uses_default: false` and `Shroud delivery`.
 - Walk the checklist in [routing.md](routing.md#checking-a-restored-workspace).
 
-If the new machines differ from the member's MacBook (paths to Xcode or Node, the Android SDK), edit
-the "Mac runtime facts" in the project description and the "Verification per platform" sections of
-the engineer and reviewer instructions after the restore.
+If the new machines differ from the member's MacBook (where Xcode, Node 24 or the Android SDK
+live), edit the "Mac runtime facts" in the project description and the "Verification per platform"
+sections of the engineer and reviewer instructions after the restore.
 
 ## This environment
 

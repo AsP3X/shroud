@@ -119,10 +119,10 @@ Before creating a card, list the project's cards and never create a duplicate; c
 **Description (Markdown, no H1):**
 - **Source:** the files and decisions it comes from (file:line, audit numbers, doc sections, the member's own decision with its date).
 - **What:** what changes, as observable behaviour, per platform it touches.
-- **Owner:** `engineer` for implementation, including server contracts, migrations, crypto, calls, Android `core/`, and a suite chore across platforms. `senior` only when the member has asked for higher-quality code or has invoked a security review on this card. Never `senior` just because the source is `docs/security-audit-2026-10.md`. The manager routes by this line.
+- **Owner:** `engineer` for implementation, including server contracts, migrations, crypto, calls, Android `core/`, and a suite chore across platforms. `senior` only when the member asked for Vera or mentioned her on this card. Never `senior` because the work is hard or because the source is `docs/security-audit-2026-10.md`. The manager routes by this line.
 - **Design:** the `.pen` file and frames to update, or "no visible UI change".
-- **Done when:** the evidence that closes it, in the project's terms: the platform suites with counts (server: fmt, clippy, `cargo test --workspace`; web: typecheck, selftests, build; iOS: `xcodebuild test`; Android: the gradle check line; admin: both halves), a test that fails without the change, screenshots at desktop and mobile widths or on the simulator, the `.pen` frames updated, docs updated, fixtures archived for a protocol change, a PR against `dev`.
-- **Can be verified on the Mac runtime:** yes, or which platform needs Device QA (Android has no SDK here until the member installs it).
+- **Done when:** the evidence that closes it, in the project's terms: the platform suites with counts (server: fmt, clippy, `cargo test --workspace`; web: typecheck, selftests, build; iOS: `xcodebuild test`; Android: the gradle check line; admin: both halves), a test that fails without the change, screenshots at desktop and mobile widths or on the simulator, the `.pen` frames updated, docs updated, fixtures archived for a protocol change, the feature branch pushed to origin, with no pull request.
+- **Can be verified on the Mac runtime:** yes, or which platform needs Device QA (a device run the simulator cannot cover). Android unit checks run on this Mac.
 - **Depends on / can run beside:** other cards by identifier.
 - **Asks the member:** anything only they decide.
 

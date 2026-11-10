@@ -27,13 +27,14 @@ Branches: dev is the working branch and the base of every worktree and feature b
 
 Rules: AGENTS.md indexes docs/agent-rules/ (binding); .cursor/rules/*.mdc are the detailed conventions (crypto invariants, API error envelope, immutable migrations, data safety, definition of done, regression testing, design system, Swift quality). Plaintext and private keys exist only on devices; the server never gains a decryption path.
 
-Mac runtime facts: set DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer for xcodebuild; prepend "/Users/niklas/Library/Application Support/Zed/node/node-v24.22.1-darwin-arm64/bin" to PATH for npm; start postgres:16-alpine and redis:7-alpine containers for the server tests (DATABASE_URL=postgres://shroud:shroud@localhost:5432/shroud, REDIS_URL=redis://localhost:6379); no Android SDK is installed until the member's runtime card is done.
+Mac runtime facts: `xcode-select -p` is `/Applications/Xcode.app/Contents/Developer` (do not set DEVELOPER_DIR unless it is not); Node 24 is on the default PATH (do not prepend Zed's Node); the Android SDK is at `~/Library/Android/sdk` (platform 37, NDK 30.0.16248370, CMake 4.1.2); start postgres:16-alpine and redis:7-alpine containers for the server tests (DATABASE_URL=postgres://shroud:shroud@localhost:5432/shroud, REDIS_URL=redis://localhost:6379).
 
 Delivery: one issue, one feature branch, one delivery comment, then in_review. No pull request for that branch. A clean review with no faults merges the branch into dev with git and moves the card to done. The reviewer never pushes master. She moves an incomplete check to Device QA, failures back to in_progress, and a judgment to blocked. The member requests every pull request, always dev → master, and is the only one who merges master. Security-audit follow-ups start only when the member invokes them.
 ~~~~
 
-The "Mac runtime facts" paragraph describes the member's MacBook (Xcode and Zed Node paths, test
-containers, the Android SDK state at the time it was written). On a different machine, update that
+The "Mac runtime facts" paragraph describes the member's MacBook: `xcode-select` already points at
+Xcode.app, Node 24 is on the default PATH, the Android SDK is installed at `~/Library/Android/sdk`,
+and the server tests use local Postgres and Redis containers. On a different machine, update that
 paragraph and the matching sections of the engineer and reviewer instructions.
 
 ## Restore

@@ -51,7 +51,7 @@ The member will ask something, answer a question you or another agent asked, or 
 How you talk to them: one reply on the same thread, with a real mention, the member's words, and what you need done. Then stop. Do not do that agent's work yourself.
 
 Who it concerns:
-- Vera, `c7aef5da-c655-4543-98f3-766c9cb6a999`, `[Macbook] Senior Full-Stack Engineer - Vera`, `claude-fable-5-2`: optional, not a step on the review loop. Only when a high-quality pass is required, or when the member invoked her. A review return stays with the author.
+- Vera, `c7aef5da-c655-4543-98f3-766c9cb6a999`, `[Macbook] Senior Full-Stack Engineer - Vera`, `claude-fable-5-2`: not a review step. Invoke her only when the member asked for her, mentioned her, or it is absolutely necessary. Absolutely necessary means Jonas and Lena cannot produce a correct result and the defect is a security or correctness failure that cannot wait. Say why in the comment that assigns her. Do not invoke her for a harder feature, a second review, or a quality preference. A review return stays with the author.
 - Jonas, `3ccc6b5b-56e1-4b80-b0cf-5bb0763a1070`, `[Macbook] Full-Stack Engineer - Jonas`: implementation, including server contracts, migrations, crypto, calls, and Android core, and a chore that only runs existing suites across platforms.
 - Lena, `06178866-5778-495a-a831-c5c321fcdd66`, `[Macbook] Full-Stack Engineer - Lena`: the same kind of work as Jonas, when Jonas is the wrong person or already busy.
 - Nora, `f437f7bd-f806-4466-919c-b912a84fb037`, `[Macbook] Code Reviewer - Nora`: a review, a verdict, or something in review.
