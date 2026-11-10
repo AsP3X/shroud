@@ -3,7 +3,7 @@
  * 1447-1451, 4318-4320`): the peer's messages are acked the first time this browser sees them —
  * over the socket, in the open chat's poll and in history pages — once each, one at a time,
  * without holding up the page, and never for our own messages, Notes, or messages deleted for
- * everyone. A failed ack is dropped.
+ * everyone. A failed ack is dropped. A malformed cached media body never makes a page reject.
  * Run: `npx tsx src/messaging.selftest.ts`.
  */
 import type { WireMessage } from "./api/client";
@@ -101,7 +101,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 
 const { createVault, derivePinSecrets } = await import("./crypto/vault");
 const { savePlaintext } = await import("./crypto/plaintextCache");
-const { deliveryAcksSettled, fetchLatest, ingestIncoming, loadHistoryPage } = await import("./messaging");
+const { decodeIncoming, deliveryAcksSettled, fetchLatest, ingestIncoming, loadHistoryPage } = await import("./messaging");
 
 // An open vault, so "this browser has the body already" (the plaintext cache) means something.
 const secrets = await derivePinSecrets("123456", new Uint8Array(16), 1);
@@ -180,5 +180,26 @@ await ingestIncoming(lost, ME, PEER, TOKEN, material);
 await deliveryAcksSettled();
 check(acks.length === 8, "a failed ack is not retried");
 check(!ackOverlap, "still one ack at a time");
+
+/*
+ * A cached media body whose caption or thumbnail is not a string (a contact's modified client,
+ * security audit W1) draws without it, and the rest of the page loads.
+ */
+const numberCaption = wire("F6F6F6F6-0000-4000-8000-000000000001", PEER, { content_type: "media" });
+const objectThumb = wire("F6F6F6F6-0000-4000-8000-000000000002", PEER, { content_type: "media" });
+const fine = wire("F6F6F6F6-0000-4000-8000-000000000003", PEER);
+savePlaintext(numberCaption.id, PEER, JSON.stringify({ t: "image", k: "a2V5", c: 5, to: ME }));
+savePlaintext(objectThumb.id, PEER, JSON.stringify({ t: "image", k: "a2V5", th: {}, to: ME }));
+savePlaintext(fine.id, PEER, "still readable");
+for (const dto of [numberCaption, objectThumb]) {
+  const decoded = await decodeIncoming(dto, ME, PEER, TOKEN, material);
+  check(decoded.kind === "image" && !decoded.failed, `${dto.id} draws as a photo`);
+  check(decoded.caption === null && decoded.thumbnail === null, `${dto.id} has no caption or thumbnail`);
+}
+page = [fine, objectThumb, numberCaption];
+const malformedPage = await loadHistoryPage(TOKEN, ME, PEER, material);
+check(malformedPage.messages.length === 3, "a page with malformed media bodies loads");
+check(malformedPage.messages.some((m) => m.id === fine.id && m.text === "still readable"), "its other messages read");
+await deliveryAcksSettled();
 
 console.log("messaging selftest ok");
