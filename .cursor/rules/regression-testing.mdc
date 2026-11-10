@@ -20,7 +20,7 @@ New features and refactors must **not break existing behavior**. Treat regressio
 - **Envelope fixtures**: keep serialized message envelopes, key bundles, and API payloads from every released protocol version under `server/tests/fixtures/`. New server code must still accept/decrypt-route every archived fixture (or the task documents a versioned break + client migration).
 - **Migration backtests**: `server/tests/` must include a test that runs all migrations from empty and from a seeded previous-release schema dump. Never edit applied migrations (`api-sqlx-migrations.mdc`).
 - **Old-client simulation**: when changing an endpoint, add/extend a test that sends the previous request shape and asserts it still succeeds or fails with the documented, versioned error.
-- When adding a new protocol/envelope version, **archive a fixture for it in the same PR**.
+- When adding a new protocol/envelope version, **archive a fixture for it in the same change**.
 
 ## Test inventory
 
