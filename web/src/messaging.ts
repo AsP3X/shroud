@@ -575,23 +575,29 @@ export async function decodeIncoming(
   if (cached != null && cached !== "[media]" && misfiled(cached)) return refused();
   if (isAnnotation && cached != null) return annotationFrom(cached);
   if (cached != null && cached !== "[media]") {
-    if (isMedia) {
-      const payload = parseMediaPayload(cached);
-      if (payload) {
-        const msg = messageFromMediaPayload(base, payload, dto.media_object_id);
+    // A cached body that cannot be drawn is one failed row, as when it was first opened: a throw
+    // here would reject the whole history page and keep the chat from loading (W1).
+    try {
+      if (isMedia) {
+        const payload = parseMediaPayload(cached);
+        if (payload) {
+          const msg = messageFromMediaPayload(base, payload, dto.media_object_id);
+          rememberPreview(me, peerUserId, msg);
+          return msg;
+        }
+      } else {
+        const parsed = parseTextPayload(cached);
+        const msg: ChatMessage = {
+          ...base,
+          text: parsed.text,
+          replyTo: parsed.replyTo,
+          linkPreview: parsed.linkPreview,
+        };
         rememberPreview(me, peerUserId, msg);
         return msg;
       }
-    } else {
-      const parsed = parseTextPayload(cached);
-      const msg: ChatMessage = {
-        ...base,
-        text: parsed.text,
-        replyTo: parsed.replyTo,
-        linkPreview: parsed.linkPreview,
-      };
-      rememberPreview(me, peerUserId, msg);
-      return msg;
+    } catch {
+      return refused();
     }
   }
   if (!dto.ciphertext) {
