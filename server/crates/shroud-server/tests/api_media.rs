@@ -10,7 +10,7 @@ use axum::http::{Request, StatusCode, header};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
-use shroud_server::media_store::MediaStoreError;
+use shroud_server::media_store::{MediaStore, MediaStoreError, NebularConfig};
 use shroud_server::routes;
 use shroud_server::state::AppState;
 use sqlx::postgres::PgPoolOptions;
@@ -820,4 +820,411 @@ async fn an_upload_linked_before_it_finishes_does_not_publish() {
         .expect("second half");
     drop(chunks);
     assert_eq!(upload.await.expect("upload"), StatusCode::CONFLICT);
+}
+
+/// A stand-in Nebular whose uploads hang until the test lets them through, so a publish can be
+/// held open for as long as a slow store would hold it.
+struct HeldNebular {
+    url: String,
+    /// The path of each upload as it reaches the store, before it is answered.
+    puts: tokio::sync::mpsc::UnboundedReceiver<String>,
+    /// `true` answers every held upload (and any later one) with 200.
+    release: tokio::sync::watch::Sender<bool>,
+    /// Paths the store was asked to delete; each is answered with 204.
+    deletes: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// The path of each delete as it reaches the store, before it is answered.
+    delete_requests: tokio::sync::mpsc::UnboundedReceiver<String>,
+    /// `false` holds every delete until it is set back to `true` (the default).
+    release_deletes: tokio::sync::watch::Sender<bool>,
+}
+
+impl HeldNebular {
+    async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        let (put_tx, puts) = tokio::sync::mpsc::unbounded_channel();
+        let (release, released) = tokio::sync::watch::channel(false);
+        let deletes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_deletes = deletes.clone();
+        let (delete_tx, delete_requests) = tokio::sync::mpsc::unbounded_channel();
+        let (release_deletes, deletes_released) = tokio::sync::watch::channel(true);
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                tokio::spawn(serve_held(
+                    socket,
+                    (put_tx.clone(), released.clone()),
+                    (delete_tx.clone(), deletes_released.clone()),
+                    seen_deletes.clone(),
+                ));
+            }
+        });
+        Self {
+            url,
+            puts,
+            release,
+            deletes,
+            delete_requests,
+            release_deletes,
+        }
+    }
+
+    fn store(&self) -> std::sync::Arc<MediaStore> {
+        let spool = std::env::temp_dir().join(format!("shroud-held-nebular-{}", Uuid::new_v4()));
+        std::sync::Arc::new(
+            MediaStore::nebular(
+                NebularConfig {
+                    url: self.url.clone(),
+                    access_key_id: "test".into(),
+                    secret_access_key: "test".into(),
+                    region: "us-east-1".into(),
+                },
+                "shroud-media",
+                Some(spool),
+            )
+            .expect("held store"),
+        )
+    }
+
+    /// Waits for the next upload to reach the store and returns its path.
+    async fn next_put(&mut self) -> String {
+        tokio::time::timeout(std::time::Duration::from_secs(10), self.puts.recv())
+            .await
+            .expect("an upload reached the store")
+            .expect("store running")
+    }
+
+    /// Waits for the next delete to reach the store and returns its path.
+    async fn next_delete(&mut self) -> String {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.delete_requests.recv(),
+        )
+        .await
+        .expect("a delete reached the store")
+        .expect("store running")
+    }
+
+    fn deleted(&self, key: &str) -> bool {
+        self.deletes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|path| path.ends_with(key))
+    }
+}
+
+/// One keep-alive connection to [`HeldNebular`]: reads each request whole, then answers it.
+async fn serve_held(
+    mut socket: tokio::net::TcpStream,
+    (puts, mut released): (
+        tokio::sync::mpsc::UnboundedSender<String>,
+        tokio::sync::watch::Receiver<bool>,
+    ),
+    (delete_requests, mut deletes_released): (
+        tokio::sync::mpsc::UnboundedSender<String>,
+        tokio::sync::watch::Receiver<bool>,
+    ),
+    deletes: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut buf = Vec::new();
+    let mut chunk = vec![0_u8; 8192];
+    loop {
+        let head_end = loop {
+            if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+            match socket.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+        let mut words = head.split_whitespace();
+        let method = words.next().unwrap_or_default().to_string();
+        let path = words.next().unwrap_or_default().to_string();
+        let body_len: usize = head
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, value)| value.trim().parse().ok())
+            .unwrap_or(0);
+        while buf.len() < head_end + body_len {
+            match socket.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+        buf.drain(..head_end + body_len);
+        let answer: &[u8] = match method.as_str() {
+            "PUT" => {
+                let _ = puts.send(path);
+                if released.wait_for(|go| *go).await.is_err() {
+                    return;
+                }
+                b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n"
+            }
+            "DELETE" => {
+                let _ = delete_requests.send(path.clone());
+                if deletes_released.wait_for(|go| *go).await.is_err() {
+                    return;
+                }
+                deletes.lock().unwrap().push(path);
+                b"HTTP/1.1 204 No Content\r\n\r\n"
+            }
+            _ => b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n",
+        };
+        if socket.write_all(answer).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// A router over a pool of `pool_size` connections whose media store holds every publish open.
+async fn held_publish_setup(pool_size: u32) -> Option<(axum::Router, AppState, HeldNebular)> {
+    let database_url = std::env::var("DATABASE_URL").ok()?;
+    let pool = PgPoolOptions::new()
+        .max_connections(pool_size)
+        .connect(&database_url)
+        .await
+        .ok()?;
+    sqlx::migrate!("../../migrations/postgres")
+        .run(&pool)
+        .await
+        .ok()?;
+    let nebular = HeldNebular::start().await;
+    let mut state = test_state(pool);
+    state.media = nebular.store();
+    let app = axum::Router::new()
+        .merge(routes::router())
+        .with_state(state.clone());
+    Some((app, state, nebular))
+}
+
+fn spawn_put(
+    app: &axum::Router,
+    token: &str,
+    media_id: &str,
+    bytes: &[u8],
+) -> tokio::task::JoinHandle<StatusCode> {
+    let (app, token, media_id, bytes) = (
+        app.clone(),
+        token.to_string(),
+        media_id.to_string(),
+        bytes.to_vec(),
+    );
+    tokio::spawn(async move { put_content(&app, &token, &media_id, &bytes).await })
+}
+
+/// A publish waits on the store, not on the database: two of them hanging must leave a
+/// two-connection pool to everyone else (security audit 2026-11 S1).
+#[tokio::test]
+async fn publishes_waiting_on_the_store_leave_the_pool_free() {
+    let Some((app, _state, mut nebular)) = held_publish_setup(2).await else {
+        eprintln!(
+            "skipping publishes_waiting_on_the_store_leave_the_pool_free: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, _) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let first = create_upload(&app, &token, bytes.len()).await;
+    let second = create_upload(&app, &token, bytes.len()).await;
+    let _uploads = [
+        spawn_put(&app, &token, &first, &bytes),
+        spawn_put(&app, &token, &second, &bytes),
+    ];
+    nebular.next_put().await;
+    nebular.next_put().await;
+
+    let me = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        app.clone().oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/auth/me")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        ),
+    )
+    .await
+    .expect("GET /auth/me answered while two publishes hang")
+    .expect("response");
+    assert_eq!(me.status(), StatusCode::OK);
+}
+
+/// While a publish is under way the row can't be linked, and a delete leaves it alone. Once the
+/// publish is done the row is an ordinary unlinked upload, so its blob is still collected.
+#[tokio::test]
+async fn a_delete_racing_the_publish_leaves_nothing_uncollected() {
+    let Some((app, state, mut nebular)) = held_publish_setup(5).await else {
+        eprintln!(
+            "skipping a_delete_racing_the_publish_leaves_nothing_uncollected: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, me) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+    let (_, key) = blob_location(&state, &media_id).await;
+    let upload = spawn_put(&app, &token, &media_id, &bytes);
+    nebular.next_put().await;
+
+    let send = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/messages")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "peer_user_id": me,
+                        "client_message_id": Uuid::new_v4(),
+                        "content_type": "media",
+                        "ciphertext": BASE64.encode(b"envelope"),
+                        "media_object_id": media_id
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(send.status(), StatusCode::CONFLICT);
+    assert_eq!(json_body(send).await["error"]["code"], "UPLOAD_IN_PROGRESS");
+
+    let id = Uuid::parse_str(&media_id).unwrap();
+    assert_eq!(
+        routes::media::purge_media_ids(&state, &[id])
+            .await
+            .expect("purge"),
+        0
+    );
+    assert!(!row_is_gone(&state, &media_id).await);
+    assert!(!nebular.deleted(&key));
+
+    nebular.release.send_replace(true);
+    assert_eq!(upload.await.expect("upload"), StatusCode::NO_CONTENT);
+    assert_eq!(
+        routes::media::purge_media_ids(&state, &[id])
+            .await
+            .expect("purge"),
+        1
+    );
+    assert!(row_is_gone(&state, &media_id).await);
+    assert!(nebular.deleted(&key));
+}
+
+/// A purge claims the row before it deletes the blob, so an upload that reaches its publish while
+/// the purge is deleting is refused instead of publishing a blob the purge has just removed (and
+/// answering 204 for a row that is about to go).
+#[tokio::test]
+async fn an_upload_reaching_its_publish_during_a_purge_is_refused() {
+    let Some((app, state, mut nebular)) = held_publish_setup(5).await else {
+        eprintln!(
+            "skipping an_upload_reaching_its_publish_during_a_purge_is_refused: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, _) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+    let id = Uuid::parse_str(&media_id).unwrap();
+
+    nebular.release_deletes.send_replace(false);
+    let purge = tokio::spawn({
+        let state = state.clone();
+        async move { routes::media::purge_media_ids(&state, &[id]).await }
+    });
+    nebular.next_delete().await;
+
+    let upload = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        put_content(&app, &token, &media_id, &bytes),
+    )
+    .await
+    .expect("the upload was refused, not published");
+    assert_eq!(upload, StatusCode::CONFLICT);
+    assert!(nebular.puts.try_recv().is_err());
+
+    nebular.release_deletes.send_replace(true);
+    assert_eq!(purge.await.expect("purge task").expect("purge"), 1);
+    assert!(row_is_gone(&state, &media_id).await);
+    assert_eq!(
+        put_content(&app, &token, &media_id, &bytes).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// A request dropped while its blob is being published (the client went away) still finishes the
+/// publish and clears its marker, so the media can be sent at once rather than once it goes stale.
+#[tokio::test]
+async fn an_upload_dropped_mid_publish_still_clears_its_marker() {
+    let Some((app, state, mut nebular)) = held_publish_setup(5).await else {
+        eprintln!(
+            "skipping an_upload_dropped_mid_publish_still_clears_its_marker: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, me) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+    let upload = spawn_put(&app, &token, &media_id, &bytes);
+    nebular.next_put().await;
+    upload.abort();
+    assert!(upload.await.expect_err("aborted").is_cancelled());
+
+    nebular.release.send_replace(true);
+    let id = Uuid::parse_str(&media_id).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let marked: bool = sqlx::query_scalar(
+                "SELECT publishing_at IS NOT NULL FROM media_objects WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&state.pool)
+            .await
+            .expect("media row");
+            if !marked {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("publishing marker cleared");
+    send_media(&app, &token, &me, &media_id).await;
+}
+
+/// A row removed while its blob was being published (by a delete that took a dead upload's
+/// marker for stale) gets that blob taken back, so nothing is left that no row names.
+#[tokio::test]
+async fn a_row_removed_during_the_publish_takes_its_blob_back() {
+    let Some((app, state, mut nebular)) = held_publish_setup(5).await else {
+        eprintln!(
+            "skipping a_row_removed_during_the_publish_takes_its_blob_back: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (token, _) = register(&app).await;
+    let bytes = blob_bytes(64);
+    let media_id = create_upload(&app, &token, bytes.len()).await;
+    let (_, key) = blob_location(&state, &media_id).await;
+    let upload = spawn_put(&app, &token, &media_id, &bytes);
+    nebular.next_put().await;
+
+    sqlx::query("DELETE FROM media_objects WHERE id = $1")
+        .bind(Uuid::parse_str(&media_id).unwrap())
+        .execute(&state.pool)
+        .await
+        .expect("remove row");
+    nebular.release.send_replace(true);
+    assert_eq!(upload.await.expect("upload"), StatusCode::NOT_FOUND);
+    assert!(nebular.deleted(&key));
 }

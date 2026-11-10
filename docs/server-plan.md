@@ -1189,7 +1189,7 @@ Optional field: `"media_object_id": "<uuid>"` required when `content_type` is `m
 | `NOT_FOUND` | media missing |
 | `ALREADY_EXISTS` | media already linked to a message |
 | `MEDIA_QUOTA_EXCEEDED` (413) | the account's media would pass `MEDIA_QUOTA_MIB` |
-| `UPLOAD_IN_PROGRESS` (409) | a `PUT` to this media object is still streaming |
+| `UPLOAD_IN_PROGRESS` (409) | a `PUT` to this media object is still streaming or publishing (also on `POST /messages` linking it; see `docs/file-sharing.md` "Upload lifecycle on the server") |
 | `RATE_LIMITED` | more than 8 uploads of the account stream at once |
 
 A `PUT` whose body sends nothing for 60 s ends with its scratch file; abandoned scratch files are

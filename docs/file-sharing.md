@@ -285,6 +285,41 @@ No decrypted file stays on disk.
 - Delete-for-everyone, chat deletion, logout and wipes remove these files with the rest of the
   message's media.
 
+### Upload lifecycle on the server
+
+The server only ever holds the sealed blob, and every client goes through the same steps:
+
+1. `POST /media/uploads` with the sealed size creates an unlinked `media_objects` row.
+2. `PUT /media/{id}/content` streams the blob into a scratch file (a local `.tmp` file, or a spool
+   file for Nebular) and checks its size. Nothing is published yet.
+3. Right before the blob is published, one short statement checks that the row still exists and is
+   unlinked, and sets its **publishing marker** (`media_objects.publishing_at`). No database
+   connection and no row lock is held while the bytes go to the store, which for Nebular can take up
+   to an hour per attempt.
+4. Once the store is done, the marker comes off in another short statement, and only if it is
+   still this upload's own marker. A row that disappeared meanwhile gets its blob deleted again.
+   A failed publish also clears the marker, so the client can retry at once.
+5. `POST /messages` with `media_object_id` links the row to the message. From then on, `PUT`
+   answers `409 ALREADY_EXISTS`, so a linked blob is never replaced.
+
+While the marker is live:
+
+- `POST /messages` that links the row answers `409 UPLOAD_IN_PROGRESS`. Clients only send after
+  their `PUT` returned `204`, so they never see it.
+- A second `PUT` to the row answers `409 UPLOAD_IN_PROGRESS`.
+- Account deletion and the orphan GC leave the row and its blob alone. When the publish ends, the
+  row is an ordinary unlinked upload, and the orphan GC collects it (blob first, then row).
+
+Deleting works the same way the other way round. Before account deletion, delete for everyone or
+the orphan GC removes a blob, it sets the marker on the row itself (the same conditional update),
+then deletes the blob and then the row. An upload that reaches step 3 meanwhile answers
+`409 UPLOAD_IN_PROGRESS` and publishes nothing, and a send can't link the row. If the store can't
+delete the blob, the marker comes off again and the row stays for the next GC pass.
+
+A process that dies mid-publish leaves its marker behind. A marker older than the longest
+possible publish (Nebular's three one-hour attempts plus a minute, `media_store::LONGEST_PUBLISH`)
+counts as unset, so the row can be linked, uploaded again or collected after that.
+
 ## 9. Vectors
 
 Run `node scripts/gen_file_vectors.mjs`; every client pins its output.
