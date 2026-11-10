@@ -1,7 +1,7 @@
 # Routing
 
 Who takes what, as the live agent, squad and workflow texts encode it on 2026-11-10, after the
-Demoncore squad was added. The texts in [agents/](agents/), [squad.md](squad.md) and
+Demoncore squad was added and Mika became the superior of both squads. The texts in [agents/](agents/), [squad.md](squad.md) and
 [workflow.md](workflow.md) are authoritative; this page summarises them so a reader can check a
 restored workspace against them.
 
@@ -9,8 +9,8 @@ restored workspace against them.
 
 | Agent | Board name | Squad | Model | Thinking | Runtime kind | Max concurrent | Takes |
 | ----- | ---------- | ----- | ----- | -------- | ------------ | -------------- | ----- |
-| Mika | `Mika` | none | `grok-4.7` | runtime default | Docker Grok | 3 | Every member comment that names no agent; the workspace's own agents, squads, workflow and project; the only agent that may assign Vera or Saga, and only when it is absolutely necessary |
-| Henrik | `[Docker] Development Manager - Henrik` | leader of both | `grok-4.7` | `high` | Docker Grok | 3 | `todo`, `in_review` (only to dispatch the reviewer) and `blocked`; routes both squads; project lead. Never assigns Vera or Saga |
+| Mika | `Mika` | superior and leader of both | `grok-4.7` | runtime default | Docker Grok | 3 | The superior of both squads: can override an assignment, does not implement and does not take Henrik's routing turns. Every member comment that names no agent; the workspace's own agents, squads, workflow and project; the only agent that may assign Vera or Saga, and only when it is absolutely necessary |
+| Henrik | `[Docker] Development Manager - Henrik` | member of both, router under Mika | `grok-4.7` | `high` | Docker Grok | 3 | Routes the board under Mika and leads neither squad: `todo`, `in_review` (only to dispatch the reviewer) and `blocked`; project lead. Never assigns Vera or Saga |
 | Nora | `[Macbook] Code Reviewer - Nora` | MacBook | `grok-4.7` | `high` | Mac Grok | 2 | The review of a Mac author's card, or of any diff that touches `ios/` or a `.pen` file, once Henrik assigns it |
 | Vera | `[Macbook] Senior Full-Stack Engineer - Vera` | MacBook | `claude-fable-5-2` | `high` | Mac Claude | 2 | Only a card the member asked for her on or mentioned her on, or one Mika assigned her because it is absolutely necessary. Not a review step |
 | Jonas | `[Macbook] Full-Stack Engineer - Jonas` | MacBook | `claude-opus-5-5` | `high` | Mac Claude | 2 | Mac implementation on every platform, the only engineers for `ios/` and `.pen` edits; first choice |
@@ -31,9 +31,12 @@ restored workspace against them.
   reviews, Saga is the senior, Emil plans. It implements and reviews `server/`, `admin/`, `web/` and
   `android/`. It never builds iOS and never edits a `.pen` file; a Demoncore agent that gets a card
   touching either moves it to `blocked` for the Mac squad and stops.
-- **Henrik leads and routes both.** One card, one squad. A card that touches `ios/` or needs a `.pen`
-  edit goes to the Mac squad. Otherwise he picks the squad that has a free engineer; if both do, the
-  one with fewer in-progress cards.
+- **Mika is the superior of both squads** and the leader of each on the board. She can override an
+  assignment. She does not implement and does not take Henrik's routing turns.
+- **Henrik routes the board under Mika.** He is a member of both squads and leads neither. One card,
+  one squad. A card that touches `ios/` or needs a `.pen` edit goes to the Mac squad. Otherwise he
+  picks the squad that has a free engineer; if both do, the one with fewer in-progress cards. He
+  does not decide when a senior runs.
 - **The squad that has the card finishes it.** The other squad continues it only when the owning
   runtime is offline, the branch is already pushed, and the card does not touch `ios/` or
   `design/*.pen`, and only when Henrik assigns it. Two squads never run one card.
@@ -74,15 +77,32 @@ flowchart TD
     C[Member comment] --> N{Names an agent?}
     N -- "yes, Vera or Saga included" --> A[That agent takes it]
     N -- no --> W{Who was woken?}
-    W -- Mika --> T{What is it about?}
+    W -- Mika --> T{"Mika, superior of both squads:<br/>what is it about?"}
     W -- "another agent, either squad" --> H[One reply mentioning Mika, then stop] --> T
     T -- "workspace agents, squads, workflow, project" --> MK[Mika does it]
-    T -- "who does a card, a blocked card, the order of work" --> HE[Henrik]
-    T -- "implementation, Mac squad" --> JO["Jonas (Lena when Jonas is busy)"]
-    T -- "implementation, Demoncore squad" --> SO["Soren (Freja when Soren is busy)"]
-    T -- "a review or verdict" --> RV["Nora (Mac delivery) or Liv (Demoncore delivery)"]
-    T -- "backlog, a missing card, drift" --> ID["Ida (Emil for Demoncore work)"]
-    T -- "the member asked for Vera or Saga,<br/>or absolutely necessary: Mika says why" --> VE[Vera or Saga]
+    T -- "who does a card, a blocked card, the order of work" --> HE["Henrik<br/>routes the board under Mika,<br/>leads neither squad"]
+    HE -. routes .-> MAC
+    HE -. routes .-> DC
+    subgraph MAC [Shroud MacBook, under Mika]
+        JO["Jonas (Lena when Jonas is busy)"]
+        NO[Nora]
+        ID[Ida]
+        VE[Vera]
+    end
+    subgraph DC [Shroud Demoncore, under Mika]
+        SO["Soren (Freja when Soren is busy)"]
+        LI[Liv]
+        EM[Emil]
+        SA[Saga]
+    end
+    T -- "implementation, Mac squad" --> JO
+    T -- "implementation, Demoncore squad" --> SO
+    T -- "a review or verdict, Mac delivery" --> NO
+    T -- "a review or verdict, Demoncore delivery" --> LI
+    T -- "backlog, a missing card, drift" --> ID
+    T -- "planning Demoncore work" --> EM
+    T -- "the member asked for Vera,<br/>or absolutely necessary: Mika says why" --> VE
+    T -- "the same rule for Saga" --> SA
 ```
 
 ## Cards
@@ -125,19 +145,38 @@ flowchart TD
   it is always `dev` → `master`. Only the member merges `master`.
 
 ```mermaid
-flowchart LR
-    B[backlog<br/>Ida, Emil, the member] --> T[todo<br/>Henrik]
+flowchart TD
+    MI["Mika<br/>superior of both squads"]
+    MI == "Henrik routes the board under her" ==> HR
+    MI -. "can override an assignment" .-> MAC
+    MI -. "can override an assignment" .-> DC
+    MI -. "absolutely necessary: assigns, says why" .-> V
+    subgraph HR [Henrik, router under Mika; leads neither squad]
+        T[todo]
+        S{"Which squad?<br/>ios/ or a .pen edit: Mac.<br/>Otherwise one with a free engineer;<br/>both free: fewer in-progress cards"}
+        R[in_review<br/>dispatches the reviewer]
+        K[blocked<br/>decides or escalates]
+    end
+    B[backlog<br/>Ida, Emil, the member] --> T
     T -- uninvoked security-audit follow-up --> B
-    T --> S{"Which squad?<br/>ios/ or a .pen edit: Mac.<br/>Otherwise one with a free engineer;<br/>both free: fewer in-progress cards"}
-    S -- Mac --> PM["in_progress, Mac engineer<br/>Jonas, or Lena when Jonas is busy"]
-    S -- Demoncore --> PW["in_progress, Demoncore engineer<br/>Soren, or Freja when Soren is busy"]
+    T --> S
+    S -- Mac --> PM
+    S -- Demoncore --> PW
+    subgraph MAC [Shroud MacBook]
+        PM["in_progress, Mac engineer<br/>Jonas, or Lena when Jonas is busy"]
+        NO[Nora reviews]
+    end
+    subgraph DC [Shroud Demoncore]
+        PW["in_progress, Demoncore engineer<br/>Soren, or Freja when Soren is busy"]
+        LI[Liv reviews]
+    end
     PM -. "owning runtime offline, branch pushed,<br/>no ios/ or .pen: Henrik hands it over" .- PW
-    V["Vera or Saga<br/>the member asked for or mentioned them,<br/>or Mika: absolutely necessary"] -.-> PM
+    V["Vera or Saga<br/>the member asked for or mentioned them,<br/>or Mika assigned them"] -.-> PM
     V -.-> PW
-    PM -- "branch pushed, no PR" --> R[in_review<br/>Henrik dispatches]
+    PM -- "branch pushed, no PR" --> R
     PW -- "branch pushed, no PR" --> R
-    R -- "Mac author, or diff touches ios/ or .pen" --> NO[Nora reviews]
-    R -- "Demoncore author" --> LI[Liv reviews]
+    R -- "Mac author, or diff touches ios/ or .pen" --> NO
+    R -- "Demoncore author" --> LI
     NO -- "clean: git merge into dev,<br/>push origin dev" --> D[done]
     LI -- "clean: git merge into dev,<br/>push origin dev" --> D
     NO -- "failures, to the author" --> PM
@@ -147,7 +186,7 @@ flowchart LR
     Q -- works --> R
     Q -- "fails, to the author" --> PM
     Q -- "fails, to the author" --> PW
-    NO -- judgment --> K[blocked<br/>Henrik]
+    NO -- judgment --> K
     LI -- judgment --> K
     PM -- "cannot proceed" --> K
     PW -- "cannot proceed, or needs ios/ or .pen" --> K
@@ -162,15 +201,18 @@ flowchart LR
       the runtime kind shown.
 - [ ] Every agent's instructions equal its file under [agents/](agents/) after `ids.sed`; no
       instruction mentions an old UUID.
-- [ ] Squad `Shroud MacBook`: leader Henrik, the six other members with their roles, and the
-      instructions in [squad.md](squad.md).
-- [ ] Squad `Shroud Demoncore`: leader Henrik, the six other members with their roles, and the
-      instructions in [squad.md](squad.md) with the new IDs.
+- [ ] Squad `Shroud MacBook`: leader Mika with the role `Superior of both squads.`, Henrik with
+      `Board router under Mika. Does not lead the squad.`, the six other members with their roles,
+      and the description and instructions in [squad.md](squad.md).
+- [ ] Squad `Shroud Demoncore`: leader Mika and Henrik with the same roles, the six other members
+      with their roles, and the description and instructions in [squad.md](squad.md) with the new
+      IDs.
 - [ ] Workflow `Shroud delivery` with the eight statuses, handlers, next and back in
       [workflow.md](workflow.md) (`in_review` handled by Henrik, Device QA's next is `in_review`),
       and the handoff texts with the new IDs.
-- [ ] Project `Shroud` on that workflow (`uses_default: false`), lead Henrik, with the `github_repo`
-      resource `https://github.com/AsP3X/shroud` on ref `dev`.
+- [ ] Project `Shroud` on that workflow (`uses_default: false`), lead Henrik (the project lead,
+      not a squad leader), with the `github_repo` resource `https://github.com/AsP3X/shroud` on
+      ref `dev`.
 - [ ] A test card in `todo` with an `Owner: engineer` line that touches `ios/` wakes Henrik, who
       assigns Jonas (or Lena) and moves it to `in_progress`.
 - [ ] A test card in `todo` that touches only `web/`, while both squads have a free engineer and the
@@ -208,8 +250,7 @@ Since the Demoncore squad:
   instructions follow the second.
 - Henrik's instructions still describe `in_review` as "the reviewer" with "A change this Mac could
   not build goes to Device QA", and his rules say "Nora merges the branch into `dev`", alongside the
-  new lines that he dispatches Nora or Liv. His description still says "Leads the Shroud development
-  team", the Mac squad's old name.
+  new lines that he dispatches Nora or Liv.
 - The `device_qa` handoff still says "move the card to in_review so Nora merges the branch". For a
   Demoncore card it is Liv, after Henrik dispatches her again.
 - The workflow description still reads "in_review (reviewer)" and "anything this Mac could not
@@ -224,3 +265,10 @@ Since the Demoncore squad:
   reviews and Emil is read-only on code. Emil's text also still says "You are the only agent that
   creates and orders cards", while Henrik's and the Demoncore squad's say Emil does not duplicate
   Ida's cards and plans only when asked or when Ida's runtime is offline.
+
+Since Mika became the superior of both squads:
+
+- Mika's agent description still reads "Your workspace Chief of Staff. Mika turns goals into issues,
+  coordinates agents, and helps build reusable workflows." and does not say she is the superior of
+  both squads. Her instructions, Henrik's, both squads, the `todo` and `in_review` handoffs and the
+  project description do.
