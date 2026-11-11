@@ -9,8 +9,10 @@ import de.corespace.shroud.core.model.ReceiptStatus
 import de.corespace.shroud.core.net.ContactItemDto
 import de.corespace.shroud.core.net.ListMessagesResponse
 import de.corespace.shroud.core.net.MessageDto
+import de.corespace.shroud.core.net.ContentType
 import de.corespace.shroud.core.net.ReactionDto
 import de.corespace.shroud.core.net.wire.Icu4jTextUnitsRule
+import de.corespace.shroud.core.net.wire.MediaMessagePayload
 import de.corespace.shroud.core.net.wire.MessageTextPayload
 import de.corespace.shroud.testing.FakeAppClock
 import kotlinx.coroutines.CompletableDeferred
@@ -510,6 +512,39 @@ class HistoryPagerTest {
         state.purge(listOf(voice.id))
         advanceUntilIdle()
         assertTrue(store.removedCaches.last().containsAll(listOf(voice.id, annotation.id)))
+    }
+
+    /**
+     * Security audit W2: Alice shares a transcript in her chat whose `r` is the id of Bob's voice
+     * note. Loading Bob's chat leaves the note without one; Bob's own share of it still attaches.
+     */
+    @Test
+    fun aTranscriptSharedInAnotherChatDoesNotFillThisChatsVoiceNote() = engineTest {
+        val pager = pager()
+        val alice = UUID.randomUUID()
+        val aliceConversation = UUID.randomUUID()
+        state.setConversations(listOf(Dtos.conversation(peer, conversation), Dtos.conversation(alice, aliceConversation, username = "alice")))
+        val voicePayload = MediaMessagePayload(t = "voice", mime = "audio/mp4", w = 0, h = 0, k = "a2V5", d = 3000).encoded()
+        val voice = Dtos.message(sender = peer, conversation = conversation, createdAtWire = wire(0), contentType = ContentType.MEDIA, ciphertext = Dtos.sealed(String(voicePayload, Charsets.UTF_8)))
+        fun transcript(sender: UUID, chat: UUID, n: Int, text: String) = Dtos.message(
+            sender = sender,
+            conversation = chat,
+            createdAtWire = wire(n),
+            contentType = ContentType.ANNOTATION,
+            ciphertext = Dtos.sealed("{\"t\":\"transcript\",\"r\":\"${voice.id}\",\"c\":\"$text\"}"),
+        )
+
+        responses += page(transcript(alice, aliceConversation, 1, "Alice's words"))
+        pager.loadThread(alice, activate = false)
+        responses += page(voice)
+        pager.loadThread(peer, activate = false)
+        val note = state.messages(peer)!!.single()
+        assertEquals(ChatMessageKind.Voice, note.kind)
+        assertNull(note.transcript)
+
+        responses += page(voice, transcript(peer, conversation, 2, "Bob's words"))
+        pager.loadThread(peer, activate = false, reconcile = true)
+        assertEquals("Bob's words", state.messages(peer)!!.single().transcript)
     }
 
     // --- Failures, locks, older pages --------------------------------------------------------------

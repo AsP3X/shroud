@@ -417,7 +417,7 @@ class MessagingControllerTest {
         assertNull(controller.peerActivity(peer))
         assertEquals(1, sink.locked)
         val voice = ChatMessage(unseenVoice, peer, peer, "Voice message", Instant.parse("2026-09-24T12:00:00Z"), isMine = false, kind = ChatMessageKind.Voice)
-        assertNull(controller.foldSharedTranscripts(listOf(voice)).single().transcript)
+        assertNull(controller.foldSharedTranscripts(peer, listOf(voice)).single().transcript)
         // The list shells stay for a less jarring re-unlock.
         assertEquals(listOf(peer), controller.conversations.value.map { it.peer.id })
         // Nothing reaches the writer until the cache was read again.
@@ -705,6 +705,36 @@ class MessagingControllerTest {
         controller.stop(wipeDisk = false)
     }
 
+    /**
+     * Security audit W2: a contact's transcript naming a voice note in another chat is kept for that
+     * contact's chat only. The note's own chat folds it in no matter what arrives there next, and
+     * the note's sender can still share the real one.
+     */
+    @Test
+    fun aSharedTranscriptFromAnotherChatNeverFillsThisChatsVoiceNote() = engineTest {
+        val voiceId = UUID.randomUUID()
+        val voice = ChatMessage(voiceId, peer, peer, "Voice message", Instant.parse("2026-09-24T11:00:00Z"), isMine = false, kind = ChatMessageKind.Voice)
+        hydrateWith(mapOf(peer to listOf(voice)))
+        val alice = UUID.randomUUID()
+        val aliceConversation = UUID.randomUUID()
+        backend.conversationList = listOf(Dtos.conversation(peer, conversation), Dtos.conversation(alice, aliceConversation, username = "alice"))
+        val controller = controller()
+        controller.start()
+        runCurrent()
+
+        socket.eventsFlow.tryEmit(RealtimeEvent.MessageNew(annotation(voiceId, "Alice's words", sender = alice, chat = aliceConversation)))
+        runCurrent()
+        // Bob's chat folds what is pending for it when his next message lands.
+        socket.eventsFlow.tryEmit(RealtimeEvent.MessageNew(Dtos.message(sender = peer, conversation = conversation, ciphertext = Dtos.sealed("hi"))))
+        runCurrent()
+        assertNull(controller.threads.value[peer]!!.first { it.id == voiceId }.transcript)
+
+        socket.eventsFlow.tryEmit(RealtimeEvent.MessageNew(annotation(voiceId, "Bob's words")))
+        runCurrent()
+        assertEquals("Bob's words", controller.threads.value[peer]!!.first { it.id == voiceId }.transcript)
+        controller.stop(wipeDisk = false)
+    }
+
     /** Decision D8b (`MessageReadEventTests`): our own reads on another device never tick our messages read. */
     @Test
     fun ourOwnReadEventIsIgnored() = engineTest {
@@ -847,9 +877,9 @@ class MessagingControllerTest {
         assertTrue(controller.isOffline.value)
     }
 
-    private fun annotation(target: UUID, text: String) = Dtos.message(
-        sender = peer,
-        conversation = conversation,
+    private fun annotation(target: UUID, text: String, sender: UUID = peer, chat: UUID = conversation) = Dtos.message(
+        sender = sender,
+        conversation = chat,
         contentType = ContentType.ANNOTATION,
         ciphertext = Dtos.sealed("{\"t\":\"transcript\",\"r\":\"$target\",\"c\":\"$text\"}"),
     )

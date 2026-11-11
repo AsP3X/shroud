@@ -85,8 +85,16 @@ class ThreadStore(
     private val listStatusFlow = MutableStateFlow(ListStatus())
     private val sinks = CopyOnWriteArrayList<MessageArtifactSinks>()
 
-    /** Shared transcripts whose voice note is not in a thread yet (`pendingSharedTranscripts`, `MessagingController.swift:139`). */
-    private val pendingSharedTranscripts = LinkedHashMap<UUID, String>()
+    /**
+     * Shared transcripts whose voice note is not in a thread yet (`pendingSharedTranscripts`,
+     * `MessagingController.swift:139`), by the store peer of the chat they were shared in, then
+     * voice note id.
+     *
+     * Agent: a transcript names its note only by id. Keyed by id alone, a contact's annotation naming
+     * a note in another chat set that note's transcript there, ahead of the real one (security audit
+     * W2). Either person in the chat may share it: iOS and Android share one for a received note.
+     */
+    private val pendingSharedTranscripts = HashMap<UUID, LinkedHashMap<UUID, String>>()
 
     /** Annotation ids purged this session, so a reloaded deleted annotation is not purged again (Android D5). */
     private val purgedAnnotations = HashSet<UUID>()
@@ -138,7 +146,7 @@ class ThreadStore(
             list.any { it.id == sent.id } -> list.map { if (it.id == sent.id) sent else it }
             else -> (list + sent).sortedBy { it.createdAt }
         }
-        setThread(storePeer, foldSharedTranscripts(next))
+        setThread(storePeer, foldSharedTranscripts(storePeer, next))
         if (isNotes(storePeer)) {
             // The shared send helpers may have parked a copy under our own id (`:4812-4815`).
             myUserId?.takeIf { it != NOTES_PEER_ID }?.let { me ->
@@ -201,7 +209,7 @@ class ThreadStore(
     override fun purge(messageIds: Collection<UUID>) {
         if (messageIds.isEmpty()) return
         val targets = messageIds.toSet()
-        for (id in targets) pendingSharedTranscripts.remove(id)
+        for (chat in pendingSharedTranscripts.values) chat.keys.removeAll(targets)
         onDisk {
             val annotations = targets.flatMap { store.annotationsFor(it) }
             store.removeCaches(targets + annotations)
@@ -307,19 +315,24 @@ class ThreadStore(
         for (sink in sinks) sink.onSensitiveMemoryLocked()
     }
 
-    /** A transcript shared as an annotation, first writer wins (`noteSharedTranscript`, `MessagingController.swift:3557-3561`). */
-    fun noteSharedTranscript(text: String, voiceMessageId: UUID) {
-        pendingSharedTranscripts.putIfAbsent(voiceMessageId, text)
+    /**
+     * A transcript shared as an annotation in the chat stored under [storePeer], first writer wins
+     * (`noteSharedTranscript`, `MessagingController.swift:3557-3561`).
+     */
+    fun noteSharedTranscript(storePeer: UUID, text: String, voiceMessageId: UUID) {
+        pendingSharedTranscripts.getOrPut(storePeer) { LinkedHashMap() }.putIfAbsent(voiceMessageId, text)
     }
 
     /**
-     * Applies the shared transcripts whose voice note is in [thread] and forgets them
-     * (`foldSharedTranscripts`, `MessagingController.swift:3564-3571`).
+     * Applies the transcripts shared in the chat stored under [storePeer] whose voice note is in
+     * [thread], that chat's thread, and forgets them (`foldSharedTranscripts`,
+     * `MessagingController.swift:3564-3571`).
      */
-    fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> {
-        if (pendingSharedTranscripts.isEmpty()) return thread
-        val updated = ThreadMessageMerge.applySharedTranscripts(pendingSharedTranscripts, thread)
-        for (message in updated) if (message.kind == ChatMessageKind.Voice) pendingSharedTranscripts.remove(message.id)
+    fun foldSharedTranscripts(storePeer: UUID, thread: List<ChatMessage>): List<ChatMessage> {
+        val pending = pendingSharedTranscripts[storePeer] ?: return thread
+        val updated = ThreadMessageMerge.applySharedTranscripts(pending, thread)
+        for (message in updated) if (message.kind == ChatMessageKind.Voice) pending.remove(message.id)
+        if (pending.isEmpty()) pendingSharedTranscripts.remove(storePeer)
         return updated
     }
 

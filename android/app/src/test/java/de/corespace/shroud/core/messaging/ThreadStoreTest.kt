@@ -131,11 +131,27 @@ class ThreadStoreTest {
         val voice = mine("Voice message", pending = true).copy(kind = ChatMessageKind.Voice)
         val sent = voice.copy(id = UUID.randomUUID(), pendingSync = false)
         state.setThread(peer, listOf(voice))
-        state.noteSharedTranscript("shared", sent.id)
+        state.noteSharedTranscript(peer, "shared", sent.id)
         state.rekey(peer, voice.id, sent)
         assertEquals("shared", state.messages(peer)?.single()?.transcript)
         // Folded once, then forgotten.
-        assertEquals(listOf(voice), state.foldSharedTranscripts(listOf(voice)))
+        assertEquals(listOf(voice), state.foldSharedTranscripts(peer, listOf(voice)))
+    }
+
+    /** Security audit W2: a transcript shared in one chat never fills a note in another. */
+    @Test
+    fun aSharedTranscriptFoldsOnlyIntoTheChatItWasSharedIn() = runTest {
+        val state = threadStore()
+        val other = UUID.randomUUID()
+        val note = mine("Voice message").copy(kind = ChatMessageKind.Voice)
+        state.noteSharedTranscript(other, "from another chat", note.id)
+        val thread = listOf(note)
+        assertSame(thread, state.foldSharedTranscripts(peer, thread))
+
+        // The same chat's own share still fills it, and the other chat's stays there.
+        state.noteSharedTranscript(peer, "from this chat", note.id)
+        assertEquals("from this chat", state.foldSharedTranscripts(peer, thread).single().transcript)
+        assertEquals("from another chat", state.foldSharedTranscripts(other, thread).single().transcript)
     }
 
     /** Android D5: a purge takes the annotations about a message along (messaging-core §14.6). */
@@ -149,7 +165,7 @@ class ThreadStoreTest {
         val voice = UUID.randomUUID()
         val annotation = UUID.randomUUID()
         disk.annotations[voice] = mutableSetOf(annotation)
-        state.noteSharedTranscript("pending", voice)
+        state.noteSharedTranscript(peer, "pending", voice)
         state.transfers.begin(voice, isUpload = false)
 
         state.purge(listOf(voice))
@@ -160,7 +176,7 @@ class ThreadStoreTest {
         assertEquals(listOf(voice), cancelled)
         assertTrue(state.transfers.transfers.value.isEmpty())
         val thread = listOf(mine("Voice message", id = voice).copy(kind = ChatMessageKind.Voice))
-        assertSame(thread, state.foldSharedTranscripts(thread))
+        assertSame(thread, state.foldSharedTranscripts(peer, thread))
     }
 
     @Test

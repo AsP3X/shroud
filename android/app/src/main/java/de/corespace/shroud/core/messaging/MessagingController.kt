@@ -701,11 +701,13 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
     fun username(peer: UUID): String? = state.username(peer)
 
     /**
-     * Applies the transcripts shared as annotations whose voice note is in [thread] and forgets them
-     * (`foldSharedTranscripts`, `MessagingController.swift:3564-3571`); a sent voice note folds through
-     * it (`:3776`). The pending map lives here, with the ingest and paging paths.
+     * Applies the transcripts shared as annotations in the chat stored under [storePeer] whose voice
+     * note is in [thread] and forgets them (`foldSharedTranscripts`, `MessagingController.swift:3564-3571`);
+     * a sent voice note folds through it (`:3776`). The pending map lives here, with the ingest and
+     * paging paths.
      */
-    fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> = state.foldSharedTranscripts(thread)
+    fun foldSharedTranscripts(storePeer: UUID, thread: List<ChatMessage>): List<ChatMessage> =
+        state.foldSharedTranscripts(storePeer, thread)
 
     // ---- Threads (messaging-core §8) ---------------------------------------------------------------
 
@@ -893,12 +895,12 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
                 state.purgeAnnotation(dto.id)
             } else {
                 MessageAnnotation.parseTranscript(decoded.text)?.let { shared ->
-                    state.noteSharedTranscript(shared.text, shared.messageId)
+                    state.noteSharedTranscript(threadPeer, shared.text, shared.messageId)
                     state.noteAnnotation(shared.messageId, dto.id)
                 }
             }
             state.messages(threadPeer)?.let { current ->
-                val updated = state.foldSharedTranscripts(current)
+                val updated = state.foldSharedTranscripts(threadPeer, current)
                 if (updated != current) {
                     state.setThread(threadPeer, updated)
                     state.persistThread(threadPeer)
@@ -910,7 +912,7 @@ class MessagingController(private val deps: MessagingDependencies) : MessagingFo
         val chat = if (isNotes) NotesLocal.fromServer(decoded) else decoded
         val current = state.messages(threadPeer).orEmpty()
         if (current.none { it.id == chat.id }) {
-            state.setThread(threadPeer, state.foldSharedTranscripts(current + chat))
+            state.setThread(threadPeer, state.foldSharedTranscripts(threadPeer, current + chat))
             if (!chat.isMine) {
                 // Their message is what the indicator was for: it takes its place.
                 typing.clearPeer(dto.senderUserId)
