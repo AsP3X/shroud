@@ -138,6 +138,51 @@ fn fresh_ip() -> String {
 }
 
 #[tokio::test]
+async fn registrations_from_one_ipv6_64_share_the_ip_budget() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!(
+            "skipping registrations_from_one_ipv6_64_share_the_ip_budget: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    // Human: One /64 is one subscriber; rotating the low 64 bits must not open a fresh budget.
+    let n = Uuid::new_v4().as_u128();
+    let prefix = format!("2001:db8:{:x}:{:x}", (n >> 16) as u16, n as u16);
+    let mut statuses = Vec::new();
+    for host in 1..=11 {
+        let username = format!("v6_{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/register")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("x-forwarded-for", format!("{prefix}::{host:x}"))
+                    .body(Body::from(
+                        json!({
+                            "username_hash": shroud_server::auth::username_hash_b64(&username),
+                            "password": "correct-horse-battery",
+                            "device_name": "RL"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("oneshot");
+        statuses.push(response.status());
+    }
+    assert!(
+        statuses[..10]
+            .iter()
+            .all(|status| *status == StatusCode::CREATED),
+        "{statuses:?}"
+    );
+    assert_eq!(statuses[10], StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn forged_forwarded_hops_do_not_pick_the_ip_budget() {
     let Some(app) = test_app(RateLimiter::new()).await else {
         eprintln!(

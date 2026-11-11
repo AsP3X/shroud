@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -380,6 +380,7 @@ async fn memory_check(
 /// (our nginx and NPM overwrite it), then the right-most `X-Forwarded-For` hop: the one the
 /// proxy appended. Every hop left of it is whatever the client sent.
 /// Agent: else the peer address; `"unknown"` only when the server runs without connect info.
+/// An IPv6 client is keyed on its /64 (see [`budget_key`]).
 pub fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust: &ForwardedTrust) -> String {
     let peer = peer.map(|ip| ip.to_canonical());
     let forwarded = if peer.is_some_and(|ip| trust.trusts(ip)) {
@@ -389,7 +390,20 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trust: &ForwardedTru
     };
     forwarded
         .or(peer)
-        .map_or_else(|| "unknown".into(), |ip| ip.to_string())
+        .map_or_else(|| "unknown".into(), budget_key)
+}
+
+/// Human: A provider hands one subscriber a whole IPv6 /64 and the host picks the low 64 bits
+/// freely, so a /128 key would give one client 2^64 budgets. The /64 is the smallest block that
+/// is one client; IPv4 stays the single address.
+fn budget_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let network = Ipv6Addr::from(u128::from(v6) & (u128::MAX << 64));
+            format!("{network}/64")
+        }
+    }
 }
 
 /// Which peers may name the client in `X-Real-IP` / `X-Forwarded-For` (see [`client_ip`]).
@@ -768,6 +782,20 @@ mod tests {
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
         assert_eq!(client_ip(&headers, mapped, &TRUSTED), "8.8.8.8");
         assert_eq!(client_ip(&HeaderMap::new(), mapped, &TRUSTED), "10.1.2.3");
+    }
+
+    #[test]
+    fn client_ip_keys_ipv6_on_its_64_prefix() {
+        let key = |value: &str| client_ip(&HeaderMap::new(), value.parse().ok(), &TRUSTED);
+        assert_eq!(key("2001:db8::1"), key("2001:db8::2"));
+        assert_ne!(key("2001:db8::1"), key("2001:db8:0:1::1"));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "2001:db8::ffff".parse().unwrap());
+        assert_eq!(
+            client_ip(&headers, DOCKER_PROXY, &TRUSTED),
+            key("2001:db8::1")
+        );
+        assert_eq!(key("::ffff:203.0.113.9"), "203.0.113.9");
     }
 
     #[test]
