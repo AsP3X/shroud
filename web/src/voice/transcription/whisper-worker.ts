@@ -1,6 +1,7 @@
 /*
  * Whisper inference in a worker so the composer stays responsive.
- * Audio never leaves this worker: only model weights are fetched from Hugging Face.
+ * Audio never leaves this worker: only model weights are fetched from Hugging Face,
+ * and only the pinned, hash-checked files in `./pinned`.
  *
  * transformers.js defaults ONNX WASM to cdn.jsdelivr.net. That host is not on
  * our CSP (and we do not want a third-party runtime), so the files are bundled
@@ -18,11 +19,16 @@ import {
   voiceNoteDecodeOptions,
   WHISPER_WINDOW_SECONDS,
 } from "./decode";
+import { pinnedCache, pinnedFetch, whisperPipelineOptions } from "./pinned";
 import { detectSpokenLanguage } from "./spoken";
 import { resample } from "../wav";
 
 env.allowLocalModels = false;
-env.useBrowserCache = true;
+// The pinned cache replaces the plain browser cache, so a cached file is checked before use too.
+env.useBrowserCache = false;
+env.useCustomCache = true;
+env.customCache = pinnedCache(() => caches.open(env.cacheKey), env.remoteHost);
+env.fetch = pinnedFetch(env.fetch, env.remoteHost);
 
 const wasm = (
   env.backends.onnx as {
@@ -74,8 +80,7 @@ function progressFraction(info: {
 
 async function load(modelId: string): Promise<AsrPipe> {
   return (await pipeline("automatic-speech-recognition", modelId, {
-    device: "wasm",
-    dtype: "q8",
+    ...whisperPipelineOptions(modelId),
     progress_callback: (info: { status?: string; progress?: number; loaded?: number; total?: number }) => {
       const fraction = progressFraction(info);
       if (fraction != null) self.postMessage({ type: "progress", fraction });

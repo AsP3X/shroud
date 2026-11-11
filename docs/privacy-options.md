@@ -8,6 +8,17 @@ Existing privacy controls, for reference: lock chats in background, the app-swit
 "Lock chats now", blocking, link previews on/off, "Let contacts clear chats for me"
 (`users.allow_peer_chat_delete`), notification sender/preview switches.
 
+Third parties a client talks to, for reference: the web client downloads the Whisper model for
+voice-note transcription once, from huggingface.co (the files themselves come from Hugging Face's
+CDN under `*.hf.co`). It starts on the first press of the microphone and fetches about 80 MB for the
+default model. Hugging Face learns the browser's IP address, the time, and, from the `Origin` and
+`Referer` headers, that the request comes from Shroud's web client. No audio, transcript or account
+data goes with it.
+The files are pinned to one commit and checked by SHA-256 (`docs/transcription-plan.md` T3.6), then
+kept in the browser's cache storage, so later notes do not contact Hugging Face again unless the
+cache is cleared or a file fails its check. There is no switch to turn transcription off yet
+(transcription plan T5.1).
+
 Ground rules for every phase:
 
 - **Account-level switches live on the server** (`users` columns, `GET/PUT /privacy/settings`),
