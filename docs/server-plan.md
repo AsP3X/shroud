@@ -98,7 +98,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Real-time m4 | HTTP send + history (done) |
 | Real-time 4b | **WebSocket** in-process fan-out (**done**) |
 | Redis fan-out | **Optional** when `REDIS_URL` set: local hub + pub/sub on `shroud:user:{user_id}`; revoked sessions on `shroud:sessions:revoked` |
-| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `message.reaction`, `reactions.seen`, `typing`, `recording`, `presence.update` |
+| WS events | `message.new`, `message.delivered`, `message.read`, `message.deleted`, `message.reaction`, `reactions.seen`, `conversation.deleted`, `typing`, `recording`, `presence.update` |
 | WS recipients | Peer devices + sender’s **other** devices (not the sending device for new) |
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
@@ -572,6 +572,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Key bundle / identity GET | 60/min per user; 120/min per IP |
 | Contact requests | 10/hour per user |
 | Message send | 120/min per user |
+| Chat delete (`DELETE /conversations/:peer`) | 30/min per user |
 | Call create / signal | 30/min per user |
 | ICE servers (`GET /calls/ice-servers`, mints a TURN login) | 60/min per user |
 | Media upload registration | 60/min per user |
@@ -1492,6 +1493,17 @@ Add optional:
 
 - `deleted_for_everyone`: bool
 - `ciphertext`: null when deleted for everyone
+
+#### `DELETE /conversations/:peer?scope=me|everyone` → `200`
+
+- **me** (default): my clear watermark moves to now. **everyone**: as well, the peer's watermark
+  moves too when they set `allow_peer_chat_delete`; otherwise my messages become tombstones and my
+  reactions are taken back. The contact stays. Budget: 30/min per user (`429` `RATE_LIMITED`).
+- WS `conversation.deleted` (`conversation_id`, `user_id` me, `peer_user_id`, `scope`,
+  `cleared_for_peer`) goes to my other devices on every call. The peer's devices get it only for
+  `everyone`, when a chat existed and their copy changed (a message they still saw was cleared,
+  or something of mine was tombstoned or taken back), and when neither of us has blocked the
+  other.
 
 #### `DELETE /auth/account` → `204`
 
