@@ -925,7 +925,7 @@ pub(crate) async fn is_blocked_either_way(
     .map_err(|err| AppError::Internal(format!("block check failed: {err}")))
 }
 
-async fn is_blocked_either_way_tx(
+pub(crate) async fn is_blocked_either_way_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     a: Uuid,
     b: Uuid,

@@ -21,6 +21,7 @@ use uuid::Uuid;
 use crate::auth::session::AuthContext;
 use crate::error::AppError;
 use crate::push::PushEvent;
+use crate::rate_limit::budgets;
 use crate::routes::notifications::MuteState;
 use crate::state::AppState;
 
@@ -476,12 +477,26 @@ pub async fn mark_chat_read(
 ///   peer still sees, while the peer's messages survive for them.
 ///
 /// Neither scope removes the contact. Blocking is what ends the connection.
+///
+/// The peer hears `conversation.deleted` only when their copy changed, and never across a
+/// block; the caller's other devices always do.
 pub async fn delete_conversation(
     State(state): State<AppState>,
     auth: AuthContext,
     Path(peer_user_id): Path<Uuid>,
     Query(query): Query<DeleteConversationQuery>,
 ) -> Result<Json<DeleteConversationResponse>, AppError> {
+    // Human: Every call publishes to the caller's devices and may reach the peer's, whose
+    // socket queues drop events when full; a loop must not crowd out messages and rings.
+    state
+        .rate_limiter
+        .check_budget(
+            "conversation_delete_user",
+            &auth.user_id.to_string(),
+            budgets::CONVERSATION_DELETE_USER,
+        )
+        .await?;
+
     let scope = query.scope.as_deref().unwrap_or("me");
     let for_everyone = match scope {
         "me" => false,
@@ -517,6 +532,8 @@ pub async fn delete_conversation(
     let now = Utc::now();
     let mut tombstoned = 0_u64;
     let mut cleared_for_peer = false;
+    // Whether the peer's copy of the chat looks any different afterwards.
+    let mut changed_for_peer = false;
     // Blobs of messages nobody can read any more. Removed from the store after commit.
     let mut media_ids = Vec::new();
 
@@ -526,6 +543,8 @@ pub async fn delete_conversation(
         if for_everyone {
             cleared_for_peer = peer_allows_chat_delete(&mut tx, peer_user_id).await?;
             if cleared_for_peer {
+                changed_for_peer =
+                    peer_sees_messages(&mut tx, peer_user_id, conversation_id, now).await?;
                 upsert_clear(&mut tx, peer_user_id, conversation_id, now).await?;
             } else {
                 // Peer keeps their own history, but nothing of ours stays readable there: our
@@ -534,18 +553,25 @@ pub async fn delete_conversation(
                     tombstone_own_messages(&mut tx, conversation_id, auth.user_id, now).await?;
                 tombstoned = count;
                 media_ids.extend(ids);
-                crate::routes::reactions::clear_reactions_by(
+                let reactions_cleared = crate::routes::reactions::clear_reactions_by(
                     &mut tx,
                     auth.user_id,
                     &[conversation_id],
                 )
                 .await?;
+                changed_for_peer = tombstoned > 0 || reactions_cleared;
             }
         }
 
         // Ciphertext neither side can reach any more has no reason to exist on the server.
         media_ids.extend(purge_fully_cleared(&mut tx, conversation_id).await?);
     }
+
+    // Human: A peer in a block either way learns nothing from the caller, as with messages and
+    // typing; their copy still changed and shows so on the next load.
+    let notify_peer = changed_for_peer
+        && !crate::routes::contacts::is_blocked_either_way_tx(&mut tx, auth.user_id, peer_user_id)
+            .await?;
 
     // The contact stays. `contact_removed` remains on the response for clients that
     // already decode it, and is false because this route does not touch `contacts`.
@@ -571,7 +597,8 @@ pub async fn delete_conversation(
 
     // Human: Tell the other participant (and our own other devices) to drop or reload the
     // thread instead of waiting for the next poll to notice it changed.
-    // Agent: PUBLISHES conversation.deleted; `me` scope stays inside the requester's devices.
+    // Agent: PUBLISHES conversation.deleted to the requester's other devices, and to the peer's
+    // only for `everyone` when `notify_peer` (their copy changed, no block either way).
     let event = conversation_deleted_event(
         conversation_id,
         auth.user_id,
@@ -580,7 +607,7 @@ pub async fn delete_conversation(
         cleared_for_peer,
     );
     if let Ok(payload) = serde_json::to_string(&event) {
-        let audience: Vec<Uuid> = if for_everyone {
+        let audience: Vec<Uuid> = if notify_peer {
             vec![auth.user_id, peer_user_id]
         } else {
             vec![auth.user_id]
@@ -597,6 +624,7 @@ pub async fn delete_conversation(
         conversation_id = ?conversation_id,
         scope,
         cleared_for_peer,
+        notify_peer,
         tombstoned,
         contact_removed,
         media_purged,
@@ -837,6 +865,39 @@ async fn upsert_clear(
     .await
     .map_err(|err| AppError::Internal(format!("upsert conversation clear failed: {err}")))?;
     crate::routes::reactions::mark_all_seen(tx, user_id, conversation_id).await
+}
+
+/// Whether `user_id` still sees any message of the chat sent at or before `at`: one past their
+/// clear watermark that they have not hidden.
+async fn peer_sees_messages(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: Uuid,
+    conversation_id: Uuid,
+    at: DateTime<Utc>,
+) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM messages m
+            WHERE m.conversation_id = $2
+              AND m.created_at <= $3
+              AND m.created_at > COALESCE(
+                  (SELECT cc.cleared_at FROM conversation_clears cc
+                   WHERE cc.user_id = $1 AND cc.conversation_id = $2),
+                  '-infinity'::timestamptz
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM message_hides h WHERE h.message_id = m.id AND h.user_id = $1
+              )
+        )
+        "#,
+    )
+    .bind(user_id)
+    .bind(conversation_id)
+    .bind(at)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("delete chat peer history check failed: {err}")))
 }
 
 async fn peer_allows_chat_delete(

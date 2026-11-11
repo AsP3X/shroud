@@ -564,3 +564,86 @@ async fn ice_servers_rate_limited_per_user() {
             .all(|status| *status == StatusCode::TOO_MANY_REQUESTS)
     );
 }
+
+#[tokio::test]
+async fn chat_delete_rate_limited_per_user() {
+    let Some(app) = test_app(RateLimiter::new()).await else {
+        eprintln!("skipping chat_delete_rate_limited_per_user: DATABASE_URL unavailable");
+        return;
+    };
+
+    async fn register(app: &axum::Router) -> (String, String) {
+        let username = format!("cd_{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/register")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("x-forwarded-for", fresh_ip())
+                    .body(Body::from(
+                        json!({
+                            "username_hash": shroud_server::auth::username_hash_b64(&username),
+                            "password": "correct-horse-battery",
+                            "device_name": "RL"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = json_body(response).await;
+        (
+            body["token"].as_str().unwrap().to_string(),
+            body["user"]["id"].as_str().unwrap().to_string(),
+        )
+    }
+    let (token, _) = register(&app).await;
+    let (_, peer_id) = register(&app).await;
+
+    // Each delete publishes to the caller's devices, and may to the peer's: a loop of them
+    // stops at 30 a minute, far above deleting chats by hand.
+    let mut statuses = Vec::new();
+    for _ in 0..32 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/conversations/{peer_id}?scope=everyone"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("oneshot");
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok()),
+                Some("60")
+            );
+            let body = json_body(response).await;
+            assert_eq!(body["error"]["code"], "RATE_LIMITED");
+            assert!(body["error"]["message"].is_string());
+            statuses.push(StatusCode::TOO_MANY_REQUESTS);
+            continue;
+        }
+        statuses.push(response.status());
+    }
+    assert!(
+        statuses[..30]
+            .iter()
+            .all(|status| *status == StatusCode::OK)
+    );
+    assert!(
+        statuses[30..]
+            .iter()
+            .all(|status| *status == StatusCode::TOO_MANY_REQUESTS)
+    );
+}

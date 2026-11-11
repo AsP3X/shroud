@@ -1565,3 +1565,220 @@ async fn a_block_stops_presence_and_typing_even_with_contact_rows_left() {
     let _ = shutdown_tx.send(());
     let _ = server.await;
 }
+
+// MARK: chat delete
+
+/// `DELETE /conversations/{peer}?scope=everyone` from `token`; returns the response body.
+async fn delete_chat_for_everyone(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+    peer_user_id: &str,
+) -> Value {
+    let response = client
+        .delete(format!(
+            "http://{addr}/api/v1/conversations/{peer_user_id}?scope=everyone"
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("delete chat");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    response.json().await.expect("json")
+}
+
+/// Human: Anyone who knows an account's id may call the route (security audit S4). Without a
+/// chat between them nothing changes for the peer, so the peer's devices hear nothing; the
+/// caller's other devices still do.
+#[tokio::test]
+async fn chat_delete_for_everyone_never_reaches_a_stranger() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping chat_delete_for_everyone_never_reaches_a_stranger: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+    let alice = unique_username();
+    let (phone_token, _alice_id) = register_as(&client, addr, &alice).await;
+    let (laptop_token, _) = log_in(&client, addr, &alice, None).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    let mut laptop = connect_authed(addr, &laptop_token).await;
+    let mut bob = connect_authed(addr, &bob_token).await;
+
+    for _ in 0..3 {
+        let body = delete_chat_for_everyone(&client, addr, &phone_token, &bob_id).await;
+        assert_eq!(body["cleared_for_me"], false);
+        assert!(
+            next_of_type(&mut laptop, "conversation.deleted", Duration::from_secs(5))
+                .await
+                .is_some(),
+            "the caller's other device hears of its own delete"
+        );
+    }
+    assert!(
+        next_of_type(&mut bob, "conversation.deleted", Duration::from_millis(500))
+            .await
+            .is_none(),
+        "a stranger's delete reached the peer"
+    );
+
+    for mut socket in [laptop, bob] {
+        let _ = socket.close(None).await;
+    }
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+/// Human: The peer hears of a delete when their copy changed: the caller's messages became
+/// tombstones, or, with `allow_peer_chat_delete`, their history was cleared. Repeating the
+/// delete changes nothing more, so it stays on the caller's devices.
+#[tokio::test]
+async fn chat_delete_for_everyone_reaches_the_peer_only_when_their_copy_changed() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping chat_delete_for_everyone_reaches_the_peer_only_when_their_copy_changed: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool.clone()).await;
+    let client = reqwest::Client::new();
+    let alice = unique_username();
+    let (phone_token, alice_id) = register_as(&client, addr, &alice).await;
+    let (laptop_token, _) = log_in(&client, addr, &alice, None).await;
+    let (bob_token, bob_id) = register(&client, addr).await;
+    become_contacts(
+        &client,
+        addr,
+        (&phone_token, &alice_id),
+        (&bob_token, &bob_id),
+    )
+    .await;
+    let mut laptop = connect_authed(addr, &laptop_token).await;
+    let mut bob = connect_authed(addr, &bob_token).await;
+    let short = Duration::from_millis(500);
+
+    // Bob keeps his history: Alice's message becomes a tombstone there.
+    send_text(&client, addr, &phone_token, &bob_id).await;
+    let body = delete_chat_for_everyone(&client, addr, &phone_token, &bob_id).await;
+    assert_eq!(body["tombstoned"], 1);
+    let event = next_of_type(&mut bob, "conversation.deleted", Duration::from_secs(5))
+        .await
+        .expect("the peer hears of the tombstones");
+    assert_eq!(event["user_id"], alice_id);
+    assert_eq!(event["cleared_for_peer"], false);
+
+    let body = delete_chat_for_everyone(&client, addr, &phone_token, &bob_id).await;
+    assert_eq!(body["tombstoned"], 0);
+    assert!(
+        next_of_type(&mut bob, "conversation.deleted", short)
+            .await
+            .is_none()
+    );
+
+    // Bob lets peers clear his copy: his own message goes, once.
+    sqlx::query("UPDATE users SET allow_peer_chat_delete = true WHERE id = $1")
+        .bind(bob_id.parse::<Uuid>().unwrap())
+        .execute(&pool)
+        .await
+        .expect("allow peer chat delete");
+    send_text(&client, addr, &bob_token, &alice_id).await;
+    let body = delete_chat_for_everyone(&client, addr, &phone_token, &bob_id).await;
+    assert_eq!(body["cleared_for_peer"], true);
+    let event = next_of_type(&mut bob, "conversation.deleted", Duration::from_secs(5))
+        .await
+        .expect("the peer hears their copy was cleared");
+    assert_eq!(event["cleared_for_peer"], true);
+
+    delete_chat_for_everyone(&client, addr, &phone_token, &bob_id).await;
+    assert!(
+        next_of_type(&mut bob, "conversation.deleted", short)
+            .await
+            .is_none()
+    );
+
+    // Each of the four deletes still reached Alice's other device.
+    for _ in 0..4 {
+        assert!(
+            next_of_type(&mut laptop, "conversation.deleted", Duration::from_secs(5))
+                .await
+                .is_some()
+        );
+    }
+
+    for mut socket in [laptop, bob] {
+        let _ = socket.close(None).await;
+    }
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
+
+/// Human: A block either way ends what the pair hear of each other. The caller's messages
+/// still become tombstones; the peer sees that on the next load, not as a pushed event.
+#[tokio::test]
+async fn chat_delete_for_everyone_never_crosses_a_block() {
+    let Some(pool) = test_pool().await else {
+        eprintln!(
+            "skipping chat_delete_for_everyone_never_crosses_a_block: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let (addr, shutdown_tx, server) = spawn_app(pool).await;
+    let client = reqwest::Client::new();
+
+    // First the peer blocks the caller, then the caller blocks the peer.
+    for peer_blocks in [true, false] {
+        let alice = unique_username();
+        let (phone_token, alice_id) = register_as(&client, addr, &alice).await;
+        let (laptop_token, _) = log_in(&client, addr, &alice, None).await;
+        let (bob_token, bob_id) = register(&client, addr).await;
+        become_contacts(
+            &client,
+            addr,
+            (&phone_token, &alice_id),
+            (&bob_token, &bob_id),
+        )
+        .await;
+        send_text(&client, addr, &phone_token, &bob_id).await;
+        let (blocker, blocked) = if peer_blocks {
+            (&bob_token, &alice_id)
+        } else {
+            (&phone_token, &bob_id)
+        };
+        let response = client
+            .post(format!("http://{addr}/api/v1/blocks"))
+            .bearer_auth(blocker)
+            .json(&json!({ "user_id": blocked }))
+            .send()
+            .await
+            .expect("block");
+        assert!(
+            response.status().is_success(),
+            "block: {}",
+            response.status()
+        );
+
+        let mut laptop = connect_authed(addr, &laptop_token).await;
+        let mut bob = connect_authed(addr, &bob_token).await;
+        let body = delete_chat_for_everyone(&client, addr, &phone_token, &bob_id).await;
+        assert_eq!(body["tombstoned"], 1);
+        assert!(
+            next_of_type(&mut laptop, "conversation.deleted", Duration::from_secs(5))
+                .await
+                .is_some()
+        );
+        assert!(
+            next_of_type(&mut bob, "conversation.deleted", Duration::from_millis(500))
+                .await
+                .is_none(),
+            "the delete crossed a block (peer blocks: {peer_blocks})"
+        );
+        for mut socket in [laptop, bob] {
+            let _ = socket.close(None).await;
+        }
+    }
+
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+}
