@@ -533,12 +533,12 @@ pub(crate) async fn clear_reactions_on(
 /// "delete chat for both" where the peer keeps the chat (nothing of ours stays readable).
 /// Agent: CALLED by conversations::delete_chats_for_both and conversations::delete_conversation,
 /// which hold every one of `conversation_ids` `FOR UPDATE`; finds the rows by
-/// message_reactions_user_idx.
+/// message_reactions_user_idx. RETURNS whether any reaction was live.
 pub(crate) async fn clear_reactions_by(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: Uuid,
     conversation_ids: &[Uuid],
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     #[derive(FromRow)]
     struct Live {
         conversation_id: Uuid,
@@ -558,6 +558,7 @@ pub(crate) async fn clear_reactions_by(
     .fetch_all(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("count account reactions failed: {err}")))?;
+    let cleared = !chats.is_empty();
     for chat in chats {
         let base = reserve_seqs(tx, chat.conversation_id, chat.count).await?;
         sqlx::query(
@@ -580,7 +581,7 @@ pub(crate) async fn clear_reactions_by(
         .await
         .map_err(|err| AppError::Internal(format!("clear account reactions failed: {err}")))?;
     }
-    Ok(())
+    Ok(cleared)
 }
 
 /// `POST /conversations/:peer_user_id/reactions/seen` — the caller has seen reactions to their

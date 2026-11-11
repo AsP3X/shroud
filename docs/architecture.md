@@ -52,6 +52,12 @@ High-level structure for the E2E encrypted messenger.
 - Base path: `/api/v1`
 - Errors: `{ "error": { "code": string, "message": string } }` (`AppError` / Swift `APIError`)
 - Auth routes and bodies: [server-plan.md — Milestone 1](./server-plan.md#milestone-1--auth-locked)
+- WebSocket events: [server-plan.md — WS events](./server-plan.md). `conversation.deleted`
+  (`DELETE /conversations/:peer`) reaches the deleter's other devices, and the peer's devices
+  only for `scope=everyone` when the peer's copy changed (the deleter's messages became
+  tombstones or lost their reactions, or the peer's history was cleared) and neither has blocked
+  the other. A stranger's delete, or one repeated with nothing left to change, stays with the
+  deleter.
 
 ## Sealed plaintext shapes
 

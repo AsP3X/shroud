@@ -40,6 +40,9 @@ pub mod budgets {
     /// Reaction set / replace / remove. Separate from sends so tapping through reactions
     /// never eats the message budget.
     pub const REACTION_USER: (u64, Duration) = (120, Duration::from_secs(60));
+    /// Whole-chat deletes (`DELETE /conversations/{peer}`): one chat at a time, by hand. Each
+    /// one publishes to every device of the caller and, for `everyone`, of the peer.
+    pub const CONVERSATION_DELETE_USER: (u64, Duration) = (30, Duration::from_secs(60));
     /// Placing calls.
     pub const CALL_USER: (u64, Duration) = (30, Duration::from_secs(60));
     /// A call's signals and heartbeats: an offer, an answer, batches of ICE candidates, and a
