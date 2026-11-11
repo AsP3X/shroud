@@ -131,20 +131,40 @@ export function whisperPipelineOptions(modelId: string): { revision: string; dev
 type Pin = { url: string; file: PinnedFile; name: string };
 
 /**
- * Sorts a request or cache key. `undefined`: not Hugging Face, leave it alone. `"missing"`: a
+ * Whether a path names a pinned repository anywhere in it. transformers.js tries the local-model
+ * path (`env.localModelPath` + `<repo>/<file>`, so `/models/<repo>/<file>` in the browser) before
+ * the Hugging Face URL as a cache key, and that path never carries the pinned commit.
+ */
+function namesPinnedRepo(path: string): boolean {
+  let decoded = path;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    /* a malformed escape: check the raw path */
+  }
+  return [path, decoded].some((candidate) =>
+    Object.keys(PINNED_WHISPER).some(
+      (repo) => candidate === repo || candidate.startsWith(`${repo}/`) || candidate.includes(`/${repo}/`),
+    ),
+  );
+}
+
+/**
+ * Sorts a request or cache key. `undefined`: neither Hugging Face nor a pinned repository's
+ * path, leave it alone. `"missing"`: a
  * file of a pinned repository that is not listed, which reads as absent. `"refused"`: any other
- * Hugging Face request. `main` maps onto the pinned commit because transformers.js 4.3 fetches
+ * Hugging Face request, and any other key that names a pinned repository. `main` maps onto the pinned commit because transformers.js 4.3 fetches
  * `config.json`, and probes two more files, without the caller's `revision` while it works out
  * which files a pipeline needs (`get_pipeline_files` and `get_file_metadata` in `pipelines.js`).
  */
 function pinFor(request: string, remoteHost: string): Pin | "missing" | "refused" | undefined {
   const host = new URL(remoteHost);
-  if (!URL.canParse(request)) {
-    // A relative cache key is transformers.js's local-model path (`<repo>/<file>`). Never served.
-    return Object.keys(PINNED_WHISPER).some((repo) => request.startsWith(`${repo}/`)) ? "refused" : undefined;
-  }
+  // Only the pinned Hugging Face URLs below serve a pinned repository's files. Any other key that
+  // names one (the local-model path, with or without an origin) is refused, so it is never read
+  // past the hash check.
+  if (!URL.canParse(request)) return namesPinnedRepo(request) ? "refused" : undefined;
   const url = new URL(request);
-  if (url.origin !== host.origin) return undefined;
+  if (url.origin !== host.origin) return namesPinnedRepo(url.pathname) ? "refused" : undefined;
   const base = host.pathname.endsWith("/") ? host.pathname : `${host.pathname}/`;
   const match = url.pathname.startsWith(base)
     ? /^([^/]+\/[^/]+)\/resolve\/([^/]+)\/(.+)$/.exec(url.pathname.slice(base.length))

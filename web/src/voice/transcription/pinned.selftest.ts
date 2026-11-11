@@ -150,6 +150,25 @@ class MemoryCache implements ModelCache {
   check((await cache.match(PINNED_URL)) === undefined, "a cached file whose hash differs is not used");
   check(!store.entries.has(PINNED_URL), "a cached file whose hash differs is deleted");
 
+  // transformers.js tries the local-model path (`/models/<repo>/<file>`) before the pinned URL.
+  // Whatever sits under it, with or without an origin, is never served past the hash check.
+  for (const key of [
+    `/models/${BASE}/onnx/decoder_model_merged_quantized.onnx`,
+    `http://localhost:5173/models/${BASE}/onnx/decoder_model_merged_quantized.onnx`,
+    `/models/onnx-community%2Fwhisper-base/onnx/decoder_model_merged_quantized.onnx`,
+  ]) {
+    store.entries.set(key, new TextEncoder().encode("NOT THE PINNED DECODER"));
+    check((await cache.match(key)) === undefined, `${key} is never served`);
+    store.entries.delete(key);
+    await cache.put(key, new Response("planted"));
+    check(!store.entries.has(key), `${key} is never written`);
+  }
+  {
+    const net = network(PREPROCESSOR);
+    await rejects(() => net.fetch(`http://localhost:5173/models/${BASE}/config.json`), "a local-model fetch is refused");
+    check(net.asked.length === 0, "a local-model fetch reaches no network");
+  }
+
   await cache.put(`${BASE}/preprocessor_config.json`, new Response(PREPROCESSOR.slice()));
   await cache.put(`https://huggingface.co/attacker/x/resolve/main/a.json`, new Response("x"));
   check(store.entries.size === 0, "no unpinned key is written");

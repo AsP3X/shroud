@@ -141,7 +141,9 @@ on download (the body errors at its end when either differs, so transformers.js 
 caches it) and again on every read from the browser cache (a mismatch deletes the entry). A file
 that fails leaves transcription unavailable for that note. Nothing falls back to `main`. Hugging
 Face requests outside this table are refused without touching the network, and unlisted files of a
-pinned repository read as 404.
+pinned repository read as 404. Only the pinned URLs serve a pinned repository's files from the
+cache: any other key that names one, such as transformers.js's local-model path
+`/models/<repo>/<file>` that it tries first, is never read or written.
 
 transformers.js 4.3 itself fetches `config.json` from `main`, and probes `tokenizer_config.json` and
 `preprocessor_config.json` there, while `pipeline()` works out which files it needs: it does not pass
