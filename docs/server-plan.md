@@ -582,7 +582,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 | Session status (`POST /auth/session-status`) | 60/min per IP |
 | PIN-guard unlock | 20/min per IP |
 
-`Retry-After` mirrors the budget window (seconds). An IP budget is keyed on the connection's peer address. With `TRUST_FORWARDED_HEADERS=true` and a peer on a loopback or private address or in `TRUSTED_PROXIES` (the proxy), it is keyed on `X-Real-IP` instead, else on the right-most `X-Forwarded-For` hop; a public peer's headers never count. The web nginx overwrites both headers with the client it resolved. Key pattern: `rl:{scope}:{id}`.
+`Retry-After` mirrors the budget window (seconds). An IP budget is keyed on the connection's peer address. With `TRUST_FORWARDED_HEADERS=true` and a peer on a loopback or private address or in `TRUSTED_PROXIES` (the proxy), it is keyed on `X-Real-IP` instead, else on the right-most `X-Forwarded-For` hop; a public peer's headers never count. The web nginx overwrites both headers with the client it resolved. An IPv6 client is keyed on its /64 prefix (`2001:db8::/64`), since one subscriber gets a whole /64; an IPv4 client, and an IPv4-mapped IPv6 address, on the single IPv4 address. The operator console's sign-in budget follows the same rule. Key pattern: `rl:{scope}:{id}`.
 
 ### Link-preview relay
 

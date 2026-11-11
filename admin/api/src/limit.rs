@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -89,7 +89,8 @@ fn wait(hits: &[Instant]) -> u64 {
 
 /// The address sign-in failures are counted against, so nobody elsewhere can lock an operator
 /// out: nginx's `X-Real-IP` when the connection comes from a proxy on a loopback or private
-/// address, else the peer itself. Held in memory for the limiter's window, never logged.
+/// address, else the peer itself. An IPv6 client counts as its /64 (see [`budget_key`]). Held in
+/// memory for the limiter's window, never logged.
 pub struct ClientAddr(pub String);
 
 impl<S: Send + Sync> FromRequestParts<S> for ClientAddr {
@@ -110,8 +111,21 @@ impl<S: Send + Sync> FromRequestParts<S> for ClientAddr {
         Ok(Self(
             forwarded
                 .or(peer)
-                .map_or_else(|| "unknown".to_owned(), |ip| ip.to_string()),
+                .map_or_else(|| "unknown".to_owned(), budget_key),
         ))
+    }
+}
+
+/// Human: A provider hands one subscriber a whole IPv6 /64 and the host picks the low 64 bits
+/// freely, so a /128 key would give one client 2^64 sign-in budgets. Same rule as the server's
+/// `rate_limit::client_ip`. A mapped address (`::ffff:a.b.c.d`) is its IPv4 address.
+fn budget_key(ip: IpAddr) -> String {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let network = Ipv6Addr::from(u128::from(v6) & (u128::MAX << 64));
+            format!("{network}/64")
+        }
     }
 }
 
@@ -137,6 +151,38 @@ mod tests {
         assert!(wait <= WINDOW.as_secs() && wait >= 1);
         limiter.clear("operator");
         assert!(limiter.retry_after("operator").is_none());
+    }
+
+    async fn client_addr(peer: &str, real_ip: Option<&str>) -> String {
+        let mut request = axum::http::Request::builder()
+            .extension(ConnectInfo(SocketAddr::new(peer.parse().unwrap(), 40000)));
+        if let Some(real_ip) = real_ip {
+            request = request.header("x-real-ip", real_ip);
+        }
+        let (mut parts, ()) = request.body(()).unwrap().into_parts();
+        let Ok(ClientAddr(addr)) = ClientAddr::from_request_parts(&mut parts, &()).await;
+        addr
+    }
+
+    #[tokio::test]
+    async fn ipv6_clients_are_keyed_on_their_64_prefix() {
+        assert_eq!(
+            client_addr("2001:db8::1", None).await,
+            client_addr("2001:db8::2", None).await
+        );
+        assert_ne!(
+            client_addr("2001:db8::1", None).await,
+            client_addr("2001:db8:0:1::1", None).await
+        );
+        assert_eq!(
+            client_addr("172.18.0.5", Some("2001:db8::ffff")).await,
+            client_addr("2001:db8::1", None).await
+        );
+        assert_eq!(
+            client_addr("172.18.0.5", Some("::ffff:203.0.113.9")).await,
+            "203.0.113.9"
+        );
+        assert_eq!(client_addr("203.0.113.9", None).await, "203.0.113.9");
     }
 
     #[test]
