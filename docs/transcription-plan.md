@@ -130,8 +130,68 @@ for the device class where it is worse.
 | T3.3 | **Android candidates.** `ggml-small-q5_1` (already pinned) and `ggml-large-v3-turbo-q5_0` (around 550 MB; pin its SHA-256 in `WhisperModelStore`). Run on the T0.6 phones. | parallel ×3 | as above |
 | T3.4 | **Web candidates.** `whisper-small` at `q8` on WASM with threads (T2.3) and on WebGPU (T2.4), compared with base. Check the size of the browser cache. | parallel ×3 | as above |
 | T3.5 | **Choose the model at runtime.** The pick follows T3.1, from the chip, RAM and a short benchmark of the installed model: <br>• iOS: `TranscriptionSession.selectedModel`, using `WhisperKit.modelSupport(for:)`. <br>• Android: call `TranscriptionBenchmark`'s P7 gate at runtime. Today only a test calls it. <br>• Web: `session.ts`, using `navigator.deviceMemory`, the thread count and WebGPU. <br>An upgrade downloads in the background; whether only on Wi-Fi is **decision D4**. The old model stays in use until the new one is verified, then it is deleted. | after T3.1–T3.4 | Unit tests per client. Upgrade, interrupted download and rollback all tested. |
-| T3.6 | **Pin the iOS and web downloads.** <br>• Web: pass a Hugging Face `revision` (commit hash) to `pipeline(...)`. transformers.js supports it (`remotePathTemplate {revision}`). <br>• iOS: download with a pinned revision through WhisperKit's `HubApi`, and check a SHA-256 manifest after the download, the way Android's `WhisperModelStore` does. | parallel | A changed file fails the check (test) |
+| T3.6 | **Pin the iOS and web downloads.** <br>• Web: **done 2026-11-11** (SHRO-23, audit W3); see [T3.6 web pins](#t36-web-pins) below. <br>• iOS: download with a pinned revision through WhisperKit's `HubApi`, and check a SHA-256 manifest after the download, the way Android's `WhisperModelStore` does. | parallel | A changed file fails the check (test) |
 | T3.7 | **Settings: show the model** (iOS, iPad, Android, web). Show the model name and size in Settings › Transcription, plus an option for a more accurate model with a larger download where the device can run it. Update `iOS-App.pen`, `iPad-App.pen`, `Android-App.pen` and `webclient.pen` (rule R5). | after T3.5 | UI and designs match. The user saves the `.pen` files with ⌘S. |
+
+### T3.6 web pins
+
+The web worker loads Whisper only through `web/src/voice/transcription/pinned.ts`. `pipeline(...)` gets
+the commit below as `revision`. Every file is checked for its exact size and SHA-256 before use:
+on download (the body errors at its end when either differs, so transformers.js neither parses nor
+caches it) and again on every read from the browser cache (a mismatch deletes the entry). A file
+that fails leaves transcription unavailable for that note. Nothing falls back to `main`. Hugging
+Face requests outside this table are refused without touching the network, and unlisted files of a
+pinned repository read as 404.
+
+transformers.js 4.3 itself fetches `config.json` from `main`, and probes `tokenizer_config.json` and
+`preprocessor_config.json` there, while `pipeline()` works out which files it needs: it does not pass
+the caller's `revision` to `get_pipeline_files` or `get_file_metadata` (`pipelines.js`). `pinned.ts`
+maps those `main` URLs onto the pinned commit, and answers the size probes from the table.
+
+| Model | Commit | Committed |
+| ----- | ------ | --------- |
+| `onnx-community/whisper-base` (default) | `27a07b4b52b3a4c5886134bb4320e93e1a4bbc7c` | 2026-11-02, "Update README.md" |
+| `onnx-community/whisper-tiny` | `ff4177021cc41f7db950912b73ea4fdf7d01d8e7` | 2025-06-19 |
+| `onnx-community/whisper-small` | `36050c46d777d46dc4b5f43f6d90574fc38f8732` | 2025-06-19 |
+
+How they were obtained (2026-11-11):
+
+1. The commit is each repository's `main` head from `GET https://huggingface.co/api/models/<repo>/revision/main`.
+   The newest whisper-base commit is titled "Update README.md". The seven files the web client loads have
+   the same git blob ids there as at the commit before it, `1846881b` (2025-06-19), so the pin keeps the
+   weights the web client already ran.
+2. The file list is what `pipeline("automatic-speech-recognition", …, { dtype: "q8" })` requests, logged in
+   Node and then in Chrome during the manual run.
+3. Each file was downloaded from `https://huggingface.co/<repo>/resolve/<commit>/<file>` and hashed with
+   `shasum -a 256`. For the ONNX files the hash also equals the LFS `oid`, and every size equals the size
+   from `POST /api/models/<repo>/paths-info/<commit>`.
+
+| Model | File | Bytes | SHA-256 |
+| ----- | ---- | ----: | ------- |
+| `whisper-base` | `config.json` | 2243 | `f4d0608f7d918166da7edb3e188de5ef1bfe70d9802e785d271fd88111e9cf4b` |
+| `whisper-base` | `generation_config.json` | 3832 | `61070cf8de25b1e9256e8e102ded49d8d24a8369ed36ef84fdf21549e68125a0` |
+| `whisper-base` | `tokenizer.json` | 2480466 | `27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566` |
+| `whisper-base` | `tokenizer_config.json` | 282682 | `2e036e4dbacfdeb7242c7d4ec4149f4a16e86026048f94d1637e3a8ee9c6a573` |
+| `whisper-base` | `preprocessor_config.json` | 339 | `a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d` |
+| `whisper-base` | `onnx/encoder_model_quantized.onnx` | 23201314 | `5862993336bf33acd23736071aae2b32261d3b1b2f37780194460d4ef974dd46` |
+| `whisper-base` | `onnx/decoder_model_merged_quantized.onnx` | 53693315 | `fa3ef9902734ce5ae6f9ef2bdb2ba9a6c4b5785b09f4f420ce036573dc9d090b` |
+| `whisper-tiny` | `config.json` | 2243 | `46aeea0a406afbeb563fc8e59ca10609203df4299af6a83f73752fef369efd2d` |
+| `whisper-tiny` | `generation_config.json` | 3772 | `f5c67e5a4f7102f8cb4d058bc95da276bbc19eeec997267c3bb0f25ef68facd1` |
+| `whisper-tiny` | `tokenizer.json` | 2480466 | `27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566` |
+| `whisper-tiny` | `tokenizer_config.json` | 282683 | `2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce` |
+| `whisper-tiny` | `preprocessor_config.json` | 339 | `a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d` |
+| `whisper-tiny` | `onnx/encoder_model_quantized.onnx` | 10124990 | `2af4a414ca47aa30f61246017e5fe82b0a8d229281d1255ba666a2a7f6b84d19` |
+| `whisper-tiny` | `onnx/decoder_model_merged_quantized.onnx` | 30719241 | `25e807a962b6349356d0ea5d0dfe530b7e5bf0e2a484aeca0359d03143faddd3` |
+| `whisper-small` | `config.json` | 2227 | `457854d452f17661e197d74aee12b8e74fb75ba30ebfaa7426d0d61ea1e08a18` |
+| `whisper-small` | `generation_config.json` | 3893 | `f538b28220c6a6d6f1af1458d4141cacb4ef4963df3de98a19490440c412ddf0` |
+| `whisper-small` | `tokenizer.json` | 2480466 | `27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566` |
+| `whisper-small` | `tokenizer_config.json` | 282683 | `2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce` |
+| `whisper-small` | `preprocessor_config.json` | 339 | `a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d` |
+| `whisper-small` | `onnx/encoder_model_quantized.onnx` | 92326160 | `a43a83f3c5361cd591cfa7c36f14b43cf7cb22f47a415cc14a8d557be800fa92` |
+| `whisper-small` | `onnx/decoder_model_merged_quantized.onnx` | 156750845 | `ec07c3cbb64172c39791e26ee870a65ac22b458c36722bfe2776b3dbf741e0c9` |
+
+Changing a pin means repeating these steps for the new commit, updating `pinned.ts` and this table in the same
+change, and running `npm test -- pinned`.
 
 ---
 
