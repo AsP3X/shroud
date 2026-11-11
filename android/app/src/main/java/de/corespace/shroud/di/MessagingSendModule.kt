@@ -125,5 +125,6 @@ internal class ControllerSendHost(private val controller: MessagingController) :
     override fun username(storePeer: UUID): String? = controller.username(storePeer)
     override fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) =
         controller.editConversations(transform)
-    override fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> = controller.foldSharedTranscripts(thread)
+    override fun foldSharedTranscripts(storePeer: UUID, thread: List<ChatMessage>): List<ChatMessage> =
+        controller.foldSharedTranscripts(storePeer, thread)
 }

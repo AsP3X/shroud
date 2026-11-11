@@ -139,10 +139,10 @@ export type ChatMessage = {
 /** Annotation ids already decoded, so polling doesn't fetch them again every tick. */
 const seenAnnotations = new Set<string>();
 /**
- * Transcripts shared as annotations, by voice note id. Kept for the session so a
- * note that lands after its annotation (send completing, a later poll) still gets
- * it. Never consumed: `applyAnnotations` runs inside React state updaters, which
- * React may call twice, so reading it must not change it.
+ * Transcripts shared as annotations, by chat and voice note id (`sharedTranscriptKey`). Kept for
+ * the session so a note that lands after its annotation (send completing, a later poll) still gets
+ * it. Never consumed: `applyAnnotations` runs inside React state updaters, which React may call
+ * twice, so reading it must not change it.
  */
 const sharedTranscripts = new Map<string, string>();
 const peerLocks = new Map<string, Promise<unknown>>();
@@ -161,8 +161,20 @@ export function forgetDecryptedState(): void {
   misaddressed.clear();
 }
 
-function noteSharedTranscript(annotation: Annotation): void {
-  if (!sharedTranscripts.has(annotation.r)) sharedTranscripts.set(annotation.r, annotation.c);
+/**
+ * A transcript names its note only by id, so it is filed under the chat it was decoded in
+ * and only a note in that chat reads it. Keyed by id alone, a contact's annotation naming a note
+ * in another chat took that note's transcript there, ahead of the real one (security audit W2).
+ * Either person in the chat may share a note's transcript: iOS and Android share one for a note
+ * they received.
+ */
+function sharedTranscriptKey(peerUserId: string, messageId: string): string {
+  return `${peerUserId.toLowerCase()}/${messageId.toLowerCase()}`;
+}
+
+function noteSharedTranscript(peerUserId: string, annotation: Annotation): void {
+  const key = sharedTranscriptKey(peerUserId, annotation.r);
+  if (!sharedTranscripts.has(key)) sharedTranscripts.set(key, annotation.c);
 }
 
 /** The chat list shows a voice note's transcript; fill it in when it arrives late. */
@@ -369,11 +381,15 @@ function kindFromPayload(payload: MediaPayload | null, isMedia: boolean): ChatKi
   return "image";
 }
 
-/** The bubble a decoded media payload draws (exported for the selftests). */
+/**
+ * The bubble a decoded media payload draws (exported for the selftests). `peerUserId` is the chat
+ * it is shown in: a voice note without a sealed transcript takes one shared in that chat only.
+ */
 export function messageFromMediaPayload(
   base: Omit<ChatMessage, "text" | "kind">,
   payload: MediaPayload,
   mediaObjectId: string | null | undefined,
+  peerUserId: string,
 ): ChatMessage {
   base = { ...base, replyTo: payloadReply(payload) };
   // A file before anything that sniffs `mime`: a PDF named .mp4 is still a file.
@@ -423,7 +439,7 @@ export function messageFromMediaPayload(
   }
   if (isVoicePayload(payload)) {
     const sealed = payload.c?.trim() || null;
-    const shared = sharedTranscripts.get(base.id.toLowerCase());
+    const shared = sharedTranscripts.get(sharedTranscriptKey(peerUserId, base.id));
     const transcript = sealed || shared || null;
     return {
       ...base,
@@ -528,7 +544,7 @@ export async function decodeIncoming(
     seenAnnotations.add(dto.id.toLowerCase());
     const annotation = plain == null ? null : parseAnnotation(plain);
     if (annotation) {
-      noteSharedTranscript(annotation);
+      noteSharedTranscript(peerUserId, annotation);
       previewSharedTranscript(me, peerUserId, annotation);
     }
     return {
@@ -581,7 +597,7 @@ export async function decodeIncoming(
       if (isMedia) {
         const payload = parseMediaPayload(cached);
         if (payload) {
-          const msg = messageFromMediaPayload(base, payload, dto.media_object_id);
+          const msg = messageFromMediaPayload(base, payload, dto.media_object_id, peerUserId);
           rememberPreview(me, peerUserId, msg);
           return msg;
         }
@@ -635,7 +651,7 @@ export async function decodeIncoming(
       savePlaintext(dto.id, dto.sender_user_id, decoded);
       const payload = parseMediaPayload(decoded);
       const msg = payload
-        ? messageFromMediaPayload(base, payload, dto.media_object_id)
+        ? messageFromMediaPayload(base, payload, dto.media_object_id, peerUserId)
         : { ...base, text: "Media", kind: "image" as const };
       rememberPreview(me, peerUserId, msg);
       return msg;
@@ -664,14 +680,15 @@ export async function decodeIncoming(
 
 /**
  * Folds annotations into the messages they point at and drops them from the list.
- * A shared transcript only fills a gap: one sealed by the sender, or shared
- * earlier, is never replaced (same rule as iOS). Pure with respect to its input:
- * safe to call from React state updaters.
+ * `list` is the thread of the chat with `peerUserId`, and only transcripts shared
+ * in that chat fold in. A shared transcript only fills a gap: one sealed by the
+ * sender, or shared earlier, is never replaced (same rule as iOS). Pure with
+ * respect to its input: safe to call from React state updaters.
  */
-export function applyAnnotations(list: ChatMessage[]): ChatMessage[] {
+export function applyAnnotations(list: ChatMessage[], peerUserId: string): ChatMessage[] {
   for (const m of list) {
     if (m.kind === "annotation" && m.annotation?.t === "transcript") {
-      noteSharedTranscript(m.annotation);
+      noteSharedTranscript(peerUserId, m.annotation);
     }
   }
   const out: ChatMessage[] = [];
@@ -679,7 +696,7 @@ export function applyAnnotations(list: ChatMessage[]): ChatMessage[] {
     if (m.kind === "annotation") continue;
     const shared =
       m.kind === "voice" && !m.deleted && !m.transcript?.trim()
-        ? sharedTranscripts.get(m.id.toLowerCase())
+        ? sharedTranscripts.get(sharedTranscriptKey(peerUserId, m.id))
         : undefined;
     out.push(shared ? { ...m, transcript: shared, text: shared } : m);
   }
@@ -889,7 +906,7 @@ export async function loadHistoryPage(
     const oldest = res.messages[res.messages.length - 1];
     const more = (res.has_more || res.messages.length >= limit) && oldest;
     return {
-      messages: applyAnnotations(out),
+      messages: applyAnnotations(out, peer),
       older: more ? { createdAt: oldest.created_at, id: oldest.id } : null,
       reactionSeq: res.reaction_seq ?? null,
       reactionUnopened: unopened.seq,
@@ -1093,6 +1110,7 @@ export async function sendVoice(opts: {
       },
       shown ?? payload,
       kept.mediaObjectId,
+      peer,
     );
     if (!shown) msg.mediaKey = null;
     rememberPreview(me, peer, msg);
@@ -1402,6 +1420,7 @@ async function sendMediaEnvelope(
       },
       shown ?? payload,
       kept.mediaObjectId,
+      peer,
     );
     if (!shown) msg.mediaKey = null;
     rememberPreview(me, peer, msg);
@@ -1425,7 +1444,7 @@ export async function shareTranscript(opts: {
   const text = clampTranscript(opts.transcript);
   if (!text || opts.messageId.startsWith("pending:")) return;
   const annotation: Annotation = { t: "transcript", r: opts.messageId.toLowerCase(), c: text };
-  noteSharedTranscript(annotation);
+  noteSharedTranscript(opts.peerUserId, annotation);
   previewSharedTranscript(opts.me, opts.peerUserId, annotation);
 
   const peer = opts.peerUserId.toLowerCase();

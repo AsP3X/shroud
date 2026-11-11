@@ -208,8 +208,11 @@ const PREFETCH_MESSAGES = 300;
 /** Pause between those background pages. */
 const PREFETCH_PAUSE_MS = 600;
 
-/** Pure (it runs inside `setThread` updaters, which React may call twice). */
-function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessage[] {
+/**
+ * Pure (it runs inside `setThread` updaters, which React may call twice). `peerUserId` is the chat
+ * both lists belong to: only transcripts shared in it fold in.
+ */
+function mergeMessages(primary: ChatMessage[], extra: ChatMessage[], peerUserId: string): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
   for (const m of primary) byId.set(m.id, m);
   for (const m of extra) if (!byId.has(m.id)) byId.set(m.id, m);
@@ -226,7 +229,7 @@ function mergeMessages(primary: ChatMessage[], extra: ChatMessage[]): ChatMessag
     return t !== 0 ? t : a.id.localeCompare(b.id);
   });
   // A transcript shared by the peer lands here as an annotation for a voice note.
-  return applyAnnotations(sorted);
+  return applyAnnotations(sorted, peerUserId);
 }
 
 export function AppShell({ session }: { session: Session }) {
@@ -408,7 +411,7 @@ export function AppShell({ session }: { session: Session }) {
       // The server still has the message. Keep its decrypted copy so the bubble we
       // put back can still draw, and so a later reload is not stuck unable to cache it.
       if (still) {
-        setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg]));
+        setThread((prev) => mergeMessages(prev.filter((m) => m.id !== localId), [msg], peerId));
         setThreadError(err instanceof ApiError ? err.message : "Could not delete the message.");
       }
       setPreviewRev((n) => n + 1);
@@ -421,6 +424,7 @@ export function AppShell({ session }: { session: Session }) {
         mergeMessages(
           list.filter((m) => m.id !== localId && m.id.toLowerCase() !== msg.id.toLowerCase()),
           [gone],
+          peerId,
         );
       rewritePreview(session.user.id, peerId, apply(threadRef.current));
       setThread(apply);
@@ -1227,7 +1231,7 @@ export function AppShell({ session }: { session: Session }) {
         if (page.reactionSeq != null) {
           lowerReactionCursor(Math.min(page.reactionSeq, (page.reactionUnopened ?? Number.POSITIVE_INFINITY) - 1));
         }
-        setThread((prev) => mergeMessages(prev, page.messages));
+        setThread((prev) => mergeMessages(prev, page.messages, open.id));
       })
       .catch(() => {
         /* cursor kept: the next scroll to the top tries again */
@@ -1284,7 +1288,7 @@ export function AppShell({ session }: { session: Session }) {
             ? Math.min(page.reactionSeq, page.reactionUnopened - 1)
             : page.reactionSeq;
         // A message that arrived over the socket while the page was in flight stays.
-        setThread((prev) => mergeMessages(page.messages, prev));
+        setThread((prev) => mergeMessages(page.messages, prev, peerId));
         setPreviewRev((n) => n + 1);
         prefetch();
       })
@@ -1372,7 +1376,7 @@ export function AppShell({ session }: { session: Session }) {
         // Another chat was opened while the page was on its way.
         if (!alive.current || epoch !== historyEpoch.current) return;
         const gone = new Set(page.messages.filter((m) => m.deleted).map((m) => m.id.toLowerCase()));
-        setThread((prev) => mergeMessages(page.messages, prev));
+        setThread((prev) => mergeMessages(page.messages, prev, peerId));
         // The page's reactions replaced what these messages held: catch-up re-applies anything
         // newer than its snapshot, and a record it couldn't open.
         if (page.reactionSeq != null) {
@@ -1538,7 +1542,7 @@ export function AppShell({ session }: { session: Session }) {
               const open = selectedRef.current;
               setPreviewRev((n) => n + 1);
               if (open && open.id.toLowerCase() === peer.toLowerCase()) {
-                setThread((prev) => mergeMessages(prev, [msg]));
+                setThread((prev) => mergeMessages(prev, [msg], peer));
               }
               if (msg.isMine) {
                 // Written on our other device: that chat has been read there.
@@ -1744,7 +1748,7 @@ export function AppShell({ session }: { session: Session }) {
           // Costs a request only when a reaction changed since the last one we applied.
           syncReactions(peerId, reactionSeq);
           if (extra.length === 0) return;
-          setThread((prev) => mergeMessages(prev, extra));
+          setThread((prev) => mergeMessages(prev, extra, peerId));
           // A shared transcript may have filled in the chat preview.
           setPreviewRev((n) => n + 1);
         })
@@ -1917,7 +1921,7 @@ export function AppShell({ session }: { session: Session }) {
       setThread((prev) =>
         droppedSends.current.has(localId)
           ? prev.filter((m) => m.id !== localId)
-          : mergeMessages(prev.filter((m) => m.id !== localId), [msg]),
+          : mergeMessages(prev.filter((m) => m.id !== localId), [msg], peerId),
       );
       setPreviewRev((n) => n + 1);
       await refresh();
@@ -2008,7 +2012,7 @@ export function AppShell({ session }: { session: Session }) {
         setThread((prev) =>
           droppedSends.current.has(localId)
             ? prev.filter((m) => m.id !== localId)
-            : mergeMessages(prev.filter((m) => m.id !== localId), [msg]),
+            : mergeMessages(prev.filter((m) => m.id !== localId), [msg], peerId),
         );
         setPreviewRev((n) => n + 1);
       }
@@ -2033,7 +2037,7 @@ export function AppShell({ session }: { session: Session }) {
           setTranscribing(msg.id, false);
           if (!alive.current) return;
           if (selectedRef.current?.id.toLowerCase() === peerId.toLowerCase()) {
-            setThread((prev) => applyAnnotations(prev));
+            setThread((prev) => applyAnnotations(prev, peerId));
           }
           setPreviewRev((n) => n + 1);
         });
@@ -2119,7 +2123,7 @@ export function AppShell({ session }: { session: Session }) {
           setThread((prev) =>
             droppedSends.current.has(draft.localId)
               ? prev.filter((m) => m.id !== draft.localId)
-              : mergeMessages(prev.filter((m) => m.id !== draft.localId), [msg]),
+              : mergeMessages(prev.filter((m) => m.id !== draft.localId), [msg], peerId),
           );
           setPreviewRev((n) => n + 1);
         }
@@ -2240,7 +2244,7 @@ export function AppShell({ session }: { session: Session }) {
           setThread((prev) =>
             droppedSends.current.has(job.localId)
               ? prev.filter((m) => m.id !== job.localId)
-              : mergeMessages(prev.filter((m) => m.id !== job.localId), [msg]),
+              : mergeMessages(prev.filter((m) => m.id !== job.localId), [msg], peerId),
           );
           setPreviewRev((n) => n + 1);
         }
@@ -2416,7 +2420,7 @@ export function AppShell({ session }: { session: Session }) {
         setThread((prev) =>
           droppedSends.current.has(localId)
             ? prev.filter((m) => m.id !== localId)
-            : mergeMessages(prev.filter((m) => m.id !== localId), [msg]),
+            : mergeMessages(prev.filter((m) => m.id !== localId), [msg], peerId),
         );
         setPreviewRev((n) => n + 1);
       }
@@ -2489,7 +2493,7 @@ export function AppShell({ session }: { session: Session }) {
       const apply = (list: ChatMessage[]) => {
         const server = list.find((m) => m.id.toLowerCase() === serverKey);
         const rest = list.filter((m) => m.id !== message.id && m.id.toLowerCase() !== serverKey);
-        return server ? mergeMessages(rest, [tombstone(server)]) : rest;
+        return server ? mergeMessages(rest, [tombstone(server)], peerId) : rest;
       };
       rewritePreview(session.user.id, peerId, apply(chatThread()));
       if (stillHere()) {

@@ -394,20 +394,20 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   const payload = parseMediaPayload(
     JSON.stringify({ t: "file", n: "../in\u202Evoice.MP4", mime: "video/mp4", k: "a2V5", s: 9, w: 0, h: 0, d: 4000 }),
   )!;
-  const msg = messageFromMediaPayload(base, payload, "77777777-2222-3333-4444-555555555555");
+  const msg = messageFromMediaPayload(base, payload, "77777777-2222-3333-4444-555555555555", base.senderUserId);
   check(msg.kind === "file", "decoded as a file, not a video");
   check(msg.fileName === "invoice.MP4", "receiver cleans the name again");
   check(msg.mime === "video/mp4" && msg.mediaBytes === 9 && msg.text === "invoice.MP4", "type from the extension");
   check(previewCopy(msg) === "invoice.MP4", "chat list shows the name");
-  const captioned = messageFromMediaPayload(base, { ...payload, c: " Q3 numbers " }, null);
+  const captioned = messageFromMediaPayload(base, { ...payload, c: " Q3 numbers " }, null, base.senderUserId);
   check(captioned.caption === "Q3 numbers" && previewCopy(captioned) === "Q3 numbers", "caption wins in the chat list");
   const ref = replyRefFor(captioned)!;
   check(ref.kind === "file" && ref.snippet === "invoice.MP4", "a reply quotes the file name");
-  const spoofed = messageFromMediaPayload(base, { ...payload, n: "notes.pdf", mime: "text/html" }, null);
+  const spoofed = messageFromMediaPayload(base, { ...payload, n: "notes.pdf", mime: "text/html" }, null, base.senderUserId);
   check(spoofed.mime === "application/pdf", "the sender's mime is ignored");
   // Photos, link pictures, voice notes and videos keep a media type only (security audit H4).
   const received = (fields: Record<string, unknown>) =>
-    messageFromMediaPayload(base, parseMediaPayload(JSON.stringify({ k: "a2V5", w: 0, h: 0, ...fields }))!, null);
+    messageFromMediaPayload(base, parseMediaPayload(JSON.stringify({ k: "a2V5", w: 0, h: 0, ...fields }))!, null, base.senderUserId);
   check(received({ t: "image", mime: "text/html" }).mime === "image/jpeg", "an html photo is drawn as JPEG");
   check(received({ t: "image", mime: "image/svg+xml" }).mime === "image/jpeg", "an svg photo is drawn as JPEG");
   check(received({ t: "image", mime: " Image/HEIC " }).mime === "image/heic", "a raster type is kept");
@@ -422,12 +422,12 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   check(received({ t: "voice", mime: "audio/mp4\u0000" }).mime === "audio/mp4", "control characters are refused");
   check(received({ t: "video", mime: "audio/mp4" }).mime === "video/mp4", "a video stays a video type");
   check(received({ t: "video", mime: "video/quicktime" }).mime === "video/quicktime", "a video type is kept");
-  const odd = messageFromMediaPayload(base, { ...payload, n: "page.html" }, null);
+  const odd = messageFromMediaPayload(base, { ...payload, n: "page.html" }, null, base.senderUserId);
   check(odd.kind === "file" && odd.mime === null, "an unsupported file stays a file, with no type");
   check(tombstone(msg).fileName === null && tombstone(msg).mediaKey === null, "tombstone forgets the file");
-  const pdfMsg = messageFromMediaPayload(base, { ...payload, n: "r.pdf", pg: 7 }, null);
+  const pdfMsg = messageFromMediaPayload(base, { ...payload, n: "r.pdf", pg: 7 }, null, base.senderUserId);
   check(pdfMsg.pageCount === 7 && tombstone(pdfMsg).pageCount === null, "pg reaches the message, tombstone drops it");
-  check(messageFromMediaPayload(base, payload, null).pageCount === null, "no pg, no page count");
+  check(messageFromMediaPayload(base, payload, null, base.senderUserId).pageCount === null, "no pg, no page count");
 }
 
 /* ------------------------------------------------------------------------- audio (§11, §9) */
@@ -559,7 +559,7 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
     deleted: false,
     failed: false,
   };
-  const song = messageFromMediaPayload(base, parsed, "77777777-2222-3333-4444-555555555555");
+  const song = messageFromMediaPayload(base, parsed, "77777777-2222-3333-4444-555555555555", base.senderUserId);
   check(song.kind === "file" && song.mime === "audio/mpeg", "decoded as a file");
   check(song.audioTitle === "Midnight City" && song.audioArtist === "M83" && song.audioDurationMs === 243400, "tags cleaned again");
   check(song.thumbnail === "AAAA", "the cover is th");
@@ -571,7 +571,7 @@ Object.defineProperty(globalThis, "window", { value: globalThis, configurable: t
   check(replyRefWire(quote).k === "audio" && replyKindLabel("audio") === "Audio", "quote label Audio");
   check(parseReplyRef({ id: "A", u: "B", k: "audio", x: "Song – Artist" })?.kind === "audio", "k=audio parses");
   // Tags on anything but an audio file mean nothing.
-  const pdf = messageFromMediaPayload(base, { ...parsed, n: "r.pdf" }, null);
+  const pdf = messageFromMediaPayload(base, { ...parsed, n: "r.pdf" }, null, base.senderUserId);
   check(pdf.audioTitle === null && pdf.audioDurationMs === null && replyRefFor(pdf)!.kind === "file", "no tags on a PDF");
 }
 

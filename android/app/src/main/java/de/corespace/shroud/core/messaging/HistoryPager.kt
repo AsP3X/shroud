@@ -172,7 +172,7 @@ class HistoryPager(
             var message = checked.message
             val inbound = !isNotes && dto.senderUserId != me && !checked.refused
             if (dto.contentType == ContentType.ANNOTATION) {
-                noteAnnotation(dto, message)
+                noteAnnotation(dto, message, storePeer)
                 if (inbound) page.inboundIds += dto.id
                 continue
             }
@@ -204,13 +204,13 @@ class HistoryPager(
      * A transcript shared as an annotation (`MessagingController.swift:1196-1205`), and the
      * annotation index of Android D5: an annotation deleted for everyone is purged.
      */
-    private fun noteAnnotation(dto: MessageDto, decoded: ChatMessage) {
+    private fun noteAnnotation(dto: MessageDto, decoded: ChatMessage, storePeer: UUID) {
         if (dto.deletedForEveryone) {
             state.purgeAnnotation(dto.id)
             return
         }
         val shared = MessageAnnotation.parseTranscript(decoded.text) ?: return
-        state.noteSharedTranscript(shared.text, shared.messageId)
+        state.noteSharedTranscript(storePeer, shared.text, shared.messageId)
         state.noteAnnotation(shared.messageId, dto.id)
     }
 
@@ -224,6 +224,7 @@ class HistoryPager(
     private fun publishHistoryPage(page: HistoryPage, storePeer: UUID) {
         val current = state.messages(storePeer).orEmpty()
         var merged = state.foldSharedTranscripts(
+            storePeer,
             ThreadMessageMerge.mergeThread(page.messages, current, current.filter { it.pendingSync }),
         )
         val snapshot = page.reactionSnapshot

@@ -687,7 +687,7 @@ class SendFakeHost : SendHost {
     var sharedForAny: String? = null
     var folds = 0
 
-    override fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> {
+    override fun foldSharedTranscripts(storePeer: UUID, thread: List<ChatMessage>): List<ChatMessage> {
         folds++
         return thread.map { message ->
             val shared = pendingTranscripts[message.id] ?: sharedForAny.takeIf { message.kind == ChatMessageKind.Voice }

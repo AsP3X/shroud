@@ -123,11 +123,11 @@ interface SendHost {
     fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>)
 
     /**
-     * Applies shared transcripts whose voice note is now in [thread] and forgets them
-     * (`foldSharedTranscripts`, MC:3564-3571). The pending map lives with the ingest path
-     * (W2-MSG-CORE); a sent voice note folds through it (MC:3776).
+     * Applies the transcripts shared in the chat stored under [storePeer] whose voice note is now in
+     * [thread] and forgets them (`foldSharedTranscripts`, MC:3564-3571). The pending map lives with
+     * the ingest path (W2-MSG-CORE); a sent voice note folds through it (MC:3776).
      */
-    fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage>
+    fun foldSharedTranscripts(storePeer: UUID, thread: List<ChatMessage>): List<ChatMessage>
 
     /**
      * Stand-in until W2-INT wires `MessagingController`: no chat list, no active chat, refreshes do
@@ -141,7 +141,7 @@ interface SendHost {
         override fun isMuted(storePeer: UUID): Boolean = false
         override fun username(storePeer: UUID): String? = null
         override fun editConversations(transform: (List<ConversationItemDto>) -> List<ConversationItemDto>) = Unit
-        override fun foldSharedTranscripts(thread: List<ChatMessage>): List<ChatMessage> = thread
+        override fun foldSharedTranscripts(storePeer: UUID, thread: List<ChatMessage>): List<ChatMessage> = thread
     }
 }
 
@@ -1775,7 +1775,7 @@ class SendPipeline(
                 // Same note, new id: the bubble carries on (sinks hear `onMessageRekeyed`), keeping a
                 // transcript that landed while it was uploading (MC:3766-3777).
                 state.rekey(storePeer, optimisticId, if (sent.transcript == null) sent.copy(transcript = current.transcript) else sent)
-                state.edit(storePeer) { host().foldSharedTranscripts(it) }
+                state.edit(storePeer) { host().foldSharedTranscripts(storePeer, it) }
             } else {
                 state.purge(listOf(optimisticId))
             }
