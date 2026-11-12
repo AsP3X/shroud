@@ -118,6 +118,9 @@ Those commands start the API, the web client, Postgres, Redis and Nebular. The o
 Logging: set `RUST_LOG` in `.env` (wizard default `info`). At `info` the API logs routes and
 outcomes but no user, device, chat or call ids; `debug` and `trace` add them, so turn them back
 down after looking into something. Compose keeps at most 3 × 10 MB of logs per container.
+Behind NPM, its access log records each request's full URL, including the token of an operator
+setup link. Turn it off on the console's proxy host, or finish setup as soon as the link is made
+([docs/admin.md](docs/admin.md#setup-links-and-proxy-logs)).
 
 Stop:
 

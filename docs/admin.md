@@ -34,6 +34,16 @@ Create the first operator after that. The link is shown once:
 
 Open it and choose a password and an authenticator.
 
+### Setup links and proxy logs
+
+A setup link's token is part of its URL, and anyone who opens a live link first can choose that operator's password. The console's own log replaces the token with `…` (`/api/admin/setup/…`, `/admin/setup/…`), and the web container keeps no access log. Its error log does record the full URL of a request it could not pass to the console, while the console is down or restarting (the page answers `502` or `504`). If opening a link fails that way, don't use that link again: issue a new one with **Reset authenticator** on the Operators page, or `./deploy.sh --admin bootstrap --recover` for a bootstrap link. Either one retires that operator's unused links. Nginx Proxy Manager keeps an access log: it writes every request's full URL to `/data/logs/proxy-host-<id>_access.log`, so a setup link stays readable there for anyone with access to NPM's data. Turn that log off on the proxy host that serves the console: edit the host, open **Advanced**, and add
+
+```
+access_log off;
+```
+
+to **Custom Nginx Configuration**. With `ADMIN_HOST` set that host serves only the console. Without it, the line turns the log off for the whole Shroud site. If the log stays on, open a link as soon as you get it and finish setup: a used link no longer works. An unused one stops working when it expires (15 minutes for an invite or a reset, 24 hours for the bootstrap link), or when `bootstrap --recover` replaces it.
+
 Turn the console off with the same command. The container goes away. `ADMIN_SECRET_KEY`, the console's database password and the operator token stay in `.env`. Operators, their authenticators and the audit log stay in schema `admin`:
 
 ```
