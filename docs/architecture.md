@@ -80,6 +80,37 @@ snippet (`x`) so a quote still reads when the original has aged out of the local
 that does not parse as one of these shapes is treated as plain text, which is what keeps old and
 new builds interoperable in both directions.
 
+**`content_type` is not authenticated.** The server sets it outside the seal and may change it, so a
+client never trusts it to say what the plaintext is. It only picks how a plaintext that passed the
+checks below is drawn.
+
+**Sealed recipient (`to`, security audit M7 and C1).** The `self` box does not say whom it was for,
+so new builds seal the recipient's user id (lowercase UUID; your own id in Notes) as `to` in the
+text envelope (`{"t":"text","c":…,"to":…}`), the media payload and the annotation. On opening, and
+again on every read of a cached plaintext, a client checks it against the chat's *expected
+recipient*: the chat's peer for a message you sent, you for the peer's (you in Notes). The check
+reads the plaintext only, never `content_type`:
+
+1. Strip one leading UTF-8 BOM and surrounding whitespace, and parse the plaintext as JSON. If it
+   is not a JSON object (raw text, broken JSON, an array), it names nobody: **accept**.
+2. If `content_type` is neither `media` nor `annotation` (so `text`, or anything else) and the
+   object is shaped like a media payload (`t` and `k` are both strings) or like an annotation
+   (`t` is the string `"transcript"` and `r` is a string): **refuse** as misfiled, whatever `to`
+   says. Shown as text, its raw JSON (caption, file name, media key, transcript) would be the
+   bubble.
+3. If the object has no `to`, or `to` is `null`, it names nobody (builds from before `to`):
+   **accept**.
+4. If `to` is a string that is the expected recipient's id (compared case-insensitively; web
+   compares the strings, Android and iOS parse an exact UUID): **accept**. Anything else (another
+   id, a number, an empty or padded string): **refuse**.
+
+The rule applies to every object, envelope or not: a bare `{"to":…}` is checked like the
+envelope. A refused message shows as "[Unable to decrypt]" ("Media" for a media label on web),
+is never cached in that chat or acked, and leaves an entry cached for its real chat alone. Web
+`sealedRecipient.ts` and Android `SealedRecipient.kt` implement this rule and share the fixtures of
+their tests. iOS `SealedRecipient.swift` still reads `to` only from the shape `content_type` names
+(the text envelope for `text`) and has to be ported to the same rule.
+
 **Reactions** are not messages. Each user has at most one sealed record per message on the server
 (`message_reactions`, migration 020) — their whole set of emoji — so the server learns who reacted
 to which message and when, never the emoji. They are sealed as a v2 envelope (identity
