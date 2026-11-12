@@ -68,18 +68,16 @@ class SealedRecipientTest {
         assertTrue(accepts(wire, "text", bob))
         assertFalse(accepts(wire, "text", alice))
         assertFalse(accepts(wire, "text", me))
-        assertEquals(SealedRecipient.Named.User(bob), SealedRecipient.named(wire.toByteArray(), "text"))
+        assertEquals(SealedRecipient.Named.User(bob), SealedRecipient.named(wire.toByteArray()))
     }
 
     @Test
-    fun legacyAndTypedTextNamesNobody() {
+    fun legacyTextNamesNobody() {
         assertTrue(accepts("See you at 10", "text", alice))
         val reply = MessageReplyReference(UUID.fromString("3f2504e0-4f89-41d3-9a0c-0305e82c3301"), me, MessageReplyReference.Kind.Text, "10?")
         assertTrue(accepts(MessageTextPayload.wire("Yes", reply), "text", alice))
-        // JSON someone typed is not the envelope, whatever keys it has.
-        assertTrue(accepts("""{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}""", "text", alice))
         assertTrue(accepts("""{"t":"text","c":"x","to":null}""", "text", alice))
-        assertEquals(SealedRecipient.Named.Nobody, SealedRecipient.named("plain".toByteArray(), "text"))
+        assertEquals(SealedRecipient.Named.Nobody, SealedRecipient.named("plain".toByteArray()))
     }
 
     @Test
@@ -87,9 +85,17 @@ class SealedRecipientTest {
         assertFalse(accepts("""{"t":"text","c":"x","to":5}""", "text", alice))
         assertFalse(accepts("""{"t":"text","c":"x","to":""}""", "text", alice))
         assertFalse(accepts("""{"t":"text","c":"x","to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb "}""", "text", bob))
-        assertEquals(SealedRecipient.Named.Invalid, SealedRecipient.named("""{"t":"text","c":"x","to":"nope"}""".toByteArray(), "text"))
+        assertEquals(SealedRecipient.Named.Invalid, SealedRecipient.named("""{"t":"text","c":"x","to":"nope"}""".toByteArray()))
         // Any case of the canonical form is the same id.
         assertTrue(accepts("""{"t":"text","c":"x","to":"BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB"}""", "text", bob))
+    }
+
+    @Test
+    fun theRecipientIsReadFromAnyObjectNotOnlyTheEnvelope() {
+        // Security audit C1: the label does not choose the reader, so a bare object is checked too.
+        assertFalse(accepts("""{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}""", "text", alice))
+        assertTrue(accepts("""{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}""", "text", bob))
+        assertEquals(SealedRecipient.Named.User(bob), SealedRecipient.named("""{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}""".toByteArray()))
     }
 
     // --- Media and annotations ----------------------------------------------------------------------
@@ -105,7 +111,7 @@ class SealedRecipientTest {
         assertFalse(accepts(fixture, "media", alice))
 
         val sealed = MediaMessagePayload(t = "voice", mime = "audio/mp4", w = 0, h = 0, k = "a2V5", d = 1200, to = bob).encoded()
-        assertEquals(SealedRecipient.Named.User(bob), SealedRecipient.named(sealed, "media"))
+        assertEquals(SealedRecipient.Named.User(bob), SealedRecipient.named(sealed))
         assertEquals("voice", MediaMessagePayload.parse(sealed)!!.t)
 
         assertTrue(accepts("""{"t":"voice","mime":"audio/mp4","w":0,"h":0,"k":"a2V5","d":1200}""", "media", alice))
@@ -133,5 +139,45 @@ class SealedRecipientTest {
             """{"t":"transcript","r":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","c":"Hello there"}""",
             String(MessageAnnotation.transcript("Hello there", voice).encoded()),
         )
+    }
+
+    // --- content_type is not sealed (security audit C1) -------------------------------------------
+
+    private fun mediaPayloadNaming(to: UUID) =
+        MediaMessagePayload(t = "file", mime = "application/pdf", w = 0, h = 0, k = "a2V5", n = "contract.pdf", s = 4096, to = to).encoded()
+
+    private fun annotationNaming(to: UUID) =
+        MessageAnnotation.transcript("Alice's transcript", UUID.fromString("3f2504e0-4f89-41d3-9a0c-0305e82c3301"), to = to).encoded()
+
+    @Test
+    fun aPayloadRelabelledAsTextIsCheckedForItsRecipient() {
+        // The server lists my file or transcript for Alice in my chat with Bob, labelled `text`.
+        assertFalse(SealedRecipient.accepts(mediaPayloadNaming(alice), "text", bob))
+        assertFalse(SealedRecipient.accepts(annotationNaming(alice), "text", bob))
+        // Any label but media and annotation reads as text.
+        assertFalse(SealedRecipient.accepts(mediaPayloadNaming(alice), "reaction", bob))
+        // The labels they were sealed with still open them where they belong.
+        assertTrue(SealedRecipient.accepts(mediaPayloadNaming(bob), "media", bob))
+        assertTrue(SealedRecipient.accepts(annotationNaming(bob), MessageAnnotation.CONTENT_TYPE, bob))
+    }
+
+    @Test
+    fun aPayloadLabelledAsTextIsMisfiledWhateverItsRecipient() {
+        // Its raw JSON (caption, file name, key) would be the bubble, so `to` fitting is not enough.
+        assertFalse(SealedRecipient.accepts(mediaPayloadNaming(bob), "text", bob))
+        assertFalse(SealedRecipient.accepts(annotationNaming(bob), "text", bob))
+        assertFalse(accepts("""{"t":"voice","mime":"audio/mp4","w":0,"h":0,"k":"a2V5","d":1200}""", "text", alice))
+        assertFalse(accepts("""{"t":"transcript","r":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","c":"x"}""", "text", alice))
+        // A text envelope is neither: it has no `k`, and its `t` is `text`.
+        assertTrue(accepts(MessageTextPayload.wire("x", null, null, bob), "text", bob))
+    }
+
+    @Test
+    fun aBomOrWhitespaceDoesNotHideTheRecipient() {
+        val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+        assertFalse(SealedRecipient.accepts(bom + mediaPayloadNaming(alice), "text", bob))
+        val envelope = MessageTextPayload.wire("See you at 10", null, null, alice)
+        assertFalse(accepts(" \n$envelope\n ", "text", bob))
+        assertTrue(SealedRecipient.accepts(bom + envelope.toByteArray(), "text", alice))
     }
 }
