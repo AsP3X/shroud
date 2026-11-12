@@ -1,11 +1,14 @@
-//! Column grants for role `shroud_admin` (docs/admin-plan.md R3).
+//! Column grants for role `shroud_admin` (docs/admin-plan.md R3), and the search path of the SQL
+//! a deploy runs as the superuser (security audit A1).
 //!
 //! Run against a throwaway Postgres started with `server/docker/init-admin-role.sh`:
 //! `GRANT_TEST_SUPER_URL` is the table owner, `GRANT_TEST_ADMIN_URL` is `shroud_admin`.
 //! Without those variables the test does not claim to have checked anything.
 
-use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{Connection, PgConnection, PgPool};
 
 #[tokio::test]
 async fn shroud_admin_cannot_read_forbidden_columns() {
@@ -69,6 +72,143 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
         .fetch_all(&admin)
         .await
         .expect("own schema");
+}
+
+/// The API's role must not be able to run code as the superuser through the SQL a deploy runs
+/// (security audit A1, CVE-2018-1058). `shroud_api` owns schema `public`, so an operator it puts
+/// there that matches argument types exactly would win over `pg_catalog`'s on any superuser
+/// session that searches `public`.
+#[tokio::test]
+async fn api_role_cannot_hijack_the_superuser_deploy_sql() {
+    let Some(super_url) = nonempty("GRANT_TEST_SUPER_URL") else {
+        eprintln!("GRANT_TEST_SUPER_URL unset; search_path test not run");
+        return;
+    };
+    let base: PgConnectOptions = super_url.parse().expect("GRANT_TEST_SUPER_URL");
+    let mut owner = PgConnection::connect_with(&base)
+        .await
+        .expect("superuser connection");
+
+    // Human: The role is cluster-wide, so a deployment's real shroud_api would get this test's
+    // password. Refuse instead of touching it.
+    let api_role_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'shroud_api')",
+    )
+    .fetch_one(&mut owner)
+    .await
+    .expect("look up shroud_api");
+    assert!(
+        !api_role_exists,
+        "role shroud_api already exists; run this test on a throwaway Postgres only"
+    );
+
+    // Human: A database of its own, because api-role.sql gives the database and schema public to
+    // shroud_api and pins the superuser's search_path in it; the other tests share theirs.
+    let tag = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_nanos();
+    let probe = format!("shroud_search_path_{}_{tag}", std::process::id());
+    let password = format!("probe{tag}");
+    sqlx::raw_sql(&format!(r#"CREATE DATABASE "{probe}""#))
+        .execute(&mut owner)
+        .await
+        .expect("create the probe database");
+
+    let outcome = plant_and_redeploy(&base, &probe, &password).await;
+
+    // Human: Clean up before asserting, so a failing run does not leave a superuser role behind.
+    // Agent: DROPS only the database and role this test created above.
+    sqlx::raw_sql(&format!(r#"DROP DATABASE "{probe}" WITH (FORCE)"#))
+        .execute(&mut owner)
+        .await
+        .expect("drop the probe database");
+    sqlx::raw_sql("DROP ROLE shroud_api")
+        .execute(&mut owner)
+        .await
+        .expect("drop the probe role");
+
+    let (rolsuper, superuser_search_path) = outcome.expect("plant the operator and redeploy");
+    assert!(
+        !rolsuper,
+        "an operator planted in public by shroud_api ran as the superuser and made shroud_api superuser"
+    );
+    assert_eq!(
+        superuser_search_path, "pg_catalog, pg_temp",
+        "a new superuser session in the API's database still searches a schema shroud_api owns"
+    );
+}
+
+/// Applies `api-role.sql` to `probe` as the superuser, plants `public.<>(oid, regrole)` as
+/// `shroud_api`, and applies the file again as a deploy would. Returns whether `shroud_api` is
+/// then a superuser, and the `search_path` a fresh superuser session in `probe` starts with.
+async fn plant_and_redeploy(
+    base: &PgConnectOptions,
+    probe: &str,
+    password: &str,
+) -> Result<(bool, String), sqlx::Error> {
+    let target = base.clone().database(probe);
+    let role_sql = api_role_sql(probe, password);
+
+    // First deploy, on an empty database (init-api-role.sh).
+    let mut first = PgConnection::connect_with(&target).await?;
+    sqlx::raw_sql(&role_sql).execute(&mut first).await?;
+    first.close().await?;
+
+    // Human: What SQL access as shroud_api allows: an exact-match `<>` for api-role.sql's
+    // `c.relowner <> 'shroud_api'::regrole` (pg_catalog's needs a cast), a table so that
+    // comparison runs, and a database default that puts public back on everyone's path.
+    let mut api =
+        PgConnection::connect_with(&target.clone().username("shroud_api").password(password))
+            .await?;
+    sqlx::raw_sql(&format!(
+        r#"
+        CREATE TABLE public.bait (id int);
+        CREATE FUNCTION public.hijack_ne(oid, regrole) RETURNS boolean LANGUAGE plpgsql AS $fn$
+        BEGIN
+          EXECUTE 'ALTER ROLE shroud_api SUPERUSER';
+          RETURN $1 OPERATOR(pg_catalog.<>) $2::oid;
+        END
+        $fn$;
+        CREATE OPERATOR public.<> (LEFTARG = oid, RIGHTARG = regrole, FUNCTION = public.hijack_ne);
+        ALTER DATABASE "{probe}" SET search_path = public;
+        "#
+    ))
+    .execute(&mut api)
+    .await?;
+    api.close().await?;
+
+    // The next deploy: a new superuser session, as `psql -f` opens one.
+    let mut second = PgConnection::connect_with(&target).await?;
+    sqlx::raw_sql(&role_sql).execute(&mut second).await?;
+    second.close().await?;
+
+    let mut check = PgConnection::connect_with(&target).await?;
+    let superuser_search_path: String = sqlx::query_scalar("SHOW search_path")
+        .fetch_one(&mut check)
+        .await?;
+    let rolsuper: bool =
+        sqlx::query_scalar("SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = 'shroud_api'")
+            .fetch_one(&mut check)
+            .await?;
+    check.close().await?;
+    Ok((rolsuper, superuser_search_path))
+}
+
+/// `server/docker/api-role.sql` with the psql variables deploy passes (`pwd`, `dbname`) filled in
+/// and `\gset` turned into a plain statement end, so sqlx can send it. Both names are letters,
+/// digits and underscores, so no quoting is needed.
+fn api_role_sql(dbname: &str, password: &str) -> String {
+    let file = include_str!("../../../server/docker/api-role.sql");
+    for psql_only in [":'pwd'", r#":"dbname""#, r"\gset"] {
+        assert!(
+            file.contains(psql_only),
+            "api-role.sql no longer uses {psql_only}; update this test's substitution"
+        );
+    }
+    file.replace(":'pwd'", &format!("'{password}'"))
+        .replace(r#":"dbname""#, &format!(r#""{dbname}""#))
+        .replace(r"\gset", ";")
 }
 
 fn nonempty(name: &str) -> Option<String> {

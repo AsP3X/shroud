@@ -235,6 +235,8 @@ sql = { service = "postgres", user = "${POSTGRES_USER:-shroud}", db = "${POSTGRE
 label = "Admin database role"
 when = "profile:admin"
 sql = { service = "postgres", user = "${POSTGRES_USER:-shroud}", db = "${POSTGRES_DB:-shroud}", vars = { dbname = "${POSTGRES_DB:-shroud}" }, sql = '''
+-- pg_catalog only: in the API's database, schema public belongs to shroud_api (security audit A1).
+SET search_path = pg_catalog, pg_temp;
 -- From the environment, not `psql -v`: process arguments show on the host (security audit A6).
 \getenv pwd ADMIN_DB_PASSWORD
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
