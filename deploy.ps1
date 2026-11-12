@@ -879,11 +879,13 @@ try {
             exit 0
         }
         "down"    {
-            $dataDir = Get-DataDir
-            if ($Volumes -and $dataDir) {
-                Write-Step "Removing containers and wiping the Postgres, Nebular and media data in $dataDir..."
+            # Not $dataDir: variable names ignore case, so at script scope that is the [switch]
+            # parameter -DataDir, and assigning a path (or "") to it throws.
+            $dataFolder = Get-DataDir
+            if ($Volumes -and $dataFolder) {
+                Write-Step "Removing containers and wiping the Postgres, Nebular and media data in $dataFolder..."
                 Invoke-Compose @("down", "--volumes", "--remove-orphans")
-                Clear-DataDir $dataDir
+                Clear-DataDir $dataFolder
             } elseif ($Volumes) {
                 Write-Step "Removing containers and named volumes (Postgres, Nebular and media data will be wiped)..."
                 Invoke-Compose @("down", "--volumes", "--remove-orphans")
