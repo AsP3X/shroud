@@ -8,6 +8,11 @@
 -- messages.body, media_objects.bucket, media_objects.object_key, push_tokens.apns_token,
 -- web_push_subscriptions.endpoint, and every key, verifier and pepper column.
 
+-- Only pg_catalog, never public: shroud_api owns public, and an operator or function it creates
+-- there that matches the argument types exactly would win over pg_catalog's and run as whoever
+-- applies this file (security audit A1, CVE-2018-1058). Every table below is named with its schema.
+SET search_path = pg_catalog, pg_temp;
+
 DO $body$
 BEGIN
   IF EXISTS (
@@ -19,29 +24,29 @@ BEGIN
 END
 $body$;
 
-GRANT SELECT (id, created_at, deleted_at) ON users TO shroud_admin;
-GRANT SELECT (id, user_id, created_at, last_seen_at, revoked_at) ON devices TO shroud_admin;
-GRANT SELECT (device_id, revoked_at, last_used_at) ON sessions TO shroud_admin;
-GRANT SELECT (device_id, kind) ON push_tokens TO shroud_admin;
-GRANT SELECT (device_id, client) ON web_push_subscriptions TO shroud_admin;
-GRANT SELECT (device_id, enabled) ON device_notification_settings TO shroud_admin;
-GRANT SELECT (id, uploader_user_id, size_bytes, message_id) ON media_objects TO shroud_admin;
-GRANT SELECT (device_id) ON device_pin_guards TO shroud_admin;
+GRANT SELECT (id, created_at, deleted_at) ON public.users TO shroud_admin;
+GRANT SELECT (id, user_id, created_at, last_seen_at, revoked_at) ON public.devices TO shroud_admin;
+GRANT SELECT (device_id, revoked_at, last_used_at) ON public.sessions TO shroud_admin;
+GRANT SELECT (device_id, kind) ON public.push_tokens TO shroud_admin;
+GRANT SELECT (device_id, client) ON public.web_push_subscriptions TO shroud_admin;
+GRANT SELECT (device_id, enabled) ON public.device_notification_settings TO shroud_admin;
+GRANT SELECT (id, uploader_user_id, size_bytes, message_id) ON public.media_objects TO shroud_admin;
+GRANT SELECT (device_id) ON public.device_pin_guards TO shroud_admin;
 
 -- iPhones whose pushes still carry readable ids: an APNs token but no payload key to seal them
 -- with (older builds). A view, so the privacy checks count them without reading payload_key.
-CREATE OR REPLACE VIEW admin_unsealed_push_devices AS
+CREATE OR REPLACE VIEW public.admin_unsealed_push_devices AS
     SELECT DISTINCT pt.device_id
-    FROM push_tokens pt
-    JOIN devices d ON d.id = pt.device_id AND d.revoked_at IS NULL
+    FROM public.push_tokens pt
+    JOIN public.devices d ON d.id = pt.device_id AND d.revoked_at IS NULL
     WHERE NOT EXISTS (
         SELECT 1
-        FROM push_tokens alert
+        FROM public.push_tokens alert
         WHERE alert.device_id = pt.device_id
           AND alert.kind = 'alert'
           AND alert.payload_key IS NOT NULL
     );
-GRANT SELECT ON admin_unsealed_push_devices TO shroud_admin;
+GRANT SELECT ON public.admin_unsealed_push_devices TO shroud_admin;
 
 RESET ROLE;
 
@@ -63,3 +68,7 @@ BEGIN
   END IF;
 END
 $body$;
+
+-- Hand the session back as it came, like RESET ROLE above: a caller that runs this file on a
+-- pooled connection (the console's tests) goes on to name the API's tables without a schema.
+RESET search_path;

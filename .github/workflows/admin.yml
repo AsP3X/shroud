@@ -6,12 +6,14 @@ on:
       - "admin/api/**"
       - "server/migrations/postgres/**"
       - "server/docker/init-admin-role.sh"
+      - "server/docker/api-role.sql"
       - ".github/workflows/admin.yml"
   pull_request:
     paths:
       - "admin/api/**"
       - "server/migrations/postgres/**"
       - "server/docker/init-admin-role.sh"
+      - "server/docker/api-role.sql"
       - ".github/workflows/admin.yml"
 
 # The jobs only read the repository.
