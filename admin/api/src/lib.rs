@@ -6,7 +6,8 @@
 //!
 //! Every response carries a content security policy and `Referrer-Policy: no-referrer`.
 //! Request bodies are capped at 16 KiB. Each request is logged with an id, the method,
-//! the path and the status. The log line has no client address and no query string.
+//! the path and the status. The log line has no client address and no query string, and a
+//! setup-link token in the path is replaced with `…`.
 //!
 //! This crate is its own Cargo workspace. Build it from `admin/api`.
 
@@ -282,11 +283,11 @@ fn length_limit(err: &impl std::error::Error) -> bool {
 }
 
 /// Security headers, a request id, and one log line. The line is the method, the path
-/// without the query, the status and the id. It does not include an address.
+/// without the query, the status and the id. It does not include an address or a setup token.
 async fn harden(request: Request, next: Next) -> Response {
     let request_id = request_id(request.headers());
     let method = request.method().clone();
-    let path = request.uri().path().to_owned();
+    let path = loggable_path(request.uri().path());
     let span = tracing::info_span!(
         "http",
         request_id = %request_id,
@@ -314,6 +315,23 @@ async fn harden(request: Request, next: Next) -> Response {
     }
     .instrument(span)
     .await
+}
+
+/// Paths whose remainder is a setup-link token: the API route and the UI page that calls it.
+const SETUP_PATHS: [&str; 2] = ["/api/admin/setup/", "/admin/setup/"];
+
+/// The request path as it may appear in a log line.
+// Human: A live setup link lets whoever opens it first choose the operator's password and copy
+// its authenticator secret, so the token must not reach the container's logs (security audit A4).
+// Agent: RETURNS `path` unchanged, or the setup prefix followed by `…` when anything follows it;
+// the token never leaves the request.
+fn loggable_path(path: &str) -> String {
+    for prefix in SETUP_PATHS {
+        if path.len() > prefix.len() && path.starts_with(prefix) {
+            return format!("{prefix}…");
+        }
+    }
+    path.to_owned()
 }
 
 /// Keep a caller's id only when it cannot break a log line. Anything else gets a new one.
@@ -346,8 +364,18 @@ mod tests {
     use tower::ServiceExt;
 
     use super::{
-        ASSET_CACHE, BODY_LIMIT, CONTENT_SECURITY_POLICY, NO_STORE, REFERRER_POLICY, router,
+        ASSET_CACHE, BODY_LIMIT, CONTENT_SECURITY_POLICY, NO_STORE, REFERRER_POLICY, loggable_path,
+        router,
     };
+
+    #[test]
+    fn loggable_path_hides_only_a_setup_token() {
+        assert_eq!(loggable_path("/api/admin/setup/abc"), "/api/admin/setup/…");
+        assert_eq!(loggable_path("/admin/setup/abc/extra"), "/admin/setup/…");
+        assert_eq!(loggable_path("/admin/setup/"), "/admin/setup/");
+        assert_eq!(loggable_path("/api/admin/session"), "/api/admin/session");
+        assert_eq!(loggable_path("/admin/operators"), "/admin/operators");
+    }
 
     static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
