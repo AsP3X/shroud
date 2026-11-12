@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { ChevronLeft, ChevronRight, KeyRound, LogIn, LogOut, ScrollText, Smartphone, UserX, Wrench } from "lucide-react";
+import { ChevronLeft, ChevronRight, KeyRound, LogIn, LogOut, ScrollText, Smartphone, Timer, UserX, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../api/client";
@@ -24,6 +24,7 @@ const ACTIONS: Record<string, { label: string; icon: LucideIcon }> = {
   "session.sign_in": { label: "Signed in", icon: LogIn },
   "session.sign_out": { label: "Signed out", icon: LogOut },
   "session.recovery": { label: "Signed in with a recovery code", icon: KeyRound },
+  "session.sign_in_slowed": { label: "Sign-in slowed down", icon: Timer },
   "setup.complete": { label: "Finished setup", icon: KeyRound },
   "device.remove": { label: "Removed device", icon: Smartphone },
   "user.sign_out_all": { label: "Signed out all devices", icon: LogOut },

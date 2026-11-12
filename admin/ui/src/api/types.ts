@@ -62,7 +62,7 @@ export interface Overview {
     media_migrated_total: number;
     calls_created_total: number;
   };
-  attention: { kind: "no_min_version" | "legacy_media" | "not_ready"; count?: number }[];
+  attention: { kind: "no_min_version" | "legacy_media" | "not_ready" | "sign_in_slowed"; count?: number }[];
 }
 
 export type PushKind = "apns" | "web" | "unifiedpush" | "none" | "mixed";
