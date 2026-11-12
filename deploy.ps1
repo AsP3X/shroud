@@ -702,7 +702,7 @@ function Show-Info {
 
 function Show-Help {
     Write-Host ""
-    Write-Line "  Shroud — API + web client (Docker)" "White"
+    Write-Line "  Shroud - API + web client (Docker)" "White"
     Write-Host ""
     Write-Host "    .\deploy.ps1                     First-time setup, or start / redeploy"
     Write-Host "    .\deploy.ps1 -Init               Force the setup wizard again"
@@ -894,7 +894,7 @@ try {
 
     Write-Host ""
     Write-Line "====================================================" "Cyan"
-    Write-Line "  Shroud — API + web client" "Cyan"
+    Write-Line "  Shroud - API + web client" "Cyan"
     Write-Line "====================================================" "Cyan"
     Write-Host ""
 

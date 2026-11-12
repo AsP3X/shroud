@@ -44,12 +44,12 @@ if ((Test-Path -LiteralPath ".env") -and $env:SHROUD_SETUP_ASSUME_YES -ne "1") {
 
 Write-Host ""
 Write-Host "==============================================" -ForegroundColor Cyan
-Write-Host "  Shroud — first-time setup" -ForegroundColor Cyan
+Write-Host "  Shroud - first-time setup" -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  How will you reach the stack?"
-Write-Host "  1) Local ports     — web :8081, API :8080"
-Write-Host "  2) Nginx Proxy Manager — join proxy-network"
+Write-Host "  1) Local ports     - web :8081, API :8080"
+Write-Host "  2) Nginx Proxy Manager - join proxy-network"
 $modeChoice = Read-Prompt "Choice" "1"
 
 if ($modeChoice -eq "2") {
@@ -156,7 +156,7 @@ if ($TURN_HOST) {
 }
 
 Write-Host ""
-Write-Host "── Admin console ──"
+Write-Host "-- Admin console --"
 Write-Host "  The operator console is a page of this site: $($WEB_PUBLIC_URL.TrimEnd('/'))/admin."
 Write-Host "  To turn it on or off later, use .\deploy.ps1 -Admin. That does not run this wizard."
 $adminChoice = "n"

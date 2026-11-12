@@ -37,6 +37,8 @@ Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the 
 .\deploy.ps1           # Windows
 ```
 
+On Windows, `deploy.ps1` runs in both Windows PowerShell 5.1 (`powershell.exe`, built into Windows) and PowerShell 7 (`pwsh`). Windows PowerShell 5.1 reads a script without a byte order mark as Windows-1252, so the `.ps1` files stay ASCII-only; CI fails on any other character.
+
 ### Operator console
 
 The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`), or of its own host when `ADMIN_HOST` is set, which keeps it on a separate origin from the messenger ([docs/admin.md](docs/admin.md#a-host-of-its-own-recommended)). Its container port stays on the Docker network. The web nginx proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer. Turn it on without re-running the setup wizard:

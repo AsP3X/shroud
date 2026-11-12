@@ -1,0 +1,32 @@
+name: Scripts
+
+on:
+  push:
+    paths:
+      - "**.ps1"
+      - ".github/workflows/scripts.yml"
+  pull_request:
+    paths:
+      - "**.ps1"
+      - ".github/workflows/scripts.yml"
+
+# The jobs only read the repository.
+permissions:
+  contents: read
+
+jobs:
+  ps1-ascii:
+    name: PowerShell scripts are ASCII
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # Windows PowerShell 5.1 reads a .ps1 without a BOM as Windows-1252, so a UTF-8 character
+      # such as an em dash can turn into a closing quote and break parsing of the rest of the file.
+      - name: No non-ASCII byte in a .ps1 file
+        run: |
+          if LC_ALL=C git grep -nP '[^\x00-\x7F]' -- '*.ps1'; then
+            echo "::error::The lines above contain non-ASCII characters. Windows PowerShell 5.1 cannot parse them; use ASCII only."
+            exit 1
+          fi
