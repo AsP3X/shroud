@@ -195,18 +195,21 @@ async fn plant_and_redeploy(
     Ok((rolsuper, superuser_search_path))
 }
 
-/// `server/docker/api-role.sql` with the psql variables deploy passes (`pwd`, `dbname`) filled in
-/// and `\gset` turned into a plain statement end, so sqlx can send it. Both names are letters,
-/// digits and underscores, so no quoting is needed.
+/// `server/docker/api-role.sql` as psql would run it: the `\getenv` that reads the password from
+/// the container's environment dropped, the psql variables (`pwd`, `dbname`) filled in and `\gset`
+/// turned into a plain statement end, so sqlx can send it. Both names are letters, digits and
+/// underscores, so no quoting is needed.
 fn api_role_sql(dbname: &str, password: &str) -> String {
     let file = include_str!("../../../server/docker/api-role.sql");
-    for psql_only in [":'pwd'", r#":"dbname""#, r"\gset"] {
+    let getenv = "\\getenv pwd API_DB_PASSWORD\n";
+    for psql_only in [getenv, ":'pwd'", r#":"dbname""#, r"\gset"] {
         assert!(
             file.contains(psql_only),
             "api-role.sql no longer uses {psql_only}; update this test's substitution"
         );
     }
-    file.replace(":'pwd'", &format!("'{password}'"))
+    file.replace(getenv, "")
+        .replace(":'pwd'", &format!("'{password}'"))
         .replace(r#":"dbname""#, &format!(r#""{dbname}""#))
         .replace(r"\gset", ";")
 }
