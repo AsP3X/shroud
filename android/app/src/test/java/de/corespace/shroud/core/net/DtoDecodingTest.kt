@@ -746,7 +746,7 @@ class DtoDecodingTest {
             AuthSessionResponse.serializer(), MeResponse.serializer(), LimitDeviceDto.serializer(), DeviceLimitDto.serializer(), PasswordChangeRequest.serializer(),
             DeleteAccountRequest.serializer(), HealthResponse.serializer(),
             // Devices
-            LinkedDeviceDto.serializer(), DevicesResponse.serializer(), PutDeviceNameRequest.serializer(),
+            LinkedDeviceDto.serializer(), DevicesResponse.serializer(), PutDeviceNameRequest.serializer(), RemoveDeviceRequest.serializer(),
             // Keys
             SignedPreKeyDto.serializer(), OneTimePreKeyDto.serializer(), PutKeyBundleRequest.serializer(),
             KeyStatusResponse.serializer(), IdentityKeyResponse.serializer(), PeerKeyBundleResponse.serializer(),
