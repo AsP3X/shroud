@@ -196,9 +196,31 @@ impl Config {
             std::env::var("TRUST_PROXY_NETWORKS").ok().as_deref(),
             false,
         )?;
+        let connected = read_connected_networks();
         if trust_proxy_networks {
-            trusted_proxies.extend(read_connected_networks()?);
+            let networks = connected.as_ref().map_err(|err| {
+                AppError::Internal(format!(
+                    "TRUST_PROXY_NETWORKS needs /proc/net/route (Linux): {err}"
+                ))
+            })?;
+            if networks.is_empty() {
+                return Err(AppError::Internal(
+                    "TRUST_PROXY_NETWORKS is on, but this host has no network besides loopback"
+                        .into(),
+                ));
+            }
+            trusted_proxies.extend(networks.iter().copied());
         }
+        // Human: A name without a dot counts only on these networks (ForwardedTrust::accepts);
+        // without /proc that leaves loopback.
+        let local_networks = if trusted_hosts.iter().any(|host| !host.contains('.')) {
+            connected.unwrap_or_else(|err| {
+                tracing::warn!(%err, "no /proc/net/route: TRUSTED_PROXIES names without a dot count on loopback only");
+                Vec::new()
+            })
+        } else {
+            Vec::new()
+        };
         if (!trusted_proxies.is_empty() || !trusted_hosts.is_empty()) && !trust_forwarded_headers {
             tracing::warn!(
                 "TRUSTED_PROXIES and TRUST_PROXY_NETWORKS are ignored while TRUST_FORWARDED_HEADERS is off"
@@ -287,7 +309,8 @@ impl Config {
                 trust_forwarded_headers,
                 trusted_proxies,
                 trusted_hosts,
-            ),
+            )
+            .with_local_networks(local_networks),
             cors_allowed_origins,
             ice_servers: ice.servers,
             turn: ice.turn,
@@ -574,22 +597,13 @@ fn is_host_name(value: &str) -> bool {
             .is_some_and(|label| label.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// The networks this container is attached to (`TRUST_PROXY_NETWORKS`); Linux only.
-fn read_connected_networks() -> Result<Vec<IpRange>, AppError> {
-    let route = std::fs::read_to_string("/proc/net/route").map_err(|err| {
-        AppError::Internal(format!(
-            "TRUST_PROXY_NETWORKS needs /proc/net/route (Linux): {err}"
-        ))
-    })?;
+/// The networks this container is attached to (`TRUST_PROXY_NETWORKS`, and where a
+/// `TRUSTED_PROXIES` name without a dot may point); Linux only.
+fn read_connected_networks() -> std::io::Result<Vec<IpRange>> {
+    let route = std::fs::read_to_string("/proc/net/route")?;
     // No IPv6 in the kernel: no file, and no IPv6 network either.
     let ipv6_route = std::fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default();
-    let networks = crate::rate_limit::connected_networks(&route, &ipv6_route);
-    if networks.is_empty() {
-        return Err(AppError::Internal(
-            "TRUST_PROXY_NETWORKS is on, but this host has no network besides loopback".into(),
-        ));
-    }
-    Ok(networks)
+    Ok(crate::rate_limit::connected_networks(&route, &ipv6_route))
 }
 
 fn parse_bool_env(name: &str, raw: Option<&str>, default: bool) -> Result<bool, AppError> {

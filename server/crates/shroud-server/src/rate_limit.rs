@@ -420,6 +420,8 @@ pub struct ForwardedTrust {
     pub proxies: Vec<IpRange>,
     /// The host names in `TRUSTED_PROXIES`, such as the Compose service `web`.
     pub hosts: Vec<String>,
+    /// The networks this container is on: where a name without a dot may resolve to.
+    pub local_networks: Vec<IpRange>,
     /// What [`Self::resolve_hosts`] last found for `hosts`, shared by every clone.
     resolved: Arc<std::sync::RwLock<Vec<IpAddr>>>,
 }
@@ -435,8 +437,28 @@ impl ForwardedTrust {
             enabled,
             proxies,
             hosts,
+            local_networks: Vec::new(),
             resolved: Arc::default(),
         }
+    }
+
+    pub fn with_local_networks(mut self, networks: Vec<IpRange>) -> Self {
+        self.local_networks = networks;
+        self
+    }
+
+    /// Human: A name without a dot is a Compose service or container name, so it counts only
+    /// on loopback or a network this container is on. While that container does not exist,
+    /// Docker's DNS hands the name to the host's resolvers and their search domains, and a LAN
+    /// host of the same name must not become a proxy. A dotted name (a CDN, a proxy on another
+    /// host) counts wherever it points.
+    fn accepts(&self, host: &str, address: IpAddr) -> bool {
+        host.contains('.')
+            || address.is_loopback()
+            || self
+                .local_networks
+                .iter()
+                .any(|network| network.contains(address))
     }
 
     fn trusts(&self, peer: IpAddr) -> bool {
@@ -450,12 +472,16 @@ impl ForwardedTrust {
     }
 
     /// Looks `hosts` up again. A host that does not resolve (its container is stopped) is
-    /// trusted on no address until it does.
+    /// trusted on no address until it does; see [`Self::accepts`] for the answers kept.
     pub async fn resolve_hosts(&self) {
         let mut found = Vec::new();
         for host in &self.hosts {
             match tokio::net::lookup_host((host.as_str(), 0)).await {
-                Ok(addresses) => found.extend(addresses.map(|address| address.ip().to_canonical())),
+                Ok(addresses) => found.extend(
+                    addresses
+                        .map(|address| address.ip().to_canonical())
+                        .filter(|&address| self.accepts(host, address)),
+                ),
                 Err(err) => tracing::debug!(%host, %err, "trusted proxy did not resolve"),
             }
         }
@@ -961,6 +987,21 @@ mod tests {
             ForwardedTrust::new(true, Vec::new(), vec!["shroud-no-such-host.invalid".into()]);
         gone.resolve_hosts().await;
         assert_eq!(client_ip(&headers, loopback, &gone), "127.0.0.1");
+    }
+
+    #[test]
+    fn a_name_without_a_dot_counts_only_on_this_containers_networks() {
+        let ip = |value: &str| value.parse::<IpAddr>().unwrap();
+        let trust = ForwardedTrust::new(true, Vec::new(), vec!["web".into(), "cdn.example".into()])
+            .with_local_networks(vec![IpRange::parse("172.19.0.0/16").unwrap()]);
+        assert!(trust.accepts("web", ip("172.19.0.7")));
+        assert!(trust.accepts("web", ip("127.0.0.1")));
+        // A LAN host called `web` (or `web.<search domain>`) while the container is gone.
+        assert!(!trust.accepts("web", ip("192.168.1.30")));
+        assert!(!trust.accepts("web", ip("172.20.0.4")));
+        assert!(trust.accepts("cdn.example", ip("192.168.1.30")));
+        let outside_docker = ForwardedTrust::new(true, Vec::new(), vec!["web".into()]);
+        assert!(!outside_docker.accepts("web", ip("172.19.0.7")));
     }
 
     #[test]
