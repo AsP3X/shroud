@@ -674,11 +674,13 @@ async fn audit_log(
     let limit = limit_of(query.limit)?;
     let cursor = cursor_of(query.cursor)?;
     let pool = pool(&state)?;
+    // Human: The name stored with each entry, never the live one: the console's role can rename an
+    // operator, and that must not re-attribute older entries (security audit A5).
+    // Agent: DB SELECT admin.audit_log only; no join on admin.operators.
     let rows = sqlx::query(
-        "SELECT a.at, a.id, o.name AS operator, a.action, a.target_kind, a.target_id,
+        "SELECT a.at, a.id, a.operator_name AS operator, a.action, a.target_kind, a.target_id,
                 a.outcome, a.detail
          FROM admin.audit_log a
-         JOIN admin.operators o ON o.id = a.operator_id
          WHERE (
              $1::uuid IS NULL
              OR a.target_id = $1

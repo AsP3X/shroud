@@ -238,6 +238,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     let left = expires.signed_duration_since(Utc::now());
     assert!(left.num_minutes() >= 29 && left.num_minutes() <= 30);
 
+    let sign_ins_refused = refused_sign_ins(&pool).await;
     let replayed = send(
         &app,
         "POST",
@@ -278,6 +279,45 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         DateTime::parse_from_rfc3339(reauth.body["reauth_until"].as_str().unwrap()).unwrap();
     let window = until.signed_duration_since(Utc::now());
     assert!(window.num_minutes() >= 4 && window.num_minutes() <= 5);
+    // Security audit A5: a step-up is logged under its own action, refused or not, and never as a
+    // sign-in.
+    let stepped: Vec<String> = sqlx::query_scalar(
+        "SELECT outcome || coalesce(' ' || detail, '') FROM admin.audit_log
+         WHERE action = 'session.reauth' ORDER BY at, id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stepped,
+        ["refused Code already used", "refused Wrong code", "ok"]
+    );
+    assert_eq!(refused_sign_ins(&pool).await, sign_ins_refused);
+
+    // Security audit A5: the console's own database role can rename an operator. Entries written
+    // before keep the name they were written under, and the next entry records the rename.
+    sqlx::query("UPDATE admin.operators SET name = 'renamed' WHERE name = 'operator'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let listed = send(
+        &app,
+        "GET",
+        "/api/admin/audit-log?limit=100",
+        None,
+        Some(&cookies.header),
+        None,
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    let names: Vec<&str> = listed.body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["operator"].as_str().unwrap())
+        .collect();
+    assert!(names.len() > 5, "{names:?}");
+    assert!(names.iter().all(|name| *name == "operator"), "{names:?}");
 
     let no_csrf = send(
         &app,
@@ -301,6 +341,25 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     )
     .await;
     assert_eq!(signed_out.status, StatusCode::NO_CONTENT);
+    let latest: Vec<String> = sqlx::query_scalar(
+        "SELECT operator_name || ' ' || action || coalesce(' ' || detail, '') FROM admin.audit_log
+         ORDER BY at DESC, id DESC LIMIT 3",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        latest,
+        [
+            "renamed session.sign_out",
+            "renamed operator.rename Was operator",
+            "operator session.reauth"
+        ]
+    );
+    sqlx::query("UPDATE admin.operators SET name = 'operator' WHERE name = 'renamed'")
+        .execute(&pool)
+        .await
+        .unwrap();
     let gone = send(
         &app,
         "GET",
@@ -471,6 +530,15 @@ struct Cookies {
     session_set: String,
     csrf_set: String,
     csrf: String,
+}
+
+async fn refused_sign_ins(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM admin.audit_log WHERE action = 'session.sign_in' AND outcome = 'refused'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 async fn truncate(pool: &PgPool) {

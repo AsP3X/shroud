@@ -174,10 +174,10 @@ async fn overview_matches_the_schema_and_a_failing_probe_is_not_ready() {
     // Security audit A3: a name that went over the sign-in ceiling in the last 24 hours is a
     // notice. An older crossing is not.
     sqlx::query(
-        "INSERT INTO admin.audit_log (operator_id, action, outcome, detail, at)
-         VALUES ($1, 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour', now()),
-                ($1, 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour', now()),
-                ($1, 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour',
+        "INSERT INTO admin.audit_log (operator_id, operator_name, action, outcome, detail, at)
+         VALUES ($1, 'overview-probe', 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour', now()),
+                ($1, 'overview-probe', 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour', now()),
+                ($1, 'overview-probe', 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour',
                  now() - interval '25 hours')",
     )
     .bind(operator)

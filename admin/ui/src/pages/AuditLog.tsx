@@ -25,6 +25,7 @@ const ACTIONS: Record<string, { label: string; icon: LucideIcon }> = {
   "session.sign_out": { label: "Signed out", icon: LogOut },
   "session.recovery": { label: "Signed in with a recovery code", icon: KeyRound },
   "session.sign_in_slowed": { label: "Sign-in slowed down", icon: Timer },
+  "session.reauth": { label: "Confirmed with a fresh code", icon: KeyRound },
   "setup.complete": { label: "Finished setup", icon: KeyRound },
   "device.remove": { label: "Removed device", icon: Smartphone },
   "user.sign_out_all": { label: "Signed out all devices", icon: LogOut },
@@ -32,6 +33,7 @@ const ACTIONS: Record<string, { label: string; icon: LucideIcon }> = {
   "operator.create": { label: "Invited an operator", icon: KeyRound },
   "operator.update": { label: "Changed an operator", icon: KeyRound },
   "operator.reset_totp": { label: "Reset an authenticator", icon: KeyRound },
+  "operator.rename": { label: "Name changed outside the console", icon: KeyRound },
   "media.orphan_sweep": { label: "Orphan media sweep", icon: Wrench },
 };
 

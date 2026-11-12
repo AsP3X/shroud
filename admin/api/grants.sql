@@ -69,6 +69,33 @@ BEGIN
 END
 $body$;
 
+-- Console migration 004 (security audit A5): each entry keeps the operator's name as it was when
+-- the entry was written. Once the log belongs to this role, only this role can add that column,
+-- so the console's start waits for it here. The names come from admin.operators, which the
+-- console's role owns, so they are read as that role: this role only changes its own table. The
+-- update right that needs is granted and revoked inside this one statement, so no other session
+-- ever sees it.
+DO $body$
+DECLARE
+  audit_log oid := to_regclass('admin.audit_log');
+BEGIN
+  IF audit_log IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = audit_log AND attname = 'operator_name' AND NOT attisdropped
+  ) THEN
+    ALTER TABLE admin.audit_log ADD COLUMN operator_name text NULL;
+    GRANT UPDATE (operator_name) ON admin.audit_log TO shroud_admin;
+    SET LOCAL ROLE shroud_admin;
+    UPDATE admin.audit_log a SET operator_name = o.name
+      FROM admin.operators o WHERE o.id = a.operator_id;
+    RESET ROLE;
+    REVOKE UPDATE (operator_name) ON admin.audit_log FROM shroud_admin;
+    ALTER TABLE admin.audit_log ALTER COLUMN operator_name SET NOT NULL;
+    CREATE INDEX audit_log_operator_idx ON admin.audit_log (operator_id, at DESC, id DESC);
+  END IF;
+END
+$body$;
+
 -- Hand the session back as it came, like RESET ROLE above: a caller that runs this file on a
 -- pooled connection (the console's tests) goes on to name the API's tables without a schema.
 RESET search_path;
