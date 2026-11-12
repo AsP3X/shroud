@@ -144,6 +144,12 @@ The API logs in to Postgres as its own role, `shroud_api`, with `API_DB_PASSWORD
 
 Schema `public` belongs to `shroud_api`, so in the API's database the superuser searches `pg_catalog` alone: a function or operator the API's role put in `public` never runs with the superuser's rights. Every SQL step the deploy runs as the superuser sets this itself, and `api-role.sql` makes it the superuser's default in that database. In `psql` as the superuser, name the API's tables with their schema (`SELECT count(*) FROM public.users`) rather than adding `public` to the search path.
 
+The API's operator listener (`OPERATOR_PORT`, 8090, on while `OPERATOR_TOKEN` is set) is never published. It binds only the API's address on `shroud-internal`, which Compose names with the alias `shroud-api-operator`, so in `npm` mode no container on `proxy-network` can connect to it. The console reaches it at `http://api:8090`.
+
+The web, API, Nebular and console containers run with a read-only root file system, `no-new-privileges`, and every capability dropped except the few their entrypoints need. The web container's nginx writes only its rendered config, its pid and its temp files, all to tmpfs (`/run`, and `/var/cache/nginx` capped at 64 MB). Console requests are capped at 64 KB (413 past that), and API uploads stream through without landing there. It keeps `NET_BIND_SERVICE`, `SETUID`, `SETGID` and `CHOWN`, so its master can bind port 80, start the workers as `nginx` and give them the temp directories.
+
+Every image is pinned by digest with its tag kept in front (`postgres:16-alpine@sha256:…`), in `docker-compose.yml` and in the Dockerfiles, so a pull or rebuild can't swap one. Dependabot (`.github/dependabot.yml`) proposes new digests and new crate, npm and GitHub Actions versions as pull requests against `dev`. The Postgres and Redis digests in `.github/workflows/` and the data tool image of the deploy scripts and `orbit.toml` follow `docker-compose.yml` by hand.
+
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
 
 ### Data storage
@@ -236,6 +242,10 @@ xcodebuild test -scheme shroud -destination 'platform=iOS Simulator,name=iPhone 
 # Without either one they return immediately, so a green run is not proof they executed.
 cd admin/api && cargo test
 cd admin/api && cargo clippy --all-targets -- -D warnings
+# The column grants with the API's own role, on a throwaway Postgres where api-role.sql ran
+# first: the steps of the "grants with the API role" job in .github/workflows/admin.yml.
+cd admin/api && GRANT_TEST_API_URL=postgres://shroud_api:…@localhost:5432/shroud cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql
+cd admin/ui && npm ci --ignore-scripts && npm run typecheck && npm run build
 ```
 
 ## Security

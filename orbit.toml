@@ -193,7 +193,9 @@ volume = "shroud_pg_data"
 folder_setting = "SHROUD_DATA_DIR"
 folder = "${SHROUD_DATA_DIR}/database"
 has_data = "PG_VERSION"
-helper_image = "postgres:16-alpine"
+# The same digest as the postgres service in docker-compose.yml and scripts/compose-env.sh's
+# SHROUD_DATA_TOOL_IMAGE: change them together.
+helper_image = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
 [[storage]]
 name = "nebular"
@@ -204,7 +206,7 @@ folder_setting = "SHROUD_DATA_DIR"
 folder = "${SHROUD_DATA_DIR}/nebular"
 # Nebular runs as uid 10001; a host folder keeps the host user's owner otherwise.
 owner = "10001:10001"
-helper_image = "postgres:16-alpine"
+helper_image = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
 [[storage]]
 name = "media"
@@ -213,7 +215,7 @@ mount = "/data/shroud-media"
 volume = "shroud_media_data"
 folder_setting = "SHROUD_DATA_DIR"
 folder = "${SHROUD_DATA_DIR}/media"
-helper_image = "postgres:16-alpine"
+helper_image = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
 # ── around the start ────────────────────────────────────────────────────────
 

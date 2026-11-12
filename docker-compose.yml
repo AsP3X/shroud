@@ -11,9 +11,10 @@
 #   http://shroud-web:80     → web client (also reverse-proxies /api/v1)
 #   http://shroud-api:8080   → API for the iOS app (/api/v1, /api/v1/ws)
 #
-# Nebular OS is the published image, pinned by digest. Its secrets come from .env, which
-# ./deploy.sh fills in (NOS_JWT_SECRET, NEBULAR_ACCESS_KEY_ID, NEBULAR_SECRET_ACCESS_KEY,
-# NOS_METRICS_TOKEN).
+# Every image, here and in the Dockerfiles, is pinned by digest with its tag kept in front, so a
+# pull can't swap it; Dependabot (.github/dependabot.yml) proposes new digests against dev.
+# Nebular OS's secrets come from .env, which ./deploy.sh fills in (NOS_JWT_SECRET,
+# NEBULAR_ACCESS_KEY_ID, NEBULAR_SECRET_ACCESS_KEY, NOS_METRICS_TOKEN).
 
 x-shroud-logging: &shroud-logging
   RUST_LOG: ${RUST_LOG:-info}
@@ -30,7 +31,7 @@ x-log-rotation: &log-rotation
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     container_name: shroud-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shroud}
@@ -56,7 +57,7 @@ services:
   # Rate-limit windows, presence and live events only: nothing is written to disk, and it
   # needs REDIS_PASSWORD (./deploy.sh fills in a missing one; letters and digits only).
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     container_name: shroud-redis
     command:
       - redis-server
@@ -181,12 +182,13 @@ services:
       MEDIA_DATA_DIR: /data/shroud-media
       HOST: 0.0.0.0
       PORT: "8080"
-      # Operator listener. Same values as the admin service. Not in `ports:`:
-      # only containers on shroud-internal can reach it. Unset token: the API
-      # does not bind the port.
+      # Operator listener. Same values as the admin service. Not in `ports:`. Unset token: the
+      # API does not bind the port.
       OPERATOR_PORT: ${OPERATOR_PORT:-8090}
-      # All of this container's addresses: only the internal network reaches it (not published).
-      OPERATOR_HOST: 0.0.0.0
+      # The alias below, which exists on shroud-internal only: the entrypoint resolves it and the
+      # listener binds that one address, so a container on another network the API joins
+      # (proxy-network with the npm overlay) cannot reach it (security audit A7).
+      OPERATOR_HOST: shroud-api-operator
       OPERATOR_TOKEN: ${OPERATOR_TOKEN:-}
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:8081}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8081}
@@ -236,7 +238,9 @@ services:
       - shroud_media_data:/data/shroud-media
       - ./.shroud-run:/run/shroud:ro
     networks:
-      - shroud-internal
+      shroud-internal:
+        aliases:
+          - shroud-api-operator
     # Writes go to the media volume only (uploads spool into it). The entrypoint starts as root to
     # hand that volume to nobody, then drops to it with gosu: CHOWN and FOWNER for the volume,
     # SETUID and SETGID for the drop, nothing else.
@@ -286,6 +290,24 @@ services:
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     networks:
       - shroud-internal
+    # The root file system is read-only: nginx writes only its config (rendered at start), its
+    # pid and its temp files, all to tmpfs. The master starts as root to bind port 80 and hand the
+    # temp directories to the nginx user its workers run as, and keeps no other capability.
+    # The temp files are request bodies nginx holds for the console and responses it spools: in
+    # memory now, so capped. API uploads stream through and never land there.
+    read_only: true
+    tmpfs:
+      - /run:size=1m
+      - /var/cache/nginx:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ >/dev/null || exit 1"]
       interval: 10s
@@ -389,7 +411,7 @@ services:
   # (coturn's recommended private/reserved ranges are refused), UDP only.
   coturn:
     profiles: ["calls"]
-    image: coturn/coturn:4.6
+    image: coturn/coturn:4.6@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
     container_name: shroud-coturn
     network_mode: host
     # The secret goes into a config file, never onto turnserver's command line: with host

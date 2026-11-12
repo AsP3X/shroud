@@ -1,0 +1,56 @@
+# Version and digest updates, proposed as pull requests against dev (master is the release line).
+# Base and service images are pinned by digest with their tag kept in front (docker-compose.yml);
+# the docker and docker-compose entries move both. The Postgres and Redis digests in
+# .github/workflows/*.yml and the data tool image of the deploy scripts and orbit.toml follow
+# docker-compose.yml by hand: Dependabot does not read them.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - /server
+      - /admin/api
+      - /web/tls
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"
+
+  - package-ecosystem: npm
+    directories:
+      - /web
+      - /admin/ui
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"
+
+  # The Dockerfiles' base images.
+  - package-ecosystem: docker
+    directories:
+      - /server
+      - /admin
+      - /web
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"
+
+  # Postgres, Redis, Nebular OS and coturn in docker-compose.yml.
+  - package-ecosystem: docker-compose
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"

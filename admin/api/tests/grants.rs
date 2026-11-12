@@ -4,6 +4,10 @@
 //! Run against a throwaway Postgres started with `server/docker/init-admin-role.sh`:
 //! `GRANT_TEST_SUPER_URL` is the table owner, `GRANT_TEST_ADMIN_URL` is `shroud_admin`.
 //! Without those variables the test does not claim to have checked anything.
+//!
+//! `GRANT_TEST_API_URL`, when set, is `shroud_api` on a Postgres where `server/docker/api-role.sql`
+//! ran first (CI's API-role job): the server migrations then run as that role, as the API runs them
+//! in a deploy, and `grants.sql` has to take its `SET ROLE shroud_api` branch.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,8 +29,17 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
         .connect(&super_url)
         .await
         .expect("owner connection");
+    let api = match nonempty("GRANT_TEST_API_URL") {
+        Some(api_url) => Some(
+            PgPoolOptions::new()
+                .connect(&api_url)
+                .await
+                .expect("shroud_api connection"),
+        ),
+        None => None,
+    };
     sqlx::migrate!("../../server/migrations/postgres")
-        .run(&owner)
+        .run(api.as_ref().unwrap_or(&owner))
         .await
         .expect("server migrations");
 
@@ -56,6 +69,22 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
         .execute(&owner)
         .await
         .expect("column grants re-apply");
+
+    if api.is_some() {
+        // Human: Made as the API's role, the view belongs to the API like its tables do, so a
+        // later server migration (run as shroud_api) can replace or drop it.
+        let view_owner: String = sqlx::query_scalar(
+            "SELECT pg_catalog.pg_get_userbyid(c.relowner)::text FROM pg_catalog.pg_class c \
+             WHERE c.oid = 'public.admin_unsealed_push_devices'::pg_catalog.regclass",
+        )
+        .fetch_one(&owner)
+        .await
+        .expect("owner of the unsealed-push view");
+        assert_eq!(
+            view_owner, "shroud_api",
+            "grants.sql did not switch to shroud_api for the API's tables"
+        );
+    }
 
     // The plan names this `body`. The column the server stores is `ciphertext`.
     expect_denied(&admin, "SELECT ciphertext FROM messages").await;

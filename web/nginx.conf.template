@@ -43,7 +43,7 @@ server {
     port_in_redirect off;
 
     # The peers that may name the client are the proxies the deployment names, written at start
-    # by nginx-real-ip.sh (conf.d/01-real-ip.conf); none in PROXY_MODE=local.
+    # by nginx-real-ip.sh (/run/nginx/conf.d/01-real-ip.conf); none in PROXY_MODE=local.
     real_ip_header X-Forwarded-For;
     real_ip_recursive on;
 

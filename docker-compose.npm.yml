@@ -15,6 +15,9 @@
 # NPM's address on proxy-network is not known in advance, so api and web trust the networks they
 # are on (TRUST_PROXY_NETWORKS). That is safe only because this overlay publishes no port: only
 # containers on proxy-network and shroud-internal reach them.
+#
+# The API's operator listener (OPERATOR_PORT) binds its shroud-internal address only, so no
+# container on proxy-network reaches it (docker-compose.yml, OPERATOR_HOST).
 
 services:
   api:

@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 
-# nginx image for both the Brotli module build and the final stage, so the module is compiled for
-# exactly the nginx it is loaded into.
-ARG NGINX_IMAGE=nginx:alpine
+# Every base image is pinned by digest with its tag kept in front; Dependabot proposes new ones.
+# The Brotli module build and the final stage name the same nginx, so the module is compiled for
+# exactly the nginx it is loaded into: change both digests together.
 
 # Link-preview TLS client: rustls compiled to WebAssembly (web/tls). clang builds ring's C code
 # for wasm32, llvm-ar archives it, and wasm-bindgen (pinned to the crate's version) writes the
 # JavaScript glue the web client loads on first use.
-FROM rust:1-slim AS link-tls
+FROM rust:1-slim@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7 AS link-tls
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang llvm \
     && rm -rf /var/lib/apt/lists/*
@@ -22,7 +22,7 @@ RUN AR_wasm32_unknown_unknown=llvm-ar sh scripts/build-link-tls.sh
 # official image has no Brotli module, so it is compiled here against the image's own nginx source
 # (--with-compat makes it loadable by the official binary). Only the static module: it serves the
 # copies as they are and links no Brotli library; nothing is compressed per request.
-FROM ${NGINX_IMAGE} AS brotli
+FROM nginx:alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11 AS brotli
 # github.com/google/ngx_brotli, pinned by commit.
 ARG NGX_BROTLI_COMMIT=a71f9312c2deb28875acc7bacfdd5695a111aa53
 RUN apk add --no-cache gcc git libc-dev linux-headers make pcre2-dev zlib-dev
@@ -36,7 +36,7 @@ RUN wget -qO- "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" | tar x
     && make modules \
     && cp objs/ngx_http_brotli_static_module.so /build/
 
-FROM node:22-alpine AS builder
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -47,11 +47,18 @@ ARG WEB_BUILD=""
 ENV VITE_WEB_BUILD=$WEB_BUILD
 RUN npm run build
 
-FROM ${NGINX_IMAGE}
+FROM nginx:alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
 RUN apk add --no-cache wget
 COPY --from=brotli /build/ngx_http_brotli_static_module.so /usr/lib/nginx/modules/
+# Compose runs this image read-only (security audit A7). What the entrypoint writes at start (the
+# rendered template and the trusted proxies) goes to /run/nginx/conf.d, a tmpfs like /run itself,
+# which nginx.conf includes after the baked conf.d. The stock default.conf goes: the template
+# used to overwrite it, and left in place it would answer for Host: localhost.
 # nginx -t fails the build if the module doesn't match this nginx.
 RUN sed -i '1i load_module modules/ngx_http_brotli_static_module.so;' /etc/nginx/nginx.conf \
+    && sed -i 's|^\( *\)include /etc/nginx/conf.d/\*.conf;|&\n\1include /run/nginx/conf.d/*.conf;|' /etc/nginx/nginx.conf \
+    && grep -q '^ *include /run/nginx/conf.d/\*.conf;' /etc/nginx/nginx.conf \
+    && rm /etc/nginx/conf.d/default.conf \
     && nginx -t
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
@@ -60,6 +67,8 @@ COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY api-proxy.conf /etc/nginx/api-proxy.conf
 COPY admin-proxy.conf /etc/nginx/admin-proxy.conf
 COPY --chmod=755 nginx-real-ip.sh /docker-entrypoint.d/15-shroud-real-ip.sh
+# Where the image's entrypoint renders the template; nginx-real-ip.sh makes it first.
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx/conf.d
 # nginx image envsubst only replaces defined environment variables.
 ENV API_UPSTREAM=http://api:8080
 ENV ADMIN_UPSTREAM=http://admin:8082

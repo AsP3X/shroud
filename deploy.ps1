@@ -386,8 +386,9 @@ $script:DataKinds = @(
     @{ Volume = "shroud_nebular_data"; Folder = "nebular" },
     @{ Volume = "shroud_media_data"; Folder = "media" }
 )
-# The image that copies and wipes data owned by the containers' users; the stack already pulls it.
-$script:DataToolImage = "postgres:16-alpine"
+# The image that copies and wipes data owned by the containers' users; the stack already pulls it
+# (the same digest as the postgres service in docker-compose.yml: change both together).
+$script:DataToolImage = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
 # The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
 function Get-ProjectName {

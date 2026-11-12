@@ -41,7 +41,8 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # The digest docker-compose.yml runs: change both together.
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
         env:
           POSTGRES_USER: shroud
           POSTGRES_PASSWORD: shroud
@@ -87,3 +88,72 @@ jobs:
       # The tests share one database and must clean up after themselves.
       - name: cargo test again on the same database
         run: cargo test
+
+  # Human: The deploy order (scripts/compose-env.sh): api-role.sql gives the database to shroud_api,
+  # the API migrates as that role, the console makes its schema, then grants.sql runs as the
+  # superuser and takes its `SET ROLE shroud_api` branch. The job above never creates shroud_api,
+  # so only this one covers that branch.
+  grants-api-role:
+    name: grants with the API role
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin/api
+    env:
+      API_DB_PASSWORD: shroud-api
+
+    services:
+      postgres:
+        # The digest docker-compose.yml runs: change both together.
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: shroud
+          POSTGRES_PASSWORD: shroud
+          POSTGRES_DB: shroud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shroud -d shroud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: admin/api
+
+      # It makes and drops a shroud_api of its own, and refuses to run once the real one exists.
+      - name: Superuser search_path test, before shroud_api exists
+        run: cargo test --test grants api_role_cannot_hijack_the_superuser_deploy_sql
+
+      # The password comes from API_DB_PASSWORD through \getenv, as in the postgres container.
+      - name: Apply api-role.sql as the superuser
+        run: >-
+          psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          -v dbname="$POSTGRES_DB" -f ../../server/docker/api-role.sql
+
+      - name: Create role shroud_admin
+        run: sh ../../server/docker/init-admin-role.sh
+
+      # The column-grant test migrates as shroud_api, applies grants.sql twice as the superuser and
+      # checks the grants and that the view belongs to shroud_api. The audit log tests use probe
+      # databases of their own.
+      - name: Grants tests with the API's tables owned by shroud_api
+        env:
+          GRANT_TEST_API_URL: postgres://shroud_api:shroud-api@localhost:5432/shroud
+        run: cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql
+
+      - name: Apply grants.sql with psql, as deploy does
+        run: psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f grants.sql
+
+      - name: Grants tests again after the psql run
+        env:
+          GRANT_TEST_API_URL: postgres://shroud_api:shroud-api@localhost:5432/shroud
+        run: cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql
