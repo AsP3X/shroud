@@ -1,5 +1,6 @@
 package de.corespace.shroud.core.messaging.local
 
+import de.corespace.shroud.core.net.wire.MessageTextPayload
 import de.corespace.shroud.testing.TempDirRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -40,10 +41,12 @@ class MessagingLocalRepositoryTest {
 
         repository.hydrate(fixture.userId)
 
-        assertEquals("hello", repository.plaintext(messageId, fixture.userId)?.toString(Charsets.UTF_8))
+        // Rewritten as the wire of the bubble, naming the chat's peer as its recipient (M7).
+        val wire = MessageTextPayload.wire("hello", replyTo = null, to = peerId)
+        assertEquals(wire, repository.plaintext(messageId, fixture.userId)?.toString(Charsets.UTF_8))
         // A fresh repository reads the disk copy, not the in-memory one.
         val reopened = fixture.repository()
-        assertEquals("hello", reopened.plaintext(messageId, fixture.userId)?.toString(Charsets.UTF_8))
+        assertEquals(wire, reopened.plaintext(messageId, fixture.userId)?.toString(Charsets.UTF_8))
     }
 
     /** `seededRepository` (`:51-76`). */
