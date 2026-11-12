@@ -150,25 +150,69 @@ $body$;
 
 -- Console migration 004 (security audit A5): each entry keeps the operator's name as it was when
 -- the entry was written. Once the log belongs to this role, only this role can add that column,
--- so the console's start waits for it here. The names come from admin.operators, which the
--- console's role owns, so they are read as that role: this role only changes its own table. The
--- update right that needs is granted and revoked inside this one statement, so no other session
--- ever sees it.
+-- so the console's start waits for it here.
+--
+-- The names come from admin.operators, which the console's role owns, so it can attach code there
+-- that a read by this role would run with this role's rights: a view or rule in the table's place,
+-- a row-level security policy (this role bypasses them, a non-superuser owner of the API tables may
+-- not), or a function in an index expression or predicate, a statistic, a default, a constraint
+-- or a column type (the planner evaluates the constant ones while it plans the read). SET ROLE is
+-- no protection: code run under it can RESET ROLE. So the table is locked, checked for all of
+-- that, and read only when nothing is there. Anything found stops the deploy with nothing
+-- changed, as for the audit log above.
 DO $body$
 DECLARE
   audit_log oid := to_regclass('admin.audit_log');
+  operators oid;
+  attached text;
 BEGIN
   IF audit_log IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM pg_attribute
     WHERE attrelid = audit_log AND attname = 'operator_name' AND NOT attisdropped
   ) THEN
+    LOCK TABLE admin.operators IN ACCESS EXCLUSIVE MODE;
+    operators := to_regclass('admin.operators');
+    SELECT string_agg(what, E'\n' ORDER BY what) INTO attached FROM (
+      SELECT 'admin.operators is not a permanent plain table' AS what
+        FROM pg_class WHERE oid = operators AND (relkind <> 'r' OR relpersistence <> 'p')
+      UNION ALL
+      SELECT pg_describe_object('pg_rewrite'::regclass, oid, 0)
+        FROM pg_rewrite WHERE ev_class = operators
+      UNION ALL
+      SELECT pg_describe_object('pg_policy'::regclass, oid, 0)
+        FROM pg_policy WHERE polrelid = operators
+      UNION ALL
+      SELECT 'row-level security on admin.operators'
+        FROM pg_class WHERE oid = operators AND (relrowsecurity OR relforcerowsecurity)
+      UNION ALL
+      SELECT 'inheritance between ' || inhrelid::regclass::text || ' and ' || inhparent::regclass::text
+        FROM pg_inherits WHERE inhrelid = operators OR inhparent = operators
+      UNION ALL
+      SELECT pg_describe_object(d.classid, d.objid, d.objsubid) || ' uses '
+             || pg_describe_object(d.refclassid, d.refobjid, 0)
+        FROM pg_depend d
+        JOIN (
+          SELECT 'pg_class'::regclass AS classid, operators AS objid
+          UNION ALL SELECT 'pg_class'::regclass, indexrelid FROM pg_index WHERE indrelid = operators
+          UNION ALL SELECT 'pg_attrdef'::regclass, oid FROM pg_attrdef WHERE adrelid = operators
+          UNION ALL SELECT 'pg_constraint'::regclass, oid FROM pg_constraint WHERE conrelid = operators
+          UNION ALL SELECT 'pg_statistic_ext'::regclass, oid FROM pg_statistic_ext WHERE stxrelid = operators
+        ) part ON part.classid = d.classid AND part.objid = d.objid
+        WHERE CASE d.refclassid
+          WHEN 'pg_proc'::regclass THEN (SELECT pronamespace FROM pg_proc WHERE oid = d.refobjid)
+          WHEN 'pg_operator'::regclass THEN (SELECT oprnamespace FROM pg_operator WHERE oid = d.refobjid)
+          WHEN 'pg_type'::regclass THEN (SELECT typnamespace FROM pg_type WHERE oid = d.refobjid)
+        END <> 'pg_catalog'::regnamespace
+    ) found;
+    IF attached IS NOT NULL THEN
+      RAISE EXCEPTION 'admin.operators carries objects that would run with the rights of %, so the audit log''s operator names were not filled in', current_user
+        USING DETAIL = attached,
+              HINT = 'See "If grants.sql refuses the audit log" in docs/admin.md. Nothing was changed.';
+    END IF;
+
     ALTER TABLE admin.audit_log ADD COLUMN operator_name text NULL;
-    GRANT UPDATE (operator_name) ON admin.audit_log TO shroud_admin;
-    SET LOCAL ROLE shroud_admin;
     UPDATE admin.audit_log a SET operator_name = o.name
-      FROM admin.operators o WHERE o.id = a.operator_id;
-    RESET ROLE;
-    REVOKE UPDATE (operator_name) ON admin.audit_log FROM shroud_admin;
+      FROM ONLY admin.operators o WHERE o.id = a.operator_id;
     ALTER TABLE admin.audit_log ALTER COLUMN operator_name SET NOT NULL;
     CREATE INDEX audit_log_operator_idx ON admin.audit_log (operator_id, at DESC, id DESC);
   END IF;
