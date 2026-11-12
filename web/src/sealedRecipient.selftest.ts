@@ -51,8 +51,10 @@ check(!recipientAccepted(sealed, "text", ME), "my id is not Bob's");
 // Legacy: messages from builds before `to` name nobody and are accepted anywhere.
 check(recipientAccepted("See you at 10", "text", ALICE), "raw text names nobody");
 check(recipientAccepted(textPayload("Yes", quote), "text", ALICE), "a legacy reply names nobody");
-// Text someone typed is not an envelope, whatever keys it has.
-check(recipientAccepted(`{"to":"${BOB}"}`, "text", ALICE), "typed JSON without the envelope names nobody");
+// `to` is read from any JSON object, envelope or not (C1): the label does not choose the reader.
+check(!recipientAccepted(`{"to":"${BOB}"}`, "text", ALICE), "a bare object naming Bob is refused in Alice's chat");
+check(recipientAccepted(`{"to":"${BOB}"}`, "text", BOB), "a bare object naming Bob is accepted in Bob's chat");
+check(recipientAccepted(`{"t":"text","c":"x"}`, "text", ALICE), "an envelope without `to` names nobody");
 check(recipientAccepted(`{"t":"text","c":"x","to":null}`, "text", ALICE), "a null `to` names nobody");
 // A `to` that is not an id string fails closed.
 check(!recipientAccepted(`{"t":"text","c":"x","to":5}`, "text", ALICE), "a non-string `to` is refused");
@@ -77,5 +79,35 @@ const annotation = parseAnnotation(annotationFixture);
 check(annotation?.c === "Hello there" && annotation.r === "3f2504e0-4f89-41d3-9a0c-0305e82c3301", "the annotation parser reads it");
 check(recipientAccepted(annotationFixture, "annotation", BOB), "an annotation names Bob");
 check(!recipientAccepted(annotationFixture, "annotation", ME), "an annotation for Bob is refused for me");
+
+/* --- content_type is not sealed (security audit C1) ---------------------------- */
+
+// The server relabels my photo, file or voice note to Alice, or my transcript in her chat, as
+// `text` and lists it in my chat with Bob. `to` is read whatever the label says.
+function mediaPayloadNaming(to: string): string {
+  return JSON.stringify({ t: "file", mime: "application/pdf", w: 0, h: 0, k: "a2V5", n: "contract.pdf", s: 4096, to });
+}
+function annotationNaming(to: string): string {
+  return JSON.stringify({ t: "transcript", r: "3f2504e0-4f89-41d3-9a0c-0305e82c3301", c: "Alice's transcript", to });
+}
+check(!recipientAccepted(mediaPayloadNaming(ALICE), "text", BOB), "a media payload for Alice labelled text is refused");
+check(!recipientAccepted(annotationNaming(ALICE), "text", BOB), "an annotation for Alice labelled text is refused");
+check(!recipientAccepted(mediaPayloadNaming(ALICE), "reaction", BOB), "any label but media and annotation reads as text");
+// A text message holding a media payload or an annotation is misfiled, even when `to` fits or
+// is missing: its raw JSON (caption, file name, key) would be the bubble.
+check(!recipientAccepted(mediaPayloadNaming(BOB), "text", BOB), "a media payload for Bob labelled text is misfiled");
+check(!recipientAccepted(annotationNaming(BOB), "text", BOB), "an annotation for Bob labelled text is misfiled");
+check(!recipientAccepted(legacyMedia, "text", ALICE), "a legacy media payload labelled text is misfiled");
+check(
+  !recipientAccepted('{"t":"transcript","r":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","c":"x"}', "text", ALICE),
+  "a legacy annotation labelled text is misfiled",
+);
+// The labels they were sealed with still open them where they belong.
+check(recipientAccepted(mediaPayloadNaming(BOB), "media", BOB), "the media payload opens as media in Bob's chat");
+check(recipientAccepted(annotationNaming(BOB), "annotation", BOB), "the annotation opens as an annotation in Bob's chat");
+// Read like a payload: a leading BOM and surrounding whitespace do not hide `to`.
+check(!recipientAccepted(`\uFEFF${mediaPayloadNaming(ALICE)}`, "text", BOB), "a BOM does not hide the payload");
+check(!recipientAccepted(` \n${sealed}\n `, "text", ALICE), "whitespace does not hide `to`");
+check(recipientAccepted(`\uFEFF${sealed}`, "text", BOB), "a BOM-led envelope naming Bob opens in Bob's chat");
 
 console.log("sealed recipient selftest ok");

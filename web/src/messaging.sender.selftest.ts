@@ -1,7 +1,7 @@
 /**
  * A message id is not a capability. Cached plaintext is reused only for the same sender,
  * a message from someone outside the chat never opens, a cached body that names another
- * recipient is not shown, and an idempotent media replay remembers the row the server kept.
+ * recipient is not shown (whatever `content_type` says), and an idempotent media replay remembers the row the server kept.
  * Run: `npx tsx src/messaging.sender.selftest.ts`.
  */
 import type { WireMessage } from "./api/client";
@@ -272,5 +272,35 @@ const refiledPreview = loadPreview(ME, BOB);
 check(refiledPreview?.id === TO_ALICE && refiledPreview.failed === true, "the chat list does not show it either");
 check(refiledPreview?.text !== "only for Alice", "the body stays out of Bob's chat row");
 check(loadPlaintext(TO_ALICE, ME) !== null, "Alice's chat keeps its body");
+
+/*
+ * Security audit C1: `content_type` is not sealed. The server lists the photo and the transcript
+ * for Alice again, relabelled `text`; the cached bodies are read as payloads all the same, and a
+ * media payload without `to` is misfiled as text too. None of the raw JSON reaches a bubble.
+ */
+const LEGACY_MEDIA = "dededede-dede-4ede-8ede-dededededede";
+savePlaintext(LEGACY_MEDIA, ME, JSON.stringify({ t: "voice", mime: "audio/mp4", w: 0, h: 0, k: "a2V5", d: 1200 }));
+for (const [id, what] of [
+  [MEDIA_TO_ALICE, "a photo for Alice"],
+  [ANNOTATION_TO_ALICE, "a transcript for Alice"],
+  [LEGACY_MEDIA, "a legacy voice note"],
+] as const) {
+  const relabelled = await decodeIncoming(wire(ME, { id }), ME, BOB, TOKEN, material);
+  check(relabelled.failed === true && relabelled.text === "[Unable to decrypt]", `${what} labelled text does not show`);
+}
+const mediaAtHome = await decodeIncoming(
+  wire(ME, { id: MEDIA_TO_ALICE, content_type: "media" }),
+  ME,
+  ALICE,
+  TOKEN,
+  material,
+);
+check(mediaAtHome.failed !== true && mediaAtHome.caption === "for Alice", "the photo still shows in Alice's chat");
+listed = [wire(ME, { id: MEDIA_TO_ALICE, created_at: "2026-10-05T12:00:00.000Z" })];
+await hydratePreviews(TOKEN, ME, [{ id: BOB, lastMessageAt: "2026-10-05T12:00:00.000Z" }], material);
+listed = null;
+const relabelledPreview = loadPreview(ME, BOB);
+check(relabelledPreview?.id === MEDIA_TO_ALICE && relabelledPreview.failed === true, "the chat list refuses it too");
+check(!relabelledPreview?.text.includes("for Alice"), "the caption stays out of Bob's chat row");
 
 console.log("sender selftest ok");
