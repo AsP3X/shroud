@@ -53,6 +53,13 @@ Windows uses `.\deploy.ps1 -Admin` with the same words. Backup, a lost `ADMIN_SE
 
 Sign in with a password and an authenticator app. A recovery code stands in for the app. Two roles: **Admin** can change things, **View only** can read the pages. A change asks for a fresh authenticator code, and that code stays valid for five minutes. Each code works once, so the code that signed in can't also approve a change. Every sign-in and change is kept in the audit log.
 
+Failed sign-ins for one operator name where the password was right have a ceiling, counted across all addresses. Past it, each further attempt with that password waits its turn, so someone who knows a password can't guess codes quickly from many addresses. A wrong password never counts, so knowing a name alone slows nothing down. Both numbers are set in `.env` ([docs/admin.md](docs/admin.md#sign-in-limits)):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ADMIN_SIGN_IN_CEILING` | `50` | Failed sign-ins with the right password for one operator name in an hour before its attempts slow down |
+| `ADMIN_SIGN_IN_DELAY_SECS` | `30` | Seconds between that name's attempts past the ceiling (1 to 3600) |
+
 | Page | What it shows |
 | --- | --- |
 | Overview | Whether Postgres, Redis and the media store answer, which push and call services are configured, and counters since the API last started |

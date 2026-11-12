@@ -926,7 +926,7 @@
       },
       "clip": true,
       "width": 1440,
-      "height": 900,
+      "height": 1014,
       "fill": "$bg",
       "children": [
         {
@@ -1819,6 +1819,62 @@
                             20
                           ],
                           "children": [
+                            {
+                              "type": "frame",
+                              "id": "aZVtS",
+                              "name": "Item · Sign-in slowed",
+                              "width": "fill_container",
+                              "gap": 12,
+                              "padding": [
+                                12,
+                                0
+                              ],
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "w1eov0",
+                                  "name": "Icon",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "triangle-alert",
+                                  "library": "lucide",
+                                  "fill": "$warn"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "PxPvY",
+                                  "name": "Text",
+                                  "width": "fill_container",
+                                  "layout": "vertical",
+                                  "gap": 3,
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "Bk6nm",
+                                      "name": "Title",
+                                      "fill": "$text-primary",
+                                      "content": "Sign-in slowed down for 1 operator",
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 13,
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "x33yWa",
+                                      "name": "Body",
+                                      "fill": "$text-tertiary",
+                                      "textGrowth": "fixed-width",
+                                      "width": "fill_container",
+                                      "content": "Too many sign-ins failed for one name in an hour, so each attempt now waits its turn. Someone may know the password: check the audit log, and change it if those attempts weren't yours.",
+                                      "lineHeight": 1.45,
+                                      "fontFamily": "$font-ui",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
                             {
                               "type": "frame",
                               "id": "asDYu",

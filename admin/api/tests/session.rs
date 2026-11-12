@@ -3,9 +3,11 @@
 //! Set `ADMIN_TEST_DATABASE_URL` to a `shroud_admin` connection. Without it the test does not
 //! claim to have checked the database.
 
-use std::time::Instant;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use chrono::{DateTime, Utc};
 use http_body_util::BodyExt;
@@ -19,6 +21,8 @@ use tower::ServiceExt;
 
 const KEY_HEX: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const PASSWORD: &str = "correct-horse";
+/// The sign-in delay of the slowed-name check.
+const SLOW_TURN: Duration = Duration::from_secs(5);
 
 #[tokio::test]
 async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
@@ -338,6 +342,81 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     .await;
     assert_eq!(again.status, StatusCode::UNAUTHORIZED);
 
+    // Security audit A3: one name's failures with the right password, from every address
+    // together, slow its sign-ins down without locking them. Ceiling 3 and 5 s here; 50 and 30 s
+    // by default. A wrong password never counts, so knowing the name alone slows nothing. The turn
+    // is taken after the password hash, so the delay stays well above a debug build's hash time.
+    let slowed_app = router_with(
+        None,
+        AppState::connected(pool.clone(), key).with_sign_in_ceiling(3, SLOW_TURN),
+    );
+    for n in 0..6 {
+        let no_password = recover_from(
+            &slowed_app,
+            &format!("192.0.2.{n}"),
+            "wrong-password-xx",
+            "AAAA-BBBB",
+        )
+        .await;
+        assert_eq!(no_password.status, StatusCode::UNAUTHORIZED);
+    }
+    for n in 0..4 {
+        let failed = recover_from(
+            &slowed_app,
+            &format!("203.0.113.{n}"),
+            PASSWORD,
+            "AAAA-BBBB",
+        )
+        .await;
+        assert_eq!(failed.status, StatusCode::UNAUTHORIZED, "attempt {}", n + 1);
+    }
+    let waiting = recover_from(&slowed_app, "198.51.100.1", PASSWORD, "AAAA-BBBB").await;
+    assert_eq!(waiting.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_fixture(
+        &waiting.text,
+        include_str!("../fixtures/error.rate-limited.json"),
+    );
+    let retry: u64 = waiting.headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=SLOW_TURN.as_secs()).contains(&retry));
+    let no_password = recover_from(
+        &slowed_app,
+        "198.51.100.9",
+        "wrong-password-xx",
+        "AAAA-BBBB",
+    )
+    .await;
+    assert_eq!(
+        no_password.status,
+        StatusCode::UNAUTHORIZED,
+        "a wrong password neither waits nor takes the turn"
+    );
+    let spare = codes[1].as_str().unwrap();
+    let early = recover_from(&slowed_app, "198.51.100.2", PASSWORD, spare).await;
+    assert_eq!(early.status, StatusCode::TOO_MANY_REQUESTS);
+    tokio::time::sleep(SLOW_TURN + Duration::from_millis(100)).await;
+    let after_delay = recover_from(&slowed_app, "198.51.100.2", PASSWORD, spare).await;
+    assert_eq!(
+        after_delay.status,
+        StatusCode::NO_CONTENT,
+        "a correct sign-in gets in after the delay"
+    );
+    let still_slowed = recover_from(&slowed_app, "198.51.100.3", PASSWORD, "AAAA-BBBB").await;
+    assert_eq!(still_slowed.status, StatusCode::TOO_MANY_REQUESTS);
+    let slowed: Vec<String> = sqlx::query_scalar(
+        "SELECT detail FROM admin.audit_log WHERE action = 'session.sign_in_slowed' AND outcome = 'refused'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        slowed,
+        ["3 failed sign-ins with the right password in an hour"]
+    );
+
     let actions: Vec<String> = sqlx::query_scalar(
         "SELECT action || ' ' || outcome FROM admin.audit_log ORDER BY at, action",
     )
@@ -457,6 +536,20 @@ async fn sign_in(app: &axum::Router, operator: &str, password: &str, code: &str)
     .await
 }
 
+/// A recovery sign-in from `peer`, the address the console counts failures against.
+async fn recover_from(app: &axum::Router, peer: &str, password: &str, code: &str) -> Reply {
+    let body =
+        format!(r#"{{"operator":"operator","password":"{password}","recovery_code":"{code}"}}"#);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/admin/session/recovery")
+        .header(header::CONTENT_TYPE, "application/json")
+        .extension(ConnectInfo(SocketAddr::new(peer.parse().unwrap(), 40000)))
+        .body(Body::from(body))
+        .unwrap();
+    reply(app, request).await
+}
+
 async fn send(
     app: &axum::Router,
     method: &str,
@@ -475,15 +568,14 @@ async fn send(
     if let Some(csrf) = csrf {
         request = request.header("x-admin-csrf", csrf);
     }
-    let response = app
-        .clone()
-        .oneshot(
-            request
-                .body(Body::from(body.unwrap_or("").to_owned()))
-                .unwrap(),
-        )
-        .await
+    let request = request
+        .body(Body::from(body.unwrap_or("").to_owned()))
         .unwrap();
+    reply(app, request).await
+}
+
+async fn reply(app: &axum::Router, request: Request<Body>) -> Reply {
+    let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();

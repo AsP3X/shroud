@@ -66,6 +66,11 @@ const ATTENTION: Record<OverviewData["attention"][number]["kind"], { title: (n?:
     body: "Check the database and Redis containers. The server reconnects by itself once they answer.",
     to: "/",
   },
+  sign_in_slowed: {
+    title: (n) => `Sign-in slowed down for ${n === undefined ? "an" : count(n)} operator${n === undefined || n === 1 ? "" : "s"}`,
+    body: "Too many sign-ins failed for one name in an hour, so each attempt now waits its turn. Someone may know the password: check the audit log, and change it if those attempts weren't yours.",
+    to: "/audit-log",
+  },
 };
 
 const keyed = (data: OverviewData) => services(data).map((row) => ({ key: row.name, state: row.label }));

@@ -171,6 +171,31 @@ async fn overview_matches_the_schema_and_a_failing_probe_is_not_ready() {
     let after_delete = count_rows(&admin).await;
     assert!(after_delete.accounts < expected.accounts);
 
+    // Security audit A3: a name that went over the sign-in ceiling in the last 24 hours is a
+    // notice. An older crossing is not.
+    sqlx::query(
+        "INSERT INTO admin.audit_log (operator_id, action, outcome, detail, at)
+         VALUES ($1, 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour', now()),
+                ($1, 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour', now()),
+                ($1, 'session.sign_in_slowed', 'refused', '50 failed sign-ins with the right password in an hour',
+                 now() - interval '25 hours')",
+    )
+    .bind(operator)
+    .execute(&owner)
+    .await
+    .unwrap();
+    let slowed = send(&app, Some(SESSION)).await;
+    assert_eq!(slowed.status, StatusCode::OK, "{}", slowed.text);
+    assert_schema(&slowed.body);
+    assert_eq!(slowed.body["attention"][0]["kind"], "sign_in_slowed");
+    assert_eq!(slowed.body["attention"][0]["count"], 1);
+    assert_eq!(slowed.body["attention"][1]["kind"], "legacy_media");
+    sqlx::query("DELETE FROM admin.audit_log WHERE operator_id = $1")
+        .bind(operator)
+        .execute(&owner)
+        .await
+        .unwrap();
+
     configure_env(false);
     let open = send(&app, Some(SESSION)).await;
     assert_eq!(open.status, StatusCode::OK, "{}", open.text);
@@ -240,6 +265,11 @@ async fn count_rows(pool: &PgPool) -> Counts {
 }
 
 async fn clear(admin: &PgPool, owner: &PgPool, operator: Uuid, users: &[Uuid]) {
+    sqlx::query("DELETE FROM admin.audit_log WHERE operator_id = $1")
+        .bind(operator)
+        .execute(owner)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM admin.operator_sessions WHERE operator_id = $1")
         .bind(operator)
         .execute(admin)
