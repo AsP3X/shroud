@@ -1,7 +1,8 @@
 //! Request log lines: an id, the method, the path and the status.
 //!
 //! This is its own binary so the tracing callsite is first seen with this subscriber.
-//! A client address in the query or in forwarding headers must not be on the line.
+//! A client address in the query or in forwarding headers must not be on the line, and neither
+//! may a setup-link token in the path.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,7 +14,7 @@ use shroud_admin::router;
 use tower::ServiceExt;
 
 #[test]
-fn request_log_carries_the_id_and_not_a_client_address() {
+fn request_log_carries_the_id_and_not_a_client_address_or_setup_token() {
     let buf = Arc::new(Mutex::new(String::new()));
     let subscriber = Capture {
         next: AtomicU64::new(1),
@@ -76,6 +77,26 @@ fn request_log_carries_the_id_and_not_a_client_address() {
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
             "{id}"
         );
+
+        // The API route and the UI page both carry the token in the path. The UI is not
+        // built here, so the page answers 404, which is still logged.
+        for (method, uri) in [
+            ("GET", format!("/api/admin/setup/{SETUP_TOKEN}")),
+            ("POST", format!("/api/admin/setup/{SETUP_TOKEN}")),
+            ("GET", format!("/admin/setup/{SETUP_TOKEN}")),
+        ] {
+            router(None)
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
     });
 
     let text = buf
@@ -90,7 +111,13 @@ fn request_log_carries_the_id_and_not_a_client_address() {
     assert!(!text.contains("198.51.100.20"), "{text}");
     assert!(!text.contains("client="), "{text}");
     assert!(!text.contains('?'), "{text}");
+    assert!(!text.contains(SETUP_TOKEN), "{text}");
+    assert!(text.contains("/api/admin/setup/…"), "{text}");
+    assert!(text.contains("/admin/setup/…"), "{text}");
+    assert!(text.contains("POST"), "{text}");
 }
+
+const SETUP_TOKEN: &str = "tok_9QmZ2xV7sKp4rT1wLc8nYb3d";
 
 struct Capture {
     next: AtomicU64,
