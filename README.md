@@ -73,8 +73,12 @@ Message text, photos, voice, device names, username hashes and password hashes a
 
 | `PROXY_MODE` | How you reach it |
 | --- | --- |
-| `local` (default) | Web `http://localhost:8081`, API `http://localhost:8080/api/v1` |
+| `local` (default) | Web `http://localhost:8081` (every interface), API `http://localhost:8080/api/v1` (this machine only) |
 | `npm` | Joins the external `proxy-network`. NPM hosts: `http://shroud-web:80`, `http://shroud-api:8080` |
+
+In `local` mode the API port binds to `127.0.0.1`. Phones and other devices on the LAN reach the API through the web port, `http://<this machine>:8081/api/v1`. To expose the API port itself on the LAN, set `API_BIND=0.0.0.0` in `.env`.
+
+Rate limits per IP address count the client a trusted proxy names in `X-Real-IP` / `X-Forwarded-For`, and the address of any other peer. A private address alone is not trusted (security audit S3). In `local` mode the API trusts only the web container's nginx, and nginx trusts nothing in front of it. So every client on the LAN is keyed on its own address, or on Docker's gateway under Docker Desktop and rootless Docker. In `npm` mode, nothing is published, so the API and nginx trust the Compose networks they are on (`TRUST_PROXY_NETWORKS`), which is where NPM connects from. Put a CDN or a proxy on another host in `TRUSTED_PROXIES` (addresses, CIDR ranges or host names). Both the API and nginx read it.
 
 The wizard asks for the **public web URL** (and API URL for iOS). The browser always talks same-origin (`/api/v1` proxied by web nginx). `WEB_PUBLIC_URL` is also sent to the API as CORS for split-origin setups.
 
@@ -110,7 +114,7 @@ Those commands start the API, the web client, Postgres, Redis and Nebular. The o
 | Service | Local port | Notes |
 | --- | --- | --- |
 | `web` | `8081` | SPA + reverse-proxy `/api/v1` (incl. WebSocket), `/admin` and `/api/admin` |
-| `api` | `8080` | Axum `/api/v1`; iOS talks here; migrations on startup |
+| `api` | `127.0.0.1:8080` | Axum `/api/v1`; iOS talks here; migrations on startup. This machine only unless `API_BIND` is set |
 | `nebular` | `127.0.0.1:9000` | Media store (this machine only); clients use API `/media/{id}/content` |
 | `postgres` | `127.0.0.1:5432` | Database (this machine only); user/db from `.env` |
 | `redis` | `127.0.0.1:6379` | Fan-out, presence and shared rate limits (this machine only). Needs `REDIS_PASSWORD`. Nothing is kept on disk |

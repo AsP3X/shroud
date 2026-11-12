@@ -39,7 +39,7 @@ Deploy: `./deploy.sh` / `.\deploy.ps1`.
 .\deploy.ps1           # Windows
 ```
 
-`PROXY_MODE=local` publishes `:8081` (web) and `:8080` (API).
+`PROXY_MODE=local` publishes `:8081` (web) and `127.0.0.1:8080` (API; `API_BIND=0.0.0.0` exposes it on the LAN).
 `PROXY_MODE=npm` joins `proxy-network`; point Nginx Proxy Manager at `shroud-web:80` and `shroud-api:8080`.
 
 ## PR plan
