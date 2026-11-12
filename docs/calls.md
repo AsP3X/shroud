@@ -590,7 +590,8 @@ pushes; a muted chat does not.
 
 coturn runs in the host's network namespace (it needs thousands of relay ports) behind the
 Compose profile `calls`. It accepts only logins the API minted: `--use-auth-secret` with
-`TURN_SECRET`, username `<expiry>:<32 random hex digits>` (random per login, so coturn never
+`TURN_SECRET` (as `static-auth-secret` in a config file it writes to a tmpfs as it starts, never on
+its command line, which `ps` shows to every user on the host), username `<expiry>:<32 random hex digits>` (random per login, so coturn never
 learns the account), password `base64(HMAC-SHA1(TURN_SECRET, username))`, valid for
 `TURN_CREDENTIAL_TTL_SECS` (12 h). It refuses to relay to loopback,
 private, link-local, CGNAT, multicast and other reserved ranges (so a TURN login cannot reach
