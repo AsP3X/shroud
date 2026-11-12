@@ -1,7 +1,8 @@
 # Multi-stage build for shroud-server (Axum API).
 # Agent: Builds release binary; runtime is distroless/debian slim; no secrets in image.
+# Base images are pinned by digest with their tag kept in front; Dependabot proposes new ones.
 
-FROM rust:1-bookworm AS builder
+FROM rust:1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 
 WORKDIR /app
 
@@ -23,7 +24,7 @@ COPY migrations migrations
 RUN touch crates/shroud-server/src/main.rs crates/shroud-server/src/lib.rs \
     && cargo build --release -p shroud-server
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 gosu curl \

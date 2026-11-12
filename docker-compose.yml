@@ -11,9 +11,10 @@
 #   http://shroud-web:80     → web client (also reverse-proxies /api/v1)
 #   http://shroud-api:8080   → API for the iOS app (/api/v1, /api/v1/ws)
 #
-# Nebular OS is the published image, pinned by digest. Its secrets come from .env, which
-# ./deploy.sh fills in (NOS_JWT_SECRET, NEBULAR_ACCESS_KEY_ID, NEBULAR_SECRET_ACCESS_KEY,
-# NOS_METRICS_TOKEN).
+# Every image, here and in the Dockerfiles, is pinned by digest with its tag kept in front, so a
+# pull can't swap it; Dependabot (.github/dependabot.yml) proposes new digests against dev.
+# Nebular OS's secrets come from .env, which ./deploy.sh fills in (NOS_JWT_SECRET,
+# NEBULAR_ACCESS_KEY_ID, NEBULAR_SECRET_ACCESS_KEY, NOS_METRICS_TOKEN).
 
 x-shroud-logging: &shroud-logging
   RUST_LOG: ${RUST_LOG:-info}
@@ -30,7 +31,7 @@ x-log-rotation: &log-rotation
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     container_name: shroud-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shroud}
@@ -56,7 +57,7 @@ services:
   # Rate-limit windows, presence and live events only: nothing is written to disk, and it
   # needs REDIS_PASSWORD (./deploy.sh fills in a missing one; letters and digits only).
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
     container_name: shroud-redis
     command:
       - redis-server
@@ -408,7 +409,7 @@ services:
   # (coturn's recommended private/reserved ranges are refused), UDP only.
   coturn:
     profiles: ["calls"]
-    image: coturn/coturn:4.6
+    image: coturn/coturn:4.6@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
     container_name: shroud-coturn
     network_mode: host
     # The secret goes into a config file, never onto turnserver's command line: with host

@@ -300,8 +300,9 @@ shroud_unset_env_value() {
 # Storage is either named volumes, written "" below, or a folder: SHROUD_DATA_DIR resolved by
 # shroud_resolve_data_dir. Each holds three kinds of data, as <volume>:<subfolder>.
 SHROUD_DATA_KINDS="shroud_pg_data:database shroud_nebular_data:nebular shroud_media_data:media"
-# The image that copies and wipes data owned by the containers' users; the stack already pulls it.
-SHROUD_DATA_TOOL_IMAGE="postgres:16-alpine"
+# The image that copies and wipes data owned by the containers' users; the stack already pulls it
+# (the same digest as the postgres service in docker-compose.yml: change both together).
+SHROUD_DATA_TOOL_IMAGE="postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
 # The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
 shroud_project_name() {

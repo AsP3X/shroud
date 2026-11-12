@@ -29,7 +29,8 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # The digest docker-compose.yml runs: change both together.
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
         env:
           POSTGRES_USER: shroud
           POSTGRES_PASSWORD: shroud
@@ -43,7 +44,8 @@ jobs:
           --health-retries 10
 
       redis:
-        image: redis:7-alpine
+        # The digest docker-compose.yml runs: change both together.
+        image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
         ports:
           - 6379:6379
         options: >-
