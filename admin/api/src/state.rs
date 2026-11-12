@@ -1,11 +1,11 @@
-//! Shared process state: the database pool, the encryption key, and the sign-in limiter.
+//! Shared process state: the database pool, the encryption key, and the sign-in limits.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use sqlx::PgPool;
 
-use crate::limit::RateLimiter;
+use crate::limit::{NameCeiling, RateLimiter};
 use crate::password;
 
 /// Table counts. Refreshed at most once a minute (plan rule R8).
@@ -28,6 +28,7 @@ pub struct AppState {
     pool: Option<PgPool>,
     key: Option<[u8; 32]>,
     limiter: Arc<RateLimiter>,
+    name_ceiling: Arc<NameCeiling>,
     counts: Arc<Mutex<Option<CachedCounts>>>,
 }
 
@@ -37,6 +38,7 @@ impl AppState {
             pool: None,
             key: None,
             limiter: Arc::new(RateLimiter::new()),
+            name_ceiling: Arc::new(NameCeiling::default()),
             counts: Arc::new(Mutex::new(None)),
         }
     }
@@ -47,8 +49,17 @@ impl AppState {
             pool: Some(pool),
             key: Some(key),
             limiter: Arc::new(RateLimiter::new()),
+            name_ceiling: Arc::new(NameCeiling::default()),
             counts: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Past `ceiling` failed sign-ins for one operator name in an hour, from every address
+    /// together, each further attempt for it starts at most once per `delay` (security audit A3).
+    /// Without this call the defaults apply: 50 and 30 s.
+    pub fn with_sign_in_ceiling(mut self, ceiling: usize, delay: Duration) -> Self {
+        self.name_ceiling = Arc::new(NameCeiling::new(ceiling, delay));
+        self
     }
 
     /// Counts from the last minute, if a page view already loaded them.
@@ -82,5 +93,9 @@ impl AppState {
 
     pub(crate) fn limiter(&self) -> Arc<RateLimiter> {
         Arc::clone(&self.limiter)
+    }
+
+    pub(crate) fn name_ceiling(&self) -> Arc<NameCeiling> {
+        Arc::clone(&self.name_ceiling)
     }
 }

@@ -55,6 +55,10 @@
   },
   "attention": [
     {
+      "kind": "sign_in_slowed",
+      "count": 1
+    },
+    {
       "kind": "no_min_version"
     },
     {
