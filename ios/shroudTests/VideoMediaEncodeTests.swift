@@ -197,6 +197,30 @@ struct VideoMediaEncodeTests {
         #expect(Int(natural.height.rounded()) == 180)
     }
 
+    /// The budget encode waits for a slow encoder for as long as the writer is writing (a full
+    /// test run kept it busy past the 5 s the wait used to allow); a writer that stopped must
+    /// still end the wait rather than leave the send on Compressing.
+    @Test func aWriterThatStoppedEndsTheWaitForTheEncoder() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("video-media-test-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: 320,
+            AVVideoHeightKey: 180,
+        ])
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        writer.cancelWriting()
+        // An input that still took samples would return at once and prove nothing.
+        #expect(!input.isReadyForMoreMediaData)
+        await #expect(throws: VideoMedia.VideoError.exportFailed) {
+            try await VideoMedia.waitUntilReady(input, of: writer)
+        }
+    }
+
     @Test func originalRefusesAClipThatCannotStayFullSize() {
         #expect(throws: VideoPlanError.self) {
             try VideoMedia.previewPlan(

@@ -902,7 +902,7 @@ nonisolated enum VideoMedia {
             let videoTime = videoBuffer.map { CMSampleBufferGetPresentationTimeStamp($0).seconds } ?? .infinity
             let audioTime = audioBuffer.map { CMSampleBufferGetPresentationTimeStamp($0).seconds } ?? .infinity
             if videoTime <= audioTime, let sample = videoBuffer {
-                try await waitUntilReady(videoInput)
+                try await waitUntilReady(videoInput, of: writer)
                 if let image = CMSampleBufferGetImageBuffer(sample) {
                     let time = CMSampleBufferGetPresentationTimeStamp(sample)
                     if !adaptor.append(image, withPresentationTime: time) {
@@ -912,7 +912,7 @@ nonisolated enum VideoMedia {
                 }
                 videoBuffer = videoOutput.copyNextSampleBuffer()
             } else if let sample = audioBuffer, let audioInput {
-                try await waitUntilReady(audioInput)
+                try await waitUntilReady(audioInput, of: writer)
                 if !audioInput.append(sample) { throw VideoError.exportFailed }
                 audioBuffer = audioOutput?.copyNextSampleBuffer()
             } else {
@@ -928,12 +928,18 @@ nonisolated enum VideoMedia {
         return out
     }
 
-    private static func waitUntilReady(_ input: AVAssetWriterInput) async throws {
-        var spins = 0
+    /// Waits until `input` takes another sample, for as long as `writer` is still writing.
+    ///
+    /// Human: A busy device can keep the encoder from draining for many seconds; that is slow, not
+    /// broken. Giving up after a fixed number of polls (500, about 5 s) failed such encodes with
+    /// `exportFailed` (VideoMediaEncodeTests caught it under a full test run). Only a writer that
+    /// failed or was cancelled will never take the sample, so its status is what ends the wait.
+    /// Agent: READS input.isReadyForMoreMediaData and writer.status every 10 ms; THROWS
+    /// VideoError.exportFailed once the writer leaves `.writing`, CancellationError when cancelled.
+    static func waitUntilReady(_ input: AVAssetWriterInput, of writer: AVAssetWriter) async throws {
         while !input.isReadyForMoreMediaData {
             try Task.checkCancellation()
-            if spins > 500 { throw VideoError.exportFailed }
-            spins += 1
+            guard writer.status == .writing else { throw VideoError.exportFailed }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
     }
