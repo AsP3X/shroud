@@ -93,7 +93,7 @@ Media blobs (always ciphertext, up to 2 GiB each) live in [Nebular OS](https://g
 
 The wizard and `./deploy.sh` write `USERNAME_KDF_SALT` once: 16 random bytes, 32 hex characters. Clients use it as the public salt of the username lookup hash (Argon2id, 64 MiB, 8 iterations, one lane). Leave the value in place. Replacing it makes every username stop matching. An empty value stops the API from starting.
 
-Voice and video calls are WebRTC between the two devices. The API rings them and relays signaling it cannot read. Where a direct path fails, the wizard can turn on the bundled coturn (`COMPOSE_PROFILES=calls`). Open UDP and TCP 3478 and UDP 49160–49259. Logins are short-lived and minted from `TURN_SECRET`. There is no shared TURN password. See [docs/calls.md](docs/calls.md). A secret without `TURN_URLS` leaves calls on Google's STUN (`stun:stun.l.google.com:19302`) until both are set.
+Voice and video calls are WebRTC between the two devices. The API rings them and relays signaling it cannot read. Where a direct path fails, the wizard can turn on the bundled coturn (`COMPOSE_PROFILES=calls`). Open UDP and TCP 3478 and UDP 49160–49259. Logins are short-lived and minted from `TURN_SECRET`. There is no shared TURN password. coturn gets the secret from a config file it writes as it starts, into a tmpfs only its own user can read, and never on its command line, where any user on the host could read it with `ps`. After changing `TURN_SECRET` in `.env`, `./deploy.sh` recreates coturn with the new one. See [docs/calls.md](docs/calls.md). A secret without `TURN_URLS` leaves calls on Google's STUN (`stun:stun.l.google.com:19302`) until both are set.
 
 ### Manual Compose
 
@@ -140,7 +140,7 @@ Stop:
 ./deploy.sh --down --volumes    # wipe Postgres / Nebular / media data
 ```
 
-The API logs in to Postgres as its own role, `shroud_api`, with `API_DB_PASSWORD`; every `./deploy.sh` sets that password on the role before the API starts, so it may be changed in `.env`. `POSTGRES_PASSWORD` is the superuser's, which no service uses; Postgres applies it only the first time it sets up its data, so changing it in `.env` later changes nothing.
+The API logs in to Postgres as its own role, `shroud_api`, with `API_DB_PASSWORD`; every `./deploy.sh` sets that password on the role before the API starts, so it may be changed in `.env`. `POSTGRES_PASSWORD` is the superuser's, which no service uses; Postgres applies it only the first time it sets up its data, so changing it in `.env` later changes nothing. The deploy and the init scripts hand `API_DB_PASSWORD` and `ADMIN_DB_PASSWORD` to `psql` through the postgres container's environment (`\getenv`), never as a command-line argument.
 
 Schema `public` belongs to `shroud_api`, so in the API's database the superuser searches `pg_catalog` alone: a function or operator the API's role put in `public` never runs with the superuser's rights. Every SQL step the deploy runs as the superuser sets this itself, and `api-role.sql` makes it the superuser's default in that database. In `psql` as the superuser, name the API's tables with their schema (`SELECT count(*) FROM public.users`) rather than adding `public` to the search path.
 
