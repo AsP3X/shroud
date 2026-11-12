@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::crypto::{self, normalize_code};
 use crate::error::ApiError;
-use crate::limit::ClientAddr;
+use crate::limit::{Attempt, ClientAddr};
 use crate::password;
 use crate::state::AppState;
 use crate::totp;
@@ -402,16 +402,16 @@ async fn sign_in(
     check_sign_in_fields(&body.operator, &body.password, &body.totp)?;
     let pool = db_pool(&state)?;
     let key = copy_key(&state)?;
-    let limit_key = limit_key(&addr, &body.operator);
-    if let Some(secs) = state.limiter().retry_after(&limit_key) {
-        return Err(ApiError::rate_limited(secs));
-    }
+    let mut turn = Turn::open(&state, &addr, &body.operator)?;
     let operator = fetch_operator(&pool, body.operator.trim()).await?;
     let password_ok = check_password(
         body.password,
         operator.as_ref().and_then(|op| op.password_hash.clone()),
     )
     .await?;
+    if password_ok {
+        turn.claim_name(&state, &body.operator)?;
+    }
     let secret = operator
         .as_ref()
         .and_then(|op| open_secret(&key, op.totp_secret_enc.as_deref()));
@@ -426,7 +426,7 @@ async fn sign_in(
     };
     let allowed = operator.as_ref().is_some_and(|op| op.enabled) & password_ok & fresh_code;
     if !allowed {
-        state.limiter().record_failure(&limit_key);
+        let crossed = turn.refused(&state);
         if let Some(op) = &operator {
             let detail = if op.enabled && password_ok && step.is_some() {
                 Some("Code already used")
@@ -434,6 +434,7 @@ async fn sign_in(
                 failure_detail(op.enabled, password_ok)
             };
             write_audit(&pool, op.id, "session.sign_in", "refused", detail).await?;
+            write_slowed(&state, &pool, op.id, crossed).await?;
         }
         tracing::debug!(
             action = "session.sign_in",
@@ -443,7 +444,7 @@ async fn sign_in(
         return Err(ApiError::bad_credentials());
     }
     let op = operator.ok_or_else(ApiError::bad_credentials)?;
-    state.limiter().clear(&limit_key);
+    turn.passed(&state);
     let (session_id, csrf) = open_session(&pool, op.id, "session.sign_in").await?;
     tracing::info!(
         action = "session.sign_in",
@@ -461,16 +462,16 @@ async fn recover_session(
     let Json(body) = body.map_err(|_| ApiError::validation("The request body isn't valid."))?;
     check_sign_in_fields(&body.operator, &body.password, &body.recovery_code)?;
     let pool = db_pool(&state)?;
-    let limit_key = limit_key(&addr, &body.operator);
-    if let Some(secs) = state.limiter().retry_after(&limit_key) {
-        return Err(ApiError::rate_limited(secs));
-    }
+    let mut turn = Turn::open(&state, &addr, &body.operator)?;
     let operator = fetch_operator(&pool, body.operator.trim()).await?;
     let password_ok = check_password(
         body.password,
         operator.as_ref().and_then(|op| op.password_hash.clone()),
     )
     .await?;
+    if password_ok {
+        turn.claim_name(&state, &body.operator)?;
+    }
     let matched = match &operator {
         Some(op) => matching_code(&pool, op.id, &body.recovery_code).await?,
         None => {
@@ -480,7 +481,7 @@ async fn recover_session(
     };
     let allowed = operator.as_ref().is_some_and(|op| op.enabled) & password_ok & matched.is_some();
     if !allowed {
-        state.limiter().record_failure(&limit_key);
+        let crossed = turn.refused(&state);
         if let Some(op) = &operator {
             let detail = if !op.enabled {
                 Some("Disabled")
@@ -490,13 +491,14 @@ async fn recover_session(
                 Some("Wrong recovery code")
             };
             write_audit(&pool, op.id, "session.recovery", "refused", detail).await?;
+            write_slowed(&state, &pool, op.id, crossed).await?;
         }
         return Err(ApiError::bad_credentials());
     }
     let op = operator.ok_or_else(ApiError::bad_credentials)?;
     let code_hash = matched.ok_or_else(ApiError::bad_credentials)?;
     burn_code(&pool, op.id, &code_hash).await?;
-    state.limiter().clear(&limit_key);
+    turn.passed(&state);
     let (session_id, csrf) = open_session(&pool, op.id, "session.recovery").await?;
     Ok(no_content(&set_cookies(&session_id, &csrf)))
 }
@@ -571,10 +573,8 @@ async fn reauth(
     if !csrf_matches(&headers, &session.csrf) {
         return Err(ApiError::csrf());
     }
-    let limit_key = limit_key(&addr, &session.name);
-    if let Some(secs) = state.limiter().retry_after(&limit_key) {
-        return Err(ApiError::rate_limited(secs));
-    }
+    let mut turn = Turn::open(&state, &addr, &session.name)?;
+    turn.claim_name(&state, &session.name)?;
     let secret = operator_secret(&pool, &key, session.operator_id).await?;
     let step = secret
         .as_deref()
@@ -584,7 +584,7 @@ async fn reauth(
         None => false,
     };
     if !ok {
-        state.limiter().record_failure(&limit_key);
+        let crossed = turn.refused(&state);
         let detail = if step.is_some() {
             "Code already used"
         } else {
@@ -598,9 +598,10 @@ async fn reauth(
             Some(detail),
         )
         .await?;
+        write_slowed(&state, &pool, session.operator_id, crossed).await?;
         return Err(ApiError::bad_credentials());
     }
-    state.limiter().clear(&limit_key);
+    turn.passed(&state);
     let until = Utc::now() + TimeDelta::seconds(REAUTH_SECS);
     sqlx::query("UPDATE admin.operator_sessions SET reauth_until = $2, last_used_at = now() WHERE id_hash = $1")
         .bind(&session.id_hash)
@@ -907,13 +908,101 @@ fn check_sign_in_fields(operator: &str, password: &str, extra: &str) -> Result<(
 
 /// Failures count per client address and operator name: nobody elsewhere can lock an operator out.
 fn limit_key(addr: &str, name: &str) -> String {
+    format!("{addr} {}", name_key(name))
+}
+
+/// The name both sign-in limits count against: trimmed and lower-cased, and one shared key for a
+/// name no operator can have.
+fn name_key(name: &str) -> String {
     let trimmed = name.trim();
-    let name = if trimmed.is_empty() || trimmed.chars().count() > 64 {
+    if trimmed.is_empty() || trimmed.chars().count() > 64 {
         "#".to_owned()
     } else {
         trimmed.to_lowercase()
-    };
-    format!("{addr} {name}")
+    }
+}
+
+/// One sign-in attempt under the console's two limits.
+struct Turn {
+    limit_key: String,
+    /// The normalised name and its started attempt, once the attempt has proved the password.
+    name: Option<(String, Attempt)>,
+}
+
+impl Turn {
+    /// Admits the attempt under the address budget, or answers 429 RATE_LIMITED.
+    fn open(state: &AppState, addr: &str, name: &str) -> Result<Self, ApiError> {
+        let limit_key = limit_key(addr, name);
+        if let Some(secs) = state.limiter().retry_after(&limit_key) {
+            return Err(ApiError::rate_limited(secs));
+        }
+        Ok(Self {
+            limit_key,
+            name: None,
+        })
+    }
+
+    /// Human: Called only once the password matched, or for a signed-in session's step-up, so
+    /// the name's ceiling counts guesses by someone who holds the password and nobody else can
+    /// fill it or take its turns (security audit A3). An attempt turned away here still costs its
+    /// address one failure, so waiting out the turn by polling uses up that address's budget.
+    /// Agent: WRITES NameCeiling (and RateLimiter when refused); RETURNS 429 RATE_LIMITED with
+    /// Retry-After until the name's next turn.
+    fn claim_name(&mut self, state: &AppState, name: &str) -> Result<(), ApiError> {
+        let name = name_key(name);
+        match state.name_ceiling().begin(&name) {
+            Ok(attempt) => {
+                self.name = Some((name, attempt));
+                Ok(())
+            }
+            Err(secs) => {
+                state.limiter().record_failure(&self.limit_key);
+                Err(ApiError::rate_limited(secs))
+            }
+        }
+    }
+
+    /// Counts the failure against the address and, when the attempt proved the password, the
+    /// name. True when this one took the name to its ceiling, which [`write_slowed`] records.
+    fn refused(&self, state: &AppState) -> bool {
+        state.limiter().record_failure(&self.limit_key);
+        self.name
+            .as_ref()
+            .is_some_and(|(name, _)| state.name_ceiling().refused(name))
+    }
+
+    fn passed(self, state: &AppState) {
+        state.limiter().clear(&self.limit_key);
+        if let Some((name, attempt)) = self.name {
+            state.name_ceiling().signed_in(&name, attempt);
+        }
+    }
+}
+
+/// Human: Nothing else would tell anyone that a name is being guessed at, so the crossing goes in
+/// the audit log, where the overview finds it for its notice. Once per crossing.
+/// Agent: DB INSERT admin.audit_log action `session.sign_in_slowed`, outcome `refused`.
+async fn write_slowed(
+    state: &AppState,
+    pool: &PgPool,
+    operator_id: Uuid,
+    crossed: bool,
+) -> Result<(), ApiError> {
+    if !crossed {
+        return Ok(());
+    }
+    let detail = format!(
+        "{} failed sign-ins with the right password in an hour",
+        state.name_ceiling().ceiling()
+    );
+    write_audit(
+        pool,
+        operator_id,
+        "session.sign_in_slowed",
+        "refused",
+        Some(&detail),
+    )
+    .await
 }
 
 /// Argon2 runs at once: each holds 19 MiB and a blocking thread. Past this a sign-in waits a few
@@ -1276,6 +1365,73 @@ mod tests {
         assert!(opts.recover);
         assert_eq!(opts.name.as_deref(), Some("ada"));
         assert!(parse_args(["--name".to_owned()].into_iter()).is_err());
+    }
+
+    /// An attempt from `addr` whose password matched, as `sign_in` runs it.
+    fn password_attempt(state: &AppState, addr: &str, name: &str) -> Result<Turn, ApiError> {
+        let mut turn = Turn::open(state, addr, name)?;
+        turn.claim_name(state, name)?;
+        Ok(turn)
+    }
+
+    fn retry_after(refused: ApiError) -> u64 {
+        let response = refused.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        response.headers()[header::RETRY_AFTER]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    /// Security audit A3: before the ceiling, each address had a budget of its own, so the 52nd
+    /// attempt from yet another address was evaluated like the first.
+    #[test]
+    fn fifty_one_failures_from_51_addresses_make_the_next_attempt_wait() {
+        let state = AppState::disconnected();
+        for n in 0..51 {
+            let turn = password_attempt(&state, &format!("203.0.113.{n}"), "Ada ")
+                .unwrap_or_else(|_| panic!("attempt {} was turned away", n + 1));
+            turn.refused(&state);
+        }
+        let Err(refused) = password_attempt(&state, "198.51.100.7", "ada") else {
+            panic!("the 52nd attempt went through");
+        };
+        assert!((1..=30).contains(&retry_after(refused)));
+        assert!(password_attempt(&state, "198.51.100.7", "grace").is_ok());
+    }
+
+    /// Review of A3: someone who knows only the name must not be able to fill the ceiling, or
+    /// take the name's turns by polling, and so keep the operator out.
+    #[test]
+    fn failures_without_the_password_never_slow_the_name() {
+        let state = AppState::disconnected();
+        for n in 0..200 {
+            let turn = Turn::open(&state, &format!("203.0.113.{n}"), "ada").unwrap();
+            turn.refused(&state);
+        }
+        let operator = password_attempt(&state, "198.51.100.7", "ada").expect("not slowed");
+        operator.passed(&state);
+        assert!(password_attempt(&state, "198.51.100.7", "ada").is_ok());
+    }
+
+    /// Waiting out the name's turn by polling uses up the address's own budget.
+    #[test]
+    fn an_attempt_turned_away_by_the_name_costs_its_address() {
+        let state = AppState::disconnected();
+        for n in 0..51 {
+            password_attempt(&state, &format!("203.0.113.{n}"), "ada")
+                .unwrap()
+                .refused(&state);
+        }
+        for _ in 0..10 {
+            let Err(refused) = password_attempt(&state, "198.51.100.7", "ada") else {
+                panic!("the name's turn was free");
+            };
+            retry_after(refused);
+        }
+        assert!(Turn::open(&state, "198.51.100.7", "ada").is_err());
+        assert!(Turn::open(&state, "198.51.100.8", "ada").is_ok());
     }
 
     #[test]

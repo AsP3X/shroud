@@ -271,7 +271,8 @@
             "enum": [
               "no_min_version",
               "legacy_media",
-              "not_ready"
+              "not_ready",
+              "sign_in_slowed"
             ]
           },
           "count": {

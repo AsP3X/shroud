@@ -180,9 +180,40 @@ async fn load_state() -> Result<AppState, StartupError> {
                 StartupError::Database
             })?;
             tracing::info!("admin schema ready");
-            Ok(AppState::connected(pool, key))
+            let (ceiling, delay) = sign_in_ceiling()?;
+            Ok(AppState::connected(pool, key).with_sign_in_ceiling(ceiling, delay))
         }
     }
+}
+
+/// `ADMIN_SIGN_IN_CEILING` (failed sign-ins for one operator name in an hour, default 50) and
+/// `ADMIN_SIGN_IN_DELAY_SECS` (the wait between that name's attempts past it, 1 to 3600, default
+/// 30). A value that doesn't parse stops startup rather than leaving the ceiling off.
+fn sign_in_ceiling() -> Result<(usize, std::time::Duration), StartupError> {
+    let ceiling = match nonempty_env("ADMIN_SIGN_IN_CEILING") {
+        None => limit::NAME_CEILING,
+        Some(raw) => raw
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|count| *count >= 1)
+            .ok_or(StartupError::Config(
+                "ADMIN_SIGN_IN_CEILING must be a whole number of at least 1",
+            ))?,
+    };
+    let delay = match nonempty_env("ADMIN_SIGN_IN_DELAY_SECS") {
+        None => limit::NAME_DELAY,
+        Some(raw) => raw
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|secs| (1..=3600).contains(secs))
+            .map(std::time::Duration::from_secs)
+            .ok_or(StartupError::Config(
+                "ADMIN_SIGN_IN_DELAY_SECS must be a whole number from 1 to 3600",
+            ))?,
+    };
+    Ok((ceiling, delay))
 }
 
 fn nonempty_env(name: &str) -> Option<String> {

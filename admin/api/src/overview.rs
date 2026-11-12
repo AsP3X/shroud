@@ -123,6 +123,7 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Result<R
     }
     let base = api_base().ok_or_else(ApiError::upstream_api)?;
     let counts = load_counts(&state).await?;
+    let slowed = slowed_operators(&state).await?;
     let ready_url = format!("{base}/api/v1/health/ready");
     let version_url = format!("{base}/api/v1/client-version?platform=ios&version=0.0.0");
     let (ready_res, metrics_res, version_res) = tokio::join!(
@@ -142,7 +143,12 @@ async fn overview(State(state): State<AppState>, headers: HeaderMap) -> Result<R
     let checked_at = Utc::now();
     let started_at = checked_at - TimeDelta::seconds(i64::try_from(samples.uptime).unwrap_or(0));
     let configured = configured_from(&counts);
-    let attention = attention_for(&ready, configured_env_has_min_version(), samples.legacy);
+    let attention = attention_for(
+        &ready,
+        configured_env_has_min_version(),
+        samples.legacy,
+        slowed,
+    );
     Ok(Json(OverviewBody {
         server: ServerBody {
             version,
@@ -208,6 +214,22 @@ pub(crate) async fn load_counts(state: &AppState) -> Result<Counts, ApiError> {
     };
     state.store_counts(counts);
     Ok(counts)
+}
+
+/// Human: Operators whose name went over the sign-in ceiling in the last 24 hours (security audit
+/// A3): someone may hold the password and be guessing codes. Read on every view, not cached with
+/// the counts, so a fresh crossing shows on the next refresh.
+/// Agent: DB SELECT admin.audit_log WHERE action = 'session.sign_in_slowed'.
+async fn slowed_operators(state: &AppState) -> Result<u64, ApiError> {
+    let pool = state.pool().ok_or_else(ApiError::upstream_postgres)?;
+    let slowed: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT operator_id) FROM admin.audit_log
+         WHERE action = 'session.sign_in_slowed' AND at >= now() - interval '24 hours'",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(db_err)?;
+    Ok(u64::try_from(slowed).unwrap_or(0))
 }
 
 fn db_err(err: sqlx::Error) -> ApiError {
@@ -380,12 +402,23 @@ fn configured_env_has_min_version() -> bool {
     nonempty("IOS_MIN_VERSION").is_some() || nonempty("ANDROID_MIN_VERSION").is_some()
 }
 
-fn attention_for(ready: &ReadyBody, min_version_set: bool, legacy: u64) -> Vec<AttentionBody> {
+fn attention_for(
+    ready: &ReadyBody,
+    min_version_set: bool,
+    legacy: u64,
+    slowed: u64,
+) -> Vec<AttentionBody> {
     let mut items = Vec::new();
     if ready.status != "ok" {
         items.push(AttentionBody {
             kind: "not_ready",
             count: None,
+        });
+    }
+    if slowed > 0 {
+        items.push(AttentionBody {
+            kind: "sign_in_slowed",
+            count: Some(slowed),
         });
     }
     if !min_version_set {
@@ -434,12 +467,15 @@ mod tests {
             redis: "ok".to_owned(),
             media: "ok".to_owned(),
         };
-        let items = attention_for(&ready, false, 3);
-        assert_eq!(items.len(), 3);
+        let items = attention_for(&ready, false, 3, 2);
+        assert_eq!(items.len(), 4);
         assert_eq!(items[0].kind, "not_ready");
         assert!(items[0].count.is_none());
-        assert_eq!(items[2].kind, "legacy_media");
-        assert_eq!(items[2].count, Some(3));
+        assert_eq!(items[1].kind, "sign_in_slowed");
+        assert_eq!(items[1].count, Some(2));
+        assert_eq!(items[3].kind, "legacy_media");
+        assert_eq!(items[3].count, Some(3));
+        assert!(attention_for(&ready, true, 0, 0).len() == 1);
     }
 
     #[test]

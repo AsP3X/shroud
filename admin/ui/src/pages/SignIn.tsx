@@ -17,8 +17,10 @@ function describe(error: unknown): Failure {
       case "BAD_CREDENTIALS":
         return { title: "Those details didn't match", body: "Check the operator name and password, then enter a fresh code." };
       case "RATE_LIMITED": {
-        const minutes = Math.max(1, Math.ceil((error.retryAfterSecs ?? 900) / 60));
-        return { title: "Too many attempts", body: `Sign-in is locked. Try again in ${minutes} min.` };
+        const seconds = error.retryAfterSecs ?? 900;
+        // A name past the sign-in ceiling waits seconds, not minutes (security audit A3).
+        if (seconds < 60) return { title: "Too many attempts", body: `Sign-in is slowed down. Try again in ${Math.max(1, Math.ceil(seconds))} s.` };
+        return { title: "Too many attempts", body: `Sign-in is locked. Try again in ${Math.ceil(seconds / 60)} min.` };
       }
       case "UPSTREAM":
         return {
