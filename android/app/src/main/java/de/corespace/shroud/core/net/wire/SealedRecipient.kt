@@ -22,6 +22,11 @@ import java.util.UUID
  *
  * Opening checks it ([accepts]): a message we sent must name the chat's peer, one from the peer must
  * name us. A payload without `to` (every message from builds before it) is accepted as before.
+ *
+ * `content_type` is set by the server outside the seal, so it never decides whether `to` is read
+ * (security audit C1): any plaintext that is a JSON object with `to` is checked. It only marks a text
+ * message whose plaintext is a media payload or an annotation as misfiled. The rule is written down
+ * in `docs/architecture.md` (Sealed recipient).
  */
 object SealedRecipient {
     /** Key of the recipient's user id in the sealed payload. */
@@ -31,7 +36,7 @@ object SealedRecipient {
 
     /** What a plaintext says about its recipient. */
     sealed interface Named {
-        /** No `to` (or `null`): a payload from before it, or not a payload of this content type. */
+        /** No `to` (or `null`): a payload from before it, raw text, or not a JSON object. */
         data object Nobody : Named
 
         /** `to` is this user. */
@@ -45,14 +50,13 @@ object SealedRecipient {
     fun wire(id: UUID): JsonPrimitive = JsonPrimitive(Ids.wire(id))
 
     /**
-     * What [plaintext] (of a message of [contentType]) names. A text message names someone only as
-     * the envelope [MessageTextPayload.parse] reads (`"t":"text"` and a string `c`), never as JSON
-     * someone typed; media and annotations are read as JSON objects as [MediaMessagePayload.parse]
-     * reads them (a leading BOM skipped, trimmed).
+     * What [plaintext] names: the `to` of the JSON object it is, read as [MediaMessagePayload.parse]
+     * reads a payload (a leading BOM skipped, trimmed), whatever the message is labelled. Raw text
+     * and anything else that is not an object names nobody.
      */
-    fun named(plaintext: ByteArray, contentType: String): Named {
-        val isPayload = contentType == MEDIA || contentType == MessageAnnotation.CONTENT_TYPE
-        val obj = (if (isPayload) payloadObject(plaintext) else textEnvelope(plaintext)) ?: return Named.Nobody
+    fun named(plaintext: ByteArray): Named = payloadObject(plaintext)?.let(::named) ?: Named.Nobody
+
+    private fun named(obj: JsonObject): Named {
         val value = obj[KEY] ?: return Named.Nobody
         if (value is JsonNull) return Named.Nobody
         val text = LenientJson.string(value) ?: return Named.Invalid
@@ -60,25 +64,31 @@ object SealedRecipient {
     }
 
     /**
-     * Whether [plaintext] may be shown where it is for [expected]: the chat's peer for a message we
-     * sent, us for the peer's (us in Notes). True when it names nobody (legacy); false when it names
-     * someone else or its `to` is not a user id.
+     * Whether [plaintext] (of a message labelled [contentType]) may be shown where it is for
+     * [expected]: the chat's peer for a message we sent, us for the peer's (us in Notes). True when
+     * it names nobody (legacy); false when it names someone else, its `to` is not a user id, or a
+     * message not labelled media or annotation holds a media payload or an annotation (relabelled by
+     * the server, its raw JSON would be the bubble).
      */
-    fun accepts(plaintext: ByteArray, contentType: String, expected: UUID): Boolean =
-        when (val named = named(plaintext, contentType)) {
+    fun accepts(plaintext: ByteArray, contentType: String, expected: UUID): Boolean {
+        val obj = payloadObject(plaintext) ?: return true
+        val isPayloadType = contentType == MEDIA || contentType == MessageAnnotation.CONTENT_TYPE
+        if (!isPayloadType && isPayloadShaped(obj)) return false
+        return when (val named = named(obj)) {
             Named.Nobody -> true
             Named.Invalid -> false
             is Named.User -> named.id == expected
         }
+    }
 
-    /** The text envelope's object, under exactly [MessageTextPayload.parse]'s conditions. */
-    private fun textEnvelope(plaintext: ByteArray): JsonObject? {
-        val text = LenientJson.utf8OrNull(plaintext) ?: return null
-        val trimmed = WireText.trimWhitespacesAndNewlines(text)
-        if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null
-        val obj = LenientJson.parseObject(trimmed) ?: return null
-        if (LenientJson.string(obj["t"]) != MessageTextPayload.KIND || LenientJson.string(obj["c"]) == null) return null
-        return obj
+    /**
+     * The shape of a media payload (`t` and `k` strings, [MediaMessagePayload.parse]) or of an
+     * annotation (`t` is `transcript` and `r` a string, [MessageAnnotation.parseTranscript]).
+     */
+    private fun isPayloadShaped(obj: JsonObject): Boolean {
+        val t = LenientJson.string(obj["t"]) ?: return false
+        return LenientJson.string(obj["k"]) != null ||
+            (t == MessageAnnotation.KIND_TRANSCRIPT && LenientJson.string(obj["r"]) != null)
     }
 
     /** The payload's object, as [MediaMessagePayload.parse] finds it. */

@@ -358,6 +358,61 @@ class MessageDecoderTest {
         assertNull(de.corespace.shroud.core.net.wire.MessageAnnotation.parseTranscript(refusedAnnotation.message.text))
     }
 
+    // --- content_type is not sealed (security audit C1) -------------------------------------------
+
+    private fun fileFor(to: UUID?) =
+        MediaMessagePayload(t = "file", mime = "application/pdf", w = 0, h = 0, k = "a2V5", n = "contract.pdf", s = 4096, to = to).encoded()
+
+    private fun transcriptFor(to: UUID?) =
+        de.corespace.shroud.core.net.wire.MessageAnnotation.transcript("Alice's words", UUID.randomUUID(), to = to).encoded()
+
+    /**
+     * The server lists our file or transcript for Alice in the chat with the peer, relabelled `text`:
+     * the self box opens, `to` is read from the plaintext all the same, and neither its raw JSON nor
+     * a cached copy is kept.
+     */
+    @Test
+    fun aPayloadForSomeoneElseRelabelledAsTextIsRefused() = runTest {
+        for (plaintext in listOf(fileFor(alice), transcriptFor(alice))) {
+            val dto = Dtos.message(sender = me, contentType = ContentType.TEXT, ciphertext = B64.encode(plaintext))
+            val decoded = decoder().decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer)
+            assertTrue(decoded.refused)
+            assertEquals("[Unable to decrypt]", decoded.message.text)
+            assertNull(store.plaintexts[dto.id])
+        }
+    }
+
+    /** A media payload or annotation labelled `text` is misfiled even when it names this chat, or nobody. */
+    @Test
+    fun aPayloadLabelledAsTextIsMisfiledWhateverItNames() = runTest {
+        for (plaintext in listOf(fileFor(peer), transcriptFor(peer), fileFor(null), transcriptFor(null))) {
+            val dto = Dtos.message(sender = me, contentType = ContentType.TEXT, ciphertext = B64.encode(plaintext))
+            val decoded = decoder().decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer)
+            assertTrue(decoded.refused)
+            assertEquals("[Unable to decrypt]", decoded.message.text)
+        }
+        // The same file, labelled as it was sealed, opens.
+        val asMedia = Dtos.message(sender = me, contentType = ContentType.MEDIA, ciphertext = B64.encode(fileFor(peer)), mediaObjectId = UUID.randomUUID())
+        val opened = decoder().decodeChecked(asMedia, context(), forcePeer = peer, chatPeer = peer)
+        assertFalse(opened.refused)
+        assertEquals(ChatMessageKind.File, opened.message.kind)
+    }
+
+    /** A payload already cached (opened in Alice's chat) and re-listed here as `text` is refused on read. */
+    @Test
+    fun aCachedPayloadRelabelledAsTextIsRefused() = runTest {
+        for (plaintext in listOf(fileFor(alice), transcriptFor(alice))) {
+            val dto = Dtos.message(sender = me, contentType = ContentType.TEXT, ciphertext = Dtos.sealed("FAIL"))
+            store.plaintexts[dto.id] = plaintext
+            val decoded = decoder().decodeChecked(dto, context(), forcePeer = peer, chatPeer = peer)
+            assertTrue(decoded.refused)
+            assertEquals("[Unable to decrypt]", decoded.message.text)
+            // Alice's chat keeps its body.
+            assertArrayEquals(plaintext, store.plaintexts[dto.id])
+        }
+        assertTrue(opener.calls.isEmpty())
+    }
+
     /** Messages from builds before the recipient was sealed open wherever they are listed, as before. */
     @Test
     fun aPlaintextNamingNobodyStillOpens() = runTest {
