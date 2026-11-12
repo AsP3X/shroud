@@ -155,8 +155,11 @@ pub async fn create_upload(
         .map_err(|err| AppError::Internal(format!("begin media upload failed: {err}")))?;
     if state.media_quota_bytes > 0 {
         // One registration per account at a time weighs the quota, so parallel ones can't pass it.
+        // Agent: bind text, not Uuid. `contacts::lock_pair` runs this same SQL with a text bind and
+        // sqlx caches the statement per connection by its SQL alone, so a Uuid bind would send the
+        // id's raw bytes as text and fail as invalid UTF-8.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
-            .bind(auth.user_id)
+            .bind(auth.user_id.to_string())
             .execute(&mut *tx)
             .await
             .map_err(|err| AppError::Internal(format!("media quota lock failed: {err}")))?;

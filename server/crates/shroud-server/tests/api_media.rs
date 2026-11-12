@@ -715,6 +715,76 @@ async fn media_quota_refuses_an_upload_past_it() {
     create_upload(&app, &token, 400).await;
 }
 
+/// The quota lock and the contact pair lock (`contacts::lock_pair`) once ran the same SQL text,
+/// and sqlx caches a prepared statement per connection by its text alone. After a message, call
+/// or contact accept had prepared it with a `text` parameter, the quota lock reused it and sent
+/// the account id's 16 raw bytes as text, which Postgres refuses unless they happen to be valid
+/// UTF-8 (`invalid byte sequence for encoding "UTF8": 0x8a`), so the upload failed with a 500
+/// (SHRO-43).
+#[tokio::test]
+async fn media_quota_lock_works_after_a_contact_pair_lock_on_the_same_connection() {
+    let Some(_) = test_setup().await else {
+        eprintln!(
+            "skipping media_quota_lock_works_after_a_contact_pair_lock_on_the_same_connection: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    // Human: one pooled connection, so the contact pair lock and the quota lock share its cache.
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&std::env::var("DATABASE_URL").expect("DATABASE_URL"))
+        .await
+        .expect("pool");
+    let mut state = test_state(pool.clone());
+    state.media_quota_bytes = 1000;
+    let app = axum::Router::new()
+        .merge(routes::router())
+        .with_state(state);
+
+    // Agent: register always draws a random id, so the account is seeded with one that starts 0x8a.
+    let mut id_bytes = *Uuid::new_v4().as_bytes();
+    id_bytes[0] = 0x8a;
+    let user_id = Uuid::from_bytes(id_bytes);
+    assert!(std::str::from_utf8(user_id.as_bytes()).is_err());
+    let (username, password) = unique_user();
+    sqlx::query(
+        "INSERT INTO users (id, username_hash, password_hash, share_code) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(user_id)
+    .bind(
+        BASE64
+            .decode(shroud_server::auth::username_hash_b64(&username))
+            .expect("username hash"),
+    )
+    .bind(
+        shroud_server::auth::hash_password(&password)
+            .await
+            .expect("password hash"),
+    )
+    .bind(shroud_server::auth::generate_share_code())
+    .execute(&pool)
+    .await
+    .expect("user");
+    let device_id: Uuid =
+        sqlx::query_scalar("INSERT INTO devices (user_id) VALUES ($1) RETURNING id")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .expect("device");
+    let (token, token_hash) = shroud_server::auth::issue_session_token().expect("token");
+    sqlx::query("INSERT INTO sessions (device_id, token_hash) VALUES ($1, $2)")
+        .bind(device_id)
+        .bind(token_hash)
+        .execute(&pool)
+        .await
+        .expect("session");
+
+    // The mutual requests auto-accept, which takes the contact pair lock.
+    let (peer_token, peer) = register(&app).await;
+    become_contacts(&app, &token, &user_id.to_string(), &peer_token, &peer).await;
+    create_upload(&app, &token, 600).await;
+}
+
 /// Parallel PUTs to one media object would each spool their own copy (security audit M4).
 #[tokio::test]
 async fn a_second_put_to_an_upload_in_progress_is_refused() {
