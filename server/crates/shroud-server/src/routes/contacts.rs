@@ -831,7 +831,8 @@ async fn insert_contact_pair(
 /// Holds the pair's lock until `tx` ends. Whatever makes two people contacts (an accept, the
 /// mutual auto-accept) and a block take it before anything else, so a block either deletes
 /// the contact rows an accept wrote or the accept sees the block; under READ COMMITTED they
-/// could otherwise interleave and leave both.
+/// could otherwise interleave and leave both. A message send and a call ring take it too and
+/// re-check the block under it, so neither reaches someone whose block commits meanwhile.
 pub(crate) async fn lock_pair(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     a: Uuid,
@@ -925,6 +926,8 @@ pub(crate) async fn is_blocked_either_way(
     .map_err(|err| AppError::Internal(format!("block check failed: {err}")))
 }
 
+/// [`is_blocked_either_way`] inside `tx`. Under [`lock_pair`] it also sees a block that
+/// committed while the caller waited for the lock.
 pub(crate) async fn is_blocked_either_way_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     a: Uuid,

@@ -14,6 +14,9 @@ use tokio::sync::mpsc::Receiver;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod block_race;
+use block_race::{stage_block, until_waiting_on};
+
 /// None without `DATABASE_URL` (the tests skip). Set but unusable fails loudly instead.
 async fn test_state() -> Option<(axum::Router, AppState)> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
@@ -1021,4 +1024,57 @@ async fn accept_and_signal_are_refused_across_a_block() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, _) = signal(&app, &d, &id, "sdp_answer", "c1.answer").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+/// Human: A ring placed while the callee's block commits (security audit S6). `POST /calls`
+/// passes its first block check, then waits on the pair lock the block holds; once the block
+/// commits it must answer 403 and leave no call, no `call.ring` and no ring to replay.
+#[tokio::test]
+async fn a_call_racing_a_block_is_refused_and_never_rings() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!("skipping a_call_racing_a_block_is_refused_and_never_rings: no DATABASE_URL");
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut b_events = socket(&state, &b).await;
+
+    let (holder, holder_pid) = stage_block(&state.pool, b.uid(), a.uid()).await;
+    let ringing = tokio::spawn({
+        let app = app.clone();
+        let token = a.token.clone();
+        let peer = b.user_id.clone();
+        async move {
+            call(
+                &app,
+                "POST",
+                "/api/v1/calls",
+                &token,
+                Some(json!({ "peer_user_id": peer, "modality": "voice", "protocol": 2 })),
+            )
+            .await
+        }
+    });
+    until_waiting_on(&state.pool, holder_pid, &ringing).await;
+    holder.commit().await.expect("commit block");
+
+    let (status, body) = ringing.await.expect("call task");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let calls: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM calls WHERE caller_user_id = $1 AND callee_user_id = $2",
+    )
+    .bind(a.uid())
+    .bind(b.uid())
+    .fetch_one(&state.pool)
+    .await
+    .expect("count calls");
+    assert_eq!(calls, 0, "a call slipped past the block");
+    assert!(
+        drain(&mut b_events)
+            .iter()
+            .all(|event| event["type"] != "call.ring"),
+        "the blocker heard a ring"
+    );
+    assert!(state.realtime.pending_ring(b.uid()).await.is_none());
 }
