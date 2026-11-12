@@ -39,11 +39,14 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSCommandPath
 Set-Location -LiteralPath $repoRoot
-$script:UseColor = -not ($NoColor -or $env:NO_COLOR)
+# Helpers read this, $DataKinds and $DataToolImage by plain name, never as $script:. The wizard
+# (scripts\setup.ps1) calls them too, and while it runs $script: is the wizard's own scope, where
+# none of them is set. A plain name reaches this scope through the wizard's caller, Invoke-Wizard.
+$UseColor = -not ($NoColor -or $env:NO_COLOR)
 
 function Write-Line {
     param([string]$Text, [string]$Color)
-    if ($script:UseColor -and $Color) { Write-Host $Text -ForegroundColor $Color }
+    if ($UseColor -and $Color) { Write-Host $Text -ForegroundColor $Color }
     else { Write-Host $Text }
 }
 function Write-Step { param([string]$Message) Write-Line "-> $Message" "Cyan" }
@@ -216,7 +219,7 @@ function Apply-ApiRole {
     # Created here, not by Docker: a missing bind-mount source would be made by the daemon.
     $dataDir = Get-DataDir
     if ($dataDir) {
-        foreach ($kind in $script:DataKinds) {
+        foreach ($kind in $DataKinds) {
             New-Item -ItemType Directory -Force -Path (Join-Path $dataDir $kind.Folder) | Out-Null
         }
     }
@@ -380,15 +383,15 @@ function Invoke-WithDataDirEnv {
 }
 
 # Storage is either named volumes, written "" below, or a folder: SHROUD_DATA_DIR resolved by
-# Resolve-DataDir. Each holds three kinds of data.
-$script:DataKinds = @(
+# Resolve-DataDir. Each holds three kinds of data. Read by plain name: see $UseColor.
+$DataKinds = @(
     @{ Volume = "shroud_pg_data"; Folder = "database" },
     @{ Volume = "shroud_nebular_data"; Folder = "nebular" },
     @{ Volume = "shroud_media_data"; Folder = "media" }
 )
 # The image that copies and wipes data owned by the containers' users; the stack already pulls it
 # (the same digest as the postgres service in docker-compose.yml: change both together).
-$script:DataToolImage = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
+$DataToolImage = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
 # The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
 function Get-ProjectName {
@@ -433,7 +436,7 @@ function Test-StorageHas {
 # POSTGRES_PASSWORD no longer applies.
 function Test-PgDataExists {
     param([string]$Storage = (Get-DataDir))
-    return (Test-StorageHas $Storage (Get-ProjectName) $script:DataKinds[0])
+    return (Test-StorageHas $Storage (Get-ProjectName) $DataKinds[0])
 }
 
 # Asks a yes/no question, default no. -Yes answers yes.
@@ -452,17 +455,17 @@ function Write-CopyCommands {
     param([string]$From, [string]$To, [string]$Project, [string]$SwitchCommand)
     Write-Host "    .\deploy.ps1 -Down"
     if ($To) {
-        $folders = ($script:DataKinds | ForEach-Object { "`"$(Join-Path $To $_.Folder)`"" }) -join ","
+        $folders = ($DataKinds | ForEach-Object { "`"$(Join-Path $To $_.Folder)`"" }) -join ","
         Write-Host "    New-Item -ItemType Directory -Force $folders"
     }
-    foreach ($kind in $script:DataKinds) {
+    foreach ($kind in $DataKinds) {
         if (-not (Test-StorageHas $From $Project $kind)) { continue }
         $src = Get-StorageSource $From $Project $kind
         $dst = Get-StorageSource $To $Project $kind
         if (-not $To) {
             Write-Host "    docker volume create --label com.docker.compose.project=$Project --label com.docker.compose.volume=$($kind.Volume) $dst"
         }
-        Write-Host "    docker run --rm -v `"${src}:/from:ro`" -v `"${dst}:/to`" $($script:DataToolImage) cp -a /from/. /to/"
+        Write-Host "    docker run --rm -v `"${src}:/from:ro`" -v `"${dst}:/to`" $($DataToolImage) cp -a /from/. /to/"
     }
     Write-Host "    $SwitchCommand"
 }
@@ -471,10 +474,10 @@ function Write-CopyCommands {
 function Write-CleanupCommands {
     param([string]$Storage, [string]$Project)
     if ($Storage) {
-        Write-Host "    docker run --rm -v `"${Storage}:/data`" $($script:DataToolImage) rm -rf /data/database /data/nebular /data/media"
+        Write-Host "    docker run --rm -v `"${Storage}:/data`" $($DataToolImage) rm -rf /data/database /data/nebular /data/media"
         return
     }
-    $existing = @($script:DataKinds | Where-Object { Test-StorageHas "" $Project $_ } |
+    $existing = @($DataKinds | Where-Object { Test-StorageHas "" $Project $_ } |
         ForEach-Object { Get-StorageSource "" $Project $_ })
     if ($existing.Count -gt 0) { Write-Host "    docker volume rm $($existing -join ' ')" }
 }
@@ -484,11 +487,11 @@ function Write-CleanupCommands {
 function Copy-Storage {
     param([string]$From, [string]$To, [string]$Project)
     if ($To) {
-        foreach ($kind in $script:DataKinds) {
+        foreach ($kind in $DataKinds) {
             New-Item -ItemType Directory -Force -Path (Join-Path $To $kind.Folder) | Out-Null
         }
     }
-    foreach ($kind in $script:DataKinds) {
+    foreach ($kind in $DataKinds) {
         if (-not (Test-StorageHas $From $Project $kind)) { continue }
         $src = Get-StorageSource $From $Project $kind
         $dst = Get-StorageSource $To $Project $kind
@@ -498,7 +501,7 @@ function Copy-Storage {
             if ($LASTEXITCODE -ne 0) { throw "docker volume create $dst exited $LASTEXITCODE" }
         }
         Write-Step "Copying $src -> $dst"
-        & docker run --rm -v "${src}:/from:ro" -v "${dst}:/to" $script:DataToolImage cp -a /from/. /to/ | Out-Host
+        & docker run --rm -v "${src}:/from:ro" -v "${dst}:/to" $DataToolImage cp -a /from/. /to/ | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "copying $src exited $LASTEXITCODE" }
     }
 }
@@ -526,7 +529,7 @@ function Initialize-StorageSwitch {
             Write-Host "Note: $fromLabel and $toLabel both hold a database."
             Write-Host "  Shroud switches to the one in $toLabel; the data in $fromLabel is left as it is."
         } elseif ($Migrate) {
-            foreach ($kind in $script:DataKinds) {
+            foreach ($kind in $DataKinds) {
                 if (Test-StorageHas $to $project $kind) {
                     Write-Die "$(Get-StorageSource $to $project $kind) already holds data; -Migrate never overwrites data."
                 }
@@ -577,9 +580,9 @@ function Initialize-StorageSwitch {
 function Clear-DataDir {
     param([string]$Dir)
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return }
-    & docker run --rm -v "${Dir}:/data" $script:DataToolImage rm -rf /data/database /data/nebular /data/media | Out-Host
+    & docker run --rm -v "${Dir}:/data" $DataToolImage rm -rf /data/database /data/nebular /data/media | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "wiping the data in $Dir exited $LASTEXITCODE" }
-    foreach ($kind in $script:DataKinds) {
+    foreach ($kind in $DataKinds) {
         New-Item -ItemType Directory -Force -Path (Join-Path $Dir $kind.Folder) | Out-Null
     }
 }
@@ -648,7 +651,7 @@ function Invoke-Compose {
     }
     $dataDir = if ($ComposeArgs[0] -eq "up") { Get-DataDir } else { "" }
     if ($dataDir) {
-        foreach ($kind in $script:DataKinds) {
+        foreach ($kind in $DataKinds) {
             New-Item -ItemType Directory -Force -Path (Join-Path $dataDir $kind.Folder) | Out-Null
         }
     }

@@ -251,3 +251,7 @@ Write-Host "  API:  $API_PUBLIC_URL/api/v1"
 if ($ADMIN_PUBLIC_URL) { Write-Host "  Admin: $ADMIN_PUBLIC_URL" }
 Write-Host "  Data: $storageLabel"
 Write-Host ""
+# deploy.ps1 reads $LASTEXITCODE after the wizard. Without this it would still hold the exit
+# code of the last native command here, such as `docker volume inspect` failing on a volume
+# that doesn't exist yet.
+exit 0
