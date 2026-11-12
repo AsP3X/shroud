@@ -67,7 +67,28 @@ jobs:
       # need CRLF and .pen files are Pen.app's own bytes.
       - name: No CR byte in a committed text file
         run: |
-          if git grep --cached -nI $'\r' -- . ':(exclude)*.bat' ':(exclude)*.cmd' ':(exclude)*.pen'; then
+          rc=0
+          git grep --cached -nI $'\r' -- . ':(exclude)*.bat' ':(exclude)*.cmd' ':(exclude)*.pen' || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "::error::The lines above end with CR. Commit them with LF line endings (see .gitattributes)."
+            exit 1
+          elif [ "$rc" -ne 1 ]; then
+            echo "::error::git grep failed with exit code $rc."
+            exit "$rc"
+          fi
+
+      # A CRLF checkout on Windows comes from the attributes, not from the committed bytes, so the
+      # step above would stay green if .gitattributes lost eol=lf. This one fails then.
+      - name: Files the Linux images read check out with LF
+        run: |
+          files=$(git ls-files -- '*.sh' '*.sql' '*.conf' '*.template' '*Dockerfile' '*.dockerignore' 'docker-compose*.yml')
+          if [ -z "$files" ]; then
+            echo "::error::No container files found; the pathspecs above are out of date."
+            exit 1
+          fi
+          wrong=$(printf '%s\n' "$files" | git check-attr --cached --stdin eol | grep -v ': eol: lf$' || true)
+          if [ -n "$wrong" ]; then
+            printf '%s\n' "$wrong"
+            echo "::error::These files would check out with CRLF on Windows. .gitattributes must give them eol=lf."
             exit 1
           fi
