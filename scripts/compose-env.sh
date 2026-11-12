@@ -686,6 +686,8 @@ shroud_apply_admin_db() {
   }
   shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
     -v pwd="$pass" -v dbname="$db" <<'SQL'
+-- pg_catalog only: in the API's database, schema public belongs to shroud_api (security audit A1).
+SET search_path = pg_catalog, pg_temp;
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$
@@ -701,8 +703,8 @@ $body$;
 GRANT CONNECT, CREATE ON DATABASE :"dbname" TO shroud_admin;
 GRANT USAGE ON SCHEMA public TO shroud_admin;
 -- shroud_admin keeps CREATE on the database (its first migration creates schema admin), so it can
--- make a schema named after this role. Every later session of this role (the API, grants.sql,
--- psql) searches public only, so such a schema can never shadow the API's tables.
+-- make a schema named after this role. This role therefore searches public, never "$user". In the
+-- API's database, where public belongs to shroud_api, api-role.sql narrows that to pg_catalog.
 ALTER ROLE CURRENT_USER SET search_path = public;
 SQL
   # grants.sql gives the audit log to this role once the console has made its schema, which it

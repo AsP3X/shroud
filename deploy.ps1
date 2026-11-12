@@ -249,6 +249,8 @@ function Apply-AdminDb {
     if (-not $pass) { Write-Die "the admin profile is on and ADMIN_DB_PASSWORD is empty." }
     $files = Get-ComposeArgs
     $roleSql = @'
+-- pg_catalog only: in the API's database, schema public belongs to shroud_api (security audit A1).
+SET search_path = pg_catalog, pg_temp;
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$
@@ -264,8 +266,8 @@ $body$;
 GRANT CONNECT, CREATE ON DATABASE :"dbname" TO shroud_admin;
 GRANT USAGE ON SCHEMA public TO shroud_admin;
 -- shroud_admin keeps CREATE on the database (its first migration creates schema admin), so it can
--- make a schema named after this role. Every later session of this role (the API, grants.sql,
--- psql) searches public only, so such a schema can never shadow the API's tables.
+-- make a schema named after this role. This role therefore searches public, never "$user". In the
+-- API's database, where public belongs to shroud_api, api-role.sql narrows that to pg_catalog.
 ALTER ROLE CURRENT_USER SET search_path = public;
 '@
     Invoke-WithDataDirEnv {

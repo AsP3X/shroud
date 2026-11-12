@@ -8,6 +8,10 @@
 -- stays for deploys and maintenance; no service connects with it.
 
 SET client_min_messages = warning;
+-- Only pg_catalog, never public: shroud_api owns public, and an operator or function it creates
+-- there that matches the argument types exactly would win over pg_catalog's and run as the
+-- superuser (security audit A1, CVE-2018-1058). Everything below names public itself.
+SET search_path = pg_catalog, pg_temp;
 
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.api_password', :'pwd', false) AS api_password_set \gset
@@ -29,10 +33,14 @@ END
 $body$;
 ALTER ROLE shroud_api NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 ALTER ROLE shroud_api SET search_path = public;
+-- The same for every later superuser session in this database (the deploy scripts' other SQL,
+-- grants.sql, a maintainer's psql), whatever its role-wide setting. A per-database setting on this
+-- role outranks the database's own default, which shroud_api as the owner can change.
+ALTER ROLE CURRENT_USER IN DATABASE :"dbname" SET search_path = pg_catalog, pg_temp;
 
 -- Migration 001 creates pgcrypto. An extension needs more than an ordinary role has on a database
 -- that never had it, so the superuser creates it first and the migration finds it.
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto" SCHEMA public;
 
 ALTER DATABASE :"dbname" OWNER TO shroud_api;
 ALTER SCHEMA public OWNER TO shroud_api;

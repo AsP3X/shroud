@@ -135,6 +135,8 @@ Stop:
 
 The API logs in to Postgres as its own role, `shroud_api`, with `API_DB_PASSWORD`; every `./deploy.sh` sets that password on the role before the API starts, so it may be changed in `.env`. `POSTGRES_PASSWORD` is the superuser's, which no service uses; Postgres applies it only the first time it sets up its data, so changing it in `.env` later changes nothing.
 
+Schema `public` belongs to `shroud_api`, so in the API's database the superuser searches `pg_catalog` alone: a function or operator the API's role put in `public` never runs with the superuser's rights. Every SQL step the deploy runs as the superuser sets this itself, and `api-role.sql` makes it the superuser's default in that database. In `psql` as the superuser, name the API's tables with their schema (`SELECT count(*) FROM public.users`) rather than adding `public` to the search path.
+
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
 
 ### Data storage
