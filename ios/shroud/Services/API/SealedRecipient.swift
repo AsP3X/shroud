@@ -15,6 +15,11 @@ import Foundation
 ///
 /// Opening checks it: a message I sent must name the chat's peer, one from the peer must name
 /// me. A payload without `to` (every message from builds before it) is accepted as before.
+///
+/// Human: `content_type` is set by the server outside the seal, so it never decides whether `to`
+/// is read (security audit C1): any plaintext that is a JSON object with `to` is checked. It only
+/// marks a text message whose plaintext is a media payload or an annotation as misfiled. The rule
+/// is written down in `docs/architecture.md` (Sealed recipient).
 /// Agent: Shared with `web/src/sealedRecipient.ts` and Android `SealedRecipient.kt`; change all
 /// three together.
 nonisolated enum SealedRecipient {
@@ -23,7 +28,7 @@ nonisolated enum SealedRecipient {
 
     /// What a plaintext says about its recipient.
     nonisolated enum Named: Equatable, Sendable {
-        /// No `to` (or `null`): a payload from before it, or not a payload of this content type.
+        /// No `to` (or `null`): a payload from before it, raw text, or not a JSON object.
         case nobody
         /// `to` is this user.
         case user(UUID)
@@ -39,44 +44,40 @@ nonisolated enum SealedRecipient {
         userID.uuidString.lowercased()
     }
 
-    /// What `plaintext` (of a message of `contentType`) names.
-    ///
-    /// Agent: A text message names someone only as the envelope `MessageTextPayload.parse` reads
-    /// (`"t":"text"` and a string `c`), never as JSON someone typed. Media and annotations are
-    /// read as JSON objects the way `MediaMessagePayload.parse` reads them (BOM skipped, trimmed).
-    static func named(in plaintext: Data, contentType: String) -> Named {
-        let isPayload = contentType == "media" || contentType == MessageAnnotation.contentType
-        guard let object = isPayload ? payloadObject(plaintext) : textEnvelope(plaintext),
-              let value = object[key]
-        else { return .nobody }
-        if value is NSNull { return .nobody }
-        guard let string = value as? String else { return .invalid }
-        guard let userID = UUID(uuidString: string) else { return .invalid }
+    /// What `plaintext` names: the `to` of the JSON object it is, read the way
+    /// `MediaMessagePayload.parse` reads a payload (BOM skipped, trimmed), whatever the message is
+    /// labelled. Raw text and anything else that is not an object names nobody.
+    static func named(in plaintext: Data) -> Named {
+        payloadObject(plaintext).map(named(in:)) ?? .nobody
+    }
+
+    private static func named(in object: [String: Any]) -> Named {
+        guard let value = object[key], !(value is NSNull) else { return .nobody }
+        guard let string = value as? String, let userID = UUID(uuidString: string) else { return .invalid }
         return .user(userID)
     }
 
-    /// Whether `plaintext` may be shown where it is for `expected`: the chat's peer for a message
-    /// I sent, me for the peer's (me in Notes). True when it names nobody (legacy); false when it
-    /// names someone else or its `to` is not a user id.
+    /// Whether `plaintext` (of a message labelled `contentType`) may be shown where it is for
+    /// `expected`: the chat's peer for a message I sent, me for the peer's (me in Notes). True when
+    /// it names nobody (legacy); false when it names someone else, its `to` is not a user id, or a
+    /// message not labelled media or annotation holds a media payload or an annotation (relabelled
+    /// by the server, its raw JSON would be the bubble).
     static func accepts(_ plaintext: Data, contentType: String, expected: UUID) -> Bool {
-        switch named(in: plaintext, contentType: contentType) {
-        case .nobody: true
-        case .invalid: false
-        case let .user(userID): userID == expected
+        guard let object = payloadObject(plaintext) else { return true }
+        let isPayloadType = contentType == "media" || contentType == MessageAnnotation.contentType
+        if !isPayloadType, isPayloadShaped(object) { return false }
+        switch named(in: object) {
+        case .nobody: return true
+        case .invalid: return false
+        case let .user(userID): return userID == expected
         }
     }
 
-    /// The text envelope's object, under exactly `MessageTextPayload.parse`'s conditions.
-    private static func textEnvelope(_ plaintext: Data) -> [String: Any]? {
-        guard let text = String(data: plaintext, encoding: .utf8) else { return nil }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
-              let data = trimmed.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["t"] as? String == MessageTextPayload.kind,
-              object["c"] as? String != nil
-        else { return nil }
-        return object
+    /// The shape of a media payload (`t` and `k` strings, `MediaMessagePayload.parse`) or of an
+    /// annotation (`t` is `transcript` and `r` a string, `MessageAnnotation.parseTranscript`).
+    private static func isPayloadShaped(_ object: [String: Any]) -> Bool {
+        guard let t = object["t"] as? String else { return false }
+        return object["k"] is String || (t == MessageAnnotation.kindTranscript && object["r"] is String)
     }
 
     /// The payload's object, as `MediaMessagePayload.parse` finds it.
