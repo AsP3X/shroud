@@ -206,7 +206,7 @@ Calls phase adds **coturn** (TURN). Media bytes do not transit the Rust API.
 - Idempotent message inserts via `client_message_id`.
 - Liveness vs readiness — **done** (`GET /health/live`, `/health/ready`; `/health` = ready; Redis required when `REDIS_URL` set).
 - Graceful SIGTERM / Ctrl-C drain — **done** (`axum::serve` + `with_graceful_shutdown` on the public listener and, when `OPERATOR_TOKEN` is set, the operator listener).
-- Operator listener — **done** when `OPERATOR_TOKEN` is set: a second bind on `OPERATOR_HOST`:`OPERATOR_PORT` (default 127.0.0.1:8090; Compose sets the host to 0.0.0.0 and does not publish the port). An empty token does not bind it. `/operator/*` is 404 on the public port; `/health*` and the public API are not on the operator port. `GET /operator/metrics` is the Prometheus text, which the public port no longer serves.
+- Operator listener — **done** when `OPERATOR_TOKEN` is set: a second bind on `OPERATOR_HOST`:`OPERATOR_PORT` (default 127.0.0.1:8090; Compose does not publish the port and sets the host to `shroud-api-operator`, an alias the API has on `shroud-internal` only, which the image's entrypoint resolves to that one address, so a container on `proxy-network` cannot connect). An empty token does not bind it. `/operator/*` is 404 on the public port; `/health*` and the public API are not on the operator port. `GET /operator/metrics` is the Prometheus text, which the public port no longer serves.
 - `DATABASE_POOL_MAX` / `RUN_MIGRATIONS` — **done** (env-backed; Compose sets both).
 
 ---
@@ -1889,7 +1889,7 @@ clients go by the `UPDATE_REQUIRED` code.
 | `WEB_BUILD` | A fixed web build id instead of `WEB_BUILD_FILE` (not both) |
 | `HOST` / `PORT` | Bind (default localhost:8080) |
 | `OPERATOR_PORT` | Internal operator listener (default 8090). Bound only when `OPERATOR_TOKEN` is set, and never published by Compose. Must be a real port and must differ from `PORT`; otherwise the process refuses to start |
-| `OPERATOR_HOST` | Address the operator listener binds (default `127.0.0.1`; Compose sets `0.0.0.0` so the console reaches it on the internal network). Not an IP address: the process refuses to start |
+| `OPERATOR_HOST` | Address the operator listener binds (default `127.0.0.1`). Compose sets `shroud-api-operator`, the API's alias on `shroud-internal` only; the image's entrypoint resolves a name to its IPv4 address and stops if it resolves to none, so the console reaches the listener and `proxy-network` does not. The server itself takes only an IP address and refuses to start on anything else |
 | `OPERATOR_TOKEN` | Bearer token for that listener (`Authorization: Bearer`). Empty or unset: the API does not bind `OPERATOR_PORT`. Whitespace-only counts as unset. A set token is used exactly as written, must not contain a line break, and must be 32 to 256 bytes (the listener has no attempt limit). The admin service uses the same value. Not logged |
 | `RUN_MIGRATIONS` | Prefer single migrator when scaled |
 | `MEDIA_DATA_DIR` | Local ciphertext blob directory; with Nebular, the older volume moved into it on start |
