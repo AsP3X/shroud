@@ -142,17 +142,18 @@ jobs:
       - name: Create role shroud_admin
         run: sh ../../server/docker/init-admin-role.sh
 
-      # Migrates as shroud_api, applies grants.sql twice as the superuser and checks the grants and
-      # that the view belongs to shroud_api.
-      - name: Column grants with the API's tables owned by shroud_api
+      # The column-grant test migrates as shroud_api, applies grants.sql twice as the superuser and
+      # checks the grants and that the view belongs to shroud_api. The audit log tests use probe
+      # databases of their own.
+      - name: Grants tests with the API's tables owned by shroud_api
         env:
           GRANT_TEST_API_URL: postgres://shroud_api:shroud-api@localhost:5432/shroud
-        run: cargo test --test grants shroud_admin_cannot_read_forbidden_columns
+        run: cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql
 
       - name: Apply grants.sql with psql, as deploy does
         run: psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f grants.sql
 
-      - name: Column grants again after the psql run
+      - name: Grants tests again after the psql run
         env:
           GRANT_TEST_API_URL: postgres://shroud_api:shroud-api@localhost:5432/shroud
-        run: cargo test --test grants shroud_admin_cannot_read_forbidden_columns
+        run: cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql

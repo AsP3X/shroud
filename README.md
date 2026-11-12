@@ -244,7 +244,7 @@ cd admin/api && cargo test
 cd admin/api && cargo clippy --all-targets -- -D warnings
 # The column grants with the API's own role, on a throwaway Postgres where api-role.sql ran
 # first: the steps of the "grants with the API role" job in .github/workflows/admin.yml.
-cd admin/api && GRANT_TEST_API_URL=postgres://shroud_api:…@localhost:5432/shroud cargo test --test grants shroud_admin_cannot_read_forbidden_columns
+cd admin/api && GRANT_TEST_API_URL=postgres://shroud_api:…@localhost:5432/shroud cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql
 cd admin/ui && npm ci --ignore-scripts && npm run typecheck && npm run build
 ```
 
