@@ -293,10 +293,12 @@ services:
     # The root file system is read-only: nginx writes only its config (rendered at start), its
     # pid and its temp files, all to tmpfs. The master starts as root to bind port 80 and hand the
     # temp directories to the nginx user its workers run as, and keeps no other capability.
+    # The temp files are request bodies nginx holds for the console and responses it spools: in
+    # memory now, so capped. API uploads stream through and never land there.
     read_only: true
     tmpfs:
-      - /run
-      - /var/cache/nginx
+      - /run:size=1m
+      - /var/cache/nginx:size=64m
     security_opt:
       - no-new-privileges:true
     cap_drop:
