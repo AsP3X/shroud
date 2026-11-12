@@ -85,6 +85,19 @@ Sign in with a password and an authenticator app. A recovery code stands in for 
 
 Message text, photos, voice, device names, username hashes and password hashes are not granted to the console. Contact, block, conversation and message counts are not shown on an account. The console also cannot tell which username hashes are still the old SHA-256: those rows move the next time that account signs in.
 
+### Sign-in limits
+
+Sign-in, recovery-code sign-in and the fresh code a change asks for count failures two ways. The console keeps both counts in memory, so a restart clears them.
+
+- **Per address and name:** 10 failures in 15 minutes from one address (an IPv6 client counts as its /64) for one operator name. Then that address waits out the 15 minutes for that name. Nobody elsewhere is affected, so nobody can lock an operator out this way.
+- **Per name, from every address:** this count only includes attempts where the password was right but the code was wrong, plus failed fresh codes from a signed-in session. Past `ADMIN_SIGN_IN_CEILING` such failures (default 50) for one name within an hour, those attempts start one at a time, `ADMIN_SIGN_IN_DELAY_SECS` apart (default 30 s). An attempt that comes sooner gets `429 RATE_LIMITED` with `Retry-After`, and it counts as a failure for its address. Signing in does not reset the count. The ceiling lifts once the hour's failures drop below it. At the defaults, guessing an authenticator code by trial takes months instead of hours, however many addresses the guesser has.
+
+A wrong password never counts toward the name and never waits for its turn. Someone who knows only an operator's name can't slow that operator's sign-in down; the per-address limit handles them.
+
+Reaching the ceiling means someone with the operator's password got the code wrong that often in an hour. Unless it was the operator, someone else has the password. The failure that reaches it writes **Sign-in slowed down** to the audit log, and for 24 hours the Overview lists it under **Needs attention**. If those attempts weren't the operator's, replace the password. Until then, whoever has it competes with the operator for each turn, so the operator's own sign-in can take several tries, or fail for as long as the attempts go on. Another admin can use **Reset authenticator** on the Operators page. That clears the password and the authenticator at once, and the operator sets new ones from the setup link. For the only operator, `./deploy.sh --admin bootstrap --recover` does the same. The old password then stops counting toward the name, which ends the slowdown.
+
+Set the two variables in `.env` and run `./deploy.sh --admin` again. A value that isn't a whole number in range stops the console from starting.
+
 ## What to back up
 
 Back up schema `admin` with the database. That schema holds:
