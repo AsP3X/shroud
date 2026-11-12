@@ -700,8 +700,9 @@ async fn insert_audit(
     target: Option<&str>,
 ) {
     sqlx::query(
-        "INSERT INTO admin.audit_log (id, at, operator_id, action, target_kind, target_id, outcome)
-         VALUES ($1, $2, $3, $4, $5, $6, 'ok')",
+        "INSERT INTO admin.audit_log
+         (id, at, operator_id, operator_name, action, target_kind, target_id, outcome)
+         VALUES ($1, $2, $3, 'pages-probe', $4, $5, $6, 'ok')",
     )
     .bind(Uuid::parse_str(id).unwrap())
     .bind(sql_time(at))

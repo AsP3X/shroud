@@ -85,6 +85,14 @@ Sign in with a password and an authenticator app. A recovery code stands in for 
 
 Message text, photos, voice, device names, username hashes and password hashes are not granted to the console. Contact, block, conversation and message counts are not shown on an account. The console also cannot tell which username hashes are still the old SHA-256: those rows move the next time that account signs in.
 
+### The audit log
+
+Each entry keeps the operator's name as it was when the entry was written, so the page shows who did it even after a rename. The console's own database login can still rename an operator: the console has no rename, so it notices a name that differs from the one on that operator's last entry and writes **Name changed outside the console** (`operator.rename`, with the old name) just before the next entry of that operator. That entry has the time it was noticed, not the time of the rename, and a renamed operator who never acts again gets none: nothing new is written under the new name either, and older entries keep the old one. Entries from before this change carry the name each operator had when the console was upgraded.
+
+A fresh code for a change is logged as **Confirmed with a fresh code** (`session.reauth`): `ok` when it opened the five-minute window, `refused` with `Wrong code` or `Code already used` when it didn't. Sign-ins stay `session.sign_in`.
+
+Upgrading a deployment whose audit log already belongs to the superuser: only the log's owner can add the name column, so the console refuses to start (`admin.audit_log needs column operator_name, and only its owner can add it`) until `grants.sql` has added it. `./deploy.sh --admin` (`.\deploy.ps1 -Admin`) runs that file after starting the console, and the console starts on its next restart. After a plain `docker compose up`, run the deploy once. The names come from `admin.operators`, which belongs to `shroud_admin`, so `grants.sql` first locks that table and checks it the same way as the log (see [If grants.sql refuses the audit log](#if-grantssql-refuses-the-audit-log)) and reads it only when nothing is attached.
+
 ### Sign-in limits
 
 Sign-in, recovery-code sign-in and the fresh code a change asks for count failures two ways. The console keeps both counts in memory, so a restart clears them.
@@ -107,7 +115,7 @@ Back up schema `admin` with the database. That schema holds:
 | `admin.operators` | Name, role, argon2id password hash, encrypted authenticator secret, enabled flag |
 | `admin.operator_sessions` | Session id hash, CSRF token, last use, re-auth deadline |
 | `admin.recovery_codes` | Recovery code hashes |
-| `admin.audit_log` | Operator actions |
+| `admin.audit_log` | Operator actions, each with the operator's name at the time |
 | `admin.setup_links` | Setup-link hashes and expiry |
 
 `ADMIN_SECRET_KEY` is not in the database. Keep it with the backup. A restored schema `admin` cannot decrypt authenticator secrets without the same key.
@@ -129,6 +137,8 @@ The deploy stops at that step with `admin.audit_log carries objects that would r
 2. Remove each one as the superuser, for example `DROP RULE <name> ON admin.audit_log;`, `DROP TRIGGER <name> ON admin.audit_log;`, `DROP POLICY <name> ON admin.audit_log;`, `ALTER TABLE admin.audit_log DISABLE ROW LEVEL SECURITY;`, `DROP INDEX admin.<name>;` or `REVOKE ALL ON admin.audit_log FROM PUBLIC;`.
 3. Give `shroud_admin` a new password (`ALTER ROLE shroud_admin PASSWORD '…';`) and put it in `ADMIN_DB_PASSWORD` and `ADMIN_DATABASE_URL` in `.env`.
 4. Run `./deploy.sh --admin` (`.\deploy.ps1 -Admin`) again. It checks the log the same way.
+
+The upgrade that adds the operator name to the log reads `admin.operators`, which `shroud_admin` owns, so the same applies there. A row-level security policy, a view or rule in the table's place, or a function from outside `pg_catalog` in one of its indexes, defaults, constraints, statistics or column types would run as the superuser when it is read (the planner evaluates a constant index predicate as whoever reads the table). `grants.sql` then stops with `admin.operators carries objects that would run with the rights of …` and changes nothing. Handle it the same way, with `\d+ admin.operators` and `DROP POLICY <name> ON admin.operators;`, `ALTER TABLE admin.operators DISABLE ROW LEVEL SECURITY, NO FORCE ROW LEVEL SECURITY;` or `DROP INDEX admin.<name>;`. Until then the console does not start.
 
 ## A lost ADMIN_SECRET_KEY
 

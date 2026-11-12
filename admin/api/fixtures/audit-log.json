@@ -1,6 +1,42 @@
 {
   "items": [
     {
+      "at": "2026-10-08T14:06:30Z",
+      "operator": "operator",
+      "action": "session.reauth",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "ok",
+      "detail": null
+    },
+    {
+      "at": "2026-10-08T14:06:12Z",
+      "operator": "operator",
+      "action": "session.reauth",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "refused",
+      "detail": "Wrong code"
+    },
+    {
+      "at": "2026-10-08T14:04:59Z",
+      "operator": "ops3",
+      "action": "session.sign_in",
+      "target_kind": null,
+      "target_id": null,
+      "outcome": "ok",
+      "detail": null
+    },
+    {
+      "at": "2026-10-08T14:04:59Z",
+      "operator": "ops3",
+      "action": "operator.rename",
+      "target_kind": "operator",
+      "target_id": "9c1f2a7e-58b4-4c0d-a1e3-6b7d8e9f0a12",
+      "outcome": "ok",
+      "detail": "Was ops2"
+    },
+    {
       "at": "2026-10-08T14:02:11Z",
       "operator": "operator",
       "action": "session.sign_in",

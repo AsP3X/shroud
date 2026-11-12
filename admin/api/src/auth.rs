@@ -593,7 +593,7 @@ async fn reauth(
         write_audit(
             &pool,
             session.operator_id,
-            "session.sign_in",
+            "session.reauth",
             "refused",
             Some(detail),
         )
@@ -603,12 +603,19 @@ async fn reauth(
     }
     turn.passed(&state);
     let until = Utc::now() + TimeDelta::seconds(REAUTH_SECS);
+    // Human: The step-up and its audit entry commit together, so every window that lets a write
+    // through is in the log (security audit A5).
+    // Agent: DB UPDATE admin.operator_sessions.reauth_until, INSERT admin.audit_log
+    // `session.reauth` ok, one transaction.
+    let mut tx = pool.begin().await.map_err(db_err)?;
     sqlx::query("UPDATE admin.operator_sessions SET reauth_until = $2, last_used_at = now() WHERE id_hash = $1")
         .bind(&session.id_hash)
         .bind(until)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(db_err)?;
+    write_audit_exec(&mut *tx, session.operator_id, "session.reauth", "ok", None).await?;
+    tx.commit().await.map_err(db_err)?;
     Ok(Json(ReauthBody {
         reauth_until: stamp(until),
     })
@@ -1237,10 +1244,35 @@ async fn record_in<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
+    // Human: Each entry keeps the operator's name as it is now, so renaming an operator later
+    // cannot re-attribute what they did (security audit A5). The console has no rename, so a name
+    // that differs from the one on this operator's last entry was changed in the database: that
+    // is written first as its own `operator.rename` entry, a microsecond earlier so it sorts just
+    // before the entry that noticed it.
+    // Agent: DB SELECT admin.operators.name and the operator's latest admin.audit_log.operator_name,
+    // INSERT admin.audit_log (plus an operator.rename row when they differ); an unknown operator
+    // inserts nothing and fails as RowNotFound.
     sqlx::query(
-        "INSERT INTO admin.audit_log
-         (operator_id, action, target_kind, target_id, outcome, detail)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "WITH op AS (
+             SELECT o.name,
+                    (SELECT l.operator_name FROM admin.audit_log l
+                     WHERE l.operator_id = o.id
+                     ORDER BY l.at DESC, l.id DESC
+                     LIMIT 1) AS last_name
+             FROM admin.operators o
+             WHERE o.id = $1
+         ), renamed AS (
+             INSERT INTO admin.audit_log
+             (at, operator_id, operator_name, action, target_kind, target_id, outcome, detail)
+             SELECT now() - interval '1 microsecond', $1, op.name, 'operator.rename', 'operator',
+                    $1, 'ok', 'Was ' || op.last_name
+             FROM op
+             WHERE op.last_name <> op.name
+         )
+         INSERT INTO admin.audit_log
+         (operator_id, operator_name, action, target_kind, target_id, outcome, detail)
+         SELECT $1, op.name, $2, $3, $4, $5, $6 FROM op
+         RETURNING id",
     )
     .bind(operator_id)
     .bind(action)
@@ -1248,7 +1280,7 @@ where
     .bind(target_id)
     .bind(outcome)
     .bind(detail)
-    .execute(executor)
+    .fetch_one(executor)
     .await
     .map_err(db_err)?;
     Ok(())

@@ -30,6 +30,14 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
         .await
         .expect("server migrations");
 
+    // Human: On a database an earlier run already took the audit log over in, a console migration
+    // that alters the log waits for grants.sql (security audit A5), as on a redeploy. The file
+    // skips schema admin until the console has created it, so this is a no-op on a fresh one.
+    let grants = include_str!("../grants.sql");
+    sqlx::raw_sql(grants)
+        .execute(&owner)
+        .await
+        .expect("column grants before the console starts");
     let admin = PgPoolOptions::new()
         .connect(&admin_url)
         .await
@@ -38,7 +46,6 @@ async fn shroud_admin_cannot_read_forbidden_columns() {
         .await
         .expect("admin migrations");
 
-    let grants = include_str!("../grants.sql");
     sqlx::raw_sql(grants)
         .execute(&owner)
         .await
@@ -137,6 +144,349 @@ async fn api_role_cannot_hijack_the_superuser_deploy_sql() {
         superuser_search_path, "pg_catalog, pg_temp",
         "a new superuser session in the API's database still searches a schema shroud_api owns"
     );
+}
+
+/// Console migration 004 adds `admin.audit_log.operator_name` (security audit A5). On a deployment
+/// whose log `grants.sql` already gave to the superuser, the console's role cannot add it: the
+/// console must refuse to start rather than skip it, and the next `grants.sql` adds it, filled in
+/// with each operator's name, without leaving the console an update right.
+#[tokio::test]
+async fn an_adopted_audit_log_gets_operator_names_from_grants_sql() {
+    let Some(super_url) = nonempty("GRANT_TEST_SUPER_URL") else {
+        eprintln!("GRANT_TEST_SUPER_URL unset; audit-log upgrade test not run");
+        return;
+    };
+    let Some(admin_url) = nonempty("GRANT_TEST_ADMIN_URL") else {
+        eprintln!("GRANT_TEST_ADMIN_URL unset; audit-log upgrade test not run");
+        return;
+    };
+    let base: PgConnectOptions = super_url.parse().expect("GRANT_TEST_SUPER_URL");
+    let admin_base: PgConnectOptions = admin_url.parse().expect("GRANT_TEST_ADMIN_URL");
+    let mut owner = PgConnection::connect_with(&base)
+        .await
+        .expect("superuser connection");
+
+    let (probe, tag) = console_probe_database(&mut owner, "shroud_audit_name").await;
+
+    let outcome = upgrade_adopted_log(&base, &admin_base, &probe, tag).await;
+
+    // Agent: DROPS only the database this test created above.
+    sqlx::raw_sql(&format!(r#"DROP DATABASE "{probe}" WITH (FORCE)"#))
+        .execute(&mut owner)
+        .await
+        .expect("drop the probe database");
+
+    let upgrade = outcome.expect("upgrade the adopted audit log");
+    assert!(
+        upgrade.refused_start.contains("needs column operator_name"),
+        "the console started without the column: {}",
+        upgrade.refused_start
+    );
+    assert_eq!(upgrade.names, ["before-upgrade", "before-upgrade"]);
+    assert!(
+        upgrade.not_null,
+        "operator_name accepts entries without a name"
+    );
+    assert!(
+        !upgrade.console_can_update,
+        "grants.sql left shroud_admin an update right on the audit log"
+    );
+}
+
+struct Upgrade {
+    refused_start: String,
+    names: Vec<String>,
+    not_null: bool,
+    console_can_update: bool,
+}
+
+/// Starts the new console on the deployment [`adopted_before_004`] builds in `probe`, applies
+/// `grants.sql` twice as a deploy would, and starts the console again.
+async fn upgrade_adopted_log(
+    base: &PgConnectOptions,
+    admin_base: &PgConnectOptions,
+    probe: &str,
+    tag: u128,
+) -> Result<Upgrade, sqlx::Error> {
+    let (owner, console) = adopted_before_004(base, admin_base, probe, tag).await?;
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(console)
+        .await?;
+    let refused_start = match shroud_admin::db::migrate(&admin).await {
+        Ok(()) => String::new(),
+        Err(err) => format!("{err} {:?}", err),
+    };
+
+    let grants = include_str!("../grants.sql");
+    sqlx::raw_sql(grants).execute(&owner).await?;
+    sqlx::raw_sql(grants).execute(&owner).await?;
+    shroud_admin::db::migrate(&admin).await?;
+
+    let names = sqlx::query_scalar("SELECT operator_name FROM admin.audit_log ORDER BY action")
+        .fetch_all(&admin)
+        .await?;
+    let not_null = sqlx::query_scalar(
+        "SELECT attnotnull FROM pg_catalog.pg_attribute
+         WHERE attrelid = 'admin.audit_log'::pg_catalog.regclass AND attname = 'operator_name'",
+    )
+    .fetch_one(&owner)
+    .await?;
+    let console_can_update = sqlx::query_scalar(
+        "SELECT pg_catalog.has_table_privilege('shroud_admin', 'admin.audit_log', 'UPDATE')
+             OR pg_catalog.has_column_privilege('shroud_admin', 'admin.audit_log', 'operator_name', 'UPDATE')",
+    )
+    .fetch_one(&owner)
+    .await?;
+    owner.close().await;
+    admin.close().await;
+    Ok(Upgrade {
+        refused_start,
+        names,
+        not_null,
+        console_can_update,
+    })
+}
+
+/// Builds, in `probe`, a deployment from before migration 004: the API's tables, console
+/// migrations 001-003 applied by `shroud_admin`, one operator with two entries, and the audit log
+/// and schema taken over by the superuser as `grants.sql` did then. Returns a superuser pool and
+/// the console's connection options for `probe`.
+async fn adopted_before_004(
+    base: &PgConnectOptions,
+    admin_base: &PgConnectOptions,
+    probe: &str,
+    tag: u128,
+) -> Result<(PgPool, PgConnectOptions), sqlx::Error> {
+    let owner = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(base.clone().database(probe))
+        .await?;
+    sqlx::migrate!("../../server/migrations/postgres")
+        .run(&owner)
+        .await?;
+
+    // Human: The console as it was before 004: only 001-003 applied, by its own role.
+    // Agent: WRITES a temporary directory with those three files and removes it after the run.
+    let old = std::env::temp_dir().join(format!("shroud-admin-migrations-{tag}"));
+    std::fs::create_dir_all(&old).expect("temporary migrations directory");
+    for (file, sql) in [
+        ("001_admin.sql", include_str!("../migrations/001_admin.sql")),
+        (
+            "002_totp_step.sql",
+            include_str!("../migrations/002_totp_step.sql"),
+        ),
+        (
+            "003_setup_secret.sql",
+            include_str!("../migrations/003_setup_secret.sql"),
+        ),
+    ] {
+        std::fs::write(old.join(file), sql).expect("write an old migration");
+    }
+    let console = admin_base.clone().database(probe);
+    let mut first = PgConnection::connect_with(&console).await?;
+    sqlx::raw_sql("CREATE SCHEMA admin; SET search_path TO admin")
+        .execute(&mut first)
+        .await?;
+    let migrated = match sqlx::migrate::Migrator::new(old.as_path()).await {
+        Ok(migrator) => migrator.run(&mut first).await,
+        Err(err) => Err(err),
+    };
+    std::fs::remove_dir_all(&old).expect("remove the temporary migrations");
+    migrated.map_err(|err| sqlx::Error::Migrate(Box::new(err)))?;
+    sqlx::raw_sql(
+        "INSERT INTO admin.operators (id, name, role)
+         VALUES ('00000000-0000-4000-8000-0000000a5a5a', 'before-upgrade', 'write');
+         INSERT INTO admin.audit_log (operator_id, action, outcome)
+         VALUES ('00000000-0000-4000-8000-0000000a5a5a', 'session.sign_in', 'ok'),
+                ('00000000-0000-4000-8000-0000000a5a5a', 'session.sign_out', 'ok')",
+    )
+    .execute(&mut first)
+    .await?;
+    first.close().await?;
+
+    // The superuser took the log over, as grants.sql did before 004.
+    sqlx::raw_sql(
+        "ALTER SCHEMA admin OWNER TO CURRENT_USER;
+         GRANT USAGE, CREATE ON SCHEMA admin TO shroud_admin;
+         ALTER TABLE admin.audit_log OWNER TO CURRENT_USER;
+         REVOKE ALL ON admin.audit_log FROM shroud_admin;
+         GRANT SELECT, INSERT ON admin.audit_log TO shroud_admin",
+    )
+    .execute(&owner)
+    .await?;
+    Ok((owner, console))
+}
+
+/// The upgrade must not run code the console's role attached to `admin.operators` with the
+/// superuser's rights (A5 review). [`ESCALATING_POLICY`] gets through `SET ROLE shroud_admin`
+/// around the read, because it can `RESET ROLE`.
+#[tokio::test]
+async fn grants_sql_never_runs_code_on_admin_operators_as_the_superuser() {
+    let Some(super_url) = nonempty("GRANT_TEST_SUPER_URL") else {
+        eprintln!("GRANT_TEST_SUPER_URL unset; operators-policy test not run");
+        return;
+    };
+    let Some(admin_url) = nonempty("GRANT_TEST_ADMIN_URL") else {
+        eprintln!("GRANT_TEST_ADMIN_URL unset; operators-policy test not run");
+        return;
+    };
+    let base: PgConnectOptions = super_url.parse().expect("GRANT_TEST_SUPER_URL");
+    let admin_base: PgConnectOptions = admin_url.parse().expect("GRANT_TEST_ADMIN_URL");
+    let mut owner = PgConnection::connect_with(&base)
+        .await
+        .expect("superuser connection");
+    let (probe, tag) = console_probe_database(&mut owner, "shroud_operators_policy").await;
+
+    let outcome = plant_and_upgrade(&base, &admin_base, &probe, tag, ESCALATING_POLICY).await;
+
+    // Human: The role is cluster-wide and every other console test logs in as it, so take back
+    // whatever the planted policy gave it before asserting, and drop the probe database.
+    // Agent: READS then RESETS shroud_admin's SUPERUSER flag; DROPS only this test's database.
+    let became_superuser: bool = sqlx::query_scalar(
+        "SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = 'shroud_admin'",
+    )
+    .fetch_one(&mut owner)
+    .await
+    .expect("read shroud_admin");
+    sqlx::raw_sql("ALTER ROLE shroud_admin NOSUPERUSER")
+        .execute(&mut owner)
+        .await
+        .expect("reset shroud_admin");
+    sqlx::raw_sql(&format!(r#"DROP DATABASE "{probe}" WITH (FORCE)"#))
+        .execute(&mut owner)
+        .await
+        .expect("drop the probe database");
+
+    let (refused, column_added) = outcome.expect("plant the policy and upgrade");
+    assert!(
+        !became_superuser,
+        "grants.sql ran a policy shroud_admin planted on admin.operators as the superuser"
+    );
+    assert!(
+        refused.contains("admin.operators carries objects"),
+        "grants.sql read admin.operators with a policy on it: {refused}"
+    );
+    assert!(
+        !column_added,
+        "a refused grants.sql still changed the audit log"
+    );
+}
+
+/// A policy that makes `shroud_admin` a superuser when any other session evaluates it.
+const ESCALATING_POLICY: &str = r#"
+    CREATE FUNCTION admin.escalate() RETURNS boolean LANGUAGE plpgsql AS $fn$
+    BEGIN
+      IF session_user <> 'shroud_admin' THEN
+        RESET ROLE;
+        ALTER ROLE shroud_admin SUPERUSER;
+      END IF;
+      RETURN true;
+    END
+    $fn$;
+    ALTER TABLE admin.operators ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE admin.operators FORCE ROW LEVEL SECURITY;
+    CREATE POLICY escalate ON admin.operators USING (admin.escalate());
+"#;
+
+/// A partial index whose constant predicate the planner evaluates, as whoever reads the table,
+/// while it plans any read of `admin.operators`.
+const PLANNED_PREDICATE: &str = r#"
+    CREATE FUNCTION admin.planned() RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT true';
+    CREATE INDEX operators_planned_idx ON admin.operators (name) WHERE admin.planned();
+"#;
+
+/// The planner runs code in an index predicate on `admin.operators` too, so `grants.sql` refuses
+/// that as well (A5 review).
+#[tokio::test]
+async fn grants_sql_refuses_console_code_in_an_index_on_admin_operators() {
+    let Some(super_url) = nonempty("GRANT_TEST_SUPER_URL") else {
+        eprintln!("GRANT_TEST_SUPER_URL unset; operators-index test not run");
+        return;
+    };
+    let Some(admin_url) = nonempty("GRANT_TEST_ADMIN_URL") else {
+        eprintln!("GRANT_TEST_ADMIN_URL unset; operators-index test not run");
+        return;
+    };
+    let base: PgConnectOptions = super_url.parse().expect("GRANT_TEST_SUPER_URL");
+    let admin_base: PgConnectOptions = admin_url.parse().expect("GRANT_TEST_ADMIN_URL");
+    let mut owner = PgConnection::connect_with(&base)
+        .await
+        .expect("superuser connection");
+    let (probe, tag) = console_probe_database(&mut owner, "shroud_operators_index").await;
+
+    let outcome = plant_and_upgrade(&base, &admin_base, &probe, tag, PLANNED_PREDICATE).await;
+
+    // Agent: DROPS only the database this test created above.
+    sqlx::raw_sql(&format!(r#"DROP DATABASE "{probe}" WITH (FORCE)"#))
+        .execute(&mut owner)
+        .await
+        .expect("drop the probe database");
+
+    let (refused, column_added) = outcome.expect("plant the index and upgrade");
+    assert!(
+        refused.contains("admin.operators carries objects"),
+        "grants.sql read admin.operators with console code in an index predicate: {refused}"
+    );
+    assert!(
+        !column_added,
+        "a refused grants.sql still changed the audit log"
+    );
+}
+
+/// Builds the pre-004 deployment, runs `plant` as `shroud_admin`, and applies `grants.sql` as the
+/// superuser. Returns its error text (empty when it ran through) and whether the audit log then has
+/// `operator_name`.
+async fn plant_and_upgrade(
+    base: &PgConnectOptions,
+    admin_base: &PgConnectOptions,
+    probe: &str,
+    tag: u128,
+    plant: &str,
+) -> Result<(String, bool), sqlx::Error> {
+    let (owner, console) = adopted_before_004(base, admin_base, probe, tag).await?;
+    let mut planter = PgConnection::connect_with(&console).await?;
+    sqlx::raw_sql(plant).execute(&mut planter).await?;
+    planter.close().await?;
+
+    let refused = match sqlx::raw_sql(include_str!("../grants.sql"))
+        .execute(&owner)
+        .await
+    {
+        Ok(_) => String::new(),
+        Err(err) => err.to_string(),
+    };
+    let column_added = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+         WHERE attrelid = 'admin.audit_log'::pg_catalog.regclass
+           AND attname = 'operator_name' AND NOT attisdropped)",
+    )
+    .fetch_one(&owner)
+    .await?;
+    owner.close().await;
+    Ok((refused, column_added))
+}
+
+/// Creates a database of its own for a console upgrade test, so the shared one keeps the
+/// `operator_name` column the other tests use, and lets `shroud_admin` in. Returns its name and the
+/// timestamp tag in it.
+async fn console_probe_database(owner: &mut PgConnection, prefix: &str) -> (String, u128) {
+    let tag = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_nanos();
+    let probe = format!("{prefix}_{}_{tag}", std::process::id());
+    sqlx::raw_sql(&format!(r#"CREATE DATABASE "{probe}""#))
+        .execute(&mut *owner)
+        .await
+        .expect("create the probe database");
+    sqlx::raw_sql(&format!(
+        r#"GRANT CONNECT, CREATE ON DATABASE "{probe}" TO shroud_admin"#
+    ))
+    .execute(&mut *owner)
+    .await
+    .expect("let the console into the probe database");
+    (probe, tag)
 }
 
 /// Applies `api-role.sql` to `probe` as the superuser, plants `public.<>(oid, regrole)` as
