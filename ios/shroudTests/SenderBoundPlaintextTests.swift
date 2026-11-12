@@ -349,6 +349,76 @@ final class SenderBoundPlaintextTests: XCTestCase {
         XCTAssertNil(refused.message.mediaObjectId)
     }
 
+    // MARK: - content_type is not sealed (security audit C1)
+
+    private func file(to: UUID?) throws -> Data {
+        try MediaMessagePayload(t: "file", mime: "application/pdf", w: 0, h: 0, k: "a2V5", s: 4096, n: "contract.pdf", to: to).encoded()
+    }
+
+    private func transcript(to: UUID?) throws -> Data {
+        try JSONEncoder().encode(MessageAnnotation.transcript("Alice's words", for: UUID(), to: to))
+    }
+
+    /// The server lists my file or transcript for Alice in my chat with Bob, relabelled `text`:
+    /// my self box opens, `to` is read from the plaintext all the same, and neither its raw JSON
+    /// nor a cached copy is kept.
+    func testMyPayloadForSomeoneElseRelabelledAsTextIsRefused() async throws {
+        let repository = unlocked()
+        let alicePublic = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        for plaintext in [try file(to: alice), try transcript(to: alice)] {
+            let id = UUID()
+            messageIDs.append(id)
+            var bobChat = context(repository: repository, threads: [:], resolved: Resolved())
+            bobChat.chatPeerUserID = bob
+
+            let listed = try dto(id: id, sender: me, ciphertext: sealedByMe(plaintext, for: alicePublic))
+            let refused = await MessageDecoder.decodeChecked(listed, context: bobChat)
+            XCTAssertTrue(refused.refused)
+            XCTAssertEqual(refused.message.text, "[Unable to decrypt]")
+            XCTAssertNil(repository.sealedPlaintext(for: id, senderUserID: me))
+        }
+    }
+
+    /// A media payload or annotation labelled `text` is misfiled even when it names this chat, or
+    /// nobody: shown as text, its raw JSON would be the bubble.
+    func testAPayloadLabelledAsTextIsMisfiledWhateverItNames() async throws {
+        let repository = unlocked()
+        let bobPublic = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        for plaintext in [try file(to: bob), try transcript(to: bob), try file(to: nil), try transcript(to: nil)] {
+            let id = UUID()
+            messageIDs.append(id)
+            var bobChat = context(repository: repository, threads: [:], resolved: Resolved())
+            bobChat.chatPeerUserID = bob
+
+            let listed = try dto(id: id, sender: me, ciphertext: sealedByMe(plaintext, for: bobPublic))
+            let refused = await MessageDecoder.decodeChecked(listed, context: bobChat)
+            XCTAssertTrue(refused.refused)
+            XCTAssertEqual(refused.message.text, "[Unable to decrypt]")
+            XCTAssertNil(repository.sealedPlaintext(for: id, senderUserID: me))
+        }
+    }
+
+    /// A payload already cached (opened in Alice's chat) and re-listed in Bob's as `text` is
+    /// refused on read, and Alice's chat keeps it.
+    func testACachedPayloadRelabelledAsTextIsRefused() async throws {
+        let repository = unlocked()
+        let resolved = Resolved()
+        for plaintext in [try file(to: alice), try transcript(to: alice)] {
+            let id = UUID()
+            messageIDs.append(id)
+            repository.saveSealedPlaintext(messageID: id, senderUserID: me, data: plaintext)
+            var bobChat = context(repository: repository, threads: [:], resolved: resolved)
+            bobChat.chatPeerUserID = bob
+
+            let listed = try dto(id: id, sender: me, ciphertext: Data("not-an-envelope".utf8).base64EncodedString())
+            let refused = await MessageDecoder.decodeChecked(listed, context: bobChat)
+            XCTAssertTrue(refused.refused)
+            XCTAssertEqual(refused.message.text, "[Unable to decrypt]")
+            XCTAssertEqual(repository.sealedPlaintext(for: id, senderUserID: me), plaintext)
+        }
+        XCTAssertTrue(resolved.ids.isEmpty)
+    }
+
     /// Bodies from builds before the recipient was sealed open wherever they are listed.
     func testAPlaintextNamingNobodyStillOpens() async throws {
         let repository = unlocked()
@@ -398,8 +468,12 @@ final class SenderBoundPlaintextTests: XCTestCase {
 
     /// A v2 envelope of mine (no ratchet state) sealed for `peerPublic`, as the wire carries it.
     private func sealedByMe(_ plaintext: String, for peerPublic: Data) throws -> String {
+        try sealedByMe(Data(plaintext.utf8), for: peerPublic)
+    }
+
+    private func sealedByMe(_ plaintext: Data, for peerPublic: Data) throws -> String {
         try MessageCrypto.seal(
-            plaintext: Data(plaintext.utf8),
+            plaintext: plaintext,
             toPeerIdentityPublicKey: peerPublic,
             ourPrivateKey: material.agreementPrivateKey,
             ourIdentityPublicKey: material.identityPublicKeyData

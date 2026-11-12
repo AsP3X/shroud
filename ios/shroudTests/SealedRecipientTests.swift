@@ -63,26 +63,31 @@ final class SealedRecipientTests: XCTestCase {
         XCTAssertTrue(accepts(wire, "text", bob))
         XCTAssertFalse(accepts(wire, "text", alice))
         XCTAssertFalse(accepts(wire, "text", me))
-        XCTAssertEqual(SealedRecipient.named(in: Data(wire.utf8), contentType: "text"), .user(bob))
+        XCTAssertEqual(SealedRecipient.named(in: Data(wire.utf8)), .user(bob))
     }
 
-    func testLegacyAndTypedTextNamesNobody() {
+    func testLegacyTextNamesNobody() {
         XCTAssertTrue(accepts("See you at 10", "text", alice))
         let quote = MessageReplyReference(messageID: voiceID, senderUserID: me, kind: .text, snippet: "10?")
         XCTAssertTrue(accepts(MessageTextPayload.wire(body: "Yes", replyTo: quote), "text", alice))
-        // JSON someone typed is not the envelope, whatever keys it has.
-        XCTAssertTrue(accepts(#"{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}"#, "text", alice))
         XCTAssertTrue(accepts(#"{"t":"text","c":"x","to":null}"#, "text", alice))
-        XCTAssertEqual(SealedRecipient.named(in: Data("plain".utf8), contentType: "text"), .nobody)
+        XCTAssertEqual(SealedRecipient.named(in: Data("plain".utf8)), .nobody)
     }
 
     func testAToThatIsNotAnIdFailsClosed() {
         XCTAssertFalse(accepts(#"{"t":"text","c":"x","to":5}"#, "text", alice))
         XCTAssertFalse(accepts(#"{"t":"text","c":"x","to":""}"#, "text", alice))
         XCTAssertFalse(accepts(#"{"t":"text","c":"x","to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb "}"#, "text", bob))
-        XCTAssertEqual(SealedRecipient.named(in: Data(#"{"t":"text","c":"x","to":"nope"}"#.utf8), contentType: "text"), .invalid)
+        XCTAssertEqual(SealedRecipient.named(in: Data(#"{"t":"text","c":"x","to":"nope"}"#.utf8)), .invalid)
         // Any case of the canonical form is the same id.
         XCTAssertTrue(accepts(#"{"t":"text","c":"x","to":"BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB"}"#, "text", bob))
+    }
+
+    func testTheRecipientIsReadFromAnyObjectNotOnlyTheEnvelope() {
+        // Security audit C1: the label does not choose the reader, so a bare object is checked too.
+        XCTAssertFalse(accepts(#"{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}"#, "text", alice))
+        XCTAssertTrue(accepts(#"{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}"#, "text", bob))
+        XCTAssertEqual(SealedRecipient.named(in: Data(#"{"to":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}"#.utf8)), .user(bob))
     }
 
     // MARK: - Media and annotations
@@ -97,7 +102,7 @@ final class SealedRecipientTests: XCTestCase {
         XCTAssertFalse(accepts(fixture, "media", alice))
 
         let sealed = try MediaMessagePayload(t: "voice", mime: "audio/mp4", w: 0, h: 0, k: "a2V5", d: 1200, to: bob).encoded()
-        XCTAssertEqual(SealedRecipient.named(in: sealed, contentType: "media"), .user(bob))
+        XCTAssertEqual(SealedRecipient.named(in: sealed), .user(bob))
         XCTAssertEqual(MediaMessagePayload.parse(sealed)?.t, "voice")
 
         XCTAssertTrue(accepts(#"{"t":"voice","mime":"audio/mp4","w":0,"h":0,"k":"a2V5","d":1200}"#, "media", alice))
@@ -120,5 +125,47 @@ final class SealedRecipientTests: XCTestCase {
         let legacy = try JSONEncoder().encode(MessageAnnotation.transcript("Hello there", for: voiceID))
         let legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: legacy) as? [String: Any])
         XCTAssertNil(legacyObject["to"])
+    }
+
+    // MARK: - content_type is not sealed (security audit C1)
+
+    private func mediaPayload(to: UUID?) throws -> Data {
+        try MediaMessagePayload(t: "file", mime: "application/pdf", w: 0, h: 0, k: "a2V5", s: 4096, n: "contract.pdf", to: to).encoded()
+    }
+
+    private func annotation(to: UUID?) throws -> Data {
+        try JSONEncoder().encode(MessageAnnotation.transcript("Alice's transcript", for: voiceID, to: to))
+    }
+
+    func testAPayloadRelabelledAsTextIsCheckedForItsRecipient() throws {
+        // The server lists my file or transcript for Alice in my chat with Bob, labelled `text`.
+        XCTAssertFalse(SealedRecipient.accepts(try mediaPayload(to: alice), contentType: "text", expected: bob))
+        XCTAssertFalse(SealedRecipient.accepts(try annotation(to: alice), contentType: "text", expected: bob))
+        // Any label but media and annotation reads as text.
+        XCTAssertFalse(SealedRecipient.accepts(try mediaPayload(to: alice), contentType: "reaction", expected: bob))
+        // The labels they were sealed with still open them where they belong.
+        XCTAssertTrue(SealedRecipient.accepts(try mediaPayload(to: bob), contentType: "media", expected: bob))
+        XCTAssertTrue(SealedRecipient.accepts(try annotation(to: bob), contentType: MessageAnnotation.contentType, expected: bob))
+    }
+
+    func testAPayloadLabelledAsTextIsMisfiledWhateverItsRecipient() throws {
+        // Its raw JSON (caption, file name, key) would be the bubble, so `to` fitting is not enough.
+        XCTAssertFalse(SealedRecipient.accepts(try mediaPayload(to: bob), contentType: "text", expected: bob))
+        XCTAssertFalse(SealedRecipient.accepts(try annotation(to: bob), contentType: "text", expected: bob))
+        XCTAssertFalse(SealedRecipient.accepts(try mediaPayload(to: nil), contentType: "text", expected: bob))
+        XCTAssertFalse(SealedRecipient.accepts(try annotation(to: nil), contentType: "text", expected: bob))
+        XCTAssertFalse(accepts(#"{"t":"voice","mime":"audio/mp4","w":0,"h":0,"k":"a2V5","d":1200}"#, "text", alice))
+        XCTAssertFalse(accepts(#"{"t":"transcript","r":"3f2504e0-4f89-41d3-9a0c-0305e82c3301","c":"x"}"#, "text", alice))
+        // A text envelope is neither: it has no `k`, and its `t` is `text`.
+        XCTAssertTrue(accepts(MessageTextPayload.wire(body: "x", replyTo: nil, to: bob), "text", bob))
+    }
+
+    func testABomOrWhitespaceDoesNotHideTheRecipient() throws {
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        let forAlice = try mediaPayload(to: alice)
+        XCTAssertFalse(SealedRecipient.accepts(bom + forAlice, contentType: "text", expected: bob))
+        let envelope = MessageTextPayload.wire(body: "See you at 10", replyTo: nil, to: alice)
+        XCTAssertFalse(accepts(" \n\(envelope)\n ", "text", bob))
+        XCTAssertTrue(SealedRecipient.accepts(bom + Data(envelope.utf8), contentType: "text", expected: alice))
     }
 }
