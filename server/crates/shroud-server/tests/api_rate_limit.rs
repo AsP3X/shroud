@@ -1,8 +1,9 @@
 //! Integration tests for enabled in-process rate limiter.
 //!
 //! Human: Uses unique X-Forwarded-For / user keys so parallel suites do not share windows.
-//! Agent: AppState with RateLimiter::new(); forwarded_trust enabled via test helper; every
-//! request arrives from a Docker-network proxy (`MockConnectInfo`), so forwarded headers count.
+//! Agent: AppState with RateLimiter::new(); forwarded_trust enabled via test helper, which names
+//! 172.18.0.5 as the proxy; requests arrive from it (`MockConnectInfo`), so forwarded headers
+//! count, except in the test of a peer that is not the proxy.
 
 use std::net::SocketAddr;
 
@@ -22,6 +23,10 @@ fn test_state(pool: sqlx::PgPool, rate_limiter: RateLimiter) -> shroud_server::s
 }
 
 async fn test_app(rate_limiter: RateLimiter) -> Option<axum::Router> {
+    test_app_from(rate_limiter, SocketAddr::from(([172, 18, 0, 5], 40000))).await
+}
+
+async fn test_app_from(rate_limiter: RateLimiter, peer: SocketAddr) -> Option<axum::Router> {
     let database_url = std::env::var("DATABASE_URL").ok()?;
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -36,7 +41,7 @@ async fn test_app(rate_limiter: RateLimiter) -> Option<axum::Router> {
         axum::Router::new()
             .merge(routes::router())
             .with_state(test_state(pool, rate_limiter))
-            .layer(MockConnectInfo(SocketAddr::from(([172, 18, 0, 5], 40000)))),
+            .layer(MockConnectInfo(peer)),
     )
 }
 
@@ -205,6 +210,52 @@ async fn forged_forwarded_hops_do_not_pick_the_ip_budget() {
         }
     }
     assert!(limited, "a forged left hop must not open a fresh IP budget");
+}
+
+/// Security audit S3: a LAN client (or Docker's gateway handing on a published port) is on a
+/// private address but is not the proxy, so the address it names in `X-Real-IP` is ignored.
+#[tokio::test]
+async fn a_private_peer_that_is_not_the_proxy_cannot_pick_the_ip_budget() {
+    let lan_client = SocketAddr::from(([192, 168, 1, 20], 51000));
+    let Some(app) = test_app_from(RateLimiter::new(), lan_client).await else {
+        eprintln!(
+            "skipping a_private_peer_that_is_not_the_proxy_cannot_pick_the_ip_budget: DATABASE_URL unavailable"
+        );
+        return;
+    };
+    let mut statuses = Vec::new();
+    for _ in 0..11 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("x-real-ip", fresh_ip())
+                    .header("x-forwarded-for", fresh_ip())
+                    .body(Body::from(
+                        json!({
+                            "username_hash": shroud_server::auth::username_hash_b64(
+                                Uuid::new_v4().to_string()
+                            ),
+                            "password": "wrong-password-here"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("oneshot");
+        statuses.push(response.status());
+    }
+    assert!(
+        statuses[..10]
+            .iter()
+            .all(|status| *status == StatusCode::UNAUTHORIZED),
+        "{statuses:?}"
+    );
+    assert_eq!(statuses[10], StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

@@ -20,8 +20,10 @@ services:
       - "127.0.0.1:9000:9000"
 
   api:
+    # This machine only, unless API_BIND says otherwise (API_BIND=0.0.0.0 for a phone on the
+    # LAN). Browsers and LAN devices can use the web port's /api/v1 instead.
     ports:
-      - "${API_PORT:-8080}:8080"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8080}:8080"
 
   web:
     ports:

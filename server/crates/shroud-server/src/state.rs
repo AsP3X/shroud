@@ -85,10 +85,14 @@ impl AppState {
             username_kdf: UsernameKdf::for_tests(),
             rate_limiter,
             redis_required: false,
-            forwarded_trust: crate::rate_limit::ForwardedTrust {
-                enabled: true,
-                proxies: Vec::new(),
-            },
+            // The web container the tests' requests come from (`MockConnectInfo`).
+            forwarded_trust: crate::rate_limit::ForwardedTrust::new(
+                true,
+                crate::rate_limit::IpRange::parse("172.18.0.5")
+                    .into_iter()
+                    .collect(),
+                Vec::new(),
+            ),
             presence_throttle: Arc::new(crate::routes::presence::PresenceThrottle::new(
                 crate::routes::presence::PRESENCE_INTERVAL,
             )),
