@@ -223,7 +223,7 @@ async fn grants_refuse_an_audit_log_with_a_planted_rule() {
         CREATE RULE leak AS ON INSERT TO admin.audit_log
             DO ALSO INSERT INTO admin.loot SELECT password_hash FROM public.users;
         "#,
-        false,
+        When::Before,
     )
     .await
     else {
@@ -259,7 +259,7 @@ async fn grants_refuse_an_audit_log_with_a_planted_trigger() {
         CREATE TRIGGER scrub BEFORE INSERT ON admin.audit_log
             FOR EACH ROW EXECUTE FUNCTION admin.scrub();
         "#,
-        false,
+        When::Before,
     )
     .await
     else {
@@ -288,7 +288,7 @@ async fn grants_refuse_an_audit_log_already_taken_with_a_rule() {
         CREATE RULE leak AS ON INSERT TO admin.audit_log
             DO ALSO INSERT INTO admin.loot SELECT password_hash FROM public.users;
         "#,
-        true,
+        When::AfterOldTakeover,
     )
     .await
     else {
@@ -315,7 +315,7 @@ async fn grants_refuse_an_audit_log_with_an_owner_run_index_or_a_public_grant() 
         CREATE INDEX audit_log_same_idx ON admin.audit_log (admin.same(action));
         GRANT DELETE ON admin.audit_log TO PUBLIC;
         "#,
-        false,
+        When::Before,
     )
     .await
     else {
@@ -334,6 +334,53 @@ async fn grants_refuse_an_audit_log_with_an_owner_run_index_or_a_public_grant() 
     );
 }
 
+/// The console's role still owns the log while `grants.sql` waits to take it over, so what it
+/// attaches in that moment has to be caught too (security audit A2, found in review). Here it holds
+/// an ordinary read lock, so the takeover has to wait, and adds a rule and a `PUBLIC` grant then.
+#[tokio::test]
+async fn grants_refuse_what_is_attached_while_the_takeover_waits() {
+    let Some(outcome) = plant_on_audit_log(
+        "waiting",
+        r#"
+        CREATE RULE leak AS ON INSERT TO admin.audit_log
+            DO ALSO INSERT INTO admin.loot SELECT password_hash FROM public.users;
+        GRANT DELETE ON admin.audit_log TO PUBLIC;
+        "#,
+        When::WhileTakeoverWaits,
+    )
+    .await
+    else {
+        return;
+    };
+    let refused = outcome
+        .refused
+        .expect("grants.sql took over an audit log that was given a rule while it waited");
+    assert!(
+        refused.contains("rule leak on table admin.audit_log"),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("a privilege on admin.audit_log for PUBLIC"),
+        "{refused}"
+    );
+    assert_eq!(outcome.leaked, 0, "an audit entry copied password hashes");
+    assert_eq!(
+        outcome.owner, "shroud_admin",
+        "the refused log still changed hands"
+    );
+}
+
+/// When `plant_in_probe` runs the console's SQL, relative to `grants.sql`.
+#[derive(Clone, Copy)]
+enum When {
+    /// Before `grants.sql` runs, while the console's role owns the log.
+    Before,
+    /// Before, and the log is then moved the way `grants.sql` did before it checked anything.
+    AfterOldTakeover,
+    /// While `grants.sql` waits for a read lock the console holds on the log.
+    WhileTakeoverWaits,
+}
+
 /// What `plant_on_audit_log` saw after `grants.sql` ran.
 struct Planted {
     /// The `DETAIL` of the refusal, which lists what was found, or `None` if the file applied.
@@ -347,7 +394,7 @@ struct Planted {
 /// Runs `plant_in_probe` in a database of its own and drops that database again, so the planted
 /// objects never reach the database the other tests share. `None` when the grant-test variables
 /// are unset.
-async fn plant_on_audit_log(label: &str, plant: &str, taken_before: bool) -> Option<Planted> {
+async fn plant_on_audit_log(label: &str, plant: &str, when: When) -> Option<Planted> {
     let Some(super_url) = nonempty("GRANT_TEST_SUPER_URL") else {
         eprintln!("GRANT_TEST_SUPER_URL unset; audit log test not run");
         return None;
@@ -384,7 +431,7 @@ async fn plant_on_audit_log(label: &str, plant: &str, taken_before: bool) -> Opt
         &base.clone().database(&probe),
         &admin.database(&probe),
         plant,
-        taken_before,
+        when,
     )
     .await;
 
@@ -398,14 +445,14 @@ async fn plant_on_audit_log(label: &str, plant: &str, taken_before: bool) -> Opt
 
 /// Builds a deployment in `probe` the way deploy does (server migrations as the superuser, the
 /// console's migrations as `shroud_admin`, one account with a password hash), runs `plant` as
-/// `shroud_admin` while it owns the audit log, and applies `grants.sql` as the superuser. With
-/// `taken_before`, the log is first moved the way `grants.sql` did before it checked anything.
+/// `shroud_admin` while it owns the audit log, at the point `when` names, and applies `grants.sql`
+/// as the superuser.
 /// The console then writes one audit entry, and the rows that reached `admin.loot` are counted.
 async fn plant_in_probe(
     superuser: &PgConnectOptions,
     console: &PgConnectOptions,
     plant: &str,
-    taken_before: bool,
+    when: When,
 ) -> Result<Planted, sqlx::Error> {
     let mut owner = PgConnection::connect_with(superuser).await?;
     sqlx::raw_sql("GRANT USAGE ON SCHEMA public TO shroud_admin")
@@ -431,9 +478,11 @@ async fn plant_in_probe(
     sqlx::raw_sql("CREATE TABLE admin.loot (stolen text)")
         .execute(&pool)
         .await?;
-    sqlx::raw_sql(plant).execute(&pool).await?;
+    if !matches!(when, When::WhileTakeoverWaits) {
+        sqlx::raw_sql(plant).execute(&pool).await?;
+    }
 
-    if taken_before {
+    if matches!(when, When::AfterOldTakeover) {
         sqlx::raw_sql(
             r#"
             ALTER SCHEMA admin OWNER TO CURRENT_USER;
@@ -447,11 +496,18 @@ async fn plant_in_probe(
         .await?;
     }
 
+    let (owner, applied) = if matches!(when, When::WhileTakeoverWaits) {
+        plant_while_takeover_waits(superuser, console, owner, plant).await?
+    } else {
+        let applied = sqlx::raw_sql(include_str!("../grants.sql"))
+            .execute(&mut owner)
+            .await
+            .map(drop);
+        (owner, applied)
+    };
+
     // Human: The refusal is the expected outcome, so it is returned rather than raised.
-    let refused = match sqlx::raw_sql(include_str!("../grants.sql"))
-        .execute(&mut owner)
-        .await
-    {
+    let refused = match applied {
         Ok(_) => None,
         Err(err) => {
             let detail = err
@@ -495,6 +551,60 @@ async fn plant_in_probe(
         leaked,
         owner,
     })
+}
+
+/// Applies `grants.sql` on `owner` while a second console session holds a read lock on the log,
+/// runs `plant` in that session once the takeover is waiting for the lock, and commits. Returns the
+/// connection and the outcome of `grants.sql`.
+async fn plant_while_takeover_waits(
+    superuser: &PgConnectOptions,
+    console: &PgConnectOptions,
+    mut owner: PgConnection,
+    plant: &str,
+) -> Result<(PgConnection, Result<(), sqlx::Error>), sqlx::Error> {
+    let mut holder = PgConnection::connect_with(console).await?;
+    sqlx::raw_sql("BEGIN").execute(&mut holder).await?;
+    sqlx::raw_sql("LOCK TABLE admin.audit_log IN ACCESS SHARE MODE")
+        .execute(&mut holder)
+        .await?;
+
+    // Human: Both halves run on this task, so the deploy can borrow `owner`.
+    let deploy = async {
+        sqlx::raw_sql(include_str!("../grants.sql"))
+            .execute(&mut owner)
+            .await
+            .map(drop)
+    };
+    let attach = async {
+        // Human: Wait until the takeover is queued behind the read lock, for at most 10 s.
+        // Agent: READS pg_locks in the probe database every 50 ms.
+        let mut watch = PgConnection::connect_with(superuser).await?;
+        let mut waiting = false;
+        for _ in 0..200 {
+            waiting = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks
+                                WHERE relation = 'admin.audit_log'::regclass AND NOT granted)",
+            )
+            .fetch_one(&mut watch)
+            .await?;
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        watch.close().await?;
+        assert!(
+            waiting,
+            "grants.sql never waited for the console's read lock"
+        );
+
+        sqlx::raw_sql(plant).execute(&mut holder).await?;
+        sqlx::raw_sql("COMMIT").execute(&mut holder).await?;
+        holder.close().await
+    };
+    let (applied, attached) = tokio::join!(deploy, attach);
+    attached?;
+    Ok((owner, applied))
 }
 
 fn nonempty(name: &str) -> Option<String> {

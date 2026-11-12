@@ -67,12 +67,21 @@ RESET ROLE;
 -- later deploy, while any of that is there. Migration 001 makes none of it: the foreign key's
 -- triggers are internal, and its defaults, constraints and indexes use pg_catalog only. This needs
 -- the search_path above, so the catalog names and operators below are pg_catalog's.
+--
+-- The check runs after the owner change, in the same block, so that nothing slips in between: the
+-- lock first stops rule, trigger, policy and index changes, the owner change then takes away the
+-- console's right to grant or attach anything, and a refusal rolls both back with the rest of the
+-- block. A check before the change would pass while something was being attached behind it.
 DO $body$
 DECLARE
   audit_log oid := to_regclass('admin.audit_log');
   attached text;
 BEGIN
   IF audit_log IS NOT NULL THEN
+    LOCK TABLE admin.audit_log IN ACCESS EXCLUSIVE MODE;
+    EXECUTE 'ALTER SCHEMA admin OWNER TO ' || quote_ident(current_user);
+    EXECUTE 'ALTER TABLE admin.audit_log OWNER TO ' || quote_ident(current_user);
+
     SELECT string_agg(what, E'\n' ORDER BY what) INTO attached FROM (
       SELECT 'admin.audit_log is not a permanent plain table' AS what
         FROM pg_class WHERE oid = audit_log AND (relkind <> 'r' OR relpersistence <> 'p')
@@ -129,12 +138,10 @@ BEGIN
     IF attached IS NOT NULL THEN
       RAISE EXCEPTION 'admin.audit_log carries objects that would run or act with the rights of %, so it was not taken over', current_user
         USING DETAIL = attached,
-              HINT = 'See "If grants.sql refuses the audit log" in docs/admin.md. Nothing was changed.';
+              HINT = 'See "If grants.sql refuses the audit log" in docs/admin.md. The audit log and schema admin were not changed.';
     END IF;
 
-    EXECUTE 'ALTER SCHEMA admin OWNER TO ' || quote_ident(current_user);
     GRANT USAGE, CREATE ON SCHEMA admin TO shroud_admin;
-    EXECUTE 'ALTER TABLE admin.audit_log OWNER TO ' || quote_ident(current_user);
     REVOKE ALL ON admin.audit_log FROM shroud_admin;
     GRANT SELECT, INSERT ON admin.audit_log TO shroud_admin;
   END IF;
