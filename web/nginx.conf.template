@@ -42,10 +42,8 @@ server {
     absolute_redirect off;
     port_in_redirect off;
 
-    set_real_ip_from 10.0.0.0/8;
-    set_real_ip_from 172.16.0.0/12;
-    set_real_ip_from 192.168.0.0/16;
-    set_real_ip_from 127.0.0.1;
+    # The peers that may name the client are the proxies the deployment names, written at start
+    # by nginx-real-ip.sh (conf.d/01-real-ip.conf); none in PROXY_MODE=local.
     real_ip_header X-Forwarded-For;
     real_ip_recursive on;
 

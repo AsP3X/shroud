@@ -59,6 +59,7 @@ COPY nginx-http-map.conf /etc/nginx/conf.d/00-http-map.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY api-proxy.conf /etc/nginx/api-proxy.conf
 COPY admin-proxy.conf /etc/nginx/admin-proxy.conf
+COPY --chmod=755 nginx-real-ip.sh /docker-entrypoint.d/15-shroud-real-ip.sh
 # nginx image envsubst only replaces defined environment variables.
 ENV API_UPSTREAM=http://api:8080
 ENV ADMIN_UPSTREAM=http://admin:8082

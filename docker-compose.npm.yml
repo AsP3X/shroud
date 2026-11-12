@@ -11,13 +11,22 @@
 # time with the API's own log, that ties people to addresses. In each host's Advanced tab, add:
 #   access_log off;
 
+#
+# NPM's address on proxy-network is not known in advance, so api and web trust the networks they
+# are on (TRUST_PROXY_NETWORKS). That is safe only because this overlay publishes no port: only
+# containers on proxy-network and shroud-internal reach them.
+
 services:
   api:
+    environment:
+      TRUST_PROXY_NETWORKS: "true"
     networks:
       - shroud-internal
       - proxy-network
 
   web:
+    environment:
+      TRUST_PROXY_NETWORKS: "true"
     networks:
       - shroud-internal
       - proxy-network
