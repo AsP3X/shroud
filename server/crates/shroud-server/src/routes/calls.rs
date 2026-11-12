@@ -23,7 +23,9 @@ use crate::config::IceServer;
 use crate::error::AppError;
 use crate::push::PushEvent;
 use crate::rate_limit::budgets;
-use crate::routes::contacts::{are_contacts, is_blocked_either_way};
+use crate::routes::contacts::{
+    are_contacts, is_blocked_either_way, is_blocked_either_way_tx, lock_pair,
+};
 use crate::state::AppState;
 
 const MAX_SIGNAL_BYTES: usize = 64 * 1024;
@@ -249,6 +251,14 @@ pub async fn create_call(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin call failed: {err}")))?;
+    // Human: A block that committed since the check above is seen here; one that comes later
+    // waits for this ring to commit and then ends it (security audit S6, L8).
+    // Agent: pg_advisory_xact_lock(pair) before the busy locks and any row lock, the order
+    // `POST /blocks` takes them in; then SELECT blocks. 403 means no call row and no ring.
+    lock_pair(&mut tx, auth.user_id, body.peer_user_id).await?;
+    if is_blocked_either_way_tx(&mut tx, auth.user_id, body.peer_user_id).await? {
+        return Err(AppError::forbidden("Cannot call this user."));
+    }
     // Human: Two people calling each other at the same moment would both pass the busy check;
     // the second waits for the first here and then finds the other busy.
     let mut keys = [

@@ -10,6 +10,9 @@ use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+mod block_race;
+use block_race::{stage_block, until_waiting_on};
+
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
     shroud_server::state::AppState::for_integration_tests(pool)
 }
@@ -588,5 +591,116 @@ async fn each_send_counts_one_message_sent() {
         messages_sent_total(&app).await,
         3,
         "an annotation is not a message sent"
+    );
+}
+
+/// [`test_app`] and its state, for a test that holds rows or listens on the hub itself.
+async fn test_app_and_state() -> Option<(axum::Router, shroud_server::state::AppState)> {
+    let database_url = std::env::var("DATABASE_URL").ok()?;
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .ok()?;
+    sqlx::migrate!("../../migrations/postgres")
+        .run(&pool)
+        .await
+        .ok()?;
+    let state = test_state(pool);
+    Some((
+        axum::Router::new()
+            .merge(routes::router())
+            .with_state(state.clone()),
+        state,
+    ))
+}
+
+/// Every event queued for a socket right now.
+fn drain(events: &mut tokio::sync::mpsc::Receiver<String>) -> Vec<Value> {
+    let mut out = Vec::new();
+    while let Ok(text) = events.try_recv() {
+        out.push(serde_json::from_str(&text).expect("json event"));
+    }
+    out
+}
+
+/// Human: A message sent while its recipient's block commits (security audit S6). The send
+/// passes its first block check, then waits on the pair lock the block holds; once the block
+/// commits it must answer 403, store nothing and publish no `message.new`.
+#[tokio::test]
+async fn a_send_racing_a_block_is_refused_and_not_delivered() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!("skipping a_send_racing_a_block_is_refused_and_not_delivered: no DATABASE_URL");
+        return;
+    };
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    let (a, b) = (
+        user_a.parse::<Uuid>().unwrap(),
+        user_b.parse::<Uuid>().unwrap(),
+    );
+    let b_device: Uuid = sqlx::query_scalar("SELECT id FROM devices WHERE user_id = $1")
+        .bind(b)
+        .fetch_one(&state.pool)
+        .await
+        .expect("b's device");
+    let mut b_events = state
+        .realtime
+        .subscribe(b, b_device, Uuid::new_v4())
+        .await
+        .expect("subscribe")
+        .events;
+
+    // The socket hears a send that lands before the block.
+    let before = post_message(
+        &app,
+        &token_a,
+        json!({
+            "peer_user_id": user_b,
+            "client_message_id": Uuid::new_v4(),
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"before")
+        }),
+    )
+    .await;
+    assert_eq!(before.status(), StatusCode::CREATED);
+    assert!(
+        drain(&mut b_events)
+            .iter()
+            .any(|event| event["type"] == "message.new")
+    );
+
+    let (holder, holder_pid) = stage_block(&state.pool, b, a).await;
+    let client_message_id = Uuid::new_v4();
+    let sending = tokio::spawn({
+        let app = app.clone();
+        let token_a = token_a.clone();
+        let body = json!({
+            "peer_user_id": user_b,
+            "client_message_id": client_message_id,
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"racing")
+        });
+        async move { post_message(&app, &token_a, body).await.status() }
+    });
+    until_waiting_on(&state.pool, holder_pid, &sending).await;
+    holder.commit().await.expect("commit block");
+
+    assert_eq!(sending.await.expect("send task"), StatusCode::FORBIDDEN);
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM messages WHERE sender_user_id = $1 AND client_message_id = $2",
+    )
+    .bind(a)
+    .bind(client_message_id)
+    .fetch_one(&state.pool)
+    .await
+    .expect("count messages");
+    assert_eq!(stored, 0, "a message slipped past the block");
+    assert!(
+        drain(&mut b_events)
+            .iter()
+            .all(|event| event["type"] != "message.new"),
+        "the blocker received the message"
     );
 }
