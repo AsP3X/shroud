@@ -7,6 +7,13 @@ import WebRTC
 @testable import shroud
 
 /// The frames the broadcast extension hands the app (ShroudShared/ScreenShareWire.swift).
+///
+/// Human: Serialized because the receiver tests share the simulator's one screen socket, as the
+/// app does: run side by side, each receiver's `start()` unlinks the socket another just bound and
+/// its `stop()` unlinks the next one's, so frames and events reach the wrong receiver or none.
+/// Agent: WRITES /tmp/shroud-screen-<SIMULATOR_UDID>.sock (`ScreenShareWire.socketURL`); a new
+/// test that starts a `ScreenShareReceiver` belongs in this suite, not in a parallel one.
+@Suite(.serialized)
 struct ScreenShareWireTests {
     private func frame(width: UInt32 = 884, height: UInt32 = 1916, orientation: UInt32 = 1, jpeg: Data) -> Data {
         ScreenShareWire.Header(width: width, height: height, orientation: orientation, length: UInt32(jpeg.count)).encoded() + jpeg
@@ -219,7 +226,7 @@ struct ScreenShareWireTests {
         }
         #expect(connected == 0)
         close(fd)
-        try await Task.sleep(for: .milliseconds(300))
+        try await Self.waitUntil { events.all.count >= 2 }
         #expect(events.all == [.connected, .disconnected])
 
         let sink = FrameSink()
@@ -230,9 +237,23 @@ struct ScreenShareWireTests {
         try await Task.sleep(for: .milliseconds(200))
         let screen = try #require(Self.pixelBuffer(width: 1206, height: 2622))
         await Self.beat(screen, into: uploader, seconds: 0.5)
-        try await Task.sleep(for: .milliseconds(300))
+        try await Self.waitUntil { events.all.count >= 4 }
         #expect(events.all == [.connected, .disconnected, .connected, .firstFrame])
         #expect(!sink.take().isEmpty)
+    }
+
+    /// Polls `condition` every 20 ms until it holds or `limit` passes.
+    ///
+    /// Human: The receiver's events reach the main queue, which the rest of the suite shares; in a
+    /// full run its main-actor tests can hold it for many seconds (one run saw nothing arrive in
+    /// 14 s). A fixed pause then reads an empty log. This waits as long as the delivery takes.
+    /// Agent: READS `condition` off the main actor; RETURNS once it holds, or after `limit` and the
+    /// caller's `#expect` reports what arrived.
+    private static func waitUntil(limit: Duration = .seconds(60), _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + limit
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
     }
 
     /// Source on a screen with an odd side: one column cut off, never a resample.
@@ -252,7 +273,9 @@ struct ScreenShareWireTests {
         // Sharp vertical stripes a pixel wide: any resample would blur them into grey.
         let screen = try #require(Self.pixelBuffer(width: 1179, height: 2556, stripes: true))
         await Self.beat(screen, into: uploader, seconds: 0.4)
-        try await Task.sleep(for: .milliseconds(300))
+        // The first frame is always sent; a busy simulator may take longer than the beat to
+        // compress and decode it.
+        try await Self.waitUntil { sink.count > 0 }
         let frames = sink.takeFrames()
         let frame = try #require(frames.last)
         #expect(frame.width == 1178 && frame.height == 2556)
@@ -345,6 +368,9 @@ private nonisolated final class FrameSink: NSObject, RTCVideoCapturerDelegate, @
             return sizes
         }
     }
+
+    /// How many frames arrived since the last take, leaving them in place.
+    var count: Int { lock.withLock { sizes.count } }
 
     /// The frames themselves since the last call.
     func takeFrames() -> [RTCVideoFrame] {
