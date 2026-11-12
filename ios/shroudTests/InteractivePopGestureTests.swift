@@ -182,17 +182,25 @@ final class InteractivePopGestureTests: XCTestCase {
         override func location(in view: UIView?) -> CGPoint { point }
     }
 
+    /// Polls `condition` on the main actor until it holds, `looks` times 20 ms apart (5 s unhurried).
+    ///
+    /// Human: Counted in looks, not wall-clock time. The test host's main thread, or the whole
+    /// simulator on a busy Mac, can stall for seconds (one run of the edge test took 14 s instead
+    /// of 0.2). A deadline that ran out during such a stall failed a push or pop that finished the
+    /// moment the main thread came back, and never looked again.
+    /// Agent: Each look runs on the main actor, so a stall only delays the next look; it cannot use
+    /// them up. A condition that never holds still fails after `looks` looks.
     private func settle(
-        timeout: Duration = .seconds(5),
+        looks: Int = 250,
         file: StaticString = #filePath,
         line: UInt = #line,
         _ condition: @escaping () throws -> Bool
     ) async throws {
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline {
+        for _ in 0..<looks {
             if (try? condition()) == true { return }
             try await Task.sleep(for: .milliseconds(20))
         }
-        XCTFail("Condition not met within \(timeout)", file: file, line: line)
+        if (try? condition()) == true { return }
+        XCTFail("Condition not met after \(looks) looks", file: file, line: line)
     }
 }
