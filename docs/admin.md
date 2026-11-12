@@ -65,7 +65,7 @@ While the profile is off, the API still binds its internal operator port when `O
 
 ## What the console shows
 
-Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Each code works once: the code that signed in can't also approve a change, so wait for the next one. Sign-ins and changes are kept in the audit log. The log and schema `admin` belong to the database superuser once `grants.sql` has run (deploy waits for the console to create them): `shroud_admin` can add and read entries, never change, remove or drop one. Its integration tests then need `GRANT_TEST_SUPER_URL` to clear entries.
+Sign in with a password and an authenticator app. A recovery code stands in for the app. **Admin** can change things. **View only** can read the pages. A change asks for a fresh authenticator code, valid for five minutes. Each code works once: the code that signed in can't also approve a change, so wait for the next one. Sign-ins and changes are kept in the audit log. The log and schema `admin` belong to the database superuser once `grants.sql` has run (deploy waits for the console to create them): `shroud_admin` can add and read entries, never change, remove or drop one. Before it takes the log, and again on every later deploy, `grants.sql` checks that the console's role attached nothing to it while it owned it, and stops the deploy if it did (see [If grants.sql refuses the audit log](#if-grantssql-refuses-the-audit-log)). Its integration tests then need `GRANT_TEST_SUPER_URL` to clear entries.
 
 | Page | What it shows |
 | --- | --- |
@@ -100,6 +100,22 @@ Back up schema `admin` with the database. That schema holds:
 `ADMIN_SECRET_KEY` is not in the database. Keep it with the backup. A restored schema `admin` cannot decrypt authenticator secrets without the same key.
 
 Column grants on the API tables are `admin/api/grants.sql`, applied by the superuser (it makes them as the tables' owner, `shroud_api`). They are not rows in schema `admin`. Apply that file again, as the superuser, if you restore onto a database that does not already have them.
+
+## If grants.sql refuses the audit log
+
+`shroud_admin` owns `admin.audit_log` from the console's first start until `grants.sql` runs: on a first deploy, on a deployment from before that file moved the log, after the 60-second wait for the console's tables ran out, and after a plain `docker compose up`. An owner can attach things to its table that keep working once the table belongs to the superuser, and then run with the superuser's rights or change entries. A rule on the log, for example, can copy `users.password_hash` into a table of the console's own on every entry the console writes. So `grants.sql` refuses to take the log, or to keep it on a later deploy, while it has any of these:
+
+- a rule, a trigger other than the foreign key's own, a row-level security policy, or row-level security turned on;
+- an index, default, constraint, extended statistic or column type that uses a function, operator or type from outside `pg_catalog` (an index expression runs as the owner whenever `ANALYZE`, `VACUUM` or `REINDEX` does, autovacuum included);
+- a privilege for any role but the superuser and `shroud_admin` (a grant to `PUBLIC` survives the owner change), on the table or on a column;
+- inheritance or partitions, or something else in the table's place (a view, an unlogged table).
+
+The deploy stops at that step with `admin.audit_log carries objects that would run or act with the rights of …`, and the `DETAIL` line names each one. Nothing is changed: the log and schema `admin` stay with whoever owned them. The console's own migrations make none of these, so treat the console's database login as stolen:
+
+1. Open `psql` as the superuser: `docker compose exec postgres psql -U <POSTGRES_USER> -d <POSTGRES_DB>`. Look at each named object (`\d+ admin.audit_log`, `\dp admin.audit_log`, `\df+ admin.*`) and at where it writes. If the log already belonged to the superuser (an earlier deploy took it over), the object may have run with the superuser's rights: what it could read may have left the database.
+2. Remove each one as the superuser, for example `DROP RULE <name> ON admin.audit_log;`, `DROP TRIGGER <name> ON admin.audit_log;`, `DROP POLICY <name> ON admin.audit_log;`, `ALTER TABLE admin.audit_log DISABLE ROW LEVEL SECURITY;`, `DROP INDEX admin.<name>;` or `REVOKE ALL ON admin.audit_log FROM PUBLIC;`.
+3. Give `shroud_admin` a new password (`ALTER ROLE shroud_admin PASSWORD '…';`) and put it in `ADMIN_DB_PASSWORD` and `ADMIN_DATABASE_URL` in `.env`.
+4. Run `./deploy.sh --admin` (`.\deploy.ps1 -Admin`) again. It checks the log the same way.
 
 ## A lost ADMIN_SECRET_KEY
 
