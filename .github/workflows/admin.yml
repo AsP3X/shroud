@@ -133,11 +133,11 @@ jobs:
       - name: Superuser search_path test, before shroud_api exists
         run: cargo test --test grants api_role_cannot_hijack_the_superuser_deploy_sql
 
+      # The password comes from API_DB_PASSWORD through \getenv, as in the postgres container.
       - name: Apply api-role.sql as the superuser
         run: >-
           psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-          -v pwd="$API_DB_PASSWORD" -v dbname="$POSTGRES_DB"
-          -f ../../server/docker/api-role.sql
+          -v dbname="$POSTGRES_DB" -f ../../server/docker/api-role.sql
 
       - name: Create role shroud_admin
         run: sh ../../server/docker/init-admin-role.sh
