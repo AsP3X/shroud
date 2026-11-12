@@ -9,7 +9,9 @@ if [ -z "${ADMIN_DB_PASSWORD:-}" ]; then
 fi
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-  -v pwd="$ADMIN_DB_PASSWORD" -v dbname="$POSTGRES_DB" <<'SQL'
+  -v dbname="$POSTGRES_DB" <<'SQL'
+-- From the environment, not `psql -v`: process arguments show on the host (security audit A6).
+\getenv pwd ADMIN_DB_PASSWORD
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$

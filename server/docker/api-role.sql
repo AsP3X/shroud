@@ -1,5 +1,7 @@
--- The API's own Postgres role (security audit H5). Run as the superuser (POSTGRES_USER) with
--- psql variables `pwd` (API_DB_PASSWORD) and `dbname`, before the API starts. Re-running is safe.
+-- The API's own Postgres role (security audit H5). Run as the superuser (POSTGRES_USER) inside the
+-- postgres container, with psql variable `dbname`, before the API starts. Re-running is safe. The
+-- password comes from the container's API_DB_PASSWORD, never from `psql -v`: process arguments
+-- show on the host to anyone with ps (security audit A6).
 --
 -- The official image makes POSTGRES_USER a superuser, and a superuser cannot be made an ordinary
 -- role again (it is the bootstrap role). So the API connects as shroud_api instead: it owns the
@@ -9,6 +11,7 @@
 
 SET client_min_messages = warning;
 
+\getenv pwd API_DB_PASSWORD
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.api_password', :'pwd', false) AS api_password_set \gset
 DO $body$

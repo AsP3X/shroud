@@ -663,8 +663,10 @@ shroud_apply_api_role() {
     fi
     sleep 1
   done
+  # api-role.sql reads the password from the container's API_DB_PASSWORD, which `up` above set
+  # from .env. Not `psql -v`: any user on the host sees process arguments (security audit A6).
   if ! shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
-    -v pwd="$pass" -v dbname="$db" -f /shroud/api-role.sql >/dev/null; then
+    -v dbname="$db" -f /shroud/api-role.sql >/dev/null; then
     echo "ERROR: could not set up the API's database role (server/docker/api-role.sql)." >&2
     return 1
   fi
@@ -685,7 +687,9 @@ shroud_apply_admin_db() {
     return 1
   }
   shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
-    -v pwd="$pass" -v dbname="$db" <<'SQL'
+    -v dbname="$db" <<'SQL'
+-- From the environment, not `psql -v`: process arguments show on the host (security audit A6).
+\getenv pwd ADMIN_DB_PASSWORD
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$

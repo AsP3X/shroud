@@ -233,8 +233,10 @@ function Apply-ApiRole {
         if (-not $ready) { Start-Sleep -Seconds 1 }
     }
     if (-not $ready) { throw "Postgres did not accept connections within 90 s (.\deploy.ps1 -Logs postgres)" }
+    # api-role.sql reads the password from the container's API_DB_PASSWORD, which `up` above set
+    # from .env. Not `psql -v`: any user on the host sees process arguments (security audit A6).
     Invoke-WithDataDirEnv {
-        & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "pwd=$pass" -v "dbname=$db" -f /shroud/api-role.sql | Out-Null
+        & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "dbname=$db" -f /shroud/api-role.sql | Out-Null
     }
     if ($LASTEXITCODE -ne 0) { throw "could not set up the API's database role (server/docker/api-role.sql)" }
 }
@@ -249,6 +251,8 @@ function Apply-AdminDb {
     if (-not $pass) { Write-Die "the admin profile is on and ADMIN_DB_PASSWORD is empty." }
     $files = Get-ComposeArgs
     $roleSql = @'
+-- From the environment, not `psql -v`: process arguments show on the host (security audit A6).
+\getenv pwd ADMIN_DB_PASSWORD
 -- \gset keeps the row (the password) in a psql variable instead of printing it to the log.
 SELECT set_config('shroud.admin_password', :'pwd', false) AS admin_password_set \gset
 DO $body$
@@ -269,7 +273,7 @@ GRANT USAGE ON SCHEMA public TO shroud_admin;
 ALTER ROLE CURRENT_USER SET search_path = public;
 '@
     Invoke-WithDataDirEnv {
-        $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "pwd=$pass" -v "dbname=$db" | Out-Null
+        $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "dbname=$db" | Out-Null
     }
     if ($LASTEXITCODE -ne 0) { throw "could not create the shroud_admin role" }
     # grants.sql gives the audit log to this role once the console has made its schema, which it
