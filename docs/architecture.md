@@ -107,9 +107,8 @@ reads the plaintext only, never `content_type`:
 The rule applies to every object, envelope or not: a bare `{"to":…}` is checked like the
 envelope. A refused message shows as "[Unable to decrypt]" ("Media" for a media label on web),
 is never cached in that chat or acked, and leaves an entry cached for its real chat alone. Web
-`sealedRecipient.ts` and Android `SealedRecipient.kt` implement this rule and share the fixtures of
-their tests. iOS `SealedRecipient.swift` still reads `to` only from the shape `content_type` names
-(the text envelope for `text`) and has to be ported to the same rule.
+`sealedRecipient.ts`, Android `SealedRecipient.kt` and iOS `SealedRecipient.swift` implement this
+rule and share the fixtures of their tests.
 
 **Reactions** are not messages. Each user has at most one sealed record per message on the server
 (`message_reactions`, migration 020) — their whole set of emoji — so the server learns who reacted
