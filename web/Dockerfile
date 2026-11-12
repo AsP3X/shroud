@@ -50,8 +50,15 @@ RUN npm run build
 FROM ${NGINX_IMAGE}
 RUN apk add --no-cache wget
 COPY --from=brotli /build/ngx_http_brotli_static_module.so /usr/lib/nginx/modules/
+# Compose runs this image read-only (security audit A7). What the entrypoint writes at start (the
+# rendered template and the trusted proxies) goes to /run/nginx/conf.d, a tmpfs like /run itself,
+# which nginx.conf includes after the baked conf.d. The stock default.conf goes: the template
+# used to overwrite it, and left in place it would answer for Host: localhost.
 # nginx -t fails the build if the module doesn't match this nginx.
 RUN sed -i '1i load_module modules/ngx_http_brotli_static_module.so;' /etc/nginx/nginx.conf \
+    && sed -i 's|^\( *\)include /etc/nginx/conf.d/\*.conf;|&\n\1include /run/nginx/conf.d/*.conf;|' /etc/nginx/nginx.conf \
+    && grep -q '^ *include /run/nginx/conf.d/\*.conf;' /etc/nginx/nginx.conf \
+    && rm /etc/nginx/conf.d/default.conf \
     && nginx -t
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
@@ -60,6 +67,8 @@ COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY api-proxy.conf /etc/nginx/api-proxy.conf
 COPY admin-proxy.conf /etc/nginx/admin-proxy.conf
 COPY --chmod=755 nginx-real-ip.sh /docker-entrypoint.d/15-shroud-real-ip.sh
+# Where the image's entrypoint renders the template; nginx-real-ip.sh makes it first.
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx/conf.d
 # nginx image envsubst only replaces defined environment variables.
 ENV API_UPSTREAM=http://api:8080
 ENV ADMIN_UPSTREAM=http://admin:8082

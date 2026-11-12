@@ -7,10 +7,13 @@
 # bridge's gateway, so trusting the private ranges let each client pick its own IP budget.
 # Agent: READS TRUSTED_PROXIES (addresses, CIDR ranges or host names, comma- or space-separated)
 # and TRUST_PROXY_NETWORKS (true: also the networks this container is on, for Nginx Proxy
-# Manager on proxy-network). WRITES /etc/nginx/conf.d/01-real-ip.conf (http level).
+# Manager on proxy-network). WRITES $NGINX_ENVSUBST_OUTPUT_DIR/01-real-ip.conf (http level),
+# making that directory first: it is on a tmpfs that starts empty (the image is read-only).
 set -euf
 
-out=/etc/nginx/conf.d/01-real-ip.conf
+dir="${NGINX_ENVSUBST_OUTPUT_DIR:?}"
+mkdir -p "$dir"
+out="$dir/01-real-ip.conf"
 {
     echo "# Written by $(basename "$0") when the container starts."
     for proxy in $(printf '%s' "${TRUSTED_PROXIES:-}" | tr ',' ' '); do
