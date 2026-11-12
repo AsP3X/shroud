@@ -110,6 +110,7 @@ pub async fn run() -> Result<(), AppError> {
         redis = config.redis_url.is_some(),
         trust_forwarded_headers = config.forwarded_trust.enabled,
         trusted_proxies = config.forwarded_trust.proxies.len(),
+        trusted_proxy_hosts = config.forwarded_trust.hosts.len(),
         media_store = if config.media.nebular.is_some() { "nebular" } else { "local" },
         media_bucket = %config.media.bucket,
         operator = config.operator.is_some(),
@@ -272,6 +273,10 @@ pub async fn run() -> Result<(), AppError> {
     media.spawn_legacy_migration(pool.clone(), metrics.clone());
     // Human: Drop revoked session rows after the 30-day retention window.
     crate::auth::session::spawn_revoked_session_purge(pool.clone(), config.session_idle_days);
+
+    // Human: Compose names the web container as a proxy (`TRUSTED_PROXIES=web`); its address
+    // changes whenever it is recreated.
+    config.forwarded_trust.spawn_host_resolver();
 
     let state = AppState {
         pool,

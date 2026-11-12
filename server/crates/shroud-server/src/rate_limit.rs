@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, FromRequestParts};
@@ -377,9 +377,10 @@ async fn memory_check(
 /// Best-effort client IP for limit keys (proxy-aware when trusted).
 ///
 /// Human: The forwarded headers count only when `trust.enabled` is on and the connection
-/// itself comes from a proxy: a loopback or private address, or one listed in
-/// `TRUSTED_PROXIES` (a CDN or a proxy on another public host). So a port published straight
-/// to the internet never lets a client name its own key. From such a proxy, `X-Real-IP` wins
+/// itself comes from a proxy the deployment names (see [`ForwardedTrust`]). A private address
+/// alone is no proxy: a published port can be reached from the LAN, and Docker Desktop, rootless
+/// Docker and the IPv6 userland proxy hand every client to the API from the bridge's gateway
+/// (security audit S3). So a client never names its own key. From such a proxy, `X-Real-IP` wins
 /// (our nginx and NPM overwrite it), then the right-most `X-Forwarded-For` hop: the one the
 /// proxy appended. Every hop left of it is whatever the client sent.
 /// Agent: else the peer address; `"unknown"` only when the server runs without connect info.
@@ -414,15 +415,70 @@ fn budget_key(ip: IpAddr) -> String {
 pub struct ForwardedTrust {
     /// `TRUST_FORWARDED_HEADERS`. Off, no peer is a proxy.
     pub enabled: bool,
-    /// `TRUSTED_PROXIES`: proxies on public addresses, trusted besides loopback and private
-    /// ones (security audit H1).
+    /// The addresses and ranges in `TRUSTED_PROXIES`, and with `TRUST_PROXY_NETWORKS` the
+    /// networks this container sits on.
     pub proxies: Vec<IpRange>,
+    /// The host names in `TRUSTED_PROXIES`, such as the Compose service `web`.
+    pub hosts: Vec<String>,
+    /// What [`Self::resolve_hosts`] last found for `hosts`, shared by every clone.
+    resolved: Arc<std::sync::RwLock<Vec<IpAddr>>>,
 }
 
+/// Human: A recreated container comes back on another address, and until the next lookup its
+/// requests count as its own, so every client behind it shares one budget. Docker's DNS is
+/// local, so a lookup this often costs nothing.
+pub const PROXY_RESOLVE_INTERVAL: Duration = Duration::from_secs(2);
+
 impl ForwardedTrust {
+    pub fn new(enabled: bool, proxies: Vec<IpRange>, hosts: Vec<String>) -> Self {
+        Self {
+            enabled,
+            proxies,
+            hosts,
+            resolved: Arc::default(),
+        }
+    }
+
     fn trusts(&self, peer: IpAddr) -> bool {
         self.enabled
-            && (is_proxy_address(peer) || self.proxies.iter().any(|range| range.contains(peer)))
+            && (self.proxies.iter().any(|range| range.contains(peer))
+                || self
+                    .resolved
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .contains(&peer))
+    }
+
+    /// Looks `hosts` up again. A host that does not resolve (its container is stopped) is
+    /// trusted on no address until it does.
+    pub async fn resolve_hosts(&self) {
+        let mut found = Vec::new();
+        for host in &self.hosts {
+            match tokio::net::lookup_host((host.as_str(), 0)).await {
+                Ok(addresses) => found.extend(addresses.map(|address| address.ip().to_canonical())),
+                Err(err) => tracing::debug!(%host, %err, "trusted proxy did not resolve"),
+            }
+        }
+        *self
+            .resolved
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = found;
+    }
+
+    /// Resolves `hosts` now and then every [`PROXY_RESOLVE_INTERVAL`], for as long as the
+    /// process runs. Nothing to do while forwarded headers are off or no host is named.
+    pub fn spawn_host_resolver(&self) {
+        if !self.enabled || self.hosts.is_empty() {
+            return;
+        }
+        let trust = self.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(PROXY_RESOLVE_INTERVAL);
+            loop {
+                every.tick().await;
+                trust.resolve_hosts().await;
+            }
+        });
     }
 }
 
@@ -482,13 +538,50 @@ fn parse_ip(value: &str) -> Option<IpAddr> {
         .map(|ip| ip.to_canonical())
 }
 
-/// Where a reverse proxy in front of the API connects from: this host or a private network
-/// (Docker, a LAN). A public peer is the client itself.
-fn is_proxy_address(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local(),
-    }
+/// The networks this host or container is attached to, from Linux's `/proc/net/route` and
+/// `/proc/net/ipv6_route` (`TRUST_PROXY_NETWORKS`).
+///
+/// Human: Only the directly connected routes: no gateway, not the loopback interface, not
+/// IPv6 link-local or multicast. Behind Nginx Proxy Manager the proxy's address is not known in
+/// advance, but it is on `proxy-network`, one of these.
+/// Agent: `/proc/net/route` prints each IPv4 address as the host-order value of its
+/// network-order bytes, so `to_ne_bytes` gives the bytes back.
+pub fn connected_networks(route: &str, ipv6_route: &str) -> Vec<IpRange> {
+    let v4 = route.lines().skip(1).filter_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let (iface, destination, gateway, mask) = (
+            *fields.first()?,
+            *fields.get(1)?,
+            *fields.get(2)?,
+            *fields.get(7)?,
+        );
+        let hex = |value: &str| u32::from_str_radix(value, 16).ok();
+        let (destination, gateway, mask) = (hex(destination)?, hex(gateway)?, hex(mask)?);
+        (iface != "lo" && gateway == 0 && destination != 0).then(|| IpRange {
+            network: IpAddr::from(destination.to_ne_bytes()),
+            prefix: mask.count_ones() as u8,
+        })
+    });
+    let v6 = ipv6_route.lines().filter_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let (destination, prefix, next_hop, iface) = (
+            *fields.first()?,
+            *fields.get(1)?,
+            *fields.get(4)?,
+            *fields.get(9)?,
+        );
+        let network = Ipv6Addr::from(u128::from_str_radix(destination, 16).ok()?);
+        let prefix = u8::from_str_radix(prefix, 16).ok()?;
+        let direct = u128::from_str_radix(next_hop, 16).ok()? == 0;
+        let scoped = network.is_unicast_link_local() || network.is_multicast();
+        (iface != "lo" && direct && !scoped && (1..128).contains(&prefix)).then_some(IpRange {
+            network: IpAddr::V6(network),
+            prefix,
+        })
+    });
+    let mut networks: Vec<IpRange> = v4.chain(v6).collect();
+    networks.dedup();
+    networks
 }
 
 /// The client IP of a request, for its IP budgets (see [`client_ip`]).
@@ -730,17 +823,21 @@ mod tests {
 
     const DOCKER_PROXY: Option<IpAddr> = Some(IpAddr::V4(std::net::Ipv4Addr::new(172, 18, 0, 5)));
     const PUBLIC_PEER: Option<IpAddr> = Some(IpAddr::V4(std::net::Ipv4Addr::new(198, 51, 100, 7)));
-    const TRUSTED: ForwardedTrust = ForwardedTrust {
-        enabled: true,
-        proxies: Vec::new(),
-    };
+    /// The web container, named in `TRUSTED_PROXIES`.
+    fn trusted() -> ForwardedTrust {
+        ForwardedTrust::new(
+            true,
+            vec![IpRange::parse("172.18.0.5").unwrap()],
+            Vec::new(),
+        )
+    }
 
     #[test]
     fn client_ip_prefers_real_ip_from_a_trusted_proxy() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 10.0.0.1".parse().unwrap());
         headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, &TRUSTED), "9.9.9.9");
+        assert_eq!(client_ip(&headers, DOCKER_PROXY, &trusted()), "9.9.9.9");
     }
 
     #[test]
@@ -748,7 +845,7 @@ mod tests {
         // The client sent `1.2.3.4`; the proxy appended the address it saw.
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, &TRUSTED), "8.8.8.8");
+        assert_eq!(client_ip(&headers, DOCKER_PROXY, &trusted()), "8.8.8.8");
     }
 
     #[test]
@@ -767,7 +864,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
         headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
-        assert_eq!(client_ip(&headers, PUBLIC_PEER, &TRUSTED), "198.51.100.7");
+        assert_eq!(client_ip(&headers, PUBLIC_PEER, &trusted()), "198.51.100.7");
     }
 
     #[test]
@@ -775,27 +872,32 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "not-an-ip".parse().unwrap());
         headers.insert("x-forwarded-for", "8.8.8.8, junk".parse().unwrap());
-        assert_eq!(client_ip(&headers, DOCKER_PROXY, &TRUSTED), "172.18.0.5");
+        assert_eq!(client_ip(&headers, DOCKER_PROXY, &trusted()), "172.18.0.5");
     }
 
     #[test]
     fn client_ip_reads_a_mapped_peer_as_ipv4() {
-        let mapped = "::ffff:10.1.2.3".parse::<IpAddr>().ok();
+        let mapped = "::ffff:172.18.0.5".parse::<IpAddr>().ok();
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers, mapped, &TRUSTED), "8.8.8.8");
-        assert_eq!(client_ip(&HeaderMap::new(), mapped, &TRUSTED), "10.1.2.3");
+        assert_eq!(client_ip(&headers, mapped, &trusted()), "8.8.8.8");
+        assert_eq!(
+            client_ip(&HeaderMap::new(), mapped, &trusted()),
+            "172.18.0.5"
+        );
+        let other = "::ffff:10.1.2.3".parse::<IpAddr>().ok();
+        assert_eq!(client_ip(&headers, other, &trusted()), "10.1.2.3");
     }
 
     #[test]
     fn client_ip_keys_ipv6_on_its_64_prefix() {
-        let key = |value: &str| client_ip(&HeaderMap::new(), value.parse().ok(), &TRUSTED);
+        let key = |value: &str| client_ip(&HeaderMap::new(), value.parse().ok(), &trusted());
         assert_eq!(key("2001:db8::1"), key("2001:db8::2"));
         assert_ne!(key("2001:db8::1"), key("2001:db8:0:1::1"));
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "2001:db8::ffff".parse().unwrap());
         assert_eq!(
-            client_ip(&headers, DOCKER_PROXY, &TRUSTED),
+            client_ip(&headers, DOCKER_PROXY, &trusted()),
             key("2001:db8::1")
         );
         assert_eq!(key("::ffff:203.0.113.9"), "203.0.113.9");
@@ -805,28 +907,84 @@ mod tests {
     fn client_ip_unknown_without_a_peer() {
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "8.8.8.8".parse().unwrap());
-        assert_eq!(client_ip(&headers, None, &TRUSTED), "unknown");
+        assert_eq!(client_ip(&headers, None, &trusted()), "unknown");
     }
 
     #[test]
     fn client_ip_trusts_a_listed_public_proxy() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "1.2.3.4, 8.8.8.8".parse().unwrap());
-        let listed = ForwardedTrust {
-            enabled: true,
-            proxies: vec![IpRange::parse("198.51.100.0/24").unwrap()],
+        let listed = |range: &str, enabled: bool| {
+            ForwardedTrust::new(enabled, vec![IpRange::parse(range).unwrap()], Vec::new())
         };
-        assert_eq!(client_ip(&headers, PUBLIC_PEER, &listed), "8.8.8.8");
-        let other = ForwardedTrust {
-            enabled: true,
-            proxies: vec![IpRange::parse("198.51.101.0/24").unwrap()],
-        };
+        let listed_on = listed("198.51.100.0/24", true);
+        assert_eq!(client_ip(&headers, PUBLIC_PEER, &listed_on), "8.8.8.8");
+        let other = listed("198.51.101.0/24", true);
         assert_eq!(client_ip(&headers, PUBLIC_PEER, &other), "198.51.100.7");
-        let off = ForwardedTrust {
-            enabled: false,
-            ..listed
-        };
+        let off = listed("198.51.100.0/24", false);
         assert_eq!(client_ip(&headers, PUBLIC_PEER, &off), "198.51.100.7");
+    }
+
+    /// Security audit S3: a LAN client, or Docker's gateway handing on a published port's
+    /// traffic, is on a private address but is not the proxy.
+    #[test]
+    fn client_ip_ignores_forwarded_from_a_private_peer_that_is_not_a_proxy() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        for peer in [
+            "192.168.1.20",
+            "10.0.0.7",
+            "172.18.0.1",
+            "127.0.0.1",
+            "fd00::2",
+        ] {
+            let ip = peer.parse::<IpAddr>().ok();
+            assert_eq!(
+                client_ip(&headers, ip, &trusted()),
+                budget_key(ip.unwrap()),
+                "{peer}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn client_ip_trusts_a_named_proxy_once_it_resolves() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
+        let loopback = "127.0.0.1".parse::<IpAddr>().ok();
+        let named = ForwardedTrust::new(true, Vec::new(), vec!["localhost".into()]);
+        assert_eq!(client_ip(&headers, loopback, &named), "127.0.0.1");
+        named.clone().resolve_hosts().await;
+        assert_eq!(client_ip(&headers, loopback, &named), "9.9.9.9");
+        let gone =
+            ForwardedTrust::new(true, Vec::new(), vec!["shroud-no-such-host.invalid".into()]);
+        gone.resolve_hosts().await;
+        assert_eq!(client_ip(&headers, loopback, &gone), "127.0.0.1");
+    }
+
+    #[test]
+    fn connected_networks_are_the_direct_routes_only() {
+        let route = "\
+Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+eth0\t00000000\t010012AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
+eth0\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
+eth1\t0000A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
+eth1\t0000000A\t0100A8C0\t0003\t0\t0\t0\t000000FF\t0\t0\t0
+lo\t0000007F\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0
+";
+        let ipv6_route = "\
+fd00000000000000000000000000ab00 78 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth0
+fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth0
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fd00000000000000000000000000ab01 00000400 00000001 00000000 00000003     eth0
+fd00000000000000000000000000ab02 80 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000002 00000000 80200001       lo
+ff000000000000000000000000000000 08 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000003 00000000 00000001     eth0
+";
+        let networks = connected_networks(route, ipv6_route);
+        let expected = ["172.18.0.0/16", "192.168.0.0/24", "fd00::ab00/120"]
+            .map(|range| IpRange::parse(range).unwrap());
+        assert_eq!(networks, expected);
+        assert!(connected_networks("", "").is_empty());
     }
 
     #[test]

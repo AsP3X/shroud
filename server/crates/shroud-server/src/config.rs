@@ -185,13 +185,24 @@ impl Config {
             std::env::var("TRUST_FORWARDED_HEADERS").ok().as_deref(),
             false,
         )?;
-        // Human: A proxy on a private or loopback address is trusted already; a CDN or a proxy on
-        // another public host has to be listed, else it is one client for every IP budget.
-        // Agent: READS TRUSTED_PROXIES (comma- or space-separated addresses and CIDR ranges).
-        let trusted_proxies =
+        // Human: Only a proxy the deployment names is trusted: a private address alone is not
+        // one (security audit S3). Anything else is one client for every IP budget.
+        // Agent: READS TRUSTED_PROXIES (comma- or space-separated addresses, CIDR ranges and
+        // host names) and TRUST_PROXY_NETWORKS (also trust the networks this container is on).
+        let (mut trusted_proxies, trusted_hosts) =
             parse_trusted_proxies(std::env::var("TRUSTED_PROXIES").ok().as_deref())?;
-        if !trusted_proxies.is_empty() && !trust_forwarded_headers {
-            tracing::warn!("TRUSTED_PROXIES is ignored while TRUST_FORWARDED_HEADERS is off");
+        let trust_proxy_networks = parse_bool_env(
+            "TRUST_PROXY_NETWORKS",
+            std::env::var("TRUST_PROXY_NETWORKS").ok().as_deref(),
+            false,
+        )?;
+        if trust_proxy_networks {
+            trusted_proxies.extend(read_connected_networks()?);
+        }
+        if (!trusted_proxies.is_empty() || !trusted_hosts.is_empty()) && !trust_forwarded_headers {
+            tracing::warn!(
+                "TRUSTED_PROXIES and TRUST_PROXY_NETWORKS are ignored while TRUST_FORWARDED_HEADERS is off"
+            );
         }
 
         let ice = crate::turn::ice_config(&|name| std::env::var(name).ok())?;
@@ -272,10 +283,11 @@ impl Config {
             port,
             media,
             redis_url,
-            forwarded_trust: ForwardedTrust {
-                enabled: trust_forwarded_headers,
-                proxies: trusted_proxies,
-            },
+            forwarded_trust: ForwardedTrust::new(
+                trust_forwarded_headers,
+                trusted_proxies,
+                trusted_hosts,
+            ),
             cors_allowed_origins,
             ice_servers: ice.servers,
             turn: ice.turn,
@@ -523,18 +535,61 @@ fn is_valid_bucket_name(name: &str) -> bool {
         && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
 }
 
-fn parse_trusted_proxies(raw: Option<&str>) -> Result<Vec<IpRange>, AppError> {
-    raw.unwrap_or_default()
+/// `TRUSTED_PROXIES` split into address ranges and host names.
+fn parse_trusted_proxies(raw: Option<&str>) -> Result<(Vec<IpRange>, Vec<String>), AppError> {
+    let mut ranges = Vec::new();
+    let mut hosts = Vec::new();
+    for item in raw
+        .unwrap_or_default()
         .split([',', ' ', '\n', '\t'])
         .filter(|item| !item.is_empty())
-        .map(|item| {
-            IpRange::parse(item).ok_or_else(|| {
-                AppError::Internal(format!(
-                    "TRUSTED_PROXIES entries must be addresses or CIDR ranges, got {item:?}"
-                ))
-            })
+    {
+        if let Some(range) = IpRange::parse(item) {
+            ranges.push(range);
+        } else if is_host_name(item) {
+            hosts.push(item.to_ascii_lowercase());
+        } else {
+            return Err(AppError::Internal(format!(
+                "TRUSTED_PROXIES entries must be addresses, CIDR ranges or host names, got {item:?}"
+            )));
+        }
+    }
+    Ok((ranges, hosts))
+}
+
+/// Human: A DNS name or a Docker container name. The last label is never all digits, so a
+/// mistyped address (`10.0.0.256`) is refused instead of looked up.
+fn is_host_name(value: &str) -> bool {
+    value.len() <= 253
+        && value.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && label.starts_with(|c: char| c.is_ascii_alphanumeric())
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         })
-        .collect()
+        && !value
+            .rsplit('.')
+            .next()
+            .is_some_and(|label| label.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The networks this container is attached to (`TRUST_PROXY_NETWORKS`); Linux only.
+fn read_connected_networks() -> Result<Vec<IpRange>, AppError> {
+    let route = std::fs::read_to_string("/proc/net/route").map_err(|err| {
+        AppError::Internal(format!(
+            "TRUST_PROXY_NETWORKS needs /proc/net/route (Linux): {err}"
+        ))
+    })?;
+    // No IPv6 in the kernel: no file, and no IPv6 network either.
+    let ipv6_route = std::fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default();
+    let networks = crate::rate_limit::connected_networks(&route, &ipv6_route);
+    if networks.is_empty() {
+        return Err(AppError::Internal(
+            "TRUST_PROXY_NETWORKS is on, but this host has no network besides loopback".into(),
+        ));
+    }
+    Ok(networks)
 }
 
 fn parse_bool_env(name: &str, raw: Option<&str>, default: bool) -> Result<bool, AppError> {
@@ -560,12 +615,30 @@ mod tests {
 
     #[test]
     fn trusted_proxies_parse_lists_and_refuse_junk() {
-        assert!(parse_trusted_proxies(None).unwrap().is_empty());
-        assert!(parse_trusted_proxies(Some(" ")).unwrap().is_empty());
-        let proxies =
-            parse_trusted_proxies(Some("203.0.113.0/24, 2001:db8::/32 192.0.2.1")).unwrap();
-        assert_eq!(proxies.len(), 3);
-        assert!(parse_trusted_proxies(Some("203.0.113.0/24,proxy.example")).is_err());
+        assert_eq!(
+            parse_trusted_proxies(None).unwrap(),
+            (Vec::new(), Vec::new())
+        );
+        assert_eq!(
+            parse_trusted_proxies(Some(" ")).unwrap(),
+            (Vec::new(), Vec::new())
+        );
+        let (ranges, hosts) = parse_trusted_proxies(Some(
+            "web 203.0.113.0/24, 2001:db8::/32 192.0.2.1,Proxy.example shroud_web-1",
+        ))
+        .unwrap();
+        assert_eq!(ranges.len(), 3);
+        assert_eq!(hosts, ["web", "proxy.example", "shroud_web-1"]);
+        for bad in [
+            "10.0.0.0/x",
+            "10.0.0.256",
+            "http://proxy",
+            "-web",
+            "web..example",
+            "a;b",
+        ] {
+            assert!(parse_trusted_proxies(Some(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]
