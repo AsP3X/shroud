@@ -10,4 +10,4 @@ if [ -z "${API_DB_PASSWORD:-}" ]; then
 fi
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-  -v pwd="$API_DB_PASSWORD" -v dbname="$POSTGRES_DB" -f /shroud/api-role.sql
+  -v dbname="$POSTGRES_DB" -f /shroud/api-role.sql
