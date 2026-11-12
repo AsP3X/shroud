@@ -57,9 +57,81 @@ RESET ROLE;
 -- its own tables and migrations). Skipped until the console has created its schema (deploy waits
 -- for it first). A later console migration that alters the audit log has to be applied by this
 -- role.
+--
+-- The console's role owns the log until this block first runs, and an owner can attach things to
+-- its table that keep working after the table changes hands, then with this role's rights (security
+-- audit A2): a rule's actions are checked against the table owner, an index expression or extended
+-- statistic runs as the owner whenever ANALYZE, VACUUM or REINDEX does (autovacuum included), a
+-- grant to PUBLIC survives the owner change, and a trigger, policy, inheritance or a view in the
+-- table's place can rewrite, hide or forge entries. Refuse to take the log, or to keep it on a
+-- later deploy, while any of that is there. Migration 001 makes none of it: the foreign key's
+-- triggers are internal, and its defaults, constraints and indexes use pg_catalog only. This needs
+-- the search_path above, so the catalog names and operators below are pg_catalog's.
 DO $body$
+DECLARE
+  audit_log oid := to_regclass('admin.audit_log');
+  attached text;
 BEGIN
-  IF to_regclass('admin.audit_log') IS NOT NULL THEN
+  IF audit_log IS NOT NULL THEN
+    SELECT string_agg(what, E'\n' ORDER BY what) INTO attached FROM (
+      SELECT 'admin.audit_log is not a permanent plain table' AS what
+        FROM pg_class WHERE oid = audit_log AND (relkind <> 'r' OR relpersistence <> 'p')
+      UNION ALL
+      SELECT pg_describe_object('pg_rewrite'::regclass, oid, 0)
+        FROM pg_rewrite WHERE ev_class = audit_log AND rulename <> '_RETURN'
+      UNION ALL
+      SELECT pg_describe_object('pg_trigger'::regclass, oid, 0)
+        FROM pg_trigger WHERE tgrelid = audit_log AND NOT tgisinternal
+      UNION ALL
+      SELECT pg_describe_object('pg_policy'::regclass, oid, 0)
+        FROM pg_policy WHERE polrelid = audit_log
+      UNION ALL
+      SELECT 'row-level security on admin.audit_log'
+        FROM pg_class WHERE oid = audit_log AND (relrowsecurity OR relforcerowsecurity)
+      UNION ALL
+      SELECT 'inheritance between ' || inhrelid::regclass::text || ' and ' || inhparent::regclass::text
+        FROM pg_inherits WHERE inhrelid = audit_log OR inhparent = audit_log
+      UNION ALL
+      -- Functions, operators and types from outside pg_catalog in the table's columns, indexes,
+      -- defaults, constraints or statistics: code the console's role wrote.
+      SELECT pg_describe_object(d.classid, d.objid, d.objsubid) || ' uses '
+             || pg_describe_object(d.refclassid, d.refobjid, 0)
+        FROM pg_depend d
+        JOIN (
+          SELECT 'pg_class'::regclass AS classid, audit_log AS objid
+          UNION ALL SELECT 'pg_class'::regclass, indexrelid FROM pg_index WHERE indrelid = audit_log
+          UNION ALL SELECT 'pg_attrdef'::regclass, oid FROM pg_attrdef WHERE adrelid = audit_log
+          UNION ALL SELECT 'pg_constraint'::regclass, oid FROM pg_constraint WHERE conrelid = audit_log
+          UNION ALL SELECT 'pg_statistic_ext'::regclass, oid FROM pg_statistic_ext WHERE stxrelid = audit_log
+        ) part ON part.classid = d.classid AND part.objid = d.objid
+        WHERE CASE d.refclassid
+          WHEN 'pg_proc'::regclass THEN (SELECT pronamespace FROM pg_proc WHERE oid = d.refobjid)
+          WHEN 'pg_operator'::regclass THEN (SELECT oprnamespace FROM pg_operator WHERE oid = d.refobjid)
+          WHEN 'pg_type'::regclass THEN (SELECT typnamespace FROM pg_type WHERE oid = d.refobjid)
+        END <> 'pg_catalog'::regnamespace
+      UNION ALL
+      -- Anyone but this role and the console holding a privilege, on the table or a column. The
+      -- console's own are replaced below.
+      SELECT 'a privilege on admin.audit_log for '
+             || CASE acl.grantee WHEN 0 THEN 'PUBLIC' ELSE acl.grantee::regrole::text END
+        FROM pg_class c, aclexplode(c.relacl) acl
+        WHERE c.oid = audit_log
+          AND acl.grantee <> c.relowner
+          AND acl.grantee NOT IN (SELECT oid FROM pg_roles WHERE rolname IN ('shroud_admin', current_user))
+      UNION ALL
+      SELECT 'a privilege on column admin.audit_log.' || a.attname::text || ' for '
+             || CASE acl.grantee WHEN 0 THEN 'PUBLIC' ELSE acl.grantee::regrole::text END
+        FROM pg_attribute a, pg_class c, aclexplode(a.attacl) acl
+        WHERE a.attrelid = audit_log AND c.oid = audit_log
+          AND acl.grantee <> c.relowner
+          AND acl.grantee NOT IN (SELECT oid FROM pg_roles WHERE rolname IN ('shroud_admin', current_user))
+    ) found;
+    IF attached IS NOT NULL THEN
+      RAISE EXCEPTION 'admin.audit_log carries objects that would run or act with the rights of %, so it was not taken over', current_user
+        USING DETAIL = attached,
+              HINT = 'See "If grants.sql refuses the audit log" in docs/admin.md. Nothing was changed.';
+    END IF;
+
     EXECUTE 'ALTER SCHEMA admin OWNER TO ' || quote_ident(current_user);
     GRANT USAGE, CREATE ON SCHEMA admin TO shroud_admin;
     EXECUTE 'ALTER TABLE admin.audit_log OWNER TO ' || quote_ident(current_user);
