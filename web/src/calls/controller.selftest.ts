@@ -28,9 +28,21 @@ function check(ok: boolean, what: string): void {
   if (!ok) throw new Error(`calls controller selftest: ${what}`);
 }
 
-/** Lets promises, WebCrypto and the fake server's deliveries run. */
+/**
+ * Lets promises, WebCrypto and the fake server's deliveries run.
+ *
+ * Human: Each of the twelve steps waits at least a millisecond of real time, so WebCrypto work
+ * running off the main thread can finish. A 1 ms timer would do that, but Windows rounds it up to
+ * about 15.6 ms, which made this suite run past the runner's two-minute limit there.
+ * Agent: `setImmediate` returns to the event loop without a timer, so finished thread-pool jobs
+ * and I/O still complete in every turn; only the wall-clock floor per step stays.
+ */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 12; i += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+  for (let i = 0; i < 12; i += 1) {
+    const start = performance.now();
+    do await new Promise((resolve) => setImmediate(resolve));
+    while (performance.now() - start < 1);
+  }
 }
 
 /* --- a clock the test moves ------------------------------------------------------------------ */
