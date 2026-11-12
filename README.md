@@ -39,6 +39,16 @@ Same shape as Ownly / pzserver: a wizard writes `.env`, then Compose builds the 
 
 On Windows, `deploy.ps1` runs in both Windows PowerShell 5.1 (`powershell.exe`, built into Windows) and PowerShell 7 (`pwsh`). Windows PowerShell 5.1 reads a script without a byte order mark as Windows-1252, so the `.ps1` files stay ASCII-only; CI fails on any other character.
 
+The Docker images run the repository's shell scripts, SQL, nginx templates and Compose files on Linux, where a CR at a line end breaks them (`set: Illegal option -`). `.gitattributes` makes git check out every text file with LF on Windows too, even with Git's default `core.autocrlf=true`; only `*.bat` and `*.cmd` get CRLF. CI fails on a committed CR. A clone made before that rule still has CRLF files on disk after `git pull`. Refresh it once, in PowerShell from the repository folder, after committing or stashing your own changes (the last command rewrites every tracked file):
+
+```powershell
+git pull
+git status                 # must say "nothing to commit"
+git rm -r --cached -q .
+git reset -q --hard
+git ls-files --eol web/scripts/build-link-tls.sh   # shows w/lf
+```
+
 ### Operator console
 
 The operator console is a page of the Shroud site (`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`), or of its own host when `ADMIN_HOST` is set, which keeps it on a separate origin from the messenger ([docs/admin.md](docs/admin.md#a-host-of-its-own-recommended)). Its container port stays on the Docker network. The web nginx proxies `/admin` and `/api/admin` to the console container. While the console is off, those paths do not answer. Turn it on without re-running the setup wizard:

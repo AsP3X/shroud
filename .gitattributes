@@ -1,0 +1,29 @@
+# Text files are stored and checked out with LF on every platform, including Windows with
+# core.autocrlf=true. The Docker builds copy whole trees (server/, web/, admin/) into Linux images,
+# where a CR at the end of a line breaks sh (`set: Illegal option -`), nginx templates and the
+# migration checksums sqlx compares with the database, so a list of single files would miss some.
+# Windows PowerShell 5.1 and PowerShell 7 both read .ps1 files with LF.
+* text=auto eol=lf
+
+# cmd.exe needs CRLF in batch files.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Pencil design files are written only by Pen.app; git keeps their bytes as they are.
+*.pen -text
+
+# Binary assets, named so git never treats them as text.
+*.png binary
+*.PNG binary
+*.jpg binary
+*.heic binary
+*.ttf binary
+*.wav binary
+*.mp3 binary
+*.mp4 binary
+*.m4a binary
+*.flac binary
+*.aiff binary
+*.zip binary
+*.jar binary
+*.onnx binary
