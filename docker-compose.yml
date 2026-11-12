@@ -390,8 +390,28 @@ services:
     image: coturn/coturn:4.6
     container_name: shroud-coturn
     network_mode: host
+    # The secret goes into a config file, never onto turnserver's command line: with host
+    # networking any user on the host reads process arguments with ps (security audit A6). The
+    # file lives in a tmpfs only coturn's user (nobody, 65534) can open, so it never reaches
+    # disk, and the variable is dropped before turnserver starts. printf is dash's builtin, so
+    # the value is in no process's arguments either. A changed TURN_SECRET changes this
+    # environment, so Compose recreates the container with the new secret.
+    environment:
+      TURN_SECRET: ${TURN_SECRET:-}
+    tmpfs:
+      - /run/coturn:uid=65534,gid=65534,mode=0700
+    entrypoint:
+      - sh
+      - -c
+      - |
+        umask 277
+        printf 'static-auth-secret=%s\n' "$$TURN_SECRET" > /run/coturn/turnserver.conf
+        unset TURN_SECRET
+        exec turnserver "$$@"
+      - turnserver
     command:
-      - -n
+      - -c
+      - /run/coturn/turnserver.conf
       # No log: coturn records each relay's client and peer addresses. To debug a relay, swap
       # these three lines for --log-file=stdout for a while.
       - --no-stdout-log
@@ -402,7 +422,6 @@ services:
       - --max-port=${TURN_MAX_PORT:-49259}
       - --fingerprint
       - --use-auth-secret
-      - --static-auth-secret=${TURN_SECRET:-}
       - --realm=${TURN_REALM:-shroud}
       # Limits per minted login and for the whole relay: a login works for hours, so these
       # bound what someone holding many of them can take. A device in a call allocates once per
