@@ -52,8 +52,8 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Area | Decision |
 | --- | --- |
 | Account | Username + password only |
-| Username | `[a-z0-9_]`, length 3–32, **case-insensitive** unique (store case-folded), **immutable** |
-| Reserved names | Denylist + prefix rules — see [Reserved usernames](#reserved-usernames) |
+| Username | `[a-z0-9_]`, length 3–32, **case-insensitive** unique, **immutable**. The client checks and case-folds the name and sends only `username_hash`, an argon2id digest under this server's public salt (`GET /auth/username-kdf`, `username_kdf.rs`). The server never receives or stores the name (migration 029 dropped `users.username`); a contact learns it only sealed (`contact_sealed_names`). Rows from before the argon2id digest still hold SHA-256 and move on their next successful login (`routes::auth::login`) |
+| Reserved names | Denylist + prefix rules — see [Reserved usernames](#reserved-usernames). The client refuses both; the server refuses the denylist by digest only (`UsernameKdf::reject_reserved`), since it never sees a name to match a prefix against |
 | Password hash | **argon2id**, OWASP 2023 baseline (e.g. m≈19 MiB, t=2, p=1), pinned in code |
 | Password policy | Min 8 chars; reject **embedded** common-password denylist |
 | Password recovery | None (phrase does not re-authenticate to the server) |
@@ -103,10 +103,11 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Delivery receipts | `POST /messages/:id/delivered` for current device (m4); read later |
 | Retention | Indefinite until user delete |
 | History recovery | Login + encryption phrase on client → download ciphertext |
-| Discovery | Share **`users.id` (UUID)** + deep link; username for login/display |
-| Profile lookup | `GET /users/:user_id` → `{ id, username }` (auth, rate-limited) |
-| Username / code lookup | `GET /users/by-username/:u`, `GET /users/by-code/:code`. With `discoverable_by_username` off (migration 026) the name lookup is 404 except for the user, contacts and pending requests either way; the code still works |
+| Discovery | Share code (QR / deep link) → **`users.id` (UUID)**; the username is for login only and never finds an account |
+| Profile lookup | `GET /users/:user_id` → `{ id }`, plus `share_code` on the caller's own card (auth, rate-limited; `routes::users::get_user`) |
+| Code lookup | `GET /users/by-code/:code` → `{ id, share_code }` (`routes::users::get_user_by_share_code`). There is no lookup by name: `GET /users/by-username/:u` went with migration 029, and `discoverable_by_username` (migration 026) is still stored but changes nothing |
 | New share code | `POST /users/me/share-code` → `{ share_code }`; the old code stops resolving (10 per hour) |
+| Contact names | Each account seals its username to each contact (`PUT /contacts/:user_id/sealed-name`, table `contact_sealed_names`, migration 029); `GET /contacts` hands the contact's seal to this account. The names an account's devices have opened are kept in one sealed book per account (`GET`/`PUT /users/me/contact-names`, table `contact_name_books`, migration 030), so a new browser learns them. The server can open neither |
 | First contact | **Contact request by target UUID only** before full messaging |
 | Contact request | No expiry in v1; pending until accept / reject / cancel / block |
 | Mutual request | If reverse pending exists → **auto-accept** both ways |
@@ -114,7 +115,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Block | Cancel pending either way + drop contact edges; end live calls between them; store block; unblock does not re-friend |
 | Message delete | Delete-for-me via `message_hides`; delete-for-everyone **anytime** (tombstone + clear ciphertext) |
 | Delete WS | `message.deleted` fan-out for for-everyone |
-| Account delete | Every chat deleted **for both**: their messages become tombstones; a peer with `allow_peer_chat_delete` loses the chat, others keep their own messages. Users row stays as a scrubbed placeholder (migration 021); username and share code are released |
+| Account delete | Every chat deleted **for both**: their messages become tombstones; a peer with `allow_peer_chat_delete` loses the chat, others keep their own messages. Users row stays as a scrubbed placeholder (migration 021); username digest and share code are released |
 | Receipts | Delivery + optional read |
 | Multi-device send | Server fan-out to sender’s other devices |
 | History page | Keyset cursor `(created_at, id)` |
@@ -131,7 +132,7 @@ Source of truth for the Rust API (`server/`): product decisions, behavior, miles
 | Store auth | SigV4 access key: `editor` role, `shroud-media` bucket only (`NOS_BUCKET_POLICY`), signed body hash, 15-minute replay window. No JWT secret or presigned URLs in the API |
 | Layout | Bucket `shroud-media`, key `media/{xx}/{object_id}` (no uploader id); rows from before keep `{uploader_user_id}/{object_id}` |
 | Deletion | Immediate in the store (`NOS_SOFT_DELETE_TTL_SECS=0`); a failed delete keeps the row for the orphan GC to retry |
-| Upload publish | The body is staged first, then published under `FOR UPDATE` on its row, only while the row exists and is unlinked (409 once a message claimed it, 404 once purged). Purges hold the same lock across the blob delete, so no blob outlives its row |
+| Upload publish | The body is staged first. The upload then sets `media_objects.publishing_at` in a statement of its own, publishes with no connection held, and clears it (migration 032, `routes::media::put_content`). A send that links the media and the purges refuse a row whose marker is live, so a linked blob is never replaced and a purged row never gets a blob. A marker older than the longest publish was left by a dead process and counts as unset |
 | Presign TTL | **15 minutes** (the `expires_at` field; the URLs are API paths) |
 | Max object size | **2 GiB** |
 | Transcripts | No transcript APIs in v1 |
@@ -222,18 +223,18 @@ Forward-only sqlx migrations under `server/migrations/postgres/`. Do not edit ap
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `UUID` PK | `gen_random_uuid()`; shareable public id |
-| `username` | `TEXT` NULL UNIQUE | Case-folded form only; NULL once deleted |
+| `username_hash` | `BYTEA` NULL | 32-byte digest of the case-folded name: argon2id under the server's salt, or SHA-256 until the row's next login (migration 029 replaced `username`); NULL once deleted |
 | `password_hash` | `TEXT` NULL | argon2id PHC string; NULL once deleted |
 | `share_code` | `TEXT` NULL UNIQUE | QR / deep-link code (migration 011); NULL once deleted |
 | `allow_peer_chat_delete` | `BOOLEAN` NOT NULL | Default false (migration 016) |
 | `send_read_receipts` | `BOOLEAN` NOT NULL | Default true (migration 025); both ways, see [Presence and push](#presence-and-push) |
 | `send_typing` | `BOOLEAN` NOT NULL | Default true (migration 025); typing and recording indicators |
 | `share_presence` | `BOOLEAN` NOT NULL | Default true (migration 025); online and last seen |
-| `discoverable_by_username` | `BOOLEAN` NOT NULL | Default true (migration 026); off hides the account from name lookups by strangers |
+| `discoverable_by_username` | `BOOLEAN` NOT NULL | Default true (migration 026). Unused since migration 029 removed the name lookup; kept so older clients still read the privacy settings (`routes::privacy`) |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | `now()` |
 | `deleted_at` | `TIMESTAMPTZ` NULL | Set by `DELETE /auth/account`; the row stays as a placeholder (migration 021) |
 
-Indexes: unique on `username` (constraint). Optional non-unique not required. CHECK `users_deleted_scrubbed`: a live row has `username`, `share_code` and `password_hash`; a deleted row has none of them, so it can't sign in or be found, and its name and code are free for new signups.
+Indexes: partial unique `users_username_hash_uidx` on `username_hash` where it is not NULL (migration 029). CHECK `users_deleted_scrubbed`: a live row has `username_hash`, `share_code` and `password_hash`; a deleted row has none of them, so it can't sign in or be found, and its name and code are free for new signups.
 
 #### `devices`
 
@@ -345,8 +346,30 @@ Constraints:
 | PK | `(blocker_id, blocked_id)` | |
 | Check | `blocker_id <> blocked_id` | |
 
-On **block**: delete both `contacts` rows for the pair; set any `pending` requests either way to `cancelled`; upsert block row.  
+On **block**: under the pair lock an accept also takes (`lock_pair`), delete both `contacts` rows for the pair; set any `pending` requests either way to `cancelled`; upsert block row (`routes::blocks::create_block`). Migration 031 deleted the contact edges that a block racing an accept had left behind before that.  
 On **unblock**: delete block row only.
+
+#### `contact_sealed_names` (migration 029)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `owner_id` | `UUID` NOT NULL FK → `users` CASCADE | The account whose username is sealed |
+| `peer_id` | `UUID` NOT NULL FK → `users` CASCADE | The contact it is sealed to |
+| `sealed` | `TEXT` NOT NULL | Sealed box (`ek`, `ct`, `t`) of the owner's username for `peer_id`; at most 2048 bytes. The server cannot open it |
+| PK | `(owner_id, peer_id)` | |
+
+Written by `PUT /contacts/:user_id/sealed-name` (`routes::contacts::put_sealed_name`), only between contacts. `DELETE /contacts/:user_id` deletes both directions; `DELETE /auth/account` deletes every row naming the account.
+
+#### `contact_name_books` (migration 030)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | `UUID` PK FK → `users` CASCADE | One book per account |
+| `sealed` | `TEXT` NOT NULL | AES-256-GCM, under a key from the phrase's history key, of the contact names the account's devices have opened; at most 512 KiB of Base64. The server cannot open it |
+| `version` | `BIGINT` NOT NULL | Compare-and-swap counter: a write names the version it was built on |
+| `updated_at` | `TIMESTAMPTZ` NOT NULL | `now()` on each write |
+
+Read and written by `GET`/`PUT /users/me/contact-names` (`routes::users::get_contact_names`, `put_contact_names`); deleted with the account.
 
 ### Milestone 4 — Messages schema (locked)
 
@@ -404,6 +427,7 @@ On send: insert delivery rows for **all devices of peer** + **all other devices 
 | `content_type` | `TEXT` NULL | Client-declared opaque type (e.g. `application/octet-stream`) |
 | `message_id` | `UUID` NULL FK → `messages` | Set when message posts with this media |
 | `created_at` | `TIMESTAMPTZ` NOT NULL | |
+| `publishing_at` | `TIMESTAMPTZ` NULL | Set while `PUT /media/:id/content` publishes the blob, then cleared (migration 032, `routes::media::put_content`). Live, it makes `POST /messages` and the purges leave the row alone; older than the longest publish it counts as unset |
 | UNIQUE | `(bucket, object_key)` | |
 
 Extend `messages` (or keep ciphertext as envelope that may contain media keys; server also accepts):
@@ -522,7 +546,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 
 ### Auth and devices
 
-- **Register** — validate username/password → user + first device + session token.
+- **Register** — check the `username_hash` (32 bytes, not a reserved name's digest, not taken) and the password → user + first device + session token. The client has already checked the name itself.
 - **Login** — verify password; reuse `device_id` if owned, else new device if under cap, else reclaim the longest-idle device with no live session; issue new session and **revoke any prior sessions on that same device** (one live token per device).
 - **Logout** — revoke **current session only**; device row remains (counts toward the cap, but a login at the cap can reclaim it). Clients forget the device id on logout.
 - **Delete device** — revoke all sessions for that device; free a slot.
@@ -566,7 +590,7 @@ Redis: pub/sub fan-out, online sets, future rate limits.
 
 | Scope | Budget |
 | --- | --- |
-| Auth (register/login) | 10/min per IP; 5/min per username |
+| Auth (register/login) | 10/min per IP; 5/min per username digest (keyed on the decoded `username_hash`, and on `legacy_username_hash` too when a login sends one) |
 | Auth sensitive (password change / account delete) | 5/hour per user |
 | User lookup | 30/min per IP |
 | Key bundle / identity GET | 60/min per user; 120/min per IP |
@@ -671,18 +695,38 @@ and cannot read the traffic.
 
 ### Milestone 1 — Auth (locked)
 
+The username never reaches the server (migration 029). The client checks it (3–32, `[a-z0-9_]`, not reserved), case-folds it, and sends `username_hash`: standard Base64 of the 32-byte argon2id digest of the folded name under the server's salt.
+
+#### `GET /auth/username-kdf` → `200`
+
+**No session** — a client needs it before it can sign up or log in (`routes::auth::username_kdf`, `username_kdf.rs`).
+
+```json
+{
+  "algorithm": "argon2id",
+  "version": 19,
+  "salt": "<standard Base64, 16 bytes>",
+  "memory_kib": 65536,
+  "iterations": 8,
+  "parallelism": 1,
+  "output_bytes": 32
+}
+```
+
+The salt is `USERNAME_KDF_SALT` (32 hex characters), public and per server; the server refuses to start with the published test salt. The cost is fixed in code, and clients refuse a cheaper answer. Rotating the salt makes every username stop matching. A `404` is a server from before this route; clients then send SHA-256 of the folded name.
+
 #### `POST /auth/register` → `201`
 
 ```json
 {
-  "username": "alice",
+  "username_hash": "<b64 argon2id digest>",
   "password": "correct-horse-battery"
 }
 ```
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `username` | yes | 3–32, `[a-z0-9_]` |
+| `username_hash` | yes | Decodes to 32 bytes; not the digest of a reserved name under this server's salt |
 | `password` | yes | min 8; not common |
 
 A `device_name` from older builds is ignored and never stored: the name is sealed once the client
@@ -693,18 +737,19 @@ Success:
 ```json
 {
   "token": "<opaque>",
-  "user": { "id": "<uuid>", "username": "alice" },
+  "user": { "id": "<uuid>", "share_code": "<code>" },
   "device": { "id": "<uuid>" }
 }
 ```
 
-`username` is the **case-folded** stored form. Client persists `token` and `device.id`.
+There is no `username` to return. Client persists `token` and `device.id` and keeps the name it typed.
 
 #### `POST /auth/login` → `200`
 
 ```json
 {
-  "username": "alice",
+  "username_hash": "<b64 argon2id digest>",
+  "legacy_username_hash": "<b64 SHA-256 digest>",
   "password": "correct-horse-battery",
   "device_id": "<uuid>",
   "replace_device_id": "<uuid>"
@@ -713,12 +758,15 @@ Success:
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `username` | yes | |
+| `username_hash` | yes | As for register. One that does not decode to 32 bytes answers `INVALID_CREDENTIALS` |
+| `legacy_username_hash` | no | SHA-256 of the same folded name, sent until this device has seen the account move. Absent or `null` once it has |
 | `password` | yes | |
 | `device_id` | no | Reuse if owned by user; else new device |
 | `replace_device_id` | no | Only used when every device slot is signed in: the device of a `DEVICE_LIMIT` answer the user agreed to sign out (`oldest_device` or another of `devices`). Ignored while a slot is free |
 
 Success body: same as register, plus `device.sealed_name` (Base64) when the reused device has one. Reusing a device revokes its previous session (one live session per device) and closes that session's WebSocket.
+
+The account under `username_hash` is tried first, then the one under `legacy_username_hash` when the password does not open it. A legacy row the password opens moves to `username_hash` inside the login's transaction, so a `DEVICE_LIMIT` refusal rolls the move back; if another account already holds that digest, the row keeps the legacy one (`routes::auth::login`). Once a row has moved, a build that sends only SHA-256 can no longer sign in to it.
 
 **Full account.** With 5 devices and none idle, the answer is `409 DEVICE_LIMIT` with the device a retry may sign out — the least recently active one (`COALESCE(last_seen_at, created_at)`). Its sealed name is left out: the device logging in has no phrase yet to open it.
 
@@ -743,10 +791,12 @@ Success body: same as register, plus `device.sealed_name` (Base64) when the reus
 
 ```json
 {
-  "user": { "id": "<uuid>", "username": "alice" },
+  "user": { "id": "<uuid>", "share_code": "<code>" },
   "device": { "id": "<uuid>", "sealed_name": "<base64>" }
 }
 ```
+
+`device.sealed_name` is omitted until a device of the account has named this one (`routes::auth::me`).
 
 #### `POST /auth/session-status` → `200`
 
@@ -826,9 +876,9 @@ The web client wraps its vault key under PIN **and** a server-held pepper, so a 
 
 | Code | When |
 | --- | --- |
-| `VALIDATION_ERROR` | Bad JSON / username charset / length |
-| `USERNAME_TAKEN` | Register conflict |
-| `USERNAME_RESERVED` | Denylist or prefix |
+| `VALIDATION_ERROR` | Bad JSON; at register, a `username_hash` that does not decode to 32 bytes (the name's charset and length are checked on the client) |
+| `USERNAME_TAKEN` | Register: another account holds that `username_hash` |
+| `USERNAME_RESERVED` | Register: the digest of a denylisted name; prefixes are refused on the client |
 | `PASSWORD_TOO_SHORT` | Fewer than 8 characters |
 | `PASSWORD_TOO_COMMON` | On embedded denylist |
 | `INVALID_CREDENTIALS` | Failed login (no user enumeration) |
@@ -972,14 +1022,38 @@ Replenish OTPKs only for current device (merge by `key_id`). Max **100** keys pe
 
 All routes require Bearer auth.
 
+No route here takes or returns a username (migration 029). A contact's name arrives only sealed (`sealed_name` on `GET /contacts`).
+
 #### `GET /users/:user_id` → `200`
 
 ```json
-{ "id": "<uuid>", "username": "alice" }
+{ "id": "<uuid>", "share_code": "<code>" }
 ```
 
-- `404` + `NOT_FOUND` if user does not exist.
+- `share_code` only on the caller's own card (`routes::users::get_user`).
+- `404` + `NOT_FOUND` if the user does not exist or was deleted.
 - Still returns card if blocked (block only affects requests/messaging); optional harden later.
+- Rate limit: 30/min per IP, shared with `GET /users/by-code/:code`.
+
+#### `GET /users/by-code/:code` → `200`
+
+The way to find an account (QR code, share link): `{ "id": "<uuid>", "share_code": "<code>" }`. The code is normalized first; a malformed or unknown code is `404 NOT_FOUND` (`routes::users::get_user_by_share_code`). There is no lookup by username: `GET /users/by-username/:u` was removed with migration 029.
+
+#### `POST /users/me/share-code` → `200`
+
+`{ "share_code": "<code>" }`, a new code; the old one stops resolving at once. Budget 10 per hour per user (`routes::users::rotate_share_code`).
+
+#### `GET /users/me/contact-names` → `200`
+
+The account's sealed contact-name book (table `contact_name_books`, migration 030; `routes::users::get_contact_names`): `{ "sealed": "<b64>", "version": 3 }`, or `{ "version": 0 }` before any device stored one. Opaque to the server.
+
+#### `PUT /users/me/contact-names` → `200`
+
+```json
+{ "sealed": "<b64>", "version": 3 }
+```
+
+`version` is the one the book was built on (`0` for the first). The server replaces the book only if nobody wrote since and answers `{ "version": 4 }`; otherwise `409 VERSION_CONFLICT`, and the device reads the newer book, merges, and tries again. `400 VALIDATION_ERROR` for an empty `sealed` or one over 512 KiB (`routes::users::put_contact_names`).
 
 #### `POST /contacts/requests` → `201` (or `200` if auto-accepted)
 
@@ -1016,11 +1090,13 @@ Query: `?box=incoming|outgoing` (default `incoming`), optional `status=pending` 
       "to_user_id": "<uuid>",
       "status": "pending",
       "created_at": "...",
-      "user": { "id": "<peer-uuid>", "username": "bob" }
+      "user": { "id": "<peer-uuid>" }
     }
   ]
 }
 ```
+
+`status` filters by `pending` (default), `accepted`, `rejected` or `cancelled`; another value is `400 VALIDATION_ERROR`. `responded_at` appears once set (`routes::contacts::list_requests`).
 
 #### `POST /contacts/requests/:id/accept` → `200`
 
@@ -1039,14 +1115,24 @@ Only `from_user`. Sets `cancelled`.
 ```json
 {
   "contacts": [
-    { "user_id": "<uuid>", "username": "bob", "created_at": "..." }
+    { "user_id": "<uuid>", "created_at": "...", "sealed_name": "<sealed box>" }
   ]
 }
 ```
 
+`sealed_name` is the contact's username, sealed by them to this account; omitted until their app has published it. Deleted accounts are left out (`routes::contacts::list_contacts`).
+
+#### `PUT /contacts/:user_id/sealed-name` → `204`
+
+```json
+{ "sealed": "<sealed box>" }
+```
+
+This account's username, sealed to that contact (table `contact_sealed_names`, migration 029; `routes::contacts::put_sealed_name`). Opaque to the server. `400 VALIDATION_ERROR` for oneself, an empty value or one over 2048 bytes; `404 NOT_FOUND` unless the two are contacts.
+
 #### `DELETE /contacts/:user_id` → `204`
 
-Remove both directed edges (unfriend). Does not create a block.
+Remove both directed edges (unfriend) and the names the two sealed to each other. Does not create a block.
 
 #### `POST /blocks` → `204`
 
@@ -1065,7 +1151,7 @@ Unblock only.
 ```json
 {
   "blocks": [
-    { "user_id": "<uuid>", "username": "mallory", "created_at": "..." }
+    { "user_id": "<uuid>", "created_at": "..." }
   ]
 }
 ```
@@ -1133,13 +1219,15 @@ List conversations for me with peer card + last message preview metadata (option
   "conversations": [
     {
       "id": "<uuid>",
-      "peer": { "id": "<uuid>", "username": "bob" },
+      "peer": { "id": "<uuid>", "deleted": false },
       "created_at": "...",
       "last_message_at": "..."
     }
   ]
 }
 ```
+
+The peer card carries no name: `deleted` is true once the peer's account was deleted, and clients show it as "Deleted account" (`routes::conversations::list_conversations`).
 
 #### `POST /messages/:id/delivered` → `204`
 
@@ -1512,13 +1600,13 @@ Add optional:
   where `sender_user_id = me` become tombstones (ciphertext and media cleared, `deleted_for_everyone_at`
   set), my clear watermark moves to now, and a peer with `allow_peer_chat_delete` gets theirs moved too
   (their copy is gone; messages both have cleared past are deleted). Every other peer keeps the chat
-  with their own messages; `GET /conversations` names me `"Deleted account"`.
+  with their own messages; `GET /conversations` marks me `"deleted": true`, which clients show as "Deleted account".
 - Reactions on my tombstoned messages and every reaction I left lose their ciphertext, each with a new
   `seq`, so a peer who keeps the chat catches up with the removals (`GET /conversations/:peer/reactions`);
   in a cleared copy they go with the purged messages. They no longer cascade away with the `users` row.
 - The `users` row is **not** deleted: conversations, messages, media and calls reference it (and my
   devices) with `ON DELETE CASCADE`, so deleting it wiped each peer's side of the chat as well. It stays
-  as a placeholder (migration 021): `username`, `share_code` and `password_hash` NULL, `deleted_at` set.
+  as a placeholder (migration 021): `username_hash`, `share_code` and `password_hash` NULL, `deleted_at` set.
   The name and code can be registered again; `GET /users/*` and contact requests answer `404`.
 - Devices are revoked as by `DELETE /devices/:id` (sessions, keys, push tokens, Web Push subscriptions,
   notification settings, PIN guards, undelivered deliveries) and their names cleared; their open
@@ -1526,7 +1614,7 @@ Add optional:
   the wake push and on `POST /auth/session-status`. A later request with a token of this account
   answers `401` with that reason. `DELETE /auth/account` itself is still `204`; if the account was
   already deleted, that `401` carries the reason too. Saved Messages, my uploads (rows and blobs), contacts, contact requests, blocks,
-  hides, reaction seen marks, read markers and chat mutes (mine, and others' of me) are deleted. Ringing or
+  hides, reaction seen marks, read markers, chat mutes (mine, and others' of me), the usernames sealed by or to me (`contact_sealed_names`) and my contact name book (`contact_name_books`) are deleted. Ringing or
   active calls end as if I hung up, then all my call rows are deleted.
 - WS to peers after commit: `conversation.deleted` per chat (`user_id` me, `scope: "everyone"`,
   `cleared_for_peer`), `contact.removed` per contact, `call.ended` per call that was still live.
