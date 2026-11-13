@@ -232,6 +232,20 @@ run `python3 scripts/generate_licenses.py` from `android/` (it calls `:app:depen
 POMs from the Gradle cache) and commit the JSON; it fails when a license cannot be mapped or a text is
 missing.
 
+Dependency updates: Dependabot (`.github/dependabot.yml`, the `gradle` entry for `/android`) proposes
+the version catalog, plugin and Gradle wrapper updates weekly as pull requests against `dev`. Such a
+pull request does not run the licence script, so regenerate the JSON on its branch before merging.
+
+whisper.cpp is the exception: it is vendored, not a Gradle dependency, so nothing proposes its
+updates. The copy is **v1.9.4**, commit `927cfce34f31707e17f2bff35c349632fb9e2c3a`, unchanged and
+pruned to what the build compiles. To see whether it is behind, compare that tag with the latest
+release at https://github.com/ggml-org/whisper.cpp/releases. To update it, follow *Updating* in
+`app/src/main/cpp/VENDORED.md`: replace the kept paths from the new tag's archive, then update the
+provenance table there, `SHROUD_WHISPER_COMMIT` and `WHISPER_VERSION` in
+`app/src/main/cpp/CMakeLists.txt`, the whisper.cpp and ggml versions in `scripts/generate_licenses.py`
+and `whisper.cpp-LICENSE.txt` in `app/src/main/assets/licenses/` (then regenerate the JSON), and
+re-run the transcription benchmark above.
+
 F-Droid listing copy is `fastlane/metadata/android/en-US/` (`title.txt`, `short_description.txt`,
 `full_description.txt`). `fdroid build` is not run here. A builder needs JDK 21, NDK
 `30.0.16248370`, CMake `4.1.2`, and `:app:assembleRelease`. No anti-feature is declared in this
