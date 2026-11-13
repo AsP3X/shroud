@@ -6,6 +6,7 @@
  * says. Only notes whose audio settled the language teach the history.
  */
 
+import { clampTranscript } from "../crypto/mediaPayload";
 import { vaultGet, vaultSet } from "../crypto/vault";
 import { storageSealed } from "../storageSeal";
 
@@ -27,6 +28,8 @@ const LANGUAGE_NAMES: Record<string, string> = {
   portuguese: "pt", dutch: "nl", polish: "pl", russian: "ru", ukrainian: "uk",
   turkish: "tr", arabic: "ar", hindi: "hi", japanese: "ja", korean: "ko",
   chinese: "zh", swedish: "sv", danish: "da", norwegian: "nb", finnish: "fi",
+  czech: "cs", greek: "el", hebrew: "he", indonesian: "id", thai: "th",
+  vietnamese: "vi", romanian: "ro", hungarian: "hu", catalan: "ca", croatian: "hr",
 };
 
 const REGION_LANGUAGE: Record<string, string> = {
@@ -227,6 +230,15 @@ export function cleaned(text: string): string {
   const trimmed = text.replace(/\s+/g, " ").trim();
   if (letterCount(trimmed) < 2) return "";
   return trimmed;
+}
+
+/**
+ * A decoded note's text as it is sealed into the payload: `cleaned`, then clamped. Letters of
+ * any script count, so a Korean, Greek, Hebrew, Hindi or Thai note keeps its transcript.
+ */
+export function cleanedTranscript(text: string): string {
+  const t = cleaned(text);
+  return t ? clampTranscript(t) : "";
 }
 
 /** Below this probability the audio did not settle the language, so the note teaches nothing. */

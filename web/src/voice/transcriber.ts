@@ -11,22 +11,13 @@
  * we share the same annotation so the other side still sees it.
  */
 
-import { clampTranscript } from "../crypto/mediaPayload";
-import { detectionCandidates, deviceLanguages, history, learningWeight, override, record } from "./language";
+import { cleanedTranscript, detectionCandidates, deviceLanguages, history, learningWeight, override, record } from "./language";
 import { concatPcm, transcriptionSession } from "./transcription/session";
 
 export function prepareTranscription(): void {
   void transcriptionSession.prepare().catch((err) => {
     console.warn("Whisper prepare failed:", err);
   });
-}
-
-/** Drops punctuation-only / empty decoder junk. Same idea as iOS `VoiceTranscript.cleaned`. */
-export function cleanedTranscript(text: string): string {
-  const t = text.replace(/\s+/g, " ").trim();
-  if (!t) return "";
-  if (!/[A-Za-z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u3040-\u30FF\u4E00-\u9FFF]/.test(t)) return "";
-  return clampTranscript(t);
 }
 
 /**
