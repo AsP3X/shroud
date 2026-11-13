@@ -50,9 +50,10 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
 
     let key = shroud_admin_key();
     let app = router_with(None, AppState::connected(pool.clone(), key));
-    // Each code works once (security audit L1): setup, sign-in and step-up use three consecutive
-    // time steps, all accepted within one step of skew while the flow stays in this window.
-    let base = fresh_time_step().await;
+    // Each code works once (security audit L1): setup, sign-in and step-up each take the next
+    // unspent time step, picked as the request goes out, so the flow passes wherever in a step it
+    // starts and however long it takes.
+    let mut spent = None;
 
     let link = bootstrap(&pool, "http://127.0.0.1:8082", None, false)
         .await
@@ -76,7 +77,6 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     assert_eq!(setup.status, StatusCode::OK);
     assert!(setup.body["qr_svg"].as_str().unwrap().contains("<svg"));
     let secret = secret_from_uri(setup.body["totp_uri"].as_str().unwrap());
-    let code = code_at(&secret, base - 1);
 
     // Opening the link keeps the secret with the link: the operator has none until setup
     // completes, and the dummy hash that stands in for a missing password never signs in
@@ -90,7 +90,13 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         pending.is_none(),
         "no secret on the operator before setup completes"
     );
-    let half_enrolled = sign_in(&app, "operator", "not-a-real-operator-password", &code).await;
+    let half_enrolled = sign_in(
+        &app,
+        "operator",
+        "not-a-real-operator-password",
+        &current_code(&secret),
+    )
+    .await;
     assert_eq!(half_enrolled.status, StatusCode::UNAUTHORIZED);
     let again = send(
         &app,
@@ -130,6 +136,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         include_str!("../fixtures/error.bad-credentials.json"),
     );
 
+    let code = unspent_code(&secret, &mut spent).await;
     let enrolled = send(
         &app,
         "POST",
@@ -210,7 +217,8 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     let still = sign_in(&locked_app, "operator", PASSWORD, &current_code(&secret)).await;
     assert_eq!(still.status, StatusCode::TOO_MANY_REQUESTS);
 
-    let signed_in = sign_in(&app, "operator", PASSWORD, &code_at(&secret, base)).await;
+    let sign_in_code = unspent_code(&secret, &mut spent).await;
+    let signed_in = sign_in(&app, "operator", PASSWORD, &sign_in_code).await;
     assert_eq!(signed_in.status, StatusCode::NO_CONTENT);
     assert!(signed_in.text.is_empty());
     let cookies = session_cookies(&signed_in.headers);
@@ -243,7 +251,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         &app,
         "POST",
         "/api/admin/session/reauth",
-        Some(&format!(r#"{{"totp":"{}"}}"#, code_at(&secret, base))),
+        Some(&format!(r#"{{"totp":"{sign_in_code}"}}"#)),
         Some(&cookies.header),
         Some(&cookies.csrf),
     )
@@ -265,11 +273,12 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
     .await;
     assert_eq!(bad_reauth.status, StatusCode::UNAUTHORIZED);
 
+    let reauth_code = unspent_code(&secret, &mut spent).await;
     let reauth = send(
         &app,
         "POST",
         "/api/admin/session/reauth",
-        Some(&format!(r#"{{"totp":"{}"}}"#, code_at(&secret, base + 1))),
+        Some(&format!(r#"{{"totp":"{reauth_code}"}}"#)),
         Some(&cookies.header),
         Some(&cookies.csrf),
     )
@@ -581,13 +590,24 @@ fn code_at(secret: &[u8], step: i64) -> String {
     format!("{:06}", totp::hotp(secret, step as u64).unwrap())
 }
 
-/// The current time step, once at least 20 s of it remain, so a flow started now ends in it.
-async fn fresh_time_step() -> i64 {
-    let into_step = Utc::now().timestamp() % 30;
-    if into_step > 10 {
-        tokio::time::sleep(std::time::Duration::from_secs((30 - into_step) as u64)).await;
+/// A code for the earliest time step after `spent` that the console accepts now, and records it
+/// as spent. The console accepts one step either way (`totp::accepted_step`).
+async fn unspent_code(secret: &[u8], spent: &mut Option<i64>) -> String {
+    loop {
+        let now = Utc::now().timestamp().div_euclid(30);
+        let step = spent.map_or(now, |last| now.max(last + 1));
+        // Human: Never the step before `now`: the current step and the next one stay accepted
+        // when the request crosses a step boundary on its way through the console.
+        // Agent: RETURNS code_at(step) for now <= step <= now + 1; WRITES `spent`.
+        if step <= now + 1 {
+            *spent = Some(step);
+            return code_at(secret, step);
+        }
+        // Human: The current and next steps are both spent, so wait for a boundary to free one.
+        // Agent: SLEEPS until the next 30 s step boundary (at most 30 s), then retries.
+        let into_step = Utc::now().timestamp_millis().rem_euclid(30_000) as u64;
+        tokio::time::sleep(Duration::from_millis(30_000 - into_step)).await;
     }
-    Utc::now().timestamp() / 30
 }
 
 async fn sign_in(app: &axum::Router, operator: &str, password: &str, code: &str) -> Reply {
