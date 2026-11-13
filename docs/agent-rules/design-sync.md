@@ -19,9 +19,12 @@ not left behind as a stale frame.
   Open the file in Pen first (`open -a /Applications/Pen.app design/<file>.pen`).
 - Reuse the file's existing components and variables, and match the code: same copy, spacing,
   colours and states (empty, loading, error) as the implementation.
-- Pencil edits live only in the running Pen app. When the design work is done, ask the user to
-  press ⌘S in Pen and say plainly that the `.pen` change is not on disk until they do.
-- Before committing a `.pen` file, check that its diff holds only this change — a save also
-  writes other sessions' unsaved edits.
+- Pencil edits live only in the running Pen app until they are saved. When the design work is
+  done, confirm with the Pencil `get_app_state` tool that the open document is the file you
+  changed, then save it yourself with the Pencil `save` tool. If the Pencil server offers no
+  `save` tool, say so and say plainly that the `.pen` change is not on disk; never claim it was
+  saved.
+- After saving and before committing a `.pen` file, check that its diff holds only this change — a
+  save also writes other sessions' unsaved edits.
 - If a UI change deliberately skips the design (a pure bug fix with no visible difference, say),
   say so in the summary instead of silently leaving it out.
