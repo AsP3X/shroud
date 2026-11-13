@@ -943,7 +943,22 @@ nonisolated enum VideoMedia {
     static let budgetStallLimit: Duration = .seconds(60)
 
     /// Waits until an input will take its pending sample, and says which. Nil means no sample of
-    /// that kind is pending.
+    /// that kind is pending. Reads the inputs and the writer; the waiting itself is below.
+    static func nextBudgetInput(
+        video: (input: AVAssetWriterInput, time: Double)?,
+        audio: (input: AVAssetWriterInput, time: Double)?,
+        writer: AVAssetWriter,
+        stallLimit: Duration = budgetStallLimit
+    ) async throws -> BudgetInput {
+        try await nextBudgetInput(
+            video: video.map { pending in (ready: { pending.input.isReadyForMoreMediaData }, time: pending.time) },
+            audio: audio.map { pending in (ready: { pending.input.isReadyForMoreMediaData }, time: pending.time) },
+            isWriting: { writer.status == .writing },
+            stallLimit: stallLimit
+        )
+    }
+
+    /// The wait behind `nextBudgetInput`, over closures so tests can hold readiness fixed.
     ///
     /// Human: The writer interleaves its inputs. It can hold the picture back until the sound
     /// catches up even when the picture's sample is the earlier one, so waiting only on the
@@ -952,22 +967,22 @@ nonisolated enum VideoMedia {
     /// for many seconds, which is slow, not broken, so the limit is time with neither input
     /// taking anything (`budgetStallLimit`), not a count of polls. A fixed 500-poll limit (5 s)
     /// failed healthy encodes under load.
-    /// Agent: READS isReadyForMoreMediaData on both inputs and writer.status every 10 ms; RETURNS
-    /// the input to append to; THROWS VideoError.exportFailed once the writer leaves `.writing` or
-    /// after `stallLimit` without either input ready, CancellationError when cancelled. The send's
-    /// encode task is not cancelled from outside, so the limit is what ends a stuck encode.
+    /// Agent: CALLS `ready` for each pending sample and `isWriting` every 10 ms; RETURNS the input
+    /// to append to; THROWS VideoError.exportFailed once `isWriting` is false or after
+    /// `stallLimit` with neither ready, CancellationError when cancelled. The send's encode task
+    /// is not cancelled from outside, so the limit is what ends a stuck encode.
     static func nextBudgetInput(
-        video: (input: AVAssetWriterInput, time: Double)?,
-        audio: (input: AVAssetWriterInput, time: Double)?,
-        writer: AVAssetWriter,
-        stallLimit: Duration = budgetStallLimit
+        video: (ready: () -> Bool, time: Double)?,
+        audio: (ready: () -> Bool, time: Double)?,
+        isWriting: () -> Bool,
+        stallLimit: Duration
     ) async throws -> BudgetInput {
         let since = ContinuousClock.now
         while true {
             try Task.checkCancellation()
-            guard writer.status == .writing else { throw VideoError.exportFailed }
-            let videoReady = video?.input.isReadyForMoreMediaData == true
-            let audioReady = audio?.input.isReadyForMoreMediaData == true
+            guard isWriting() else { throw VideoError.exportFailed }
+            let videoReady = video?.ready() == true
+            let audioReady = audio?.ready() == true
             if let video, let audio, videoReady, audioReady {
                 return video.time <= audio.time ? .video : .audio
             }

@@ -237,36 +237,49 @@ struct VideoMediaEncodeTests {
     }
 
     /// Neither input taking a sample for the whole stall limit ends the encode instead of leaving
-    /// the send on Compressing (nothing cancels a send's encode from outside).
+    /// the send on Compressing (nothing cancels a send's encode from outside). Readiness is held
+    /// fixed: a real encoder under load can pause and resume inside any limit a test could pick.
     @Test func neitherInputTakingASampleEndsTheWaitAfterTheLimit() async throws {
-        let (writer, input, url) = try Self.idleWriter()
-        defer {
-            writer.cancelWriting()
-            try? FileManager.default.removeItem(at: url)
-        }
-        // A sound track that never gets a sample: the writer takes the picture only so far ahead
-        // of it, then holds it back while it goes on writing.
-        let sound = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: Self.audioRate,
-            AVNumberOfChannelsKey: 1,
-        ])
-        sound.expectsMediaDataInRealTime = false
-        writer.add(sound)
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: 320,
-            kCVPixelBufferHeightKey as String: 180,
-        ])
-        writer.startWriting()
-        writer.startSession(atSourceTime: .zero)
-        let held = try await Self.feedUntilHeldBack(adaptor)
-        #expect(writer.status == .writing)
         let start = ContinuousClock.now
         await #expect(throws: VideoMedia.VideoError.exportFailed) {
-            try await VideoMedia.nextBudgetInput(video: (input, held), audio: nil, writer: writer, stallLimit: .milliseconds(300))
+            try await VideoMedia.nextBudgetInput(
+                video: (ready: { false }, time: 1),
+                audio: (ready: { false }, time: 2),
+                isWriting: { true },
+                stallLimit: .milliseconds(300)
+            )
         }
         #expect(ContinuousClock.now - start >= .milliseconds(300))
+    }
+
+    /// The writer may hold the earlier sample's input until the other catches up: the other one
+    /// is fed meanwhile instead of waiting on the earlier one for good.
+    @Test func theInputTheWriterWillTakeGoesNextEvenIfItsSampleIsLater() async throws {
+        let next = try await VideoMedia.nextBudgetInput(
+            video: (ready: { false }, time: 1),
+            audio: (ready: { true }, time: 2),
+            isWriting: { true },
+            stallLimit: .seconds(30)
+        )
+        #expect(next == .audio)
+    }
+
+    /// With both inputs willing, the earlier sample goes first.
+    @Test func theEarlierSampleGoesFirstWhenBothInputsWillTakeOne() async throws {
+        let video = try await VideoMedia.nextBudgetInput(
+            video: (ready: { true }, time: 1),
+            audio: (ready: { true }, time: 2),
+            isWriting: { true },
+            stallLimit: .seconds(30)
+        )
+        #expect(video == .video)
+        let audio = try await VideoMedia.nextBudgetInput(
+            video: (ready: { true }, time: 3),
+            audio: (ready: { true }, time: 2),
+            isWriting: { true },
+            stallLimit: .seconds(30)
+        )
+        #expect(audio == .audio)
     }
 
     @Test func originalRefusesAClipThatCannotStayFullSize() {
@@ -442,29 +455,6 @@ struct VideoMediaEncodeTests {
         input.expectsMediaDataInRealTime = false
         writer.add(input)
         return (writer, input, url)
-    }
-
-    /// Appends 30 fps frames until the input stops taking them for a whole second; RETURNS the
-    /// time of the frame it is holding back.
-    private static func feedUntilHeldBack(_ adaptor: AVAssetWriterInputPixelBufferAdaptor) async throws -> Double {
-        var frame = 0
-        var heldSince: ContinuousClock.Instant?
-        while frame < 30 * 60 {
-            if adaptor.assetWriterInput.isReadyForMoreMediaData {
-                heldSince = nil
-                var buffer: CVPixelBuffer?
-                CVPixelBufferPoolCreatePixelBuffer(nil, try #require(adaptor.pixelBufferPool), &buffer)
-                adaptor.append(try #require(buffer), withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
-                frame += 1
-            } else if let heldSince, ContinuousClock.now - heldSince >= .seconds(1) {
-                return Double(frame) / 30
-            } else {
-                heldSince = heldSince ?? ContinuousClock.now
-                try await Task.sleep(for: .milliseconds(10))
-            }
-        }
-        Issue.record("The writer took a minute of picture without the sound it waits for")
-        return Double(frame) / 30
     }
 
     private static let audioRate = 44_100
