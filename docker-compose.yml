@@ -173,9 +173,11 @@ services:
       RUN_MIGRATIONS: "true"
       TRUST_FORWARDED_HEADERS: "true"
       # Only the web container's nginx, and any proxy named in .env, may name the client: a
-      # private address alone is not a proxy (security audit S3). `web` is looked up again
-      # every few seconds, since a recreated container gets a new address.
-      TRUSTED_PROXIES: "web ${TRUSTED_PROXIES:-}"
+      # private address alone is not a proxy (security audit S3). The name is looked up again
+      # every few seconds, since a recreated container gets a new address. It is this stack's
+      # container name, not the service name: on proxy-network (npm overlay) `web` is every
+      # stack's web service, so another stack's nginx would be trusted too.
+      TRUSTED_PROXIES: "${COMPOSE_PROJECT_NAME:-shroud}-web ${TRUSTED_PROXIES:-}"
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}@redis:6379
       # Public salt for username lookup hashes. Clients fetch it. Empty refuses to boot.
       # Generate once (32 hex characters) and do not rotate it.
@@ -288,8 +290,11 @@ services:
       api:
         condition: service_healthy
     environment:
-      API_UPSTREAM: http://api:8080
-      ADMIN_UPSTREAM: http://admin:8082
+      # Container names, which are unique on the host. With the npm overlay this container is on
+      # proxy-network too, where `api` and `admin` are the service names of every stack and app
+      # on that network: nginx would send part of the requests to another stack's API.
+      API_UPSTREAM: http://${COMPOSE_PROJECT_NAME:-shroud}-api:8080
+      ADMIN_UPSTREAM: http://${COMPOSE_PROJECT_NAME:-shroud}-admin:8082
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
       ADMIN_HOST: ${ADMIN_HOST:-}
       # A proxy in front of nginx (a CDN, or a proxy on this host): nginx takes the client from
