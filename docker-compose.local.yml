@@ -1,24 +1,28 @@
 # Local / first-run overlay: publish host ports. Used by ./deploy.sh when PROXY_MODE=local.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# Every host port below is fixed by default. A second stack on this machine (a second checkout,
+# with its own COMPOSE_PROJECT_NAME) sets POSTGRES_PORT, REDIS_PORT, NEBULAR_PORT, API_PORT and
+# WEB_PORT in its .env to free ones: two stacks can't publish the same host port.
 
 services:
   postgres:
     # This machine only: for an API run with `cargo run`, and server tests
     # (DATABASE_URL=postgres://…@127.0.0.1:5432/shroud).
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
 
   redis:
     # This machine only: for an API run with `cargo run`, and server tests
     # (REDIS_URL=redis://:<REDIS_PASSWORD>@127.0.0.1:6379).
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
 
   nebular:
     # This machine only: for an API run with `cargo run` (NEBULAR_URL=http://127.0.0.1:9000).
     ports:
-      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:${NEBULAR_PORT:-9000}:9000"
 
   api:
     # This machine only, unless API_BIND says otherwise (API_BIND=0.0.0.0 for a phone on the

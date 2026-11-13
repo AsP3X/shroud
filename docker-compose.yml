@@ -11,6 +11,13 @@
 #   http://shroud-web:80     → web client (also reverse-proxies /api/v1)
 #   http://shroud-api:8080   → API for the iOS app (/api/v1, /api/v1/ws)
 #
+# Container and network names start with the Compose project name: the checkout's folder name
+# unless .env sets COMPOSE_PROJECT_NAME. A checkout in a folder named shroud keeps the names
+# above (shroud-postgres, shroud-internal, ...). A second checkout with another project name is a
+# separate stack, with its own containers, network and volumes, so none of its containers can
+# reach this one's database. The ":-shroud" only matters to a Compose too old to hand the project
+# name to interpolation; it keeps the names such a Compose has always used.
+#
 # Every image, here and in the Dockerfiles, is pinned by digest with its tag kept in front, so a
 # pull can't swap it; Dependabot (.github/dependabot.yml) proposes new digests against dev.
 # Nebular OS's secrets come from .env, which ./deploy.sh fills in (NOS_JWT_SECRET,
@@ -32,7 +39,7 @@ x-log-rotation: &log-rotation
 services:
   postgres:
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
-    container_name: shroud-postgres
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shroud}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set - run ./deploy.sh, which writes .env}
@@ -58,7 +65,7 @@ services:
   # needs REDIS_PASSWORD (./deploy.sh fills in a missing one; letters and digits only).
   redis:
     image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
-    container_name: shroud-redis
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-redis
     command:
       - redis-server
       - --requirepass
@@ -90,7 +97,7 @@ services:
     # digest together (`docker buildx imagetools inspect ghcr.io/asp3x/nebular-os:<tag>`) after
     # reading the release's upgrade notes: a version that has written data can't be rolled back.
     image: ghcr.io/asp3x/nebular-os:0.2.0@sha256:5d18264c2c7c06ebfa5d515d3fc110fa90826032f28e0d92500fff15259bebc9
-    container_name: shroud-nebular
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-nebular
     environment:
       <<: *shroud-logging
       NOS_BIND_ADDR: 0.0.0.0:9000
@@ -150,7 +157,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: shroud-api
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -166,9 +173,13 @@ services:
       RUN_MIGRATIONS: "true"
       TRUST_FORWARDED_HEADERS: "true"
       # Only the web container's nginx, and any proxy named in .env, may name the client: a
-      # private address alone is not a proxy (security audit S3). `web` is looked up again
-      # every few seconds, since a recreated container gets a new address.
-      TRUSTED_PROXIES: "web ${TRUSTED_PROXIES:-}"
+      # private address alone is not a proxy (security audit S3). The name is looked up again
+      # every few seconds, since a recreated container gets a new address. It is this stack's
+      # container name, the same one nginx's upstreams use, rather than the service name `web`,
+      # which on proxy-network is every stack's web service. With the npm overlay that changes
+      # nothing: TRUST_PROXY_NETWORKS trusts every address on the networks the API is on anyway
+      # (docker-compose.npm.yml), another stack's nginx included.
+      TRUSTED_PROXIES: "${COMPOSE_PROJECT_NAME:-shroud}-web ${TRUSTED_PROXIES:-}"
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}@redis:6379
       # Public salt for username lookup hashes. Clients fetch it. Empty refuses to boot.
       # Generate once (32 hex characters) and do not rotate it.
@@ -276,13 +287,16 @@ services:
       args:
         # Baked into the bundle; ./deploy.sh (or deploy.ps1) then hands the API the same id.
         WEB_BUILD: ${SHROUD_WEB_BUILD:-}
-    container_name: shroud-web
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-web
     depends_on:
       api:
         condition: service_healthy
     environment:
-      API_UPSTREAM: http://api:8080
-      ADMIN_UPSTREAM: http://admin:8082
+      # Container names, which are unique on the host. With the npm overlay this container is on
+      # proxy-network too, where `api` and `admin` are the service names of every stack and app
+      # on that network: nginx would send part of the requests to another stack's API.
+      API_UPSTREAM: http://${COMPOSE_PROJECT_NAME:-shroud}-api:8080
+      ADMIN_UPSTREAM: http://${COMPOSE_PROJECT_NAME:-shroud}-admin:8082
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-2147483648}
       ADMIN_HOST: ${ADMIN_HOST:-}
       # A proxy in front of nginx (a CDN, or a proxy on this host): nginx takes the client from
@@ -326,7 +340,7 @@ services:
     build:
       context: .
       dockerfile: admin/Dockerfile
-    container_name: shroud-admin
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-admin
     environment:
       HOST: 0.0.0.0
       PORT: "8082"
@@ -412,7 +426,7 @@ services:
   coturn:
     profiles: ["calls"]
     image: coturn/coturn:4.6@sha256:71c3c990283385567f11794ee692e3a47b66fd9b0bb39e42afbe776e331dd888
-    container_name: shroud-coturn
+    container_name: ${COMPOSE_PROJECT_NAME:-shroud}-coturn
     network_mode: host
     # The secret goes into a config file, never onto turnserver's command line: with host
     # networking any user on the host reads process arguments with ps (security audit A6). The
@@ -488,7 +502,7 @@ services:
 
 networks:
   shroud-internal:
-    name: shroud-internal
+    name: ${COMPOSE_PROJECT_NAME:-shroud}-internal
     driver: bridge
 
 volumes:

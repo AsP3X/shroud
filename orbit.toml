@@ -318,7 +318,7 @@ urls = [
 ]
 open = "${WEB_PUBLIC_URL}"
 notes = [
-  { text = "Nginx Proxy Manager: ${WEB_PUBLIC_URL|host} → http://shroud-web:80, ${API_PUBLIC_URL|host} → http://shroud-api:8080", when = "PROXY_MODE == 'npm'" },
+  { text = "Nginx Proxy Manager: ${WEB_PUBLIC_URL|host} → http://<project>-web:80, ${API_PUBLIC_URL|host} → http://<project>-api:8080, where <project> is COMPOSE_PROJECT_NAME or else the checkout's folder name (shroud-web and shroud-api for a plain clone)", when = "PROXY_MODE == 'npm'" },
   { text = "Calls: open UDP/TCP 3478 and UDP 49160-49259 to this machine (${TURN_URLS})", when = "profile:calls" },
 ]
 

@@ -93,7 +93,7 @@ Message text, photos, voice, device names, username hashes and password hashes a
 | `PROXY_MODE` | How you reach it |
 | --- | --- |
 | `local` (default) | Web `http://localhost:8081` (every interface), API `http://localhost:8080/api/v1` (this machine only) |
-| `npm` | Joins the external `proxy-network`. NPM hosts: `http://shroud-web:80`, `http://shroud-api:8080` |
+| `npm` | Joins the external `proxy-network`. NPM hosts: `http://shroud-web:80`, `http://shroud-api:8080` (`<project>-web` and `<project>-api` under another project name, see [Two stacks on one machine](#two-stacks-on-one-machine)) |
 
 In `local` mode the API port binds to `127.0.0.1`. Phones and other devices on the LAN reach the API through the web port, `http://<this machine>:8081/api/v1`. To expose the API port itself on the LAN, set `API_BIND=0.0.0.0` in `.env`.
 
@@ -163,6 +163,26 @@ The web, API, Nebular and console containers run with a read-only root file syst
 Every image is pinned by digest with its tag kept in front (`postgres:16-alpine@sha256:…`), in `docker-compose.yml` and in the Dockerfiles, so a pull or rebuild can't swap one. Dependabot (`.github/dependabot.yml`) proposes new digests and new crate, npm and GitHub Actions versions as pull requests against `dev`. The Postgres and Redis digests in `.github/workflows/` and the data tool image of the deploy scripts and `orbit.toml` follow `docker-compose.yml` by hand.
 
 Rebuild after server or web changes: `./deploy.sh --rebuild`.
+
+### Two stacks on one machine
+
+Containers, the internal network and the named volumes all take their names from the Compose project name: `<project>-postgres`, `<project>-api`, `<project>-internal`, `<project>_shroud_pg_data` and so on. The project name is the checkout's folder name unless `.env` sets `COMPOSE_PROJECT_NAME`, so a plain clone in a folder named `shroud` keeps the names it always had (`shroud-postgres`, `shroud-internal`, `shroud_shroud_pg_data`) and its data.
+
+A second checkout on the same machine is a separate stack as long as its project name differs: its own containers, network and volumes, and none of its containers can reach the first one's database. Two checkouts in folders with the same name (`~/a/shroud` and `~/b/shroud`) would share one project, so give the second its own name in its `.env` before its first deploy. In `local` mode the host ports are fixed by default, and two stacks can't publish the same one, so pick free ones too:
+
+```bash
+# .env of the second checkout
+COMPOSE_PROJECT_NAME=shroud-two
+WEB_PORT=8181
+API_PORT=8180
+POSTGRES_PORT=5532
+REDIS_PORT=6479
+NEBULAR_PORT=9100
+```
+
+Set the web URLs to match (`WEB_PUBLIC_URL=http://localhost:8181`, `CORS_ALLOWED_ORIGINS` the same, `API_PUBLIC_URL=http://localhost:8180`); the wizard asks for the web and API ports and URLs. With `npm`, both stacks join `proxy-network` and NPM reaches the second one at `http://shroud-two-web:80` and `http://shroud-two-api:8080`; `./deploy.sh --status` prints them. Each web nginx sends `/api/v1` and the console to its own stack's containers by name. Their APIs and nginx trust every address on `proxy-network` to name the client (`TRUST_PROXY_NETWORKS`), so each stack also trusts the other's nginx there, as it trusts any container on that network. The `calls` profile runs coturn on the host network at port 3478 and the relay range, so only one stack per machine can turn it on.
+
+Don't change the project name of a stack that already holds data: the new name points it at new, empty volumes, and the old ones stay behind under the old name. An upgrade from a release that pinned the names changes nothing for a checkout in a folder named `shroud`. A checkout in another folder gets containers and a network under its own name on the next deploy; its volumes were named after the folder already, so it keeps its data, and the old `shroud-internal` network it leaves behind can go once nothing uses it (`docker network rm shroud-internal`). Behind NPM, point that checkout's proxy hosts at `<project>-web` and `<project>-api`.
 
 ### Data storage
 
