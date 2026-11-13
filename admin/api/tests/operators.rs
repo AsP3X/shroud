@@ -5,6 +5,7 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use chrono::{TimeDelta, Utc};
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -307,17 +308,22 @@ async fn operators_list_invites_and_end_sessions() {
     clear(&cleanup).await;
 }
 
+/// The console stamps the link's expiry with its own clock, so the bounds come from that clock
+/// too: Postgres' `now()` can run minutes apart from it, as a container's clock can.
 async fn within_fifteen_minutes(pool: &PgPool, name: &str) -> bool {
+    let now = Utc::now();
     sqlx::query_scalar(
         "SELECT EXISTS (
             SELECT 1 FROM admin.setup_links l
             JOIN admin.operators o ON o.id = l.operator_id
             WHERE o.name = $1 AND l.used_at IS NULL
-              AND l.expires_at > now() + interval '14 minutes'
-              AND l.expires_at <= now() + interval '16 minutes'
+              AND l.expires_at > $2
+              AND l.expires_at <= $3
          )",
     )
     .bind(name)
+    .bind(now + TimeDelta::minutes(14))
+    .bind(now + TimeDelta::minutes(16))
     .fetch_one(pool)
     .await
     .unwrap()
@@ -402,13 +408,17 @@ async fn clear_audits(pool: &PgPool, operators: &[Uuid]) {
         .unwrap();
 }
 
+/// The console compares `reauth_until` with its own clock (`auth::reauth_current`), so the window
+/// is stamped from that clock, as a real step-up does. Postgres' `now()` running four minutes
+/// behind it would close the window before the first write.
 async fn set_reauth(pool: &PgPool, operator: Uuid, fresh: bool) {
-    let sql = if fresh {
-        "UPDATE admin.operator_sessions SET reauth_until = now() + interval '4 minutes' WHERE operator_id = $1"
-    } else {
-        "UPDATE admin.operator_sessions SET reauth_until = NULL WHERE operator_id = $1"
-    };
-    sqlx::query(sql).bind(operator).execute(pool).await.unwrap();
+    let until = fresh.then(|| Utc::now() + TimeDelta::minutes(4));
+    sqlx::query("UPDATE admin.operator_sessions SET reauth_until = $2 WHERE operator_id = $1")
+        .bind(operator)
+        .bind(until)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 async fn seed(pool: &PgPool, writer: Uuid, reader: Uuid) {
