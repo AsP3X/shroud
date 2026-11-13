@@ -46,7 +46,14 @@ on_error() {
   printf '  At:      %s%s:%s%s\n' "$DIM" "${src#./}" "$line" "$NC" >&2
   printf '  Inspect:  %s./deploy.sh --ps%s\n' "$DIM" "$NC" >&2
   printf '  Logs:     %s./deploy.sh --logs%s\n' "$DIM" "$NC" >&2
-  printf '  Retry:    %s./deploy.sh --down [--volumes] && ./deploy.sh%s\n' "$DIM" "$NC" >&2
+  # Never --volumes here: it wipes the data, and after a refused SQL step also the object Postgres
+  # refused it over (shroud_sql_refused in scripts/compose-env.sh).
+  if [[ -n "${SHROUD_SQL_REFUSED:-}" ]]; then
+    printf '  SQL:      %s%s was not applied; the data was kept%s\n' "$DIM" "$SHROUD_SQL_REFUSED" "$NC" >&2
+    printf '  Next:     %sdeal with what psql named above, then ./deploy.sh again%s\n' "$DIM" "$NC" >&2
+  else
+    printf '  Retry:    %s./deploy.sh --down && ./deploy.sh%s\n' "$DIM" "$NC" >&2
+  fi
   exit "$rc"
 }
 trap 'on_error "$LINENO" "$BASH_COMMAND" "${BASH_SOURCE[0]}"' ERR

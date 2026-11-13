@@ -633,8 +633,24 @@ shroud_up() {
     shroud_diagnose_up
     return 1
   fi
-  shroud_apply_admin_db
+  shroud_apply_admin_db || return 1
   shroud_publish_web_build
+}
+
+# Reports that Postgres did not apply deploy SQL step $1, which sets up $2. A refusal can name an
+# object someone planted in the database (grants.sql checks for those), and wiping the data would
+# remove that evidence with it, so this never suggests --volumes. deploy.sh's failure summary reads
+# SHROUD_SQL_REFUSED and leaves --volumes out too.
+shroud_sql_refused() {
+  SHROUD_SQL_REFUSED="$1"
+  {
+    printf '\n'
+    echo "ERROR: Postgres did not apply $1 ($2)."
+    echo "  psql's ERROR and DETAIL lines above say what was refused, or why it could not run."
+    echo "  The data was kept: a failed deploy step deletes nothing."
+    echo "  Don't wipe it with --down --volumes. If Postgres named an object in the database,"
+    echo "  that object is the evidence of who planted it, and the wipe would remove it as well."
+  } >&2
 }
 
 # Starts Postgres alone and gives the API its own role (server/docker/api-role.sql) before the API
@@ -668,7 +684,7 @@ shroud_apply_api_role() {
   # from .env. Not `psql -v`: any user on the host sees process arguments (security audit A6).
   if ! shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
     -v dbname="$db" -f /shroud/api-role.sql >/dev/null; then
-    echo "ERROR: could not set up the API's database role (server/docker/api-role.sql)." >&2
+    shroud_sql_refused server/docker/api-role.sql "the API's database role"
     return 1
   fi
 }
@@ -687,7 +703,7 @@ shroud_apply_admin_db() {
     echo "ERROR: the admin profile is on and ADMIN_DB_PASSWORD is empty." >&2
     return 1
   }
-  shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+  if ! shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
     -v dbname="$db" <<'SQL'
 -- pg_catalog only: in the API's database, schema public belongs to shroud_api (security audit A1).
 SET search_path = pg_catalog, pg_temp;
@@ -712,6 +728,10 @@ GRANT USAGE ON SCHEMA public TO shroud_admin;
 -- API's database, where public belongs to shroud_api, api-role.sql narrows that to pg_catalog.
 ALTER ROLE CURRENT_USER SET search_path = public;
 SQL
+  then
+    shroud_sql_refused "the shroud_admin setup in scripts/compose-env.sh" "the console's database role"
+    return 1
+  fi
   # grants.sql gives the audit log to this role once the console has made its schema, which it
   # does as it starts. Wait for it, so a first deploy does not leave the log with the console.
   local tries=0
@@ -725,8 +745,11 @@ SQL
     fi
     sleep 1
   done
-  shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
-    -f - < "${SHROUD_REPO_ROOT}/admin/api/grants.sql"
+  if ! shroud_compose exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$db" \
+    -f - < "${SHROUD_REPO_ROOT}/admin/api/grants.sql"; then
+    shroud_sql_refused admin/api/grants.sql "the console's grants and its audit log"
+    return 1
+  fi
 }
 
 # Empties the three data folders in $1 and makes them again. Their contents belong to uid 70,
