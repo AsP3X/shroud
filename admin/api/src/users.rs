@@ -164,7 +164,7 @@ async fn user_detail(
         .pool()
         .cloned()
         .ok_or_else(ApiError::upstream_postgres)?;
-    let row = sqlx::query("SELECT id, created_at, deleted_at FROM users WHERE id = $1")
+    let row = sqlx::query("SELECT id, created_at, deleted_at FROM public.users WHERE id = $1")
         .bind(id)
         .fetch_optional(&pool)
         .await
@@ -223,8 +223,8 @@ async fn fetch_page(
         "SELECT u.id, u.created_at, u.deleted_at IS NOT NULL AS deleted,
                 count(d.id) FILTER (WHERE d.revoked_at IS NULL) AS devices,
                 max(d.last_seen_at) AS last_seen
-         FROM users u
-         LEFT JOIN devices d ON d.user_id = u.id
+         FROM public.users u
+         LEFT JOIN public.devices d ON d.user_id = u.id
          WHERE ($1::text IS NULL OR lower(u.id::text) LIKE $1 || '%')
            AND ($2::text IS NULL
                 OR ($2 = 'active' AND u.deleted_at IS NULL)
@@ -268,9 +268,9 @@ async fn push_for_users(
                 bool_or(pt.device_id IS NOT NULL) AS apns,
                 bool_or(w.client = 'browser') AS web,
                 bool_or(w.client = 'android') AS unifiedpush
-         FROM devices d
-         LEFT JOIN push_tokens pt ON pt.device_id = d.id
-         LEFT JOIN web_push_subscriptions w ON w.device_id = d.id
+         FROM public.devices d
+         LEFT JOIN public.push_tokens pt ON pt.device_id = d.id
+         LEFT JOIN public.web_push_subscriptions w ON w.device_id = d.id
          WHERE d.user_id = ANY($1) AND d.revoked_at IS NULL
          GROUP BY d.user_id",
     )
@@ -313,12 +313,12 @@ async fn fetch_devices(pool: &PgPool, user_id: Uuid) -> Result<Vec<DeviceRow>, A
                 bool_or(pt.kind = 'voip') AS voip,
                 max(w.client) AS client,
                 EXISTS (
-                    SELECT 1 FROM sessions s
+                    SELECT 1 FROM public.sessions s
                     WHERE s.device_id = d.id AND s.revoked_at IS NULL
                 ) AS live
-         FROM devices d
-         LEFT JOIN push_tokens pt ON pt.device_id = d.id
-         LEFT JOIN web_push_subscriptions w ON w.device_id = d.id
+         FROM public.devices d
+         LEFT JOIN public.push_tokens pt ON pt.device_id = d.id
+         LEFT JOIN public.web_push_subscriptions w ON w.device_id = d.id
          WHERE d.user_id = $1
          GROUP BY d.id
          ORDER BY d.created_at, d.id",
@@ -353,7 +353,7 @@ async fn fetch_devices(pool: &PgPool, user_id: Uuid) -> Result<Vec<DeviceRow>, A
 async fn media_for(pool: &PgPool, user_id: Uuid) -> Result<(i64, i64), ApiError> {
     let row = sqlx::query(
         "SELECT count(id) AS objects, coalesce(sum(size_bytes), 0)::bigint AS bytes
-         FROM media_objects WHERE uploader_user_id = $1",
+         FROM public.media_objects WHERE uploader_user_id = $1",
     )
     .bind(user_id)
     .fetch_one(pool)
@@ -368,8 +368,8 @@ async fn media_for(pool: &PgPool, user_id: Uuid) -> Result<(i64, i64), ApiError>
 async fn pin_guard_for(pool: &PgPool, user_id: Uuid) -> Result<bool, ApiError> {
     sqlx::query_scalar(
         "SELECT EXISTS (
-            SELECT 1 FROM device_pin_guards g
-            JOIN devices d ON d.id = g.device_id
+            SELECT 1 FROM public.device_pin_guards g
+            JOIN public.devices d ON d.id = g.device_id
             WHERE d.user_id = $1
          )",
     )

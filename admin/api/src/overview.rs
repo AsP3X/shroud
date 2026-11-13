@@ -194,13 +194,13 @@ pub(crate) async fn load_counts(state: &AppState) -> Result<Counts, ApiError> {
     }
     let row = sqlx::query(
         "SELECT
-            (SELECT count(id) FROM users) AS accounts,
-            (SELECT count(id) FROM users WHERE deleted_at IS NOT NULL) AS accounts_deleted,
-            (SELECT count(id) FROM users WHERE created_at >= now() - interval '7 days') AS accounts_7d,
-            (SELECT count(id) FROM devices
+            (SELECT count(id) FROM public.users) AS accounts,
+            (SELECT count(id) FROM public.users WHERE deleted_at IS NOT NULL) AS accounts_deleted,
+            (SELECT count(id) FROM public.users WHERE created_at >= now() - interval '7 days') AS accounts_7d,
+            (SELECT count(id) FROM public.devices
                 WHERE revoked_at IS NULL AND last_seen_at >= now() - interval '30 days')
                 AS devices_active_30d,
-            (SELECT count(device_id) FROM web_push_subscriptions) AS web_push_subscriptions",
+            (SELECT count(device_id) FROM public.web_push_subscriptions) AS web_push_subscriptions",
     )
     .fetch_one(&pool)
     .await

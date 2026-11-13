@@ -288,7 +288,7 @@ async fn finish(
 }
 
 async fn load_account(pool: &PgPool, id: Uuid) -> Result<Account, ApiError> {
-    let Some(row) = sqlx::query("SELECT deleted_at FROM users WHERE id = $1")
+    let Some(row) = sqlx::query("SELECT deleted_at FROM public.users WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -305,7 +305,7 @@ async fn load_account(pool: &PgPool, id: Uuid) -> Result<Account, ApiError> {
 }
 
 async fn load_device(pool: &PgPool, id: Uuid) -> Result<Option<DeviceRow>, ApiError> {
-    let Some(row) = sqlx::query("SELECT user_id, revoked_at FROM devices WHERE id = $1")
+    let Some(row) = sqlx::query("SELECT user_id, revoked_at FROM public.devices WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
         .await

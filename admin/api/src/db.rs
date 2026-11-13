@@ -2,14 +2,25 @@
 //! API's tables are applied by the table owner (`admin/api/grants.sql`), not by this role.
 
 use sqlx::PgPool;
+use sqlx::postgres::PgConnectOptions;
 
 /// Session advisory lock so two consoles do not migrate at once.
 const MIGRATION_LOCK: i64 = 0x5348_4441;
 
+/// The schemas every console connection searches. Never `public`: `shroud_api` owns it in a
+/// deploy, and a function or operator it puts there that matches the argument types more exactly
+/// than `pg_catalog`'s (a `count(uuid)` beside `count("any")`, say) would run inside the console's
+/// queries with the console's rights (security audit A1, CVE-2018-1058). The API's tables are
+/// therefore always named `public.<table>`. No spaces: sqlx passes this unescaped as `-c`.
+const SEARCH_PATH: &str = "pg_catalog,admin,pg_temp";
+
+/// Open the console's pool. Every connection starts with `SEARCH_PATH`, sent in the startup
+/// packet, so it outranks a database or role default that the database's owner can change.
 pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
+    let options: PgConnectOptions = url.parse()?;
     sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
-        .connect(url)
+        .connect_with(options.options([("search_path", SEARCH_PATH)]))
         .await
 }
 
@@ -31,9 +42,8 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
         .execute(&mut *conn)
         .await?;
     let migrated = sqlx::migrate!("./migrations").run(&mut *conn).await;
-    let reset = sqlx::query("SET search_path TO public")
-        .execute(&mut *conn)
-        .await;
+    // Human: Back to the connection's startup value, `SEARCH_PATH`, before the pool reuses it.
+    let reset = sqlx::query("RESET search_path").execute(&mut *conn).await;
     let unlocked = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(MIGRATION_LOCK)
         .execute(&mut *conn)

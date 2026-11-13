@@ -30,8 +30,7 @@ async fn operators_list_invites_and_end_sessions() {
         eprintln!("ADMIN_TEST_DATABASE_URL unset; operators test not run");
         return;
     };
-    let admin = PgPoolOptions::new()
-        .connect(&admin_url)
+    let admin = shroud_admin::db::connect(&admin_url)
         .await
         .expect("shroud_admin connection");
     shroud_admin::db::migrate(&admin)

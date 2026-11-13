@@ -51,8 +51,7 @@ async fn writes_require_reauth_and_audit_each_attempt() {
         .run(&owner)
         .await
         .expect("server migrations");
-    let admin = PgPoolOptions::new()
-        .connect(&admin_url)
+    let admin = shroud_admin::db::connect(&admin_url)
         .await
         .expect("shroud_admin connection");
     shroud_admin::db::migrate(&admin)

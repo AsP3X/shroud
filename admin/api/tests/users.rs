@@ -50,8 +50,7 @@ async fn users_list_and_detail_match_the_schema_and_hide_sealed_names() {
         eprintln!("GRANT_TEST_SUPER_URL unset; users test not run");
         return;
     };
-    let admin = PgPoolOptions::new()
-        .connect(&admin_url)
+    let admin = shroud_admin::db::connect(&admin_url)
         .await
         .expect("shroud_admin connection");
     shroud_admin::db::migrate(&admin)
@@ -189,8 +188,7 @@ async fn lost_push_registration_is_platform_unknown() {
         eprintln!("GRANT_TEST_SUPER_URL unset; lost push registration test not run");
         return;
     };
-    let admin = PgPoolOptions::new()
-        .connect(&admin_url)
+    let admin = shroud_admin::db::connect(&admin_url)
         .await
         .expect("shroud_admin connection");
     shroud_admin::db::migrate(&admin)
