@@ -160,23 +160,35 @@ Device-level switch "Always relay calls" (off by default). On: every peer connec
 
 ### Todos
 
+Since migration `029_private_usernames.sql` nobody can find an account by its username: the server
+no longer stores the name, and `GET /users/by-username/:u` is gone (`server/crates/shroud-server/src/routes/mod.rs`).
+An account is found only by its share code (`GET /users/by-code/:code`), from a QR code or link.
+The first two items below describe the switch as built in September; 029 made it moot.
+
 - [x] Migration `026_username_discovery.sql`: `users.discoverable_by_username BOOL DEFAULT true`.
-- [x] `GET /users/by-username/:u` returns 404 for an undiscoverable user unless the caller is
-      the user, a contact, or has a pending request with them either way. Contact requests go by
-      user id, which only a lookup hands out, so they need no rule of their own.
+      Since 029 the column is still stored and still in `GET/PUT /privacy/settings`, so older
+      clients can read the settings, but it changes nothing (`routes::privacy::PrivacySettings`).
+- [x] `GET /users/by-username/:u` returned 404 for an undiscoverable user unless the caller was
+      the user, a contact, or had a pending request with them either way. Removed with 029.
+      Contact requests go by user id, which only a share-code lookup hands out, so they need no
+      rule of their own.
 - [x] `POST /users/me/share-code` rotates the share code (old QR codes and links stop working;
       rate-limited to 10 an hour).
-- [x] iOS + web: "Find me by username" switch and "Reset QR code" action (confirmation, since
-      shared codes break). iOS picks the new code up through `/auth/me`; web stores it with the
-      session (`saveShareCode`) and shows it at once, and reads `/auth/me` when the shell opens,
-      so a reset on another device doesn't leave a dead QR code on screen.
-- [x] Server tests for lookup + rotation (`tests/api_privacy.rs`).
+- [x] iOS + web: "Reset QR code" action (confirmation, since shared codes break). iOS picks the
+      new code up through `/auth/me`; web stores it with the session (`saveShareCode`) and shows it
+      at once, and reads `/auth/me` when the shell opens, so a reset on another device doesn't
+      leave a dead QR code on screen. The "Find me by username" switch that sat beside it left the
+      privacy screens with 029.
+- [x] Server tests for rotation, and that a username finds no one
+      (`tests/api_privacy.rs`: `rotating_the_share_code_retires_the_old_one`,
+      `a_username_is_not_a_way_to_find_an_account`).
 
-Not covered, on purpose: signing up with a taken name still says it's taken (names stay unique),
-and anyone who looked up the old code before a reset already has the account's id.
+Not covered, on purpose: signing up with a taken name still says it's taken (names stay unique,
+by their digest), and anyone who looked up the old code before a reset already has the account's id.
 
 **Status (2026-09-28): done.** Server tests pass; the web section and reset dialog were driven in a
-harness; the iOS card compiles and its model tests pass (not seen on a device).
+harness; the iOS card compiles and its model tests pass (not seen on a device). Superseded in part
+by migration 029, as above.
 
 ---
 
