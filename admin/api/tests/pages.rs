@@ -70,8 +70,7 @@ async fn read_only_pages_match_the_schema() {
     assert_eq!(stopped.status, StatusCode::BAD_GATEWAY);
     assert_eq!(stopped.body, fixture("error.upstream-postgres.json"));
 
-    let admin = PgPoolOptions::new()
-        .connect(&admin_url)
+    let admin = shroud_admin::db::connect(&admin_url)
         .await
         .expect("shroud_admin connection");
     shroud_admin::db::migrate(&admin)
@@ -260,7 +259,7 @@ async fn read_only_pages_match_the_schema() {
     let privacy = send(&app, "/api/admin/privacy-checks", Some(SESSION)).await;
     assert_eq!(privacy.status, StatusCode::OK, "{}", privacy.text);
     assert_schema("privacy-checks.schema.json", &privacy.body);
-    let accounts: i64 = sqlx::query_scalar("SELECT count(id) FROM users")
+    let accounts: i64 = sqlx::query_scalar("SELECT count(id) FROM public.users")
         .fetch_one(&admin)
         .await
         .unwrap();
@@ -310,7 +309,7 @@ async fn read_only_pages_match_the_schema() {
     );
     // The seeded iPhone registered no payload key, so its pushes still carry readable ids.
     let unsealed: i64 =
-        sqlx::query_scalar("SELECT count(device_id) FROM admin_unsealed_push_devices")
+        sqlx::query_scalar("SELECT count(device_id) FROM public.admin_unsealed_push_devices")
             .fetch_one(&admin)
             .await
             .unwrap();
@@ -538,7 +537,7 @@ async fn storage_sql(pool: &PgPool) -> (i64, i64, i64) {
         "SELECT count(id) AS objects,
                 coalesce(sum(size_bytes), 0)::bigint AS bytes,
                 count(id) FILTER (WHERE message_id IS NULL) AS unlinked
-         FROM media_objects",
+         FROM public.media_objects",
     )
     .fetch_one(pool)
     .await
@@ -553,11 +552,11 @@ async fn storage_sql(pool: &PgPool) -> (i64, i64, i64) {
 async fn push_sql(pool: &PgPool) -> (i64, i64, i64, i64, i64) {
     let row = sqlx::query(
         "SELECT
-            (SELECT count(device_id) FROM push_tokens WHERE kind = 'alert') AS apns,
-            (SELECT count(device_id) FROM push_tokens WHERE kind = 'voip') AS voip,
-            (SELECT count(device_id) FROM web_push_subscriptions WHERE client = 'browser') AS web,
-            (SELECT count(device_id) FROM web_push_subscriptions WHERE client = 'android') AS unified,
-            (SELECT count(device_id) FROM device_notification_settings WHERE enabled = false) AS off",
+            (SELECT count(device_id) FROM public.push_tokens WHERE kind = 'alert') AS apns,
+            (SELECT count(device_id) FROM public.push_tokens WHERE kind = 'voip') AS voip,
+            (SELECT count(device_id) FROM public.web_push_subscriptions WHERE client = 'browser') AS web,
+            (SELECT count(device_id) FROM public.web_push_subscriptions WHERE client = 'android') AS unified,
+            (SELECT count(device_id) FROM public.device_notification_settings WHERE enabled = false) AS off",
     )
     .fetch_one(pool)
     .await

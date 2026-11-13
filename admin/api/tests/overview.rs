@@ -69,8 +69,7 @@ async fn overview_matches_the_schema_and_a_failing_probe_is_not_ready() {
         return;
     };
 
-    let admin = PgPoolOptions::new()
-        .connect(&admin_url)
+    let admin = shroud_admin::db::connect(&admin_url)
         .await
         .expect("shroud_admin connection");
     shroud_admin::db::migrate(&admin)
@@ -244,13 +243,13 @@ struct Counts {
 async fn count_rows(pool: &PgPool) -> Counts {
     let row = sqlx::query(
         "SELECT
-            (SELECT count(id) FROM users) AS accounts,
-            (SELECT count(id) FROM users WHERE deleted_at IS NOT NULL) AS accounts_deleted,
-            (SELECT count(id) FROM users WHERE created_at >= now() - interval '7 days') AS accounts_7d,
-            (SELECT count(id) FROM devices
+            (SELECT count(id) FROM public.users) AS accounts,
+            (SELECT count(id) FROM public.users WHERE deleted_at IS NOT NULL) AS accounts_deleted,
+            (SELECT count(id) FROM public.users WHERE created_at >= now() - interval '7 days') AS accounts_7d,
+            (SELECT count(id) FROM public.devices
                 WHERE revoked_at IS NULL AND last_seen_at >= now() - interval '30 days')
                 AS devices_active_30d,
-            (SELECT count(device_id) FROM web_push_subscriptions) AS web_push_subscriptions",
+            (SELECT count(device_id) FROM public.web_push_subscriptions) AS web_push_subscriptions",
     )
     .fetch_one(pool)
     .await

@@ -30,11 +30,7 @@ async fn session_flow_matches_the_fixtures_and_stores_no_secret() {
         eprintln!("ADMIN_TEST_DATABASE_URL unset; session test not run");
         return;
     };
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&url)
-        .await
-        .expect("connect");
+    let pool = shroud_admin::db::connect(&url).await.expect("connect");
     shroud_admin::db::migrate(&pool).await.expect("migrate");
     // The audit log belongs to the table owner once grants.sql has run (security audit L3).
     let cleanup = match nonempty("GRANT_TEST_SUPER_URL") {

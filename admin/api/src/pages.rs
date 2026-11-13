@@ -311,11 +311,11 @@ async fn push(State(state): State<AppState>, headers: HeaderMap) -> Result<Respo
     let pool = pool(&state)?;
     let row = sqlx::query(
         "SELECT
-            (SELECT count(device_id) FROM push_tokens WHERE kind = 'alert') AS apns,
-            (SELECT count(device_id) FROM push_tokens WHERE kind = 'voip') AS voip,
-            (SELECT count(device_id) FROM web_push_subscriptions WHERE client = 'browser') AS web,
-            (SELECT count(device_id) FROM web_push_subscriptions WHERE client = 'android') AS unified,
-            (SELECT count(device_id) FROM device_notification_settings WHERE enabled = false) AS off",
+            (SELECT count(device_id) FROM public.push_tokens WHERE kind = 'alert') AS apns,
+            (SELECT count(device_id) FROM public.push_tokens WHERE kind = 'voip') AS voip,
+            (SELECT count(device_id) FROM public.web_push_subscriptions WHERE client = 'browser') AS web,
+            (SELECT count(device_id) FROM public.web_push_subscriptions WHERE client = 'android') AS unified,
+            (SELECT count(device_id) FROM public.device_notification_settings WHERE enabled = false) AS off",
     )
     .fetch_one(&pool)
     .await
@@ -481,12 +481,13 @@ async fn privacy_checks(
     let counts = overview::load_counts(&state).await?;
     let username_column = username_column(&pool).await?;
     let messages_sealed =
-        column_unreadable(&pool, "SELECT ciphertext FROM messages LIMIT 1").await?;
-    let names_sealed = column_unreadable(&pool, "SELECT sealed_name FROM devices LIMIT 1").await?;
+        column_unreadable(&pool, "SELECT ciphertext FROM public.messages LIMIT 1").await?;
+    let names_sealed =
+        column_unreadable(&pool, "SELECT sealed_name FROM public.devices LIMIT 1").await?;
     let media_sealed =
-        column_unreadable(&pool, "SELECT object_key FROM media_objects LIMIT 1").await?;
+        column_unreadable(&pool, "SELECT object_key FROM public.media_objects LIMIT 1").await?;
     let unsealed_pushes: i64 =
-        sqlx::query_scalar("SELECT count(device_id) FROM admin_unsealed_push_devices")
+        sqlx::query_scalar("SELECT count(device_id) FROM public.admin_unsealed_push_devices")
             .fetch_one(&pool)
             .await
             .map_err(db_err)?;
@@ -684,7 +685,7 @@ async fn audit_log(
          WHERE (
              $1::uuid IS NULL
              OR a.target_id = $1
-             OR a.target_id IN (SELECT id FROM devices WHERE user_id = $1)
+             OR a.target_id IN (SELECT id FROM public.devices WHERE user_id = $1)
          )
          AND ($2::timestamptz IS NULL OR (a.at, a.id) < ($2, $3))
          ORDER BY a.at DESC, a.id DESC
@@ -750,7 +751,7 @@ async fn storage_counts(pool: &PgPool) -> Result<(i64, i64, i64), ApiError> {
         "SELECT count(id) AS objects,
                 coalesce(sum(size_bytes), 0)::bigint AS bytes,
                 count(id) FILTER (WHERE message_id IS NULL) AS unlinked
-         FROM media_objects",
+         FROM public.media_objects",
     )
     .fetch_one(pool)
     .await
