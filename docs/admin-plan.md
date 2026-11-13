@@ -1,8 +1,10 @@
 # Server admin console — implementation plan (Grok = backend, Claude = frontend)
 
-**Status:** proposed 2026-10-08. Nothing here is built yet; `design/admin.pen` is the only artefact.
+**Status:** proposed 2026-10-08; built. Every task in §4 and §5 is ticked (`admin/api`, `admin/ui`),
+and §11 lists what is left for the owner. Operating it: `docs/admin.md`.
 **Access (2026-10-09):** operators open the console at the Shroud site plus `/admin`
-(`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`). It is not a separate hostname.
+(`WEB_PUBLIC_URL` + `/admin`, for example `https://shroud-app.com/admin`), or on a host of its own
+when `ADMIN_HOST` is set (`6280f8e2`, security audit M10; `docs/admin.md`).
 **Scope:** a console for the operator of one Shroud server, built as its own application: its own
 code, container, database role and sign-in. It is not part of `web/` and not part of
 the API in `server/crates/shroud-server`.
