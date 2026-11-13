@@ -197,6 +197,78 @@ struct VideoMediaEncodeTests {
         #expect(Int(natural.height.rounded()) == 180)
     }
 
+    /// A clip whose sound stops before its picture (a phone video with a short sound track). The
+    /// writer interleaves its inputs and held the picture back for sound that never came: the
+    /// encode failed after 5 s on dev, and hung once that limit went. It must finish, sound kept.
+    @Test(.timeLimit(.minutes(10)))
+    func budgetEncodeOfAClipWhoseSoundEndsEarlyFinishes() async throws {
+        let url = try await Self.makeMovie(seconds: 10, audioSeconds: 2)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let written = try await VideoMedia.writeBudget(
+            asset: AVURLAsset(url: url),
+            width: 320,
+            height: 180,
+            videoBitrate: 80_000,
+            audioBitrate: 32_000,
+            frameRate: 15
+        )
+        defer { try? FileManager.default.removeItem(at: written) }
+        let encoded = AVURLAsset(url: written)
+        #expect(try await encoded.load(.duration).seconds > 9.5)
+        let sound = try #require(try await encoded.loadTracks(withMediaType: .audio).first)
+        #expect(try await sound.load(.timeRange).duration.seconds > 1.5)
+    }
+
+    /// A writer that stopped ends the wait at its first look, not after a time limit (the old
+    /// limit failed it too, but only 5 s later).
+    @Test func aWriterThatStoppedEndsTheWaitAtOnce() async throws {
+        let (writer, input, url) = try Self.idleWriter()
+        defer { try? FileManager.default.removeItem(at: url) }
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        writer.cancelWriting()
+        // An input that still took samples would return at once and prove nothing.
+        #expect(!input.isReadyForMoreMediaData)
+        let start = ContinuousClock.now
+        await #expect(throws: VideoMedia.VideoError.exportFailed) {
+            try await VideoMedia.nextBudgetInput(video: (input, 0), audio: nil, writer: writer, stallLimit: .seconds(30))
+        }
+        #expect(ContinuousClock.now - start < .seconds(5))
+    }
+
+    /// Neither input taking a sample for the whole stall limit ends the encode instead of leaving
+    /// the send on Compressing (nothing cancels a send's encode from outside).
+    @Test func neitherInputTakingASampleEndsTheWaitAfterTheLimit() async throws {
+        let (writer, input, url) = try Self.idleWriter()
+        defer {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: url)
+        }
+        // A sound track that never gets a sample: the writer takes the picture only so far ahead
+        // of it, then holds it back while it goes on writing.
+        let sound = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: Self.audioRate,
+            AVNumberOfChannelsKey: 1,
+        ])
+        sound.expectsMediaDataInRealTime = false
+        writer.add(sound)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 320,
+            kCVPixelBufferHeightKey as String: 180,
+        ])
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        let held = try await Self.feedUntilHeldBack(adaptor)
+        #expect(writer.status == .writing)
+        let start = ContinuousClock.now
+        await #expect(throws: VideoMedia.VideoError.exportFailed) {
+            try await VideoMedia.nextBudgetInput(video: (input, held), audio: nil, writer: writer, stallLimit: .milliseconds(300))
+        }
+        #expect(ContinuousClock.now - start >= .milliseconds(300))
+    }
+
     @Test func originalRefusesAClipThatCannotStayFullSize() {
         #expect(throws: VideoPlanError.self) {
             try VideoMedia.previewPlan(
@@ -290,7 +362,14 @@ struct VideoMediaEncodeTests {
     }
 
     /// A small H.264 .mov, so the encode takes the real export path rather than passthrough.
-    private static func makeMovie(seconds: Int, fps: Int32 = 30, width: Int = 640, height: Int = 360) async throws -> URL {
+    /// With `audioSeconds`, a mono AAC track of silence that long starts with the picture.
+    private static func makeMovie(
+        seconds: Int,
+        fps: Int32 = 30,
+        width: Int = 640,
+        height: Int = 360,
+        audioSeconds: Int? = nil
+    ) async throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("video-media-test-\(UUID().uuidString).mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -306,21 +385,126 @@ struct VideoMediaEncodeTests {
             kCVPixelBufferHeightKey as String: height,
         ])
         writer.add(input)
+        let sound: AVAssetWriterInput? = audioSeconds == nil ? nil : AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: audioRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ])
+        if let sound {
+            sound.expectsMediaDataInRealTime = false
+            writer.add(sound)
+        }
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
-        for frame in 0 ..< Int(fps) * seconds {
-            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
-            var buffer: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, try #require(adaptor.pixelBufferPool), &buffer)
-            let pixels = try #require(buffer)
-            CVPixelBufferLockBaseAddress(pixels, [])
-            memset(CVPixelBufferGetBaseAddress(pixels), Int32(frame * 4 % 255), CVPixelBufferGetDataSize(pixels))
-            CVPixelBufferUnlockBaseAddress(pixels, [])
-            adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps))
+        let frames = Int(fps) * seconds
+        let chunks = audioRate * (audioSeconds ?? 0) / audioChunk
+        var frame = 0
+        var chunk = 0
+        // The writer interleaves its inputs and holds one back until the other catches up, so
+        // whichever will take a sample gets the next one.
+        while frame < frames || chunk < chunks {
+            if frame < frames, input.isReadyForMoreMediaData {
+                var buffer: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, try #require(adaptor.pixelBufferPool), &buffer)
+                let pixels = try #require(buffer)
+                CVPixelBufferLockBaseAddress(pixels, [])
+                memset(CVPixelBufferGetBaseAddress(pixels), Int32(frame * 4 % 255), CVPixelBufferGetDataSize(pixels))
+                CVPixelBufferUnlockBaseAddress(pixels, [])
+                adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps))
+                frame += 1
+            } else if chunk < chunks, let sound, sound.isReadyForMoreMediaData {
+                sound.append(try silence(startingAt: chunk * audioChunk))
+                chunk += 1
+                // Finished at once, or the writer holds the picture back for more of it.
+                if chunk == chunks { sound.markAsFinished() }
+            } else {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
         }
         input.markAsFinished()
+        if chunks == 0 { sound?.markAsFinished() }
         await writer.finishWriting()
         try #require(writer.status == .completed)
         return url
+    }
+
+    /// A writer with one video input, not yet started.
+    private static func idleWriter() throws -> (AVAssetWriter, AVAssetWriterInput, URL) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("video-media-test-\(UUID().uuidString).mp4")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: 320,
+            AVVideoHeightKey: 180,
+        ])
+        input.expectsMediaDataInRealTime = false
+        writer.add(input)
+        return (writer, input, url)
+    }
+
+    /// Appends 30 fps frames until the input stops taking them for a whole second; RETURNS the
+    /// time of the frame it is holding back.
+    private static func feedUntilHeldBack(_ adaptor: AVAssetWriterInputPixelBufferAdaptor) async throws -> Double {
+        var frame = 0
+        var heldSince: ContinuousClock.Instant?
+        while frame < 30 * 60 {
+            if adaptor.assetWriterInput.isReadyForMoreMediaData {
+                heldSince = nil
+                var buffer: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, try #require(adaptor.pixelBufferPool), &buffer)
+                adaptor.append(try #require(buffer), withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
+                frame += 1
+            } else if let heldSince, ContinuousClock.now - heldSince >= .seconds(1) {
+                return Double(frame) / 30
+            } else {
+                heldSince = heldSince ?? ContinuousClock.now
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        Issue.record("The writer took a minute of picture without the sound it waits for")
+        return Double(frame) / 30
+    }
+
+    private static let audioRate = 44_100
+    /// Samples per audio buffer: about 23 ms, the size a microphone delivers.
+    private static let audioChunk = 1024
+
+    /// `audioChunk` samples of 16-bit mono silence at sample `start`.
+    private static func silence(startingAt start: Int) throws -> CMSampleBuffer {
+        var description = AudioStreamBasicDescription(
+            mSampleRate: Float64(audioRate),
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 2,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 16,
+            mReserved: 0
+        )
+        var format: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: nil, asbd: &description, layoutSize: 0, layout: nil,
+            magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &format
+        )
+        let length = audioChunk * 2
+        var block: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(
+            allocator: nil, memoryBlock: nil, blockLength: length, blockAllocator: nil,
+            customBlockSource: nil, offsetToData: 0, dataLength: length,
+            flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block
+        )
+        let data = try #require(block)
+        CMBlockBufferFillDataBytes(with: 0, blockBuffer: data, offsetIntoDestination: 0, dataLength: length)
+        var sample: CMSampleBuffer?
+        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+            allocator: nil, dataBuffer: data, formatDescription: try #require(format),
+            sampleCount: audioChunk,
+            presentationTimeStamp: CMTime(value: CMTimeValue(start), timescale: CMTimeScale(audioRate)),
+            packetDescriptions: nil, sampleBufferOut: &sample
+        )
+        return try #require(sample)
     }
 }
