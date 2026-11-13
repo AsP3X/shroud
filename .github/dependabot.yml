@@ -2,7 +2,8 @@
 # Base and service images are pinned by digest with their tag kept in front (docker-compose.yml);
 # the docker and docker-compose entries move both. The Postgres and Redis digests in
 # .github/workflows/*.yml and the data tool image of the deploy scripts and orbit.toml follow
-# docker-compose.yml by hand: Dependabot does not read them.
+# docker-compose.yml by hand: Dependabot does not read them. Neither does it read the vendored
+# whisper.cpp in android/app/src/main/cpp (see VENDORED.md there and android/README.md).
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -49,6 +50,26 @@ updates:
   # Postgres, Redis, Nebular OS and coturn in docker-compose.yml.
   - package-ecosystem: docker-compose
     directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"
+
+  # The Android app: gradle/libs.versions.toml, the build scripts and the Gradle wrapper.
+  # After a dependency update, android/scripts/generate_licenses.py refreshes the licence list.
+  - package-ecosystem: gradle
+    directory: /android
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "CHORE:"
+
+  # The iOS app's remote Swift packages: the version rules in shroud.xcodeproj, the pins in its
+  # Package.resolved. Vendor/Argon2 and Vendor/WebRTC are local packages with no remote dependency.
+  - package-ecosystem: swift
+    directory: /ios
     target-branch: dev
     schedule:
       interval: weekly
