@@ -60,8 +60,11 @@ if ($modeChoice -eq "2") {
     $API_PORT = "8080"
 } else {
     $PROXY_MODE = "local"
-    $WEB_PORT = Read-Prompt "Web host port" "8081"
-    $API_PORT = Read-Prompt "API host port" "8080"
+    # A re-run offers the ports .env has: a second stack on this machine runs on other ones.
+    $currentWebPort = Get-EnvValue "WEB_PORT"; if (-not $currentWebPort) { $currentWebPort = "8081" }
+    $currentApiPort = Get-EnvValue "API_PORT"; if (-not $currentApiPort) { $currentApiPort = "8080" }
+    $WEB_PORT = Read-Prompt "Web host port" $currentWebPort
+    $API_PORT = Read-Prompt "API host port" $currentApiPort
     $WEB_PUBLIC_URL = "http://localhost:$WEB_PORT"
     $API_PUBLIC_URL = "http://localhost:$API_PORT"
 }
@@ -240,12 +243,35 @@ $envLines = @(
     "RUST_LOG=info"
     "RUST_LOG_FORMAT=text"
 )
+# The keys this wizard writes. Every other line of the old .env is appended again below, as in
+# scripts/setup.sh: COMPOSE_PROJECT_NAME and the other host ports of a second stack on this
+# machine, push, client versions and extras. Dropping COMPOSE_PROJECT_NAME would move the next
+# deploy onto the project of another checkout in a folder with the same name.
+$wizardKeys = @($envLines | ForEach-Object { $_.Substring(0, $_.IndexOf("=")) }) + "SHROUD_DATA_DIR"
 if ($SHROUD_DATA_DIR) { $envLines += "SHROUD_DATA_DIR=$SHROUD_DATA_DIR" }
+$carriedHeader = "# Kept from the previous .env (settings the setup wizard does not ask about)."
+$carried = @()
+$carriedCount = 0
+if (Test-Path -LiteralPath ".env") {
+    foreach ($line in (Read-EnvLines)) {
+        # Blank lines and the header of an earlier run are written again below, once.
+        if ([string]::IsNullOrWhiteSpace($line) -or $line -eq $carriedHeader) { continue }
+        if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=') {
+            if ($wizardKeys -contains $Matches[1]) { continue }
+            $carriedCount++
+        }
+        $carried += $line
+    }
+}
+if ($carriedCount -gt 0) { $envLines += @("", $carriedHeader) + $carried }
 # UTF-8 without a byte-order mark (deploy.ps1's Write-EnvLines).
 Write-EnvLines $envLines
 
 Write-Host ""
 Write-Host "Wrote .env (mode $PROXY_MODE)." -ForegroundColor Green
+if ($carriedCount -gt 0) {
+    Write-Host "  Kept $carriedCount settings the wizard doesn't ask about (project name, ports, push, client versions, extras)."
+}
 Write-Host "  Web:  $WEB_PUBLIC_URL"
 Write-Host "  API:  $API_PUBLIC_URL/api/v1"
 if ($ADMIN_PUBLIC_URL) { Write-Host "  Admin: $ADMIN_PUBLIC_URL" }

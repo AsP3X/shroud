@@ -53,6 +53,18 @@ jobs:
             exit 1
           fi
 
+  setup-wizard:
+    name: The Windows setup wizard keeps a second stack's .env settings
+    # Windows PowerShell 5.1, which deploy.ps1 and setup.ps1 must run in.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: A re-run of scripts/setup.ps1 keeps COMPOSE_PROJECT_NAME, the host ports and extras
+        shell: powershell
+        run: ./scripts/test-setup-wizard.ps1
+
   lf-line-endings:
     name: Text files have LF line endings
     runs-on: ubuntu-latest
