@@ -897,12 +897,20 @@ nonisolated enum VideoMedia {
 
         var videoBuffer = videoOutput.copyNextSampleBuffer()
         var audioBuffer = audioOutput?.copyNextSampleBuffer()
-        while videoBuffer != nil || audioBuffer != nil {
-            try Task.checkCancellation()
-            let videoTime = videoBuffer.map { CMSampleBufferGetPresentationTimeStamp($0).seconds } ?? .infinity
-            let audioTime = audioBuffer.map { CMSampleBufferGetPresentationTimeStamp($0).seconds } ?? .infinity
-            if videoTime <= audioTime, let sample = videoBuffer {
-                try await waitUntilReady(videoInput)
+        // Human: A track that has run out is finished at once. The writer interleaves its inputs
+        // and otherwise holds the picture back for sound that never comes: a clip whose sound
+        // ends before its picture stalled here (failing after 5 s, and for good without a limit).
+        if videoBuffer == nil { videoInput.markAsFinished() }
+        if audioBuffer == nil { audioInput?.markAsFinished() }
+        while true {
+            let video = videoBuffer.map { (input: videoInput, time: CMSampleBufferGetPresentationTimeStamp($0).seconds) }
+            let audio = audioBuffer.flatMap { sample in
+                audioInput.map { (input: $0, time: CMSampleBufferGetPresentationTimeStamp(sample).seconds) }
+            }
+            guard video != nil || audio != nil else { break }
+            switch try await nextBudgetInput(video: video, audio: audio, writer: writer) {
+            case .video:
+                guard let sample = videoBuffer else { break }
                 if let image = CMSampleBufferGetImageBuffer(sample) {
                     let time = CMSampleBufferGetPresentationTimeStamp(sample)
                     if !adaptor.append(image, withPresentationTime: time) {
@@ -911,30 +919,77 @@ nonisolated enum VideoMedia {
                     onProgress?(min(0.99, max(0, time.seconds / seconds)))
                 }
                 videoBuffer = videoOutput.copyNextSampleBuffer()
-            } else if let sample = audioBuffer, let audioInput {
-                try await waitUntilReady(audioInput)
+                if videoBuffer == nil { videoInput.markAsFinished() }
+            case .audio:
+                guard let sample = audioBuffer, let audioInput else { break }
                 if !audioInput.append(sample) { throw VideoError.exportFailed }
                 audioBuffer = audioOutput?.copyNextSampleBuffer()
-            } else {
-                break
+                if audioBuffer == nil { audioInput.markAsFinished() }
             }
         }
         if reader.status == .failed { throw VideoError.exportFailed }
-        videoInput.markAsFinished()
-        audioInput?.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else { throw VideoError.exportFailed }
         keep = true
         return out
     }
 
-    private static func waitUntilReady(_ input: AVAssetWriterInput) async throws {
-        var spins = 0
-        while !input.isReadyForMoreMediaData {
+    /// The budget encode's next sample: which input to append to.
+    enum BudgetInput: Equatable {
+        case video, audio
+    }
+
+    /// How long the budget encode waits with neither input taking a sample before it gives up.
+    static let budgetStallLimit: Duration = .seconds(60)
+
+    /// Waits until an input will take its pending sample, and says which. Nil means no sample of
+    /// that kind is pending. Reads the inputs and the writer; the waiting itself is below.
+    static func nextBudgetInput(
+        video: (input: AVAssetWriterInput, time: Double)?,
+        audio: (input: AVAssetWriterInput, time: Double)?,
+        writer: AVAssetWriter,
+        stallLimit: Duration = budgetStallLimit
+    ) async throws -> BudgetInput {
+        try await nextBudgetInput(
+            video: video.map { pending in (ready: { pending.input.isReadyForMoreMediaData }, time: pending.time) },
+            audio: audio.map { pending in (ready: { pending.input.isReadyForMoreMediaData }, time: pending.time) },
+            isWriting: { writer.status == .writing },
+            stallLimit: stallLimit
+        )
+    }
+
+    /// The wait behind `nextBudgetInput`, over closures so tests can hold readiness fixed.
+    ///
+    /// Human: The writer interleaves its inputs. It can hold the picture back until the sound
+    /// catches up even when the picture's sample is the earlier one, so waiting only on the
+    /// earlier sample can stall for good: the earlier one goes first when both inputs will take a
+    /// sample, otherwise whichever will. A busy device can also keep the encoder from draining
+    /// for many seconds, which is slow, not broken, so the limit is time with neither input
+    /// taking anything (`budgetStallLimit`), not a count of polls. A fixed 500-poll limit (5 s)
+    /// failed healthy encodes under load.
+    /// Agent: CALLS `ready` for each pending sample and `isWriting` every 10 ms; RETURNS the input
+    /// to append to; THROWS VideoError.exportFailed once `isWriting` is false or after
+    /// `stallLimit` with neither ready, CancellationError when cancelled. The send's encode task
+    /// is not cancelled from outside, so the limit is what ends a stuck encode.
+    static func nextBudgetInput(
+        video: (ready: () -> Bool, time: Double)?,
+        audio: (ready: () -> Bool, time: Double)?,
+        isWriting: () -> Bool,
+        stallLimit: Duration
+    ) async throws -> BudgetInput {
+        let since = ContinuousClock.now
+        while true {
             try Task.checkCancellation()
-            if spins > 500 { throw VideoError.exportFailed }
-            spins += 1
-            try await Task.sleep(nanoseconds: 10_000_000)
+            guard isWriting() else { throw VideoError.exportFailed }
+            let videoReady = video?.ready() == true
+            let audioReady = audio?.ready() == true
+            if let video, let audio, videoReady, audioReady {
+                return video.time <= audio.time ? .video : .audio
+            }
+            if videoReady { return .video }
+            if audioReady { return .audio }
+            guard ContinuousClock.now - since < stallLimit else { throw VideoError.exportFailed }
+            try await Task.sleep(for: .milliseconds(10))
         }
     }
 
