@@ -72,14 +72,24 @@ object SealedRecipient {
      */
     fun accepts(plaintext: ByteArray, contentType: String, expected: UUID): Boolean {
         val obj = payloadObject(plaintext) ?: return true
-        val isPayloadType = contentType == MEDIA || contentType == MessageAnnotation.CONTENT_TYPE
-        if (!isPayloadType && isPayloadShaped(obj)) return false
+        if (relabelled(obj, contentType)) return false
         return when (val named = named(obj)) {
             Named.Nobody -> true
             Named.Invalid -> false
             is Named.User -> named.id == expected
         }
     }
+
+    /**
+     * Whether [plaintext] is a media payload or an annotation in a message not labelled media or
+     * annotation: misfiled whoever the chat is for, so it is checked even where the expected
+     * recipient is not known.
+     */
+    fun relabelled(plaintext: ByteArray, contentType: String): Boolean =
+        payloadObject(plaintext)?.let { relabelled(it, contentType) } ?: false
+
+    private fun relabelled(obj: JsonObject, contentType: String): Boolean =
+        contentType != MEDIA && contentType != MessageAnnotation.CONTENT_TYPE && isPayloadShaped(obj)
 
     /**
      * The shape of a media payload (`t` and `k` strings, [MediaMessagePayload.parse]) or of an

@@ -104,8 +104,9 @@ class MessageDecoder(
      * ours (our own id in Notes) and us when it is theirs; otherwise it is our message to someone else
      * re-filed under this chat (the `self` box does not say whom it was for) and shows the same way,
      * opened but neither shown nor cached. Without [chatPeer] our own message is checked against the
-     * conversation's peer, and not at all when that is unknown too. One that names nobody (older
-     * builds) shows as before.
+     * conversation's peer; when that is unknown too, only a media payload or annotation labelled
+     * `text` is refused ([SealedRecipient.relabelled]). One that names nobody (older builds) shows
+     * as before.
      */
     suspend fun decode(dto: MessageDto, context: Context, forcePeer: UUID? = null, chatPeer: UUID? = null): ChatMessage =
         decodeChecked(dto, context, forcePeer, chatPeer).message
@@ -142,9 +143,16 @@ class MessageDecoder(
         val isMedia = dto.contentType == ContentType.MEDIA
         val base = Base(dto, peer, isMine, receipt)
         // Whom the plaintext must name, if it names anyone (security audit M7): the chat's peer for
-        // ours (us in Notes), us for theirs. Null: the chat of our own message is not known.
+        // ours (us in Notes), us for theirs. Null: the chat of our own message is not known, so `to`
+        // cannot be checked, but a payload relabelled `text` is misfiled in any chat (security audit C1).
         val recipient: UUID? = if (isMine) chatPeer ?: conversationPeer else me
-        val misfiled = { plain: ByteArray -> recipient != null && !SealedRecipient.accepts(plain, dto.contentType, recipient) }
+        val misfiled = { plain: ByteArray ->
+            if (recipient != null) {
+                !SealedRecipient.accepts(plain, dto.contentType, recipient)
+            } else {
+                SealedRecipient.relabelled(plain, dto.contentType)
+            }
+        }
         // Like a message from outside the chat: unreadable, no media, nothing of its body kept.
         val refused = { Decoded(base.message(text = ThreadMessageMerge.UNABLE_TO_DECRYPT), refused = true) }
 
