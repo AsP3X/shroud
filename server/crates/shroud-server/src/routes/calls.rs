@@ -24,7 +24,7 @@ use crate::error::AppError;
 use crate::push::PushEvent;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{
-    are_contacts, is_blocked_either_way, is_blocked_either_way_tx, lock_pair,
+    are_contacts, are_contacts_tx, is_blocked_either_way, is_blocked_either_way_tx, lock_pair,
 };
 use crate::state::AppState;
 
@@ -251,11 +251,16 @@ pub async fn create_call(
         .begin()
         .await
         .map_err(|err| AppError::Internal(format!("begin call failed: {err}")))?;
-    // Human: A block that committed since the check above is seen here; one that comes later
-    // waits for this ring to commit and then ends it (security audit S6, L8).
+    // Human: A block or a contact removal that committed since the checks above is seen here;
+    // a block that comes later waits for this ring to commit and then ends it (security audit
+    // S6, L8), and a removal that comes later waits for it (SHRO-14).
     // Agent: pg_advisory_xact_lock(pair) before the busy locks and any row lock, the order
-    // `POST /blocks` takes them in; then SELECT blocks. 403 means no call row and no ring.
+    // `POST /blocks` takes them in; then SELECT contacts and blocks. 403 means no call row and
+    // no ring.
     lock_pair(&mut tx, auth.user_id, body.peer_user_id).await?;
+    if !are_contacts_tx(&mut tx, auth.user_id, body.peer_user_id).await? {
+        return Err(AppError::forbidden("You can only call accepted contacts."));
+    }
     if is_blocked_either_way_tx(&mut tx, auth.user_id, body.peer_user_id).await? {
         return Err(AppError::forbidden("Cannot call this user."));
     }

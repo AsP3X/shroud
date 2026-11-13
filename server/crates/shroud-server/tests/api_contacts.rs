@@ -649,6 +649,91 @@ async fn a_block_racing_a_mutual_request_leaves_no_contact() {
     .await;
 }
 
+/// Human: A contact removal while a send or a ring for the pair is in progress (SHRO-14). This
+/// test holds the pair lock as that send would; the removal must wait for it instead of
+/// committing underneath it, and must finish once it is released.
+#[tokio::test]
+async fn a_contact_removal_waits_for_the_pair_lock() {
+    let Some((app, pool)) = test_app_and_pool().await else {
+        eprintln!("skipping a_contact_removal_waits_for_the_pair_lock: no DATABASE_URL");
+        return;
+    };
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    let (status, _) = post(
+        &app,
+        "/api/v1/contacts/requests",
+        &token_a,
+        json!({ "user_id": user_b }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = post(
+        &app,
+        "/api/v1/contacts/requests",
+        &token_b,
+        json!({ "user_id": user_a }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (a, b) = (
+        user_a.parse::<Uuid>().unwrap(),
+        user_b.parse::<Uuid>().unwrap(),
+    );
+
+    let mut holder = pool.begin().await.expect("begin");
+    let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *holder)
+        .await
+        .expect("pid");
+    let (low, high) = if a < b { (a, b) } else { (b, a) };
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(format!("contact-pair:{low}:{high}"))
+        .execute(&mut *holder)
+        .await
+        .expect("pair lock");
+
+    let removing = tokio::spawn({
+        let app = app.clone();
+        let token_b = token_b.clone();
+        let uri = format!("/api/v1/contacts/{user_a}");
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token_b}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response")
+            .status()
+        }
+    });
+    blocked_by(&pool, holder_pid).await;
+    assert!(
+        !removing.is_finished(),
+        "the removal committed under a held pair lock"
+    );
+    holder.rollback().await.expect("release the pair lock");
+
+    assert_eq!(
+        removing.await.expect("removal task"),
+        StatusCode::NO_CONTENT
+    );
+    let contact_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM contacts \
+         WHERE (user_id = $1 AND contact_user_id = $2) OR (user_id = $2 AND contact_user_id = $1)",
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&pool)
+    .await
+    .expect("count contacts");
+    assert_eq!(contact_rows, 0);
+}
+
 async fn contact_names_call(
     app: &axum::Router,
     method: &str,

@@ -651,6 +651,17 @@ pub async fn delete_contact(
     auth: AuthContext,
     Path(peer_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
+
+    // Human: A send or a ring in progress holds the pair lock until it commits, so the removal
+    // waits for it; one that comes later waits for the removal and finds no contact (SHRO-14).
+    // Agent: pg_advisory_xact_lock(pair) before the row deletes, the order the L6 fix set.
+    lock_pair(&mut tx, auth.user_id, peer_id).await?;
+
     let result = sqlx::query(
         r#"
         DELETE FROM contacts
@@ -660,14 +671,16 @@ pub async fn delete_contact(
     )
     .bind(auth.user_id)
     .bind(peer_id)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|err| AppError::Internal(format!("delete contact failed: {err}")))?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::not_found("Contact not found."));
     }
-    let _ = sqlx::query(
+    // Agent: propagated, not ignored: a failed statement aborts `tx`, and Postgres answers the
+    // COMMIT of an aborted transaction with a rollback, which would undo the removal silently.
+    sqlx::query(
         r#"
         DELETE FROM contact_sealed_names
         WHERE (owner_id = $1 AND peer_id = $2) OR (owner_id = $2 AND peer_id = $1)
@@ -675,8 +688,13 @@ pub async fn delete_contact(
     )
     .bind(auth.user_id)
     .bind(peer_id)
-    .execute(&state.pool)
-    .await;
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| AppError::Internal(format!("delete sealed names failed: {err}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| AppError::Internal(format!("commit contact removal failed: {err}")))?;
 
     let event = serde_json::json!({
         "type": "contact.removed",
@@ -829,10 +847,11 @@ async fn insert_contact_pair(
 }
 
 /// Holds the pair's lock until `tx` ends. Whatever makes two people contacts (an accept, the
-/// mutual auto-accept) and a block take it before anything else, so a block either deletes
-/// the contact rows an accept wrote or the accept sees the block; under READ COMMITTED they
-/// could otherwise interleave and leave both. A message send and a call ring take it too and
-/// re-check the block under it, so neither reaches someone whose block commits meanwhile.
+/// mutual auto-accept), a block and a contact removal take it before anything else, so a block
+/// either deletes the contact rows an accept wrote or the accept sees the block; under READ
+/// COMMITTED they could otherwise interleave and leave both. A message send and a call ring
+/// take it too and re-check the contact and the block under it, so neither reaches someone
+/// whose removal or block commits meanwhile.
 pub(crate) async fn lock_pair(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     a: Uuid,
@@ -858,6 +877,27 @@ pub(crate) async fn are_contacts(pool: &sqlx::PgPool, a: Uuid, b: Uuid) -> Resul
     .bind(a)
     .bind(b)
     .fetch_one(pool)
+    .await
+    .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
+}
+
+/// [`are_contacts`] inside `tx`. Under [`lock_pair`] it also sees a removal that committed
+/// while the caller waited for the lock.
+pub(crate) async fn are_contacts_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    a: Uuid,
+    b: Uuid,
+) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM contacts WHERE user_id = $1 AND contact_user_id = $2
+        )
+        "#,
+    )
+    .bind(a)
+    .bind(b)
+    .fetch_one(&mut **tx)
     .await
     .map_err(|err| AppError::Internal(format!("contacts check failed: {err}")))
 }
