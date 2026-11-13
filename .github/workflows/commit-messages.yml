@@ -1,0 +1,84 @@
+name: Commit messages
+
+# Every push, whatever it touches: a commit message is part of every change.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# The job only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  commit-messages:
+    name: Prefix and no AI attribution
+    runs-on: ubuntu-latest
+
+    steps:
+      # Full history and every branch, so the range below can be cut against origin/dev.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      # .cursor/rules/git-commits.mdc allows only these prefixes, and Git's default message on a
+      # merge or revert commit. docs/agent-rules/no-ai-attribution.md forbids crediting an AI
+      # assistant, including the Co-authored-by trailer the agent platform adds. Only commits this
+      # push or pull request brings in are checked: history already on dev keeps its old messages,
+      # so commits reachable from origin/dev are skipped everywhere except on dev itself.
+      - name: New commits have an allowed prefix and no AI attribution
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+
+          exclude=()
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            exclude+=("^$BEFORE")
+          fi
+          if [ "$EVENT" = pull_request ] || [ "$REF_NAME" != dev ]; then
+            exclude+=("^origin/dev")
+          fi
+          if [ "${#exclude[@]}" -eq 0 ]; then
+            echo "::error::Cannot tell which commits on dev are new: the push has no usable before commit."
+            exit 1
+          fi
+
+          commits=$(git rev-list "$HEAD_SHA" "${exclude[@]}")
+          if [ -z "$commits" ]; then
+            echo "No new commits to check."
+            exit 0
+          fi
+
+          ai='(claude|anthropic|multica|openai|chatgpt|copilot|cursor|codex|gemini|devin|aider)'
+          failed=0
+          for c in $commits; do
+            short=$(git rev-parse --short "$c")
+            subject=$(git log -1 --format=%s "$c")
+            parents=$(git log -1 --format=%P "$c" | wc -w)
+
+            if [ "$parents" -le 1 ] \
+                && ! printf '%s\n' "$subject" | grep -qE '^((TASK|FIX|BUGFIX|DOCS|CHORE): [^ ]|Revert ")'; then
+              echo "::error::$short \"$subject\" must start with TASK:, FIX:, BUGFIX:, DOCS: or CHORE: and a sentence (.cursor/rules/git-commits.mdc)."
+              failed=1
+            fi
+
+            credit=$(git log -1 --format=%B "$c" \
+              | grep -iE "^[[:space:]]*co-authored-by:.*$ai|^[^[:alnum:]]*generated (with|by) .*$ai" || true)
+            if [ -n "$credit" ]; then
+              while IFS= read -r line; do
+                echo "::error::$short \"$subject\" credits an AI assistant: $line (docs/agent-rules/no-ai-attribution.md)."
+              done <<< "$credit"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "Reword the commits above before pushing; git commit --amend or an interactive rebase on an unpushed branch."
+            exit 1
+          fi
+          echo "$(printf '%s\n' "$commits" | wc -l) new commit(s) checked."
