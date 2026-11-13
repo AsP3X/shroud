@@ -218,10 +218,14 @@ export function resetMemory(): void {
   setCurrentLocale(null);
 }
 
+/**
+ * Letters and combining marks, per code point: what iOS `CharacterSet.letters` counts over
+ * `unicodeScalars`, so a short Hindi "हाँ" (one base letter, two marks) is speech on both.
+ */
 export function letterCount(text: string): number {
   let n = 0;
   for (const ch of text) {
-    if (/\p{L}/u.test(ch)) n += 1;
+    if (/[\p{L}\p{M}]/u.test(ch)) n += 1;
   }
   return n;
 }

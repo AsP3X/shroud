@@ -64,6 +64,8 @@ const transcripts: Record<string, string> = {
 for (const [code, text] of Object.entries(transcripts)) {
   check(cleanedTranscript(text) === text, `a ${code} transcript is kept`);
 }
+check(cleanedTranscript("हाँ") === "हाँ", "a one-word Hindi reply counts its marks, as on iOS");
+check(cleanedTranscript("जी") === "जी", "a base letter and its vowel sign are two letters");
 check(cleanedTranscript("  내일   전화할게요 \n") === "내일 전화할게요", "whitespace is collapsed");
 check(cleanedTranscript("... ?! ♪") === "", "punctuation-only decoder output is dropped");
 check(cleanedTranscript("") === "", "an empty transcript is dropped");
