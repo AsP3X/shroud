@@ -1,0 +1,9 @@
+# Read by .github/workflows/codeql.yml for every language.
+name: Shroud CodeQL
+
+# Code we do not maintain. whisper.cpp is vendored upstream code (see VENDORED.md next to it); its
+# findings belong upstream, and Dependabot does not track it either. The design/*/index.html pages
+# are static mockups that no build ships.
+paths-ignore:
+  - android/app/src/main/cpp/whisper.cpp
+  - design/*/index.html
