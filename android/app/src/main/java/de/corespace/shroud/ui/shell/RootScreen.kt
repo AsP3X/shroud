@@ -382,7 +382,7 @@ private fun onboardingTransition(kind: OnboardingTransition, push: Boolean, redu
     else -> onboardingPushPop(push)
 }
 
-/** The iOS push: the new screen slides in from the end, the old one drifts back a third (`ShroudApp.kt` interim). */
+/** The iOS push: the new screen slides in from the end, the old one drifts back a third. */
 private fun onboardingPushPop(push: Boolean): ContentTransform {
     return if (push) {
         (slideInHorizontally(Motion.standard()) { it } + fadeIn(Motion.fade())) togetherWith

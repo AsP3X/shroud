@@ -1,5 +1,9 @@
 # Shroud Android port: work split and handover (Claude = UI, Grok = system/dev)
 
+> **History.** This handover records the Android port on 2026-10-02 and is no longer kept up
+> to date: its branches, owners and open items are not the current state. What the code does
+> now is in [android-plan.md](./android-plan.md) and [android/README.md](../android/README.md).
+
 Written 2026-10-02 from the repo state at `dev` 8b6c976. The specs live outside the repo, at
 `/Users/nvorberg/.claude/projects/-Users-nvorberg-Documents-development-shroud/android-port-specs/`
 (`00-plan.md` plus 13 area specs). In this document, "the plan" means that `00-plan.md`, and

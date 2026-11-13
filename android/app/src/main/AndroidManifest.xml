@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The single manifest of the single, Google-free build (00-plan §5.3; decision record 2026-10-01).
-  No Firebase, GMS or c2dm entries, no direct-boot-aware components: the AppContainer reads
-  credential-encrypted storage and is only built after the first unlock. Shared file — one owner
-  per wave (00-plan §2.6); later changes go through that owner.
+  No Firebase or GMS components. The one c2dm entry is `PlayPushReceiver` below, which takes the
+  embedded FCM distributor's broadcasts from Play Services. No direct-boot-aware components: the
+  AppContainer reads credential-encrypted storage and is only built after the first unlock. Shared
+  file — one owner per wave (00-plan §2.6); later changes go through that owner.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -142,7 +143,7 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- Lock-screen host of the call screen (calls §6.9). The activity class is the UI stub; full-screen and answer intents target it. -->
+        <!-- Lock-screen host of the call screen (calls §6.9). The activity draws the call screen; full-screen and answer intents target it. -->
         <activity
             android:name=".ui.calls.CallActivity"
             android:exported="false"

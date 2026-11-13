@@ -36,7 +36,8 @@ import java.util.UUID
  * (W2-CONTACTS), the notifier (W2-NOTIF), the send, reaction and media engines (W2-MSG-SEND, whose
  * `SendHost` is an adapter over [controller], see `MessagingSendModule`) and the call secrets
  * (W2-CALLS-CORE). The voice player hears purges, locks and re-keys through
- * [MessagingController.registerArtifactSink]. The interim root (`ui/ShroudApp.kt`) starts and stops it.
+ * [MessagingController.registerArtifactSink]. The shell (`AppShellController`, through
+ * `ShellEnvironment.startMessaging` and `stopMessaging`) starts and stops it.
  */
 class MessagingModule(container: AppContainer) : AppModule(container) {
     private val controllerLazy = lazy {
