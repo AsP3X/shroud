@@ -1,4 +1,5 @@
 import {
+  cleanedTranscript,
   detectionCandidates,
   deviceLanguages,
   history,
@@ -9,6 +10,7 @@ import {
   resetMemory,
   setCurrentLocale,
   setPreferredLanguageTags,
+  WHISPER_CODES,
 } from "./language";
 
 /*
@@ -50,6 +52,40 @@ check(learningWeight(10, 0.3) === 0, "a note the history carried teaches nothing
 check(learningWeight(10, Number.NaN) === 0, "no probability, no lesson");
 check(learningWeight(10, 0.95) === 1, "a clear note teaches fully");
 check(learningWeight(2, 0.95) < learningWeight(8, 0.95), "short notes teach less");
+
+// A transcript in any script Whisper writes is kept, not only Latin, Cyrillic, Arabic and CJK.
+const transcripts: Record<string, string> = {
+  ko: "내일 아침에 전화할게요",
+  el: "Θα σε πάρω τηλέφωνο αύριο",
+  he: "אני אתקשר אליך מחר",
+  hi: "मैं कल तुम्हें फ़ोन करूँगा",
+  th: "พรุ่งนี้ฉันจะโทรหาคุณ",
+};
+for (const [code, text] of Object.entries(transcripts)) {
+  check(cleanedTranscript(text) === text, `a ${code} transcript is kept`);
+}
+check(cleanedTranscript("हाँ") === "हाँ", "a one-word Hindi reply counts its marks, as on iOS");
+check(cleanedTranscript("जी") === "जी", "a base letter and its vowel sign are two letters");
+check(cleanedTranscript("  내일   전화할게요 \n") === "내일 전화할게요", "whitespace is collapsed");
+check(cleanedTranscript("... ?! ♪") === "", "punctuation-only decoder output is dropped");
+check(cleanedTranscript("") === "", "an empty transcript is dropped");
+
+// Whisper reports a language by name or code; every picker language's name maps to its code.
+const names: Record<string, string> = {
+  english: "en", german: "de", spanish: "es", french: "fr", italian: "it",
+  portuguese: "pt", dutch: "nl", polish: "pl", russian: "ru", ukrainian: "uk",
+  turkish: "tr", arabic: "ar", hindi: "hi", japanese: "ja", korean: "ko",
+  chinese: "zh", swedish: "sv", danish: "da", norwegian: "nb", finnish: "fi",
+  czech: "cs", greek: "el", hebrew: "he", indonesian: "id", thai: "th",
+  vietnamese: "vi", romanian: "ro", hungarian: "hu", catalan: "ca", croatian: "hr",
+};
+check(
+  [...WHISPER_CODES].sort().join() === Object.values(names).sort().join(),
+  "the table names every picker language",
+);
+for (const [name, code] of Object.entries(names)) {
+  check(normalize(name) === code, `normalize ${name} is ${code}, got ${normalize(name)}`);
+}
 
 resetMemory();
 console.log("language selftest ok");
