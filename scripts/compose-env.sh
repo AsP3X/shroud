@@ -789,6 +789,28 @@ shroud_down() {
   fi
 }
 
+# The host of a URL, lowercased, without scheme, credentials, port, path or IPv6 brackets.
+shroud_url_host() {
+  local host="${1#*://}"
+  host="${host%%/*}"
+  host="${host##*@}"
+  if [[ "$host" == \[* ]]; then
+    host="${host#[}"
+    host="${host%%]*}"
+  else
+    host="${host%%:*}"
+  fi
+  printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
+}
+
+# Whether a host name or bind address answers on this machine only.
+shroud_is_loopback() {
+  case "$1" in
+    localhost | *.localhost | 127.* | ::1 | 0:0:0:0:0:0:0:1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 shroud_info() {
   shroud_load_proxy_mode
   local web api
@@ -806,7 +828,28 @@ shroud_info() {
     echo "  Storage:     named Docker volumes"
   fi
   echo "  Web client:  ${web}"
-  echo "  API (iOS):   ${api}/api/v1"
+  if [[ "$PROXY_MODE" == "local" ]]; then
+    # The API port binds API_BIND, 127.0.0.1 unless set (docker-compose.local.yml), so another
+    # device reaches the API through the web port, whose nginx proxies /api/v1 on every interface.
+    local bind web_port api_port
+    bind="$(shroud_env_value API_BIND)"
+    web_port="$(shroud_env_value WEB_PORT)"
+    api_port="$(shroud_env_value API_PORT)"
+    echo "  API (iOS):   ${web}/api/v1"
+    if shroud_is_loopback "$(shroud_url_host "$web")"; then
+      echo "               localhost answers on this machine only; other devices use this"
+      echo "               machine's LAN address on port ${web_port:-8081}"
+    fi
+    if shroud_is_loopback "${bind:-127.0.0.1}"; then
+      echo "  API port:    ${api_port:-8080}, this machine only (API_BIND=0.0.0.0 opens it on the LAN)"
+    elif shroud_is_loopback "$(shroud_url_host "$api")"; then
+      echo "  API port:    ${api}/api/v1, this machine only by that name"
+    else
+      echo "  API port:    ${api}/api/v1"
+    fi
+  else
+    echo "  API (iOS):   ${api}/api/v1"
+  fi
   if shroud_profile_enabled calls; then
     local min max
     min="$(shroud_env_value TURN_MIN_PORT)"
