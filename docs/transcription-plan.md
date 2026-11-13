@@ -89,7 +89,7 @@ tasks go top to bottom.
 | ID | Todo | Order | Done when |
 | -- | ---- | ----- | --------- |
 | T1.9 | **Remember "no speech".** Today the result lives only in the bubble's `@State`, so every tap decodes the note again. Store it on the message in `LocalMessageStore`, sealed like the transcript, and have the bubble read it back. Do the same on Android if it has the same gap; check `BubbleServices.transcribe`. | parallel | Tapping a silent note a second time doesn't run Whisper (unit test) |
-| T1.10 | **No plaintext temp file.** `VoiceTranscriber.transcribe(audioData:)` writes a plaintext `.m4a` to disk. Decode the audio in memory instead: read it with `AVAudioFile` from a sealed or memory-backed source, or decode the AAC frames with `AVAudioConverter`. | parallel | No file is written under tmp during a transcription (test) |
+| T1.10 ✓ | **No plaintext temp file.** `VoiceTranscriber.transcribe(audioData:)` writes a plaintext `.m4a` to disk. Decode the audio in memory instead: read it with `AVAudioFile` from a sealed or memory-backed source, or decode the AAC frames with `AVAudioConverter`. **Done 2026-11-13:** `InMemoryAudioDecoder` reads the bytes through Core Audio callbacks (`ExtAudioFile`, the samples `AVAudioFile` gives) and hands the PCM to `transcribe(samples:)`. | parallel | No file is written under tmp during a transcription (test: `VoiceTranscriberTests.transcribingANoteWritesNothingUnderTmp`) |
 
 ### Lane D — Shared
 

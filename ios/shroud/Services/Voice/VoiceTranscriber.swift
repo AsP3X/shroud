@@ -102,11 +102,66 @@ enum VoiceTranscriber {
         conversationID: UUID? = nil,
         tracking: UUID? = nil
     ) async throws -> String {
+        try await transcribe(
+            contextualStrings: contextualStrings,
+            conversationID: conversationID,
+            tracking: tracking,
+            session: .shared
+        ) { request in
+            let output = try await TranscriptionSession.shared.transcribe(fileURL: fileURL, request: request)
+            return (output, audioDuration(of: fileURL))
+        }
+    }
+
+    /// Transcribes a voice note held in memory: a received note or the user's own take.
+    ///
+    /// Human: The bytes are plaintext audio, so they are decoded in memory and never written to a
+    /// file; everything on disk must be sealed with the history key (`docs/architecture.md`,
+    /// security invariants 1 and 4). This used to write `tmp/shroud-tx-<uuid>.m4a` for Whisper.
+    /// Agent: READS audioData; CALLS InMemoryAudioDecoder.decode off the main actor, then
+    /// session.transcribe(samples:sampleRate:); WRITES no file. `session` is a test seam.
+    static func transcribe(
+        audioData: Data,
+        contextualStrings: [String] = [],
+        conversationID: UUID? = nil,
+        tracking: UUID? = nil,
+        session: TranscriptionSession = .shared
+    ) async throws -> String {
+        try await transcribe(
+            contextualStrings: contextualStrings,
+            conversationID: conversationID,
+            tracking: tracking,
+            session: session
+        ) { request in
+            // Human: Decoding a long note takes a moment; keep it off the main actor.
+            let pcm = try await Task.detached(priority: .userInitiated) {
+                try InMemoryAudioDecoder.decode(audioData)
+            }.value
+            let output = try await session.transcribe(
+                samples: pcm.samples,
+                sampleRate: pcm.sampleRate,
+                request: request
+            )
+            return (output, pcm.seconds)
+        }
+    }
+
+    /// Shared by both entry points: progress for the bubble, the model, the decode, the cleanup.
+    ///
+    /// Agent: CALLS session.prepare (may download Whisper), then `decode` with the voice-note
+    /// request; WRITES TranscriptionLanguageMemory when the note settled its language.
+    private static func transcribe(
+        contextualStrings: [String],
+        conversationID: UUID?,
+        tracking: UUID?,
+        session: TranscriptionSession,
+        decode: (TranscriptionRequest) async throws -> (output: TranscriptionOutput, seconds: Double)
+    ) async throws -> String {
         TranscriptionModelInstall.shared.begin(messageID: tracking)
         defer { Task { @MainActor in TranscriptionModelInstall.shared.finish() } }
 
         do {
-            try await TranscriptionSession.shared.prepare { fraction in
+            try await session.prepare { fraction in
                 Task { @MainActor in
                     TranscriptionModelInstall.shared.downloading(
                         languageName: "Whisper",
@@ -123,47 +178,27 @@ enum VoiceTranscriber {
 
         TranscriptionModelInstall.shared.transcribing()
 
-        let duration = audioDuration(of: fileURL)
-        let output: TranscriptionOutput
+        let decoded: (output: TranscriptionOutput, seconds: Double)
         do {
-            output = try await decodeVoiceNote(
-                fileURL: fileURL,
+            decoded = try await decode(voiceNoteRequest(
                 contextualStrings: contextualStrings,
                 conversationID: conversationID
-            )
+            ))
         } catch let error as TranscriptionEngineError {
             throw map(error)
         } catch {
             throw TranscribeError.failed(error.localizedDescription)
         }
 
+        let output = decoded.output
         let text = VoiceTranscript.cleaned(output.text)
         if let code = output.language, let heard = output.languageProbability, !text.isEmpty {
-            let weight = VoiceTranscript.learningWeight(audioSeconds: duration, languageProbability: heard)
+            let weight = VoiceTranscript.learningWeight(audioSeconds: decoded.seconds, languageProbability: heard)
             if weight > 0 {
                 TranscriptionLanguageMemory.record(languageCode: code, peerID: conversationID, weight: weight)
             }
         }
         return text
-    }
-
-    static func transcribe(
-        audioData: Data,
-        fileExtension: String = "m4a",
-        contextualStrings: [String] = [],
-        conversationID: UUID? = nil,
-        tracking: UUID? = nil
-    ) async throws -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("shroud-tx-\(UUID().uuidString).\(fileExtension)")
-        try audioData.write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
-        return try await transcribe(
-            fileURL: url,
-            contextualStrings: contextualStrings,
-            conversationID: conversationID,
-            tracking: tracking
-        )
     }
 
     @discardableResult
@@ -208,18 +243,16 @@ enum VoiceTranscriber {
     /// The pin, else one decode in the language Whisper detects, weighed with the device's
     /// languages and this chat's history (`SpokenLanguagePick`). A note is never decoded again in
     /// a language Whisper did not hear: forced, it translates.
-    private static func decodeVoiceNote(
-        fileURL: URL,
+    private static func voiceNoteRequest(
         contextualStrings: [String],
         conversationID: UUID?
-    ) async throws -> TranscriptionOutput {
-        let request = TranscriptionRequest.voiceNote(
+    ) -> TranscriptionRequest {
+        TranscriptionRequest.voiceNote(
             language: TranscriptionLanguage.pinnedLanguage,
             hints: contextualStrings,
             candidateLanguages: TranscriptionLanguage.detectionCandidates(TranscriptionLanguage.deviceLanguages),
             languageHistory: TranscriptionLanguageMemory.history(peerID: conversationID)
         )
-        return try await TranscriptionSession.shared.transcribe(fileURL: fileURL, request: request)
     }
 
     private static func map(_ error: TranscriptionEngineError) -> TranscribeError {

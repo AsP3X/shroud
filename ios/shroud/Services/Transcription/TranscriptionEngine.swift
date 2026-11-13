@@ -16,6 +16,7 @@ nonisolated protocol TranscriptionEngine: Sendable {
 
     func transcribe(fileURL: URL, request: TranscriptionRequest) async throws -> TranscriptionOutput
 
-    /// 16 kHz mono PCM in [-1, 1]. Used by live-call chunking without writing temp files.
+    /// Mono PCM in [-1, 1] at `sampleRate`; the engine resamples to its own rate. Used by live-call
+    /// chunking and by voice notes decoded in memory, so neither writes a temp file.
     func transcribe(samples: [Float], sampleRate: Double, request: TranscriptionRequest) async throws -> TranscriptionOutput
 }

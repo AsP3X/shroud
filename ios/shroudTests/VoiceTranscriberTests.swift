@@ -128,23 +128,116 @@ struct VoiceTranscriberTests {
         _ = try await VoiceTranscriber.transcribe(fileURL: url)
     }
 
+    // MARK: - No plaintext audio on disk
+
+    /// The regression this section exists for: `transcribe(audioData:)` wrote the decrypted note to
+    /// `tmp/shroud-tx-<uuid>.m4a` and deleted it afterwards. The engine looks at `tmp` while it is
+    /// decoding, which is when that file existed.
     @Test
-    func transcribingDataCleansUpItsTempFile() async throws {
-        guard await VoiceTranscriber.modelIsInstalled(locale: englishUS) else { return }
+    func transcribingANoteWritesNothingUnderTmp() async throws {
+        let note = try makeVoiceNote(seconds: 1.5)
+        let engine = TempDirectoryWatchingEngine(watching: note.data)
+        let session = TranscriptionSession(engine: engine)
+        let before = Self.transcriptionTempFiles()
 
-        let url = try makeSilentFile(seconds: 1)
-        defer { try? FileManager.default.removeItem(at: url) }
-        let data = try Data(contentsOf: url)
+        let text = try await VoiceTranscriber.transcribe(audioData: note.data, session: session)
 
-        let before = temporaryTranscriptionFileCount()
-        _ = try await VoiceTranscriber.transcribe(audioData: data, fileExtension: "wav")
-        #expect(temporaryTranscriptionFileCount() == before, "temp audio must not be left behind")
+        #expect(text == "See you at eight")
+        #expect(engine.transcriptions == 1)
+        #expect(engine.copiesOnDisk.isEmpty, "the note's plaintext was on disk: \(engine.copiesOnDisk)")
+        #expect(engine.transcriptionTempFiles == before, "a transcription temp file appeared under tmp")
+        // The engine got the whole note, at the recorder's rate, for its own resampler.
+        #expect(engine.sampleRate == 44_100)
+        #expect(engine.samples == note.samples)
     }
 
-    private func temporaryTranscriptionFileCount() -> Int {
-        let dir = FileManager.default.temporaryDirectory
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        return contents.filter { $0.hasPrefix("shroud-tx-") }.count
+    /// Whisper must hear what `AVAudioFile` reads from the same bytes, or transcripts change.
+    @Test
+    func inMemoryDecodeMatchesAVAudioFile() throws {
+        let note = try makeVoiceNote(seconds: 2)
+        let pcm = try InMemoryAudioDecoder.decode(note.data)
+        #expect(pcm.sampleRate == 44_100)
+        #expect(pcm.samples == note.samples)
+        #expect(abs(pcm.seconds - 2) < 0.001)
+
+        let wavURL = try makeSilentFile(seconds: 1)
+        defer { try? FileManager.default.removeItem(at: wavURL) }
+        let wav = try InMemoryAudioDecoder.decode(Data(contentsOf: wavURL))
+        #expect(wav.sampleRate == 16_000)
+        #expect(wav.samples.count == 16_000)
+    }
+
+    /// `message.voiceData` can be a slice whose first index is not 0.
+    @Test
+    func inMemoryDecodeReadsADataSlice() throws {
+        let note = try makeVoiceNote(seconds: 1)
+        let slice = (Data([1, 2, 3]) + note.data).dropFirst(3)
+        #expect(slice.startIndex == 3)
+        #expect(try InMemoryAudioDecoder.decode(slice).samples == note.samples)
+    }
+
+    @Test
+    func bytesThatAreNotAudioFailTheTranscription() async throws {
+        #expect(throws: InMemoryAudioDecoder.DecodeError.self) {
+            try InMemoryAudioDecoder.decode(Data("not audio".utf8))
+        }
+        #expect(throws: InMemoryAudioDecoder.DecodeError.self) {
+            try InMemoryAudioDecoder.decode(Data())
+        }
+        let session = TranscriptionSession(engine: TempDirectoryWatchingEngine(watching: Data()))
+        await #expect(throws: VoiceTranscriber.TranscribeError.self) {
+            try await VoiceTranscriber.transcribe(audioData: Data("not audio".utf8), session: session)
+        }
+    }
+
+    /// A 440 Hz tone in the recorder's format (AAC, 44.1 kHz, mono), and the samples `AVAudioFile`
+    /// reads back from it. The file exists only while this runs, before any test looks at `tmp`.
+    private func makeVoiceNote(seconds: Double) throws -> (data: Data, samples: [Float]) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shroud-test-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeTone(to: url, seconds: seconds)
+
+        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: AVAudioFrameCount(file.length)
+        ) else {
+            throw TestSetupError.bufferUnavailable
+        }
+        try file.read(into: buffer)
+        let samples = Array(UnsafeBufferPointer(start: buffer.floatChannelData?[0], count: Int(buffer.frameLength)))
+        return (try Data(contentsOf: url), samples)
+    }
+
+    /// Separate so the writer is released, and the file finished, before it is read.
+    private func writeTone(to url: URL, seconds: Double) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+        ]
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1) else {
+            throw TestSetupError.formatUnavailable
+        }
+        let frames = AVAudioFrameCount(format.sampleRate * seconds)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let channel = buffer.floatChannelData?[0]
+        else {
+            throw TestSetupError.bufferUnavailable
+        }
+        buffer.frameLength = frames
+        for frame in 0 ..< Int(frames) {
+            channel[frame] = 0.3 * sin(Float(frame) * 2 * .pi * 440 / Float(format.sampleRate))
+        }
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        try file.write(from: buffer)
+    }
+
+    /// Names under `tmp` that the old code used for its plaintext copy.
+    fileprivate static func transcriptionTempFiles() -> Set<String> {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)) ?? []
+        return Set(names.filter { $0.hasPrefix("shroud-tx-") })
     }
 
     @Test
@@ -152,5 +245,59 @@ struct VoiceTranscriberTests {
         let locales = await VoiceTranscriber.availableLocales()
         #expect(!locales.isEmpty)
         #expect(await VoiceTranscriber.supportsLongForm())
+    }
+}
+
+/// Answers like a model, and while it "decodes" looks through `tmp` for a file holding the note.
+///
+/// Human: Other suites write their own files under `tmp` in parallel, so this looks for the note's
+/// bytes (and the old `shroud-tx-` names) rather than for any new entry.
+final class TempDirectoryWatchingEngine: TranscriptionEngine, @unchecked Sendable {
+    let id = "tmp-watch"
+    private let note: Data
+    private(set) var transcriptions = 0
+    private(set) var copiesOnDisk: [String] = []
+    private(set) var transcriptionTempFiles: Set<String> = []
+    private(set) var samples: [Float] = []
+    private(set) var sampleRate: Double = 0
+
+    init(watching note: Data) {
+        self.note = note
+    }
+
+    func prepare(model: TranscriptionModelID, progress: (@Sendable (Double) -> Void)?) async throws {}
+
+    func transcribe(fileURL: URL, request: TranscriptionRequest) async throws -> TranscriptionOutput {
+        lookAtTmp()
+        return Self.output
+    }
+
+    func transcribe(
+        samples: [Float],
+        sampleRate: Double,
+        request: TranscriptionRequest
+    ) async throws -> TranscriptionOutput {
+        self.samples = samples
+        self.sampleRate = sampleRate
+        lookAtTmp()
+        return Self.output
+    }
+
+    /// No language, so the test teaches the chat's language history nothing.
+    private static let output = TranscriptionOutput(text: "See you at eight", language: nil, confidence: 0.9)
+
+    private func lookAtTmp() {
+        transcriptions += 1
+        transcriptionTempFiles = VoiceTranscriberTests.transcriptionTempFiles()
+        let tmp = FileManager.default.temporaryDirectory
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        guard let files = FileManager.default.enumerator(at: tmp, includingPropertiesForKeys: keys) else { return }
+        for case let url as URL in files {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true, values.fileSize == note.count,
+                  (try? Data(contentsOf: url)) == note
+            else { continue }
+            copiesOnDisk.append(url.lastPathComponent)
+        }
     }
 }
