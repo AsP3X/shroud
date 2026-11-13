@@ -175,8 +175,10 @@ services:
       # Only the web container's nginx, and any proxy named in .env, may name the client: a
       # private address alone is not a proxy (security audit S3). The name is looked up again
       # every few seconds, since a recreated container gets a new address. It is this stack's
-      # container name, not the service name: on proxy-network (npm overlay) `web` is every
-      # stack's web service, so another stack's nginx would be trusted too.
+      # container name, the same one nginx's upstreams use, rather than the service name `web`,
+      # which on proxy-network is every stack's web service. With the npm overlay that changes
+      # nothing: TRUST_PROXY_NETWORKS trusts every address on the networks the API is on anyway
+      # (docker-compose.npm.yml), another stack's nginx included.
       TRUSTED_PROXIES: "${COMPOSE_PROJECT_NAME:-shroud}-web ${TRUSTED_PROXIES:-}"
       REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is not set - run ./deploy.sh, which writes .env}@redis:6379
       # Public salt for username lookup hashes. Clients fetch it. Empty refuses to boot.
