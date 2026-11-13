@@ -41,7 +41,9 @@ devices) access before it reaches a LAN or emulator-host server.
   libraries: the app draws its own chrome from `ui/theme` tokens.
 - `verifyNoGoogleServices` fails if a Firebase, Google Play services, ML Kit, Tink, Play Core,
   install-referrer or data-transport module reaches the debug or release runtime classpath, or if
-  the merged release manifest mentions GMS, C2DM or Firebase.
+  the merged release manifest mentions `com.google.firebase`. Play Services and C2DM strings are
+  allowed there: the embedded FCM distributor (see *Choosing a distributor*) needs them and ships no
+  Google classes (`VerifyNoGoogleServicesTask` in `app/build.gradle.kts`).
 - `verifyNoGoogleClasses` reads R8's release mapping and fails if a class from one of those
   packages ships, by its original name. R8 moves most renamed classes into the unnamed package, so
   this (not the dex package list) is what catches an obfuscated or vendored copy. All three run as
@@ -60,18 +62,21 @@ devices) access before it reaches a LAN or emulator-host server.
 | `app/src/main/java/.../core/crypto` | BIP39, phrase → identity keys, key bundle, `CryptoController`; the v1/v2/v3 envelopes, double ratchet, media crypto, sealed device names, safety numbers; `ByteOps`, `Primitives`, `LocalHistoryCrypto`, `PeerLocks` |
 | `app/src/main/java/.../core/keys` | Sealed key stores (identity, ratchets, peer pins), the screen-lock-bound history-key vault, `LocalNames`, key-material wipe |
 | `app/src/main/java/.../core/auth` | Session (`SessionController` with the auth listener every authenticated request reports to, Keystore-sealed `SessionStore`), password strength, the `WipeHooks` seam |
-| `app/src/main/java/.../core/{messaging,contacts,media,links,notifications,calls,push,transcription}` | Engines for those packages. `CallController.attach` is not wired; `CallActivity` still closes at once |
+| `app/src/main/java/.../core/{messaging,contacts,media,links,notifications,calls,push,transcription}` | Engines for those packages. `AppContainer.onProcessStart` attaches the call engine once (`calls.controller.attach`) |
 | `app/src/main/java/.../core/storage` | `KeystoreSealer`, sealed files in no-backup storage, `StorageSeal` (blocks writes during a wipe) |
 | `app/src/main/java/.../ui/theme` | Colour tokens (light/dark), Inter, motion, the design's icons |
 | `app/src/main/java/.../ui/components` | The app's own chrome: buttons, glass, toggle, toast, onboarding parts; avatars, chat rows, glass bars, scroll screens, settings rows; the overlay host, menus, sheets, dialogs, pull to refresh |
 | `app/src/main/java/.../ui/onboarding` | Welcome, Server settings, Sign Up, Log In |
+| `app/src/main/java/.../ui/shell` | The signed-in root: `RootScreen`, `MainShell` and the tab bar, `AppShellController` (lifecycle, auto-lock), window protection and the privacy cover |
+| `app/src/main/java/.../ui/{lock,chats,conversation,contacts,calls,media,camera,settings,wipe,update,permissions}` | The screens: Lock, chats, conversation and composer, contacts, the call screen, media compose and viewer, camera, Settings, the wipe overlay, "Update required", the runtime permission requests |
 | `app/src/test/java/.../testing` | JVM test kit: `MainDispatcherRule`, `FakeSharedPreferences`, `XorSealer`, `FakeAppClock`, `TempDirRule`, `SealedTestKey` |
 | `e2e/` | Local stack and adb scripts (below) |
 
 `UnifiedPushReceiver`, `BackgroundConnectionService`, `BootCompletedReceiver` and
-`DecryptedMediaProvider` are implemented. `CallActivity` still finishes immediately. The signed-in
-UI root is still the interim `ShroudApp`. The launcher entry points are two aliases of `MainActivity`
-(`.LauncherDetailed`, enabled, and `.LauncherSimple`), switched by the logo setting.
+`DecryptedMediaProvider` are implemented. `CallActivity` draws the call screen, also over the lock
+screen. The signed-in UI root is `ui/shell/RootScreen.kt`. The launcher entry points are two
+aliases of `MainActivity` (`.LauncherDetailed`, enabled, and `.LauncherSimple`), switched by the
+logo setting.
 
 ## End-to-end (local stack)
 
@@ -256,8 +261,8 @@ Nothing arrives while Shroud is closed unless one of these is on.
   socket. This is the fallback when neither distributor is available.
 
 With neither, `PushCopy` says the phone has no way to receive notifications while Shroud is
-closed. The Settings › Delivery screen that would list distributors is still an empty composable,
-so that choice is not drawn yet. The rules above are what the registration code does.
+closed. Settings › Notifications and Sounds › Delivery (`ui/settings/push/PushDeliveryScreen.kt`)
+lists the distributors, lets the user choose one and switches the background connection.
 
 The end-to-end scripts follow the same split. `e2e/stack-up.sh` runs ntfy in Docker as the push
 server. The distributor on the emulator is `e2e/up-stub`, not a downloaded ntfy APK.

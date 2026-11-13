@@ -10,6 +10,16 @@ Read this before the first commit in `android/`.
 | [calls.md](./calls.md) | Call signalling, media, screen sharing, pushes |
 | [privacy-options.md](./privacy-options.md) | Privacy settings; Phase 5 (device protections) has Android equivalents below |
 
+**Status (2026-11-13, checked against `dev` `790c84c3`):** the signed-in app is the shell
+(`ui/shell/RootScreen.kt`, `ui/shell/MainShell.kt`), with the Lock screen at launch
+(`ui/lock/LockScreen.kt`), the call screen (`ui/calls/CallActivity.kt`), the wipe overlay
+(`ui/wipe/DeviceWipeOverlay.kt`) and Settings › Delivery (`ui/settings/push/PushDeliveryScreen.kt`).
+In [Workstreams](#workstreams), a ticked box names the code that does it and, where one is owed,
+the physical-phone run; an open box names what is still missing. Paths there are under
+`android/app/src/main/java/de/corespace/shroud/` unless they start with `android/` or `gradle/`.
+The dated status notes below are history; where one no longer matches the code, it says so. The
+`docs/android-handover*.md` files are history too.
+
 **Status (2026-10-01, wave 1 merged):** the port follows a five-wave plan (W0 contracts, W1
 foundations, W2 engines, W3 screens and platform, W4 hardening and release). Waves 0 and 1 are in
 `android/` (see [android/README.md](../android/README.md)):
@@ -20,12 +30,13 @@ foundations, W2 engines, W3 screens and platform, W4 hardening and release). Wav
   names, safety numbers — all pinned by the iOS and web vectors.
 - **Keys:** the sealed key stores, the history-key vault bound to the screen lock (Keystore wrap
   key, system biometric prompt), key-material wipe, and `CryptoController` parity with iOS. The
-  Lock screen that opens the vault at launch arrives in wave 3; until then the phrase step stands
-  in for it and going to the background drops the keys (invariant 5), except while the vault's own
-  prompt is up.
+  Lock screen that opens the vault at launch has since landed (`ui/lock/LockScreen.kt`). Going to
+  the background drops the keys after the chosen auto-lock delay (invariant 5), except while the
+  vault's own prompt is up.
 - **Session:** every authenticated request and the socket report to the session; three 401s in a
   row and `DEVICE_REMOVED` (token-checked) both sign out and delete the stored identity and vault at
-  once, as iOS's full wipe does. Log Out deletes them too. The full wipe overlay is wave 2/3.
+  once, as iOS's full wipe does. Log Out deletes them too. The full wipe overlay has since landed
+  (`ui/wipe/DeviceWipeOverlay.kt`).
 - **UI kit:** every colour token, SwiftUI-matched motion, haptics, icons, tiered glass, toasts,
   list rows, bars, settings parts, menus, sheets, dialogs, pull to refresh — no Material.
 - **Seams for wave 2** are published with their final signatures (messaging, contacts, media,
@@ -36,17 +47,17 @@ foundations, W2 engines, W3 screens and platform, W4 hardening and release). Wav
 **Status (2026-10-02, phase A system work):** the engines are in the tree. Checked against the code:
 
 - This phone seals its device name with kind byte 4 (`DeviceNameSync`). A custom name an older client saved as kind 0 is re-sealed with kind 4.
-- Notifications while the app is closed are UnifiedPush (no FCM) plus the opt-in background connection, default off. One installed distributor is registered; several wait until one is chosen. The Settings › Delivery composable is still empty.
+- Notifications while the app is closed are UnifiedPush plus the opt-in background connection, default off. Since 2026-10-03, UnifiedPush's embedded FCM distributor is the default when Play Services is installed. It brings no Play Services SDK, and the server reaches it as a Web Push endpoint (see *Choosing a distributor* in [android/README.md](../android/README.md)). One installed distributor is registered; several wait until one is chosen on Settings › Delivery (`ui/settings/push/PushDeliveryScreen.kt`).
 - Voice notes are transcribed on device with whisper.cpp. Per-chat language stats are sealed at `language-stats.sealed` and do not leave the phone. The physical-phone RTF gate in [android/README.md](../android/README.md) is still owed.
-- Release: R8 and resource shrinking are on. The release build is one APK per ABI (`arm64-v8a`, `x86_64`) and no universal APK. Debug stays `app-debug.apk`. The owner's key is not in the repo. `android/e2e/repro-build.sh` compares two builds signed with a throwaway `/tmp` keystore. `check-native.sh` is POSIX sh and runs in CI on every `.so`, including WebRTC.
+- Release: R8 and resource shrinking are on. The release build is one APK per ABI (`arm64-v8a`, `x86_64`) and no universal APK. Debug stays `app-debug.apk`. The owner's key is not in the repo. `android/e2e/repro-build.sh` compares two builds signed with a throwaway `/tmp` keystore. `check-native.sh` is POSIX sh and checks every `.so`, including WebRTC. It runs by hand: there is no Android CI workflow (removed in `7d5f9c3c`).
 
-The signed-in UI on this branch is still the interim root (`ShroudApp`). `CallActivity` still closes at once. The shell is not in this branch.
+That branch's interim root (`ShroudApp`) is gone. The signed-in UI is the shell (`ui/shell/RootScreen.kt`), and `CallActivity` draws the call screen.
 
-**Status (2026-10-02, `grok/g9-prep`):** this branch prepares the non-UI half of G9. It is not merged. The owner merges it together with `claude/android-ui`.
+**Status (2026-10-02, `grok/g9-prep`):** this branch prepared the non-UI half of G9. It is merged into `dev` together with `claude/android-ui`, and the points below hold there.
 
 - Production attaches the call engine once, from `AppContainer.onProcessStart`, after the call controller and the call system have started: `calls.controller.attach(callsMedia.engine, callsSystem.system)`. `CallsSystemModule` does not attach, and `onCallPush` is not fed to the push dispatcher. `PushModule` already forwards a call push to `CallController.handleCallPush`.
 - A wipe deletes every `cacheDir/shroud-*` file (`WipeHooksImpl.haltWriters` calls `SensitiveTempFiles.sweep()` with no age). Chat lock still passes `SensitiveTempFiles.STALE_AGE_MS` (ten minutes).
-- `ShroudApplication` no longer locks chats from `ON_STOP`. `ShellModule.onProcessStart()` stays a no-op. On `claude/android-ui` the shell starts from `MainActivity` via `container.shell.startShell()` and owns auto-lock. That shell is not in this branch.
+- `ShroudApplication` no longer locks chats from `ON_STOP`. `ShellModule.onProcessStart()` stays a no-op. The shell starts from `MainActivity` via `container.shell.startShell()` and owns auto-lock.
 
 Still open from wave 1:
 
@@ -69,8 +80,8 @@ Still open from wave 1:
 Sign Up still has two steps, unlike iOS (*Account*, then *Phrase*; nothing reaches the server
 before the phrase step's Create Account), refuses a phone without a screen lock, and asks for
 Android 17's local-network permission before the first request to a LAN or emulator-host server.
-After unlocking, a temporary placeholder with Log Out stands in for the main shell; it is not in
-the design on purpose and goes in wave 3.
+After unlocking, the main shell opens (`ui/shell/MainShell.kt`); the temporary placeholder with
+Log Out that stood in for it is gone.
 
 ## Ground rules
 
@@ -194,82 +205,156 @@ Order is roughly dependency order. iOS sources are the reference implementation.
 
 - [x] Port `Services/Crypto`: BIP39, identity keys, double ratchet, message and media crypto,
       sender tags, sealed device names, safety numbers. Pass the iOS vectors (wave 1).
-- [ ] Vault per decision 1 (built in wave 1; the Lock screen and the auto-lock delay of
-      privacy-options Phase 5 are wave 3). Backgrounding clears the history key and decrypted
-      threads from memory (invariant 5).
-- [ ] Sealed local store (SQLite or files, AES-256-GCM under `historyKey`), including
-      `SealedLocalState` and the ratchet session store.
+- [x] Vault per decision 1, with the Lock screen and the auto-lock delay of privacy-options
+      Phase 5. Backgrounding clears the history key and decrypted threads from memory
+      (invariant 5). Code: `core/keys/HistoryKeyVault.kt`, `ui/lock/LockScreen.kt`, auto-lock in
+      `ui/shell/AppShellController.kt` (`onBackground`, `lockIfAutoLockDue`, `lockChatsInMemory`),
+      the delay setting in `ui/settings/privacy/PrivacySecurityModel.kt`. Owed: the Keystore rows
+      of the [test matrix](#test-matrix) on physical phones.
+- [x] Sealed local store (files, AES-256-GCM under `historyKey`), including `SealedLocalState`
+      and the ratchet session store. Code: `core/messaging/local/LocalMessageStore.kt`,
+      `core/keys/SealedLocalState.kt`, `core/keys/RatchetSessionStore.kt`.
 - [x] Sensitive temp files: app-private cache only, wiped on lock and on start.
 
 ### C. Messaging
 
 - [x] REST + WebSocket client, focus reporting (`{type:"focus"}`, `"background": true` for the
       background connection), reconnect rules (wave 1).
-- [ ] Known traps carried over from iOS: the server re-keys sent messages (drop the client
+- [x] Known traps carried over from iOS: the server re-keys sent messages (drop the client
       id on send), tombstones reach the newest page only, annotation caches need purging.
-- [ ] Device removal: `DEVICE_REMOVED` + wake push wipes at once, also when the app is killed.
-- [ ] Log out: the wipe sequence in *Log Out — Clearing this phone*, then forget push tokens.
+      Code: `core/messaging/SendPipeline.kt` (`ThreadState.rekey`), `core/messaging/HistoryPager.kt`
+      (`tombstonesToPurge`), `core/messaging/DeleteEngine.kt` (`ThreadState.purge`).
+- [x] Device removal: `DEVICE_REMOVED` + wake push wipes at once, also when the app is killed.
+      Code: `core/auth/DeviceRemovalWake.kt` (`RemovalWake`), `core/push/DeviceRemovalWorker.kt`,
+      the `device_removed` kind in `core/push/PushDispatcher.kt`. The emulator engine e2e covers a
+      revoke from the other device (android/README.md). Owed: a removal while the app is killed,
+      on a physical phone.
+- [x] Log out: the wipe sequence in *Log Out — Clearing this phone*, then forget push tokens.
+      Code: `core/auth/DeviceWipeController.kt` (`endLocalSession` runs `forgetPush`),
+      `ui/wipe/DeviceWipeOverlay.kt`.
 
 ### D. Notifications
 
 - [x] Transport per decision 2: UnifiedPush registration (distributor choice, subscription keys
-      made on the phone) and the opt-in background connection. The Delivery screen composable is
-      still empty; registration itself is in `PushRegistrar`.
+      made on the phone) and the opt-in background connection. Registration is in
+      `PushRegistrar`; the choice is drawn on Settings › Delivery
+      (`ui/settings/push/PushDeliveryScreen.kt`).
 - [x] The receiver decrypts the RFC 8291 message and posts the notification; a process started
       before the first unlock does nothing until the user unlocks (distributors deliver queued
       pushes then).
 - [ ] Channels: Messages, Calls, Contact requests. Per-device settings from the server still
       apply; channel settings in Android can override them and the screen should reflect that.
-- [ ] `POST_NOTIFICATIONS` (Android 13+) asked once after the first unlock, then from the
-      Settings cards (decided).
-- [ ] Badges: launcher dots; count from the push where the launcher supports it.
+      Done: the Messages, Contact requests and Missed calls channels
+      (`core/notifications/NotificationChannels.kt`, `Family`) and the incoming and ongoing call
+      channels (`core/calls/system/CallDevices.kt`). Gap: Settings › Notifications reflects only a
+      blocked Messages channel (`messagesChannelBlocked` in
+      `ui/settings/notifications/NotificationsSettingsScreen.kt`), not Contact requests or Missed
+      calls.
+- [x] `POST_NOTIFICATIONS` (Android 13+) asked once after the first unlock, then from the
+      Settings cards (decided). Code: `NotificationPermissionOnFirstUnlock` in
+      `ui/shell/RootScreen.kt`, the card's request in
+      `ui/settings/notifications/NotificationsSettingsScreen.kt`.
+- [x] Badges: launcher dots; count from the push where the launcher supports it. Code: the
+      push's badge as `number` in `core/notifications/SystemNotifier.kt`, `setNumber` in
+      `core/notifications/AndroidNotificationSink.kt`. Owed: a look at the dot and the count on a
+      Pixel and a Samsung launcher.
 - [ ] OEM battery restrictions: detect the common ones and link to the right settings page;
-      expect late pushes on Xiaomi, Huawei, Oppo, older Samsung regardless.
+      expect late pushes on Xiaomi, Huawei, Oppo, older Samsung regardless. Gap: nothing detects
+      an OEM manager. The app asks once for the system battery exemption when the background
+      connection is turned on (`core/push/backgroundconnection/BatteryOptimization.kt`).
 
 ### E. Calls and screen sharing
 
-- [ ] WebRTC (same stack version policy as iOS), signalling from calls.md unchanged.
+- [x] WebRTC (same stack version policy as iOS), signalling from calls.md unchanged. Code: the
+      WebRTC M150 AAR (`gradle/libs.versions.toml`, `webrtc`), `core/calls/media/WebRtcRuntime.kt`,
+      the one production attach in `AppContainer.kt` (`calls.controller.attach`). Owed: the Calls
+      rows of the [test matrix](#test-matrix) on physical phones (the emulator engine e2e uses a
+      fake media engine).
 - [ ] Decision 3 for ringing. Audio routing (earpiece, speaker, wired, Bluetooth) via Telecom.
-- [ ] Mic level for the speaking indicator: iOS polls sender stats
-      (`media-source.audioLevel`); same approach works here.
-- [ ] Screen share: MediaProjection + `mediaProjection` foreground service; consent dialog at
+      Done: the ring (`CallStyle` and the full-screen intent in
+      `core/calls/system/CallNotices.kt`, self-managed Telecom in `core/calls/system/CallTelecom.kt`)
+      and the route seam (`audioRoutes`, `currentRoute`, `selectRoute` in `core/calls/CallSeams.kt`).
+      Gap: the call screen has only the speaker toggle (`ui/calls/CallScreen.kt`); nothing picks a
+      wired or Bluetooth route.
+- [x] Mic level for the speaking indicator: iOS polls sender stats
+      (`media-source.audioLevel`); same approach works here. Code: `audioLevel` in
+      `core/calls/media/CallMediaStats.kt`, `CallController.localAudioLevel`,
+      `core/calls/SpeakingMeter.kt`.
+- [x] Screen share: MediaProjection + `mediaProjection` foreground service; consent dialog at
       every start; tolerate single-app sharing (Android 14+) and projection stopping on its own.
       App audio capture (`AudioPlaybackCapture`) is possible on Android where iOS has none —
-      not in v1 (decided).
-- [ ] Proximity sensor screen-off during voice calls (iOS gets it for free).
+      not in v1 (decided). Code: the consent launch in `ui/calls/CallScreen.kt`
+      (`createScreenCaptureIntent`), `core/calls/media/ScreenCaptureSource.kt` (its
+      `MediaProjection.Callback.onStop`), the `mediaProjection` service type in
+      `core/calls/system/AndroidCallSystem.kt` (`screenShareStarted`). Owed: the Screen
+      share row of the [test matrix](#test-matrix).
+- [x] Proximity sensor screen-off during voice calls (iOS gets it for free). Code: the
+      `PROXIMITY_SCREEN_OFF_WAKE_LOCK` in `core/calls/system/CallDevices.kt`.
 
 ### F. Media, links, voice
 
 - [ ] Metadata strip before encrypt: EXIF/XMP/IPTC for JPEG, HEIC, PNG, WebP; test with real
-      Samsung and Pixel camera files (iOS found HEIC XMP and JPEG APP13 survivors).
-- [ ] Photos through the system photo picker; `READ_MEDIA_*` only for the Recents strip,
-      with the denied and partial states from the design.
-- [ ] Video: trim, transcode, thumbnails (Media3 Transformer); match the iOS output limits.
-- [ ] Link previews fetched on device, user agent rule from iOS (`WhatsApp/2…`), sealed into
-      the message.
+      Samsung and Pixel camera files (iOS found HEIC XMP and JPEG APP13 survivors). Done: the
+      JPEG, PNG and HEIF scrubbers (`core/media/scrub/MediaMetadataScrubber.kt`); WebP is never
+      passed through and is re-encoded (`allowsPassthrough` in `core/media/scrub/ImageHeader.kt`).
+      Gap: no real camera files have been run. `RealCameraPhotosTest` skips itself unless
+      `SHROUD_REAL_PHOTOS` points at a folder of them, and none are committed.
+- [x] Photos through the system photo picker; `READ_MEDIA_*` only for the Recents strip,
+      with the denied and partial states from the design. Code: `PickVisualMedia` in
+      `ui/conversation/pickers/MediaPickers.kt`, `ui/conversation/attach/PhotoAccess.kt`.
+- [x] Video: trim, transcode, thumbnails (Media3 Transformer); match the iOS output limits.
+      Code: `core/media/video/VideoEncoder.kt` (trim, mute, poster),
+      `core/media/video/Media3VideoExporter.kt`, the limits in `core/media/video/VideoPlanner.kt`.
+- [x] Link previews fetched on device, user agent rule from iOS (`WhatsApp/2…`), sealed into
+      the message. Code: `core/links/LinkPreviewFetcher.kt` (`USER_AGENT`),
+      `core/links/LinkPreviewComposer.kt`.
 - [ ] Voice messages: record, waveform, playback. Transcription: whisper.cpp on device, with
       sealed per-chat language memory (`TranscriptionLanguageMemory`); still gated by a benchmark
       on a mid-range phone ([android/README.md](../android/README.md)); the Transcription screen's
-      copy depends on it.
+      copy depends on it. Done: `core/voice/VoiceRecorder.kt`, `core/voice/VoiceWaveform.kt`,
+      `core/voice/VoicePlaybackCoordinator.kt`, `core/transcription/WhisperCppEngine.kt`,
+      `core/transcription/TranscriptionLanguageMemory.kt`. Gap: the P7 benchmark on physical
+      phones; only emulator numbers exist, and they fail the gate.
 
 ### G. Device protections (privacy-options Phase 5 equivalents)
 
-- [ ] **Screenshots / recents.** Recents cover is designed. Decided: a per-API-level scheme
+- [x] **Screenshots / recents.** Recents cover is designed. Decided: a per-API-level scheme
       (`FLAG_SECURE`, Recents, the recording callback) behind one switch, on by default, like
-      iOS's "Hide chats during screen recording".
-- [ ] **Keyboards.** iOS can refuse third-party keyboards; Android cannot. Set
+      iOS's "Hide chats during screen recording". Code: the API table in
+      `ui/shell/WindowProtection.kt`, `ui/shell/ScreenCaptureMonitor.kt`,
+      `ui/shell/PrivacyCover.kt`. Owed: Recents and a screen recording on a phone at API 30–32,
+      33–34 and 35+.
+- [x] **Keyboards.** iOS can refuse third-party keyboards; Android cannot. Set
       `IME_FLAG_NO_PERSONALIZED_LEARNING` on composer, search and phrase fields, and drop the
-      "Only Apple keyboards" switch from the Android privacy screen.
-- [ ] Clipboard: mark phrase copies sensitive (`EXTRA_IS_SENSITIVE`) and clear as iOS does.
+      "Only Apple keyboards" switch from the Android privacy screen. Code: `NoLearningTextInput`
+      in `ui/components/SearchField.kt`, used by `ui/conversation/composer/ChatComposer.kt` and
+      the phrase field in `ui/onboarding/LogInScreen.kt`; the privacy screen has no keyboard switch
+      (`ui/settings/privacy/PrivacySecurityModel.kt`).
+- [x] Clipboard: mark phrase copies sensitive (`EXTRA_IS_SENSITIVE`) and clear as iOS does.
+      Code: `ui/onboarding/PhraseClipboard.kt` (the sensitive flag, cleared after a minute).
 
 ### H. Platform polish
 
-- [ ] Predictive back for every dismissible surface (storyboard in the design).
-- [ ] IME insets: composer follows the keyboard frame by frame (*Conversation — Keyboard Open*).
-- [ ] Window sizes: 360 dp minimum, list–detail from 600 dp.
-- [ ] App icon switch (Detailed / Simple) via `activity-alias`.
-- [ ] Haptics mapped from `Haptics.swift`; long-press menu timing from the iOS numbers.
-- [ ] Accessibility: TalkBack labels, font scale up to 200 %, touch targets 48 dp.
+- [ ] Predictive back for every dismissible surface (storyboard in the design). Done: pushed
+      screens (`PredictiveBackHandler` in `ui/shell/StackHost.kt`) and every menu, sheet and dialog
+      (`ui/components/OverlayHost.kt`). Gap: the full-screen layers (media viewer, photo and video
+      compose, camera, QR scanner, onboarding) close on a plain `BackHandler` with no back
+      animation, for example in `ui/conversation/composer/ComposeMediaLayers.kt`.
+- [x] IME insets: composer follows the keyboard frame by frame (*Conversation — Keyboard Open*).
+      Code: `WindowInsets.ime` in `ui/conversation/composer/ComposeSeams.kt` and
+      `ui/conversation/ConversationScreen.kt`.
+- [x] Window sizes: 360 dp minimum, list–detail from 600 dp. Code: `twoPaneMinWidth` and
+      `listPaneWidth` in `ui/shell/ShellLayoutMath.kt`. Owed: the foldable row of the
+      [test matrix](#test-matrix).
+- [x] App icon switch (Detailed / Simple) via `activity-alias`. Code: `.LauncherDetailed` and
+      `.LauncherSimple` in `android/app/src/main/AndroidManifest.xml`. Owed: the switch on a
+      Samsung launcher.
+- [x] Haptics mapped from `Haptics.swift`; long-press menu timing from the iOS numbers. Code:
+      `ui/theme/Haptics.kt`, `MESSAGE_LONG_PRESS_MS` (0.25 s, as iOS) in
+      `ui/conversation/gestures/MessageGestures.kt`.
+- [ ] Accessibility: TalkBack labels, font scale up to 200 %, touch targets 48 dp. Done: labels
+      and semantics on the shared components and most screens. Gap: no pass over every screen at
+      200 % font and for 48 dp targets, and no TalkBack run on a phone.
 
 ## Server changes
 
@@ -282,7 +367,8 @@ Order is roughly dependency order. iOS sources are the reference implementation.
       (wave 1); Android writes it (`DeviceNameSync`, kind 4, including a custom name an older
       client saved as kind 0).
 - [ ] Share links (`/u/<code>`): Android App Links need `/.well-known/assetlinks.json` with our
-      release-key fingerprint.
+      release-key fingerprint. Gap: the manifest asks for verification (`autoVerify` on the
+      `/u/` filter in `android/app/src/main/AndroidManifest.xml`), but nothing serves the file.
 
 ## Test matrix
 

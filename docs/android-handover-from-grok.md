@@ -1,5 +1,9 @@
 # Shroud Android port: handover from Grok (phase A) to Claude (UI)
 
+> **History.** This handover records the Android port on 2026-10-02 and is no longer kept up
+> to date: its branches, owners and open items are not the current state. What the code does
+> now is in [android-plan.md](./android-plan.md) and [android/README.md](../android/README.md).
+
 Written 2026-10-02 from local branch `grok/phase-a` at `2e53e5a`. This file is the phase-A
 report. `docs/android-handover.md` stays the owner's split and is not edited here. Where this
 file and §2 of that document disagree, this file is what the code does.

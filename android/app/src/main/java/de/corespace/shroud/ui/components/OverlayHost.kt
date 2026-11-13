@@ -49,8 +49,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * The root layer every menu, sheet and dialog of the app is drawn in (00-plan §1.7.12; W1-INT puts
- * it around the whole of `ShroudApp`).
+ * The root layer every menu, sheet and dialog of the app is drawn in (00-plan §1.7.12): `RootScreen`
+ * puts it around the whole app, `CallActivity` around the call screen.
  *
  * Human: iOS presents sheets, menus and alerts above everything — the tab bar, toasts, the call
  * pill — wherever the code that opens them sits. Android has no such layer without separate
@@ -64,8 +64,8 @@ import kotlinx.coroutines.launch
  * dispatcher, tab-bar clearance…). While a modal layer is up, everything below it is hidden from
  * TalkBack (the content and lower layers), and on API 31+ the app content can be blurred behind
  * it ([OverlayLayer]'s `backdropBlur`, used by the light context menu's blur scrim, shell-chats
- * §8.7). Without a host above it (previews, tests, today's `ShroudApp` until W1-INT wraps it) an
- * [OverlayLayer] draws in place as a full-size box, which is what `ShroudSheet` always did.
+ * §8.7). Without a host above it (previews, tests) an [OverlayLayer] draws in place as a full-size
+ * box, which is what `ShroudSheet` always did.
  *
  * A full-screen block drawn in the app content (the "Update required" screen) declares
  * [BlockOverlays]: every layer that can close is asked to ([OverlayLayer]'s `onDismissRequest`),
