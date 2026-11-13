@@ -15,7 +15,8 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use shroud_server::client_version::{ClientVersions, Version};
 use shroud_server::state::AppState;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::Connection;
+use sqlx::postgres::{PgConnectOptions, PgConnection, PgPoolOptions};
 use tokio_tungstenite::tungstenite::Message;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -522,17 +523,76 @@ async fn operator_writes_close_sockets_like_the_user() {
     }
 }
 
+/// Runs `body` against a database of its own, created next to `DATABASE_URL`'s and dropped after.
+///
+/// Human: For tests whose answer depends on every row of a table, not only their own. The
+/// shared test database keeps what earlier runs and the other tests left behind.
+/// Agent: DB CREATE DATABASE / DROP DATABASE … WITH (FORCE) as `DATABASE_URL`'s role (needs
+/// CREATEDB; the CI and local containers' superuser has it). DROPS only the database it
+/// created, also when `body` panics, then re-raises the panic.
+async fn with_own_database<F, Fut>(database_url: &str, body: F)
+where
+    F: FnOnce(sqlx::PgPool) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    let base: PgConnectOptions = database_url.parse().expect("parse DATABASE_URL");
+    let mut owner = PgConnection::connect_with(&base)
+        .await
+        .expect("connect to DATABASE_URL");
+    let name = format!("shroud_test_{}", Uuid::new_v4().simple());
+    sqlx::raw_sql(&format!(r#"CREATE DATABASE "{name}""#))
+        .execute(&mut owner)
+        .await
+        .expect("create the test's database");
+
+    // Human: Connect, migrate and run inside one task so a panic anywhere still reaches the drop.
+    let options = base.clone().database(&name);
+    let outcome = tokio::spawn(async move {
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await
+            .expect("connect to the test's database");
+        sqlx::migrate!("../../migrations/postgres")
+            .run(&pool)
+            .await
+            .expect("apply migrations to the test's database");
+        body(pool).await;
+    })
+    .await;
+
+    // Agent: FORCE ends connections the body's servers may still hold.
+    sqlx::raw_sql(&format!(r#"DROP DATABASE "{name}" WITH (FORCE)"#))
+        .execute(&mut owner)
+        .await
+        .expect("drop the test's database");
+    if let Err(err) = outcome {
+        match err.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(err) => panic!("test body did not finish: {err}"),
+        }
+    }
+}
+
 /// The push check answers each line from the relays' setup and touches no subscription. Here:
 /// no APNs, the generated VAPID key, and a browser subscription on a host the policy doesn't
 /// allow, which is refused before anything is sent.
+///
+/// Human: The check reads every subscription and probes at most a dozen hosts, busiest first.
+/// In the shared database the hosts earlier runs left behind pushed this one out of that dozen,
+/// so the test runs in a database that holds only the subscription it inserts.
 #[tokio::test]
 async fn push_check_reports_each_relay_without_sending() {
-    let Some(pool) = test_pool().await else {
+    let Ok(database_url) = std::env::var("DATABASE_URL") else {
         eprintln!(
             "skipping push_check_reports_each_relay_without_sending: DATABASE_URL unavailable"
         );
         return;
     };
+    with_own_database(&database_url, push_check_reports_each_relay).await;
+}
+
+async fn push_check_reports_each_relay(pool: sqlx::PgPool) {
     let state = AppState::for_integration_tests(pool.clone());
     let servers = spawn(state.clone()).await;
     let client = reqwest::Client::new();

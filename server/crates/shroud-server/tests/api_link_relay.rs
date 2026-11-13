@@ -315,18 +315,47 @@ async fn relay_frees_the_slot_of_a_browser_that_stops_reading() {
     // to the browser stalls well before the downstream cap; it must still end at the idle limit.
     let mut stalled = open(addr, hello.clone()).await;
     assert_eq!(reply(&mut stalled).await["type"], "connected");
-    tokio::time::sleep(Duration::from_secs(20)).await;
+    let stalled_at = tokio::time::Instant::now();
 
-    let mut open_pipes = Vec::new();
-    for _ in 0..routes::link_relay::MAX_CONCURRENT_PER_USER {
-        let mut socket = open(addr, hello.clone()).await;
-        assert_eq!(
-            reply(&mut socket).await["type"],
-            "connected",
-            "the stalled pipe still holds a slot"
+    // Human: Waits for the slot itself, not a fixed time: the pipe ends after the 15 s idle limit
+    // plus up to 2 s for each side's close, and later still on a loaded machine. Every attempt,
+    // the last one included, must finish well inside the pipe's 45 s lifetime, so a freed slot
+    // means the idle limit ended the pipe, not the lifetime.
+    loop {
+        let freed = every_slot_opens(addr, &hello).await;
+        let waited = stalled_at.elapsed();
+        assert!(
+            waited < Duration::from_secs(40),
+            "the stalled pipe still held a slot after {waited:?}"
         );
-        open_pipes.push(socket);
+        if freed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
     drop(stalled);
     let _ = shutdown.send(());
+}
+
+/// True when the account can open all of its pipes at once, i.e. no other pipe holds a slot.
+///
+/// Agent: Opens `MAX_CONCURRENT_PER_USER` pipes concurrently (one attempt takes one connect, not
+/// six), then drops them all; a dropped browser frees its slot within moments, so a refusal the
+/// previous attempt caused clears on the next one. Any answer but `connected` or `RATE_LIMITED`
+/// fails the test.
+async fn every_slot_opens(addr: SocketAddr, hello: &Value) -> bool {
+    let attempts = (0..routes::link_relay::MAX_CONCURRENT_PER_USER).map(|_| async {
+        let mut socket = open(addr, hello.clone()).await;
+        let answer = reply(&mut socket).await;
+        (socket, answer)
+    });
+    let pipes = futures_util::future::join_all(attempts).await;
+    let mut every_slot = true;
+    for (_, answer) in &pipes {
+        if answer["type"] != "connected" {
+            assert_eq!(answer["error"]["code"], "RATE_LIMITED", "{answer}");
+            every_slot = false;
+        }
+    }
+    every_slot
 }
