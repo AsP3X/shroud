@@ -304,7 +304,8 @@ SHROUD_DATA_KINDS="shroud_pg_data:database shroud_nebular_data:nebular shroud_me
 # (the same digest as the postgres service in docker-compose.yml: change both together).
 SHROUD_DATA_TOOL_IMAGE="postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
-# The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
+# The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data), the
+# containers (<project>-api) and the network (<project>-internal).
 shroud_project_name() {
   local name
   name="$(cd "$SHROUD_REPO_ROOT" && docker compose -f docker-compose.yml config --no-interpolate 2>/dev/null |
@@ -539,7 +540,7 @@ shroud_prepare_storage_switch() {
 
 shroud_diagnose_up() {
   local logs=""
-  logs="$(docker logs shroud-api 2>&1 | tail -n 80 || true)"
+  logs="$(docker logs "$(shroud_project_name)-api" 2>&1 | tail -n 80 || true)"
   if printf '%s' "$logs" | grep -q 'password authentication failed'; then
     printf '\n'
     echo "ERROR: Postgres rejected the API password."
@@ -869,9 +870,11 @@ shroud_info() {
   fi
   if [[ "$PROXY_MODE" == "npm" ]]; then
     echo ""
+    local project
+    project="$(shroud_project_name)"
     echo "  Nginx Proxy Manager hosts:"
-    echo "    web  →  http://shroud-web:80"
-    echo "    api  →  http://shroud-api:8080"
+    echo "    web  →  http://${project}-web:80"
+    echo "    api  →  http://${project}-api:8080"
   fi
   echo ""
   shroud_compose ps

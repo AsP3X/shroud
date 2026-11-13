@@ -419,7 +419,8 @@ $DataKinds = @(
 # (the same digest as the postgres service in docker-compose.yml: change both together).
 $DataToolImage = "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 
-# The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data).
+# The Compose project name, which prefixes the named volumes (<project>_shroud_pg_data), the
+# containers (<project>-api) and the network (<project>-internal).
 function Get-ProjectName {
     $composeFile = Join-Path $repoRoot "docker-compose.yml"
     foreach ($line in @(Invoke-NativeOutput { docker compose -f $composeFile config --no-interpolate })) {
@@ -759,9 +760,10 @@ function Show-Info {
     }
     if ($mode -eq "npm") {
         Write-Host ""
+        $project = Get-ProjectName
         Write-Host "  Nginx Proxy Manager hosts:"
-        Write-Host "    web  ->  http://shroud-web:80"
-        Write-Host "    api  ->  http://shroud-api:8080"
+        Write-Host "    web  ->  http://$project-web:80"
+        Write-Host "    api  ->  http://$project-api:8080"
     }
     Write-Host ""
     Invoke-Compose @("ps")
@@ -1003,7 +1005,7 @@ try {
         Apply-AdminRole
         Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
     } catch {
-        $apiLogs = & docker logs shroud-api 2>&1 | Select-Object -Last 80
+        $apiLogs = & docker logs "$(Get-ProjectName)-api" 2>&1 | Select-Object -Last 80
         if ($apiLogs -match "password authentication failed") {
             Write-Host ""
             Write-Line "ERROR: Postgres rejected the API password." "Red"
