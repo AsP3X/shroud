@@ -1,6 +1,7 @@
 # Calls
 
-1:1 voice and video calls between any two of a contact's devices: iPhone and web, in any mix.
+1:1 voice and video calls between any two of a contact's devices: iPhone, Android and web, in any
+mix.
 Media is WebRTC (DTLS-SRTP), peer to peer, or through the TURN relay when the networks in between
 refuse a direct path. The API only rings devices and relays signaling it cannot read; call audio
 and video never pass through it.
@@ -11,6 +12,7 @@ and video never pass through it.
 | TURN logins | `server/crates/shroud-server/src/turn.rs`; coturn in `docker-compose.yml` (profile `calls`) |
 | iPhone | `ios/shroud/Services/Calls/` (native WebRTC, CallKit, PushKit) |
 | iPhone screen broadcast | `ios/ShroudScreenShare/` (extension), `ios/ShroudShared/ScreenShareWire.swift` |
+| Android | `android/app/src/main/java/de/corespace/shroud/core/calls/` (WebRTC and the screen capture in `media/`; self-managed Telecom, CallStyle notifications and the phoneCall service in `system/`); call screen in `ui/calls/` |
 | Web | `web/src/calls/` |
 
 A call is voice or video by what its two cameras do, not by how it was placed: either side can
@@ -568,6 +570,7 @@ DTLS-SRTP like the camera's. The TURN relay sees more traffic while a screen is 
 | --- | --- | --- |
 | iPhone with a VoIP token | PushKit push, even when the app is in front (CallKit ignores a call it already shows) | PushKit `call_ended` (same call id) so CallKit stops; the app shows "Missed call" itself |
 | iPhone without one (older builds) | alert "Incoming call", only when that app is not in front | alert "Missed call", same `apns-collapse-id` |
+| Android app | Web Push `call`/`video_call` through its UnifiedPush distributor, even when the app is in front (`Urgency: high`, expires with the ring; a socket `call.ring` for the same call rings once, `CallController.handleCallPush`) | Web Push `call_ended` (no topic) stops the ring; `missed_call` only when the app is not in front, collapsing onto that call's queued ring, and not shown when the phone showed that call itself (server: `notify_call`, `notify_call_ended`, `notify_missed_call`, `web_options` in `push/mod.rs`) |
 | Browser | Web Push `call`/`video_call`, only when that tab is not in front | Web Push `missed_call`, same tag |
 
 A device counts as in front while its socket is open and it has not sent `{type:"focus", focused:false}`.

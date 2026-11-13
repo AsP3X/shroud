@@ -62,18 +62,20 @@ High-level structure for the E2E encrypted messenger.
 ## Sealed plaintext shapes
 
 The server only ever sees `content_type` (`text` / `media` / `annotation`) and an opaque
-envelope. What the two clients agree on *inside* that envelope:
+envelope. What the three clients (web, iOS, Android) agree on *inside* that envelope, and the code
+on each that writes and reads it:
 
-| Shape | Sealed plaintext | Written by |
+| Shape | Sealed plaintext | Written and read by |
 | --- | --- | --- |
-| Plain text | raw UTF-8, exactly as typed | every build since v1 |
-| Reply | `{"t":"text","c":<body>,"re":{"id","u","k","x"}}` | `MessageReplyReference` / `web/src/reply.ts` |
-| Text with link preview | `{"t":"text","c":<body>,"lp":{…}}` (plus `re` when it is also a reply) | iOS `MessageTextPayload` (read by `web/src/reply.ts`) |
-| Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (read by `web/src/crypto/mediaPayload.ts`) |
-| Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | `MediaModels.swift` / `web/src/crypto/mediaPayload.ts` |
+| Plain text | raw UTF-8, exactly as typed; current builds seal it as `{"t":"text","c":<body>,"to":<id>}` (below) | written raw by builds from before `to`; every client reads both: iOS `MessageTextPayload` (`MessageReplyReference.swift`), web `textWire` / `parseTextPayload` (`web/src/reply.ts`), Android `MessageTextPayload.kt` |
+| Reply | `{"t":"text","c":<body>,"re":{"id","u","k","x"}}` | iOS `MessageReplyReference.swift`, web `web/src/reply.ts`, Android `MessageReplyReference.kt` + `MessageTextPayload.kt` |
+| Text with link preview | `{"t":"text","c":<body>,"lp":{…}}` (plus `re` when it is also a reply) | iOS `MessageTextPayload`; web `sendText` (`web/src/messaging.ts`) via `textWire`, read by `parseTextPayload` (`web/src/reply.ts`); Android `MessageTextPayload.textWire` / `parse` |
+| Link with a large preview image | `content_type = media`: `MediaMessagePayload` with `t:"link"`, `c` = the whole message text, `lp`, and the image as the encrypted blob | iOS `deliverLinkWithImage` (`MessagingController.swift`); web `sendLinkWithImage` (`web/src/messaging.ts`), read by `payloadLinkPreview` (`web/src/crypto/mediaPayload.ts`); Android `SendPipeline.deliverLinkWithImage`, read by `MediaMessagePayload.isLink` |
+| Media | `MediaMessagePayload` JSON (`t`, `mime`, `k`, …), with the same `re` object when it is a reply | iOS `MediaModels.swift`, web `web/src/crypto/mediaPayload.ts`, Android `MediaMessagePayload.kt` |
 | File | `MediaMessagePayload` with `t:"file"`, the cleaned name `n`, size `s` and the key of an SHRF1 blob; read before any MIME sniffing. Audio files add `d`, `ti`, `ar` and cover art (§11) | [file-sharing.md](./file-sharing.md) |
-| Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | `MessageAnnotation` |
-| Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>, …]}` (the person's whole set, oldest first), always a tagged v2 envelope | `MessageReaction.swift` / `web/src/reactions.ts` |
+| Annotation | `{"t":"transcript","r":<message id>,"c":<text>}` | iOS `MessageAnnotation.swift`; web `shareTranscript` / `parseAnnotation` (`web/src/messaging.ts`); Android `AnnotationSender.kt`, read by `MessageAnnotation.parseTranscript` |
+| Reaction (not a message: `PUT /messages/{id}/reaction`) | `{"t":"reaction","r":<message id>,"e":[<emoji>, …]}` (the person's whole set, oldest first), always a tagged v2 envelope | iOS `MessageReaction.swift`, web `reactionPayload` / `parseReaction` (`web/src/reactions.ts`), Android `MessageReactionPayload.kt` |
+| Notes to-do (Saved Messages only) | `[todo:0]<text>` (open) or `[todo:1]<text>` (done) as the `c` of the text envelope: `{"t":"text","c":"[todo:0]<text>","to":<your id>}` | iOS `NotesLocal.syncedTodoPlaintext` / `parseSyncedTodo` (`NotesLocal.swift`), sent by `appendAndSyncNote` and read by `notesMessageFromServer` (`MessagingController.swift`); Android `SendPipeline.todoWire`, read by `NotesLocal.fromServer` (`NotesLocal.kt`). Ticking one is not sent again, so other devices keep the state it was sent with. The web neither writes nor reads it: it has no Saved Messages yet (SHRO-58) |
 
 `re` carries the quoted message's id (`id`), its author (`u`), its kind (`k`) and a ≤120-character
 snippet (`x`) so a quote still reads when the original has aged out of the local window. Anything
@@ -139,16 +141,17 @@ most 20. Records are not padded (messages aren't either), so a record's size hin
 emoji it holds. The unseen-reaction badge is server metadata of the same kind as read receipts; to
 keep a taken-back emoji from lighting it, a write also tells the server whether it added one.
 
-`lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts`): `u` the page URL (http/https
-only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,
+`lp` is a link preview (`LinkPreview.swift` / `web/src/links.ts` / Android `LinkPreview.kt`): `u`
+the page URL (http/https only), `n` site name, `ti` title, `d` description, `th` a ≤6 KB square JPEG for the small layout,
 `w`/`h` the image size, `vd` a video page (play badge), `ab` drawn above the text instead of under
 it. Only the **sender's** phone contacts the website (HTTPS only; no local names, IP literals,
-or names that resolve to a private address; ephemeral session, head only) and seals the result;
+or names that resolve to a private address; ephemeral session, head only; Android applies the
+same rules in `LinkTargetRules.kt`) and seals the result;
 recipients never load anything from the link.
 A picture too big for the envelope goes out as the blob of a `t:"link"` media message — the server
 cannot tell it from a photo, and a build without link support shows it as a photo with the text as
 its caption. Links themselves are found on each device by the same rules (`LinkDetector.swift` /
-`links.ts`, shared test vectors).
+`links.ts` / `LinkDetector.kt`, shared test vectors).
 
 **The web client builds its previews through the link relay.** A browser cannot read other
 websites (CORS, and the client's own CSP), and fetching a link *for* it would hand the server the
@@ -165,9 +168,9 @@ contact the website.
 
 ### Sealed device names
 
-`DeviceNameSeal.swift` / `web/src/crypto/deviceName.ts` (golden vector shared by
-`DeviceNameSealTests` and `deviceName.selftest.ts`). The server keeps a device's name only as
-`devices.sealed_name`, which it cannot open:
+`DeviceNameSeal.swift` / `web/src/crypto/deviceName.ts` / Android `DeviceNameSeal.kt` (golden
+vectors shared by `DeviceNameSealTests`, `deviceName.selftest.ts` and `DeviceNameSealTest.kt`).
+The server keeps a device's name only as `devices.sealed_name`, which it cannot open:
 
 - key: HKDF-SHA256 of the phrase's `historyKey`, salt `shroud-v1`, info `shroud-device-name-v1`,
   32 bytes. Every device of the account derives it; nobody else can.
@@ -186,7 +189,9 @@ as "Safari on iPhone"). The Android app asks nothing either: it seals the phone'
 (`Settings.Global.DEVICE_NAME`, otherwise the manufacturer and model) with kind 4 after an unlock
 when the sealed name has changed. A name someone typed is kept, except that a custom name an older
 client saved with kind 0 is sealed again with kind 4. Settings → Devices renames any device
-on iOS and web. Login and register carry no name; a plaintext `device_name` from an older build is ignored.
+on iOS (`DevicesView.swift`), web (`web/src/components/settings/DevicesView.tsx`) and Android
+(`DevicesModel.rename`, sealed by `DevicesController.rename`). Login and register carry no name; a
+plaintext `device_name` from an older build is ignored.
 
 ## Message envelopes and sender authentication
 
@@ -278,7 +283,11 @@ content to send.
   service cannot read the payload, so the name travels inside it and the service worker
   (`web/public/sw.js`) writes the text.
 - **Calls** ring iPhones through PushKit (`call` / `video_call`), even when the app is not in
-  front, and a `call_ended` VoIP push stops CallKit when the ring ends. Older iPhones and
+  front, and a `call_ended` VoIP push stops CallKit when the ring ends. The Android app gets the
+  same `call` / `video_call` and `call_ended` through UnifiedPush, in front or not (`notify_call`
+  and `notify_call_ended` in `push/mod.rs`), and rings with a CallStyle notification and a
+  self-managed Telecom call (`AndroidCallSystem.kt`); a push and the socket's `call.ring` for the
+  same call ring once (`CallController.handleCallPush`). Older iPhones and
   browsers get an alert only while they are not in front. The server keeps the ring while the
   call rings, and hands it to a device that connects meanwhile, so opening the app from the
   notification lands on the ringing call.
@@ -305,7 +314,9 @@ content to send.
   not see the phone as online. With none of the three, nothing arrives until the app is open.
   If Play Services is absent and exactly one distributor is installed, the app registers it; if
   several are and none is the embedded distributor, it waits until one is chosen.
-- **Sounds** are generated (`scripts/gen_notification_sounds.py`) and shared by both apps.
+- **Sounds** are generated (`scripts/gen_notification_sounds.py`) and shared by the web, iOS and
+  Android apps (`web/public/sounds/`, `ios/shroud/Resources/Sounds/`,
+  `android/app/src/main/res/raw/`).
 
 ## Security invariants
 
@@ -376,7 +387,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 | Logout wipe | **done** — iOS and web clear every store the app uses (files, Keychain, defaults, HTTP cache, snapshots, notifications) behind a step-by-step overlay, then verify; identity keys go too, so signing in again takes the phrase. The device-id anchor goes too; at the 5-device cap a login reuses the account's longest-idle device with no live session. Interrupted wipes finish on next launch. Server logout also drops the device's push token. |
 | History pagination | **done** — a chat opens on its newest 40 messages; older `before_created_at`/`before_id` pages load in the background (up to ~300) and then as the reader scrolls up, within the 90-day window. Clients render only the newest rows and add older ones near the top |
 | Notes multi-device | **done** — Saved Messages via `peer_user_id = self`; excluded from chats list |
-| Notes to me | **done** — local-only self chat (text / photo / voice / todos); no server replies |
+| Notes to me | **done** — self chat (text / photo / voice / to-dos); no server replies. Text, photos and to-dos are sealed to yourself and reach your other devices (`appendAndSyncNote`, `sendImage`); a to-do travels as `[todo:0]` / `[todo:1]` ([Sealed plaintext shapes](#sealed-plaintext-shapes)) and a tick stays on the device it was made on (`toggleTodo`). Voice notes stay on the device (`sendVoice`) |
 | Photo media messages | **done** — E2E AES-GCM blobs + caption compose |
 | Files | **done** — text, PDF, Word/Excel/PowerPoint, image and video files as they are, APKs; streamed SHRF1 blobs up to 2 GiB; warnings for APKs and macro-capable Office files ([file-sharing.md](./file-sharing.md)) |
 | Voice messages | **done** — record/upload/play; on-device Whisper on iOS and web (pluggable engines) |
