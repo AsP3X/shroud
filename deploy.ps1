@@ -206,6 +206,23 @@ function Set-AdminPublicUrl {
     Set-EnvValue "ADMIN_PUBLIC_URL" $url
 }
 
+# Reports that Postgres did not apply deploy SQL step $Step, which sets up $What, and stops the
+# deploy. A refusal can name an object someone planted in the database (grants.sql checks for
+# those), and wiping the data would remove that evidence with it, so this never suggests -Volumes.
+# The catch at the end reads SqlRefused from the exception and leaves -Volumes out of its hint too.
+function Stop-SqlRefused {
+    param([string]$Step, [string]$What)
+    Write-Host ""
+    Write-Line "ERROR: Postgres did not apply $Step ($What)." "Red"
+    Write-Host "  psql's ERROR and DETAIL lines above say what was refused, or why it could not run."
+    Write-Host "  The data was kept: a failed deploy step deletes nothing."
+    Write-Host "  Don't wipe it with -Down -Volumes. If Postgres named an object in the database,"
+    Write-Host "  that object is the evidence of who planted it, and the wipe would remove it as well."
+    $refusal = [System.InvalidOperationException]::new("Postgres did not apply $Step")
+    $refusal.Data["SqlRefused"] = $Step
+    throw $refusal
+}
+
 # Starts Postgres alone and gives the API its own role (server/docker/api-role.sql) before the API
 # starts: on a volume from before that role, its tables still belong to the superuser, and the API
 # logs in as shroud_api from now on. The init script does this on an empty data directory; this
@@ -241,7 +258,7 @@ function Apply-ApiRole {
     Invoke-WithDataDirEnv {
         & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "dbname=$db" -f /shroud/api-role.sql | Out-Null
     }
-    if ($LASTEXITCODE -ne 0) { throw "could not set up the API's database role (server/docker/api-role.sql)" }
+    if ($LASTEXITCODE -ne 0) { Stop-SqlRefused "server/docker/api-role.sql" "the API's database role" }
 }
 
 # The init script only runs on an empty data directory. This creates shroud_admin on a volume
@@ -280,7 +297,7 @@ ALTER ROLE CURRENT_USER SET search_path = public;
     Invoke-WithDataDirEnv {
         $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "dbname=$db" | Out-Null
     }
-    if ($LASTEXITCODE -ne 0) { throw "could not create the shroud_admin role" }
+    if ($LASTEXITCODE -ne 0) { Stop-SqlRefused "the shroud_admin setup in deploy.ps1" "the console's database role" }
     # grants.sql gives the audit log to this role once the console has made its schema, which it
     # does as it starts. Wait for it, so a first deploy does not leave the log with the console.
     $ready = $false
@@ -298,7 +315,7 @@ ALTER ROLE CURRENT_USER SET search_path = public;
     Invoke-WithDataDirEnv {
         Get-Content -Raw -LiteralPath $grants | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -f - | Out-Null
     }
-    if ($LASTEXITCODE -ne 0) { throw "could not apply admin/api/grants.sql" }
+    if ($LASTEXITCODE -ne 0) { Stop-SqlRefused "admin/api/grants.sql" "the console's grants and its audit log" }
 }
 
 function Add-TurnSecret {
@@ -985,5 +1002,14 @@ catch {
     Write-Line "Failed: $($_.Exception.Message)" "Red"
     Write-Line "  Inspect:  .\deploy.ps1 -Ps" "DarkGray"
     Write-Line "  Logs:     .\deploy.ps1 -Logs" "DarkGray"
+    # Never -Volumes here: it wipes the data, and after a refused SQL step also the object Postgres
+    # refused it over (Stop-SqlRefused).
+    $refused = $_.Exception.Data["SqlRefused"]
+    if ($refused) {
+        Write-Line "  SQL:      $refused was not applied; the data was kept" "DarkGray"
+        Write-Line "  Next:     deal with what psql named above, then .\deploy.ps1 again" "DarkGray"
+    } else {
+        Write-Line "  Retry:    .\deploy.ps1 -Down; .\deploy.ps1" "DarkGray"
+    }
     exit 1
 }
