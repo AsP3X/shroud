@@ -117,7 +117,14 @@ impl LocalStore {
             }
         };
         if let Err(err) = async {
-            let file = tokio::fs::File::open(&scratch).await?;
+            // Human: Windows refuses `sync_all` (FlushFileBuffers) on a read-only handle with
+            // "Access is denied", so the scratch file is reopened writable before the fsync.
+            // Agent: OPENS scratch with write access (no truncate, no create), CALLS sync_all, then
+            // renames scratch over `path`; a failure removes scratch and nothing is published.
+            let file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&scratch)
+                .await?;
             file.sync_all().await?;
             drop(file);
             tokio::fs::rename(&scratch, &path).await?;
