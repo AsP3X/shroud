@@ -48,6 +48,25 @@ struct MediaMessagePayloadTests {
         #expect(payload.wf == nil)
     }
 
+    /// A caption, thumbnail or waveform that is not a string is dropped, and the rest of the
+    /// payload still parses (the iOS half of November audit W1, fixed on the web in SHRO-16).
+    @Test
+    func nonStringCaptionThumbnailAndWaveformAreDropped() throws {
+        let json = #"{"t":"voice","mime":"audio/mp4","k":"a2V5","d":4200,"c":42,"th":{"x":1},"wf":[1,2]}"#
+        let voice = try #require(MediaMessagePayload.parse(Data(json.utf8)))
+        #expect(voice.isVoice)
+        #expect(voice.d == 4200)
+        #expect(voice.c == nil)
+        #expect(voice.th == nil)
+        #expect(voice.wf == nil)
+
+        let image = #"{"t":"image","mime":"image/jpeg","w":8,"h":6,"k":"a2V5","c":true,"th":7}"#
+        let photo = try #require(MediaMessagePayload.parse(Data(image.utf8)))
+        #expect(photo.isImage)
+        #expect(photo.c == nil)
+        #expect(photo.previewJPEG == nil)
+    }
+
     @Test
     func mimeSniffsWhenTypeIsUnknown() throws {
         let json = #"{"t":"note","mime":"audio/mp4","k":"a2V5"}"#

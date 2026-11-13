@@ -146,8 +146,9 @@ final class MessagingController {
 
     private weak var sessionController: SessionController?
     private weak var cryptoController: CryptoController?
-    /// Shared transcripts whose voice note is not in the thread yet (annotation arrived first).
-    private var pendingSharedTranscripts: [UUID: String] = [:]
+    /// Shared transcripts whose voice note is not in the thread yet (annotation arrived first),
+    /// per chat (security audit W2).
+    private var pendingSharedTranscripts = PendingSharedTranscripts()
     /// Own voice notes whose transcript is still being made, by optimistic id.
     private var voiceTranscriptsInFlight: Set<UUID> = []
     /// Server ids those notes were re-keyed to, so a late transcript finds its bubble.
@@ -1256,7 +1257,7 @@ final class MessagingController {
             if dto.contentType == MessageAnnotation.contentType {
                 // Not a bubble: it attaches to a message; folded in after the merge.
                 if let shared = MessageAnnotation.parseTranscript(message.text) {
-                    noteSharedTranscript(shared.text, for: shared.messageID)
+                    pendingSharedTranscripts.note(shared.text, for: shared.messageID, inChat: storePeerID)
                 }
                 if inbound {
                     page.inboundIDs.append(dto.id)
@@ -1316,12 +1317,13 @@ final class MessagingController {
     /// Merges a decoded page into the live thread (re-read, so sends made meanwhile stay).
     private func publishHistoryPage(_ page: HistoryPage, storePeerID: UUID) {
         let currentThread = threads[storePeerID] ?? []
-        var merged = foldSharedTranscripts(
+        var merged = pendingSharedTranscripts.fold(
             into: ThreadMessageMerge.mergeThread(
                 decoded: page.messages,
                 previous: currentThread,
                 pendingLocal: currentThread.filter(\.pendingSync)
-            )
+            ),
+            chat: storePeerID
         )
         if let snapshot = page.reactionSnapshot {
             for index in merged.indices where page.serverIDs.contains(merged[index].id) {
@@ -3663,22 +3665,6 @@ final class MessagingController {
         }
     }
 
-    private func noteSharedTranscript(_ text: String, for messageID: UUID) {
-        if pendingSharedTranscripts[messageID] == nil {
-            pendingSharedTranscripts[messageID] = text
-        }
-    }
-
-    /// Applies any shared transcripts that now have a matching voice note, and drops those keys.
-    private func foldSharedTranscripts(into thread: [ChatMessage]) -> [ChatMessage] {
-        guard !pendingSharedTranscripts.isEmpty else { return thread }
-        let updated = ThreadMessageMerge.applySharedTranscripts(pendingSharedTranscripts, to: thread)
-        for message in updated where message.kind == .voice {
-            pendingSharedTranscripts.removeValue(forKey: message.id)
-        }
-        return updated
-    }
-
     /// Keeps a transcript made on this device and shares it with the chat as an annotation, so
     /// the other side — and our other devices, the web client included — show it without
     /// transcribing again.
@@ -3892,7 +3878,7 @@ final class MessagingController {
             // A transcript that landed while this was uploading.
             if replacement.transcript == nil { replacement.transcript = thread[idx].transcript }
             thread[idx] = replacement
-            threads[peerUserID] = foldSharedTranscripts(into: thread)
+            threads[peerUserID] = pendingSharedTranscripts.fold(into: thread, chat: peerUserID)
         }
         if voiceTranscriptsInFlight.contains(optimisticID) {
             sentVoiceIDs[optimisticID] = dto.id
@@ -5221,10 +5207,10 @@ final class MessagingController {
             // A transcript shared by the other side (or our other device): not a new message,
             // so no bubble, no unread badge — it fills in the voice note it points at.
             if let shared = MessageAnnotation.parseTranscript(chat.text) {
-                noteSharedTranscript(shared.text, for: shared.messageID)
+                pendingSharedTranscripts.note(shared.text, for: shared.messageID, inChat: threadPeer)
             }
             if let current = threads[threadPeer] {
-                let updated = foldSharedTranscripts(into: current)
+                let updated = pendingSharedTranscripts.fold(into: current, chat: threadPeer)
                 if updated != current {
                     threads[threadPeer] = updated
                     persistThread(threadPeer)
@@ -5236,7 +5222,7 @@ final class MessagingController {
         var thread = threads[threadPeer] ?? []
         if !thread.contains(where: { $0.id == chat.id }) {
             thread.append(chat)
-            thread = foldSharedTranscripts(into: thread)
+            thread = pendingSharedTranscripts.fold(into: thread, chat: threadPeer)
             // Their message is what the typing/recording was for: it takes the indicator's place.
             if !chat.isMine {
                 setPeerTyping(dto.senderUserId, false)

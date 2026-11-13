@@ -349,6 +349,29 @@ final class SenderBoundPlaintextTests: XCTestCase {
         XCTAssertNil(refused.message.mediaObjectId)
     }
 
+    /// A peer's voice note whose caption, thumbnail and waveform are not strings still opens as a
+    /// voice row, without them: one malformed payload never fails the history page (the iOS half
+    /// of November audit W1).
+    func testAMalformedMediaPayloadStillOpensAsItsRow() async throws {
+        let repository = unlocked()
+        let id = UUID()
+        messageIDs.append(id)
+        let to = SealedRecipient.wire(me)
+        let json = #"{"t":"voice","mime":"audio/mp4","k":"a2V5","d":4200,"c":42,"th":{"x":1},"wf":[1,2],"to":"\#(to)"}"#
+        repository.saveSealedPlaintext(messageID: id, senderUserID: alice, data: Data(json.utf8))
+        var aliceChat = context(repository: repository, threads: [:], resolved: Resolved())
+        aliceChat.chatPeerUserID = alice
+
+        let listed = try dto(id: id, sender: alice, ciphertext: nil, contentType: "media")
+        let opened = await MessageDecoder.decodeChecked(listed, context: aliceChat)
+        XCTAssertFalse(opened.refused)
+        XCTAssertEqual(opened.message.kind, .voice)
+        XCTAssertEqual(opened.message.text, "Voice message")
+        XCTAssertNil(opened.message.transcript)
+        XCTAssertNil(opened.message.voiceWaveform)
+        XCTAssertEqual(opened.message.voiceDurationMs, 4200)
+    }
+
     // MARK: - content_type is not sealed (security audit C1)
 
     private func file(to: UUID?) throws -> Data {

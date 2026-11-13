@@ -126,4 +126,49 @@ struct MessageAnnotationTests {
         )
         #expect(merged == thread)
     }
+
+    // MARK: - Bound to the chat it was shared in (security audit W2)
+
+    /// An annotation in chat A naming a voice note in chat B leaves B's note untranscribed, and
+    /// B's own transcript still lands when it is shared there.
+    @Test
+    func aTranscriptSharedInOneChatDoesNotFillANoteInAnother() {
+        let chatA = UUID()
+        let chatB = UUID()
+        let note = voiceNote()
+        var pending = PendingSharedTranscripts()
+        pending.note("Planted from chat A", for: note.id, inChat: chatA)
+
+        let inB = pending.fold(into: [note], chat: chatB)
+        #expect(inB.first?.transcript == nil)
+
+        pending.note("The real words", for: note.id, inChat: chatB)
+        let shared = pending.fold(into: [note], chat: chatB)
+        #expect(shared.first?.transcript == "The real words")
+    }
+
+    /// A note that lands after its annotation, in the same chat, still takes it, once.
+    @Test
+    func aTranscriptWaitsForItsNoteInTheSameChat() {
+        let chat = UUID()
+        let note = voiceNote()
+        var pending = PendingSharedTranscripts()
+        pending.note("Running late", for: note.id, inChat: chat)
+
+        #expect(pending.fold(into: [], chat: chat).isEmpty)
+        #expect(pending.fold(into: [note], chat: chat).first?.transcript == "Running late")
+        #expect(pending.fold(into: [note], chat: chat) == [note], "used up once the note was there")
+    }
+
+    /// The first transcript shared for a note in a chat is kept; a later one does not replace it.
+    @Test
+    func theFirstSharedTranscriptInAChatWins() {
+        let chat = UUID()
+        let note = voiceNote()
+        var pending = PendingSharedTranscripts()
+        pending.note("First", for: note.id, inChat: chat)
+        pending.note("Second", for: note.id, inChat: chat)
+
+        #expect(pending.fold(into: [note], chat: chat).first?.transcript == "First")
+    }
 }
