@@ -228,10 +228,15 @@ files still show that switch until a design pass.
   - Change: send peers an opaque per-conversation device handle instead of the device UUID
     (the ratchet only needs a stable handle per peer device).
   - Done when: two contacts of the same user see different handles for the same device.
-- [ ] **2.5 Stop `GET /users/{id}` returning the share code** (`routes/users.rs`). Anyone who
+- [x] **2.5 Stop `GET /users/{id}` returning the share code** (`routes/users.rs`). Anyone who
   knows the id gets the current code, so rotating it doesn't cut them off.
   - Change: return the code only to the account itself, or drop it from the response.
   - Done when: after a rotation, a non-contact who knows the id can't get the new code.
+  - Done in `ab3b9c9e` (2026-10-29): `UserCard::for_viewer` (`routes/users.rs:27-41`) keeps the
+    code only on the account's own card. `tests/api_privacy.rs`
+    `rotating_the_share_code_retires_the_old_one` checks that a lookup by id after a rotation has
+    no `share_code`. A reset still does not stop requests from someone who already has the id;
+    that limit is kept on purpose (`docs/privacy-options.md:186-187`, security audit November S5).
 - [ ] **2.6 Coarsen timestamps that don't need precision.** Every timestamp is `now()` to the
   microsecond.
   - Change: keep message order with a sequence number; store delivered and read times to the
