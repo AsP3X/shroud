@@ -534,11 +534,12 @@ shared by every replica.
 
 ### Later entities (sketch)
 
-| Entity | Role |
-| --- | --- |
-| (presence online hash) | Redis HASH + 90s TTL / WS heartbeat refresh |
+None left. The presence online hash sketched here is built (`c67ca550`): Redis HASH
+`shroud:online:{user_id}`, one field per device, 90 s TTL refreshed by the WS heartbeat
+(`realtime/mod.rs`, `ONLINE_TTL_SECS`, `refresh_online`).
 
-Redis: pub/sub fan-out, online sets, future rate limits.
+Redis: pub/sub fan-out across replicas and the online hash (`realtime/mod.rs`), rate-limit counters
+`rl:{scope}:{id}` (`rate_limit.rs`, `17350c2a`).
 
 ---
 
@@ -679,6 +680,7 @@ and cannot read the traffic.
 | **7** | **Deletes** | **Done** — migration 007; for me / everyone; account delete; message.deleted WS |
 | **8** | **APNs** | **Done** — migration 008; `PUT /push/token`; offline WS gate; HTTP/2 ES256 JWT client (`.p8` / `APNS_KEY_PEM`); drop invalid tokens |
 | **9** | **Calls** | **Done** — migration 010; ring/accept/reject/hangup/signal; `GET /calls/ice-servers`; WS events; coturn compose profile; call alert push |
+| **10** | **Reactions** | **Done** — migration 020 (`426c473f`); sealed per-user sets via `PUT`/`DELETE /messages/:id/reaction`; catch-up `GET /conversations/:peer_user_id/reactions`; WS `message.reaction` + `reactions.seen`; tests `api_reactions.rs` |
 | **11** | **Notifications** | **Done** — migration 022; APNs alerts (sealed sender name) + Web Push (RFC 8291, VAPID via `ring`); per-device settings; chat mutes; read markers → `unread_count` + icon badges; `conversation.read` / `conversation.mute`; WS ping / idle close; test push |
 
 **Compose:** Postgres + Redis + Nebular + API → later + coturn.

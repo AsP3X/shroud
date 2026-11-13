@@ -5,8 +5,11 @@ web, iOS and Android. Each finding below was traced through the code from a real
 its effect. Where a finding could not be run end to end here (a browser, a locked iPhone), it says
 so. Every finding is fixed since, except L16 and the rest of H3, which is accepted (see H3); each
 says how under **Fixed** (the Low items under [Low: fixed](#low-fixed)). The iOS and Android changes
-were not compiled or run (no Xcode or Android SDK where they were written) and need a build and test
-run before release, and the deploy scripts' H5 changes were not run against Docker.
+were written without Xcode or an Android SDK and have been built and tested since: the iOS app
+builds with no project warnings and its unit tests pass (`19c6a0cd`, `5c988ac6`, 983 tests), and
+the full Android check passes (`728e0d5d`, 4079 tests, 0 failures). The device checks M8, L15 and
+L17 ask for are still owed, and the deploy scripts' H5 changes were not run against Docker in this
+review. The [November audit](security-audit-2026-11.md) re-checked these fixes.
 
 Severity is what an attacker gains, weighted by what they need first. "Server" in a client finding
 means a malicious or compromised Shroud server, which the E2EE design is meant to withstand.
@@ -26,11 +29,11 @@ means a malicious or compromised Shroud server, which the E2EE design is meant t
 | M4 | Medium | Server | No media quota: one account stores ~120 GiB/min permanently; scratch files leak | Fixed |
 | M5 | Medium | Server | WebSocket frames have no size or rate limit; focus toggles amplify into presence fan-out | Fixed |
 | M6 | Medium | Server | A link-relay pipe outlives its lifetime and idle limits | Fixed |
-| M7 | Medium | Web, iOS, Android | History accepts messages from people outside the chat (server) | Fixed (iOS/Android unbuilt) |
-| M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Fixed (unbuilt) |
-| M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Fixed (iOS/Android unbuilt) |
+| M7 | Medium | Web, iOS, Android | History accepts messages from people outside the chat (server) | Fixed |
+| M8 | Medium | iOS | A locked phone trusts any identity key the server sends (server) | Fixed (device check owed) |
+| M9 | Medium | Web, iOS, Android | The contact username book is stored unsealed (iOS: also in backups) | Fixed |
 | M10 | Medium | Deploy | The operator console shares an origin and cookie path with the messenger | Fixed (opt-in `ADMIN_HOST`) |
-| L1–L19 | Low | various | See [Low](#low) | Fixed, except L16 (iOS/Android unbuilt) |
+| L1–L19 | Low | various | See [Low](#low) | Fixed, except L16 (L15, L17: device check owed) |
 | — | Deps | Rust, npm | `h2`, `rustls`, `rustls-webpki`, `webpki-roots` advisories; Vite/sharp in the web toolchain | Fixed |
 
 ## High

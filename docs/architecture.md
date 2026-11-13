@@ -365,6 +365,7 @@ Detail: [server-plan.md](./server-plan.md#implementation-milestones).
 7. **Deletes** — **done** (for me / for everyone; account deletion deletes each chat for both and keeps a scrubbed placeholder user row)  
 8. **Push** — **done** (token register; offline gate; live HTTP/2 APNs with .p8 JWT when configured)  
 9. **Calls** — **done** (1:1 signaling ring/accept/reject/hangup/signal; ICE servers; coturn compose profile)  
+10. **Reactions** — **done** (sealed per-user reaction sets, migration 020; catch-up by per-chat sequence; WS `message.reaction`, `reactions.seen`)  
 11. **Notifications** — **done** (APNs alerts with a sealed sender name, Web Push with VAPID; per-device settings; chat mutes; server unread counts and badges; socket liveness by ping)
 
 ### iOS client

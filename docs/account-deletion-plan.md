@@ -1,15 +1,18 @@
 # Delete Account in the apps — implementation plan (Grok = code, Claude = design)
 
-**Status:** proposed 2026-10-09. Design C1–C4 drawn 2026-10-09; the frames are exported to
-`docs/account-deletion/` (`ios-`, `ipad-`, `web-`, `android-` + `privacy-and-security`,
-`delete-account`, `delete-account-{filled,deleting,wrong-password,too-many-tries,couldnt-reach}`,
+**Status:** proposed 2026-10-09; built on all three clients. Design C1–C4 drawn 2026-10-09; the
+frames are exported to `docs/account-deletion/` (`ios-`, `ipad-`, `web-`, `android-` +
+`privacy-and-security`, `delete-account`,
+`delete-account-{filled,deleting,wrong-password,too-many-tries,couldnt-reach}`,
 `wipe-account-deleted`; Android also `privacy-and-security-dark`). G1–G4 are on `dev` (0df8546d).
 C5 done 2026-10-10: §5.1 lists what matched and four fixes; §5.2 their re-check. The fixes are on
 `dev` (d6089317). Left: a `simctl` shot of the real deleting state on iPhone and iPad, and the deploy.
 **Scope:** let a person delete their own account from iOS, the web client and Android. The server
 already does the deletion (`DELETE /auth/account`, `routes/auth.rs`, documented in
-`docs/server-plan.md` § `DELETE /auth/account`). No app offers it yet; Android has only the request
-type (`core/net/dto/AuthDto.kt:131`, "no UI in v1, P18" — this plan replaces P18).
+`docs/server-plan.md` § `DELETE /auth/account`). Before this plan no app offered it, and Android had
+only the request type ("no UI in v1, P18" — this plan replaced P18). Each client now has it:
+`ios/shroud/Features/Main/DeleteAccount.swift`, `web/src/components/settings/DeleteAccountView.tsx`,
+`android/app/src/main/java/de/corespace/shroud/ui/settings/privacy/DeleteAccountScreen.kt`.
 **Split:** Grok writes every line of code: the one server change, iOS, web, Android, and their tests
 and docs. Claude does the design: every frame in `design/iOS-App.pen`, `design/iPad-App.pen`,
 `design/webclient.pen` and `design/Android-App.pen`, and checks the built screens against them at

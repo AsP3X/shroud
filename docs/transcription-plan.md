@@ -1,6 +1,7 @@
 # Voice transcription — improvement plan
 
-**Status:** proposed 2026-10-06. Nothing here is built yet.
+**Status:** proposed 2026-10-06. Done on `dev` so far: T1.1 and T1.2 (`f3caa522`), T1.10
+(`0f717cb4`) and the web half of T3.6 (`3fa5145d`, `84a73861`). No other task is marked done.
 **Scope:** voice-note transcription on iOS/iPad (WhisperKit), web (transformers.js) and Android
 (whisper.cpp). Live call captions are out of scope.
 
