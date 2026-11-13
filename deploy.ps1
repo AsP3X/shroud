@@ -262,8 +262,9 @@ function Apply-ApiRole {
 }
 
 # The init script only runs on an empty data directory. This creates shroud_admin on a volume
-# that already existed, then re-applies the column grants.
-function Apply-AdminDb {
+# that already existed. It runs after Apply-ApiRole has started Postgres alone and before `up`
+# starts the console, so the console's first login finds its role.
+function Apply-AdminRole {
     if (-not (Test-ProfileEnabled "admin")) { return }
     $user = Get-EnvValue "POSTGRES_USER"; if (-not $user) { $user = "shroud" }
     $db = Get-EnvValue "POSTGRES_DB"; if (-not $db) { $db = "shroud" }
@@ -298,6 +299,14 @@ ALTER ROLE CURRENT_USER SET search_path = public;
         $roleSql | & docker compose @files exec -T postgres psql -q -v ON_ERROR_STOP=1 -U $user -d $db -v "dbname=$db" | Out-Null
     }
     if ($LASTEXITCODE -ne 0) { Stop-SqlRefused "the shroud_admin setup in deploy.ps1" "the console's database role" }
+}
+
+# Re-applies the column grants once the console is up (the API role owns those tables).
+function Apply-AdminGrants {
+    if (-not (Test-ProfileEnabled "admin")) { return }
+    $user = Get-EnvValue "POSTGRES_USER"; if (-not $user) { $user = "shroud" }
+    $db = Get-EnvValue "POSTGRES_DB"; if (-not $db) { $db = "shroud" }
+    $files = Get-ComposeArgs
     # grants.sql gives the audit log to this role once the console has made its schema, which it
     # does as it starts. Wait for it, so a first deploy does not leave the log with the console.
     $ready = $false
@@ -821,8 +830,9 @@ function Invoke-Wizard {
         }
     }
     Apply-ApiRole
+    Apply-AdminRole
     Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
-    Apply-AdminDb
+    Apply-AdminGrants
     Show-Info
 }
 
@@ -952,6 +962,7 @@ try {
     }
     try {
         Apply-ApiRole
+        Apply-AdminRole
         Invoke-Compose @("up", "-d", "--build", "--remove-orphans")
     } catch {
         $apiLogs = & docker logs shroud-api 2>&1 | Select-Object -Last 80
@@ -966,7 +977,7 @@ try {
         }
         throw
     }
-    Apply-AdminDb
+    Apply-AdminGrants
     $elapsed = (Get-Date) - $startedAt
     Write-Host ""
     Write-Ok ("Deploy finished in {0}m {1}s." -f [int][math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds)

@@ -629,11 +629,12 @@ shroud_up() {
     shroud_own_nebular_dir || return 1
   fi
   shroud_apply_api_role || return 1
+  shroud_apply_admin_role || return 1
   if ! shroud_compose up -d --build --remove-orphans; then
     shroud_diagnose_up
     return 1
   fi
-  shroud_apply_admin_db || return 1
+  shroud_apply_admin_grants || return 1
   shroud_publish_web_build
 }
 
@@ -690,8 +691,9 @@ shroud_apply_api_role() {
 }
 
 # The init script only runs on an empty data directory. This creates shroud_admin on a volume
-# that already existed, then re-applies the column grants (the API role owns those tables).
-shroud_apply_admin_db() {
+# that already existed. It runs after shroud_apply_api_role has started Postgres alone and before
+# `up` starts the console, so the console's first login finds its role.
+shroud_apply_admin_role() {
   local user db pass
   shroud_profile_enabled admin || return 0
   user="$(shroud_env_value POSTGRES_USER)"
@@ -732,6 +734,16 @@ SQL
     shroud_sql_refused "the shroud_admin setup in scripts/compose-env.sh" "the console's database role"
     return 1
   fi
+}
+
+# Re-applies the column grants once the console is up (the API role owns those tables).
+shroud_apply_admin_grants() {
+  local user db
+  shroud_profile_enabled admin || return 0
+  user="$(shroud_env_value POSTGRES_USER)"
+  db="$(shroud_env_value POSTGRES_DB)"
+  user="${user:-shroud}"
+  db="${db:-shroud}"
   # grants.sql gives the audit log to this role once the console has made its schema, which it
   # does as it starts. Wait for it, so a first deploy does not leave the log with the console.
   local tries=0
