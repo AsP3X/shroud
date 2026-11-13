@@ -254,6 +254,8 @@ xcodebuild test -scheme shroud -destination 'platform=iOS Simulator,name=iPhone 
 # Without either one they return immediately, so a green run is not proof they executed.
 cd admin/api && cargo test
 cd admin/api && cargo clippy --all-targets -- -D warnings
+# CI creates the console's role with server/docker/init-admin-role.sh first. Run from the host, that
+# script needs psql 15 or newer: it reads the password with \getenv.
 # The column grants with the API's own role, on a throwaway Postgres where api-role.sql ran
 # first: the steps of the "grants with the API role" job in .github/workflows/admin.yml.
 cd admin/api && GRANT_TEST_API_URL=postgres://shroud_api:…@localhost:5432/shroud cargo test --test grants -- --skip api_role_cannot_hijack_the_superuser_deploy_sql

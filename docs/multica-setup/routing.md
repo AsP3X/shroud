@@ -272,3 +272,13 @@ Since Mika became the superior of both squads:
   coordinates agents, and helps build reusable workflows." and does not say she is the superior of
   both squads. Her instructions, Henrik's, both squads, the `todo` and `in_review` handoffs and the
   project description do.
+
+Found on 2026-11-13, against the Mac:
+
+- Jonas's, Lena's, Vera's and Nora's iOS check lines use
+  `-destination 'platform=iOS Simulator,name=iPhone 17,OS=27.1'`. The Mac's iOS 27.1 runtime has
+  only an "iPhone Duo" simulator, so that destination finds no device. `name=iPhone 17,OS=27.0`
+  works (SHRO-36), and `.cursor/rules/regression-testing.mdc` uses it.
+- The admin check line (Jonas, Lena, Vera, Soren, Freja, Saga, Nora and Liv) runs
+  `server/docker/init-admin-role.sh` from the host. That script reads the password with psql's
+  `\getenv`, so the host needs psql 15 or newer.

@@ -27,7 +27,7 @@ New features and refactors must **not break existing behavior**. Treat regressio
 | Area | Automated checks | Notes |
 | --- | --- | --- |
 | **Server (`server/`)** | `cargo test --workspace`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check` | Integration tests under `server/tests/` for HTTP-visible behavior (spin up Postgres via `DATABASE_URL`). |
-| **iOS (`ios/`)** | `xcodebuild test -scheme Shroud -destination 'platform=iOS Simulator,name=iPhone 16'` | Unit tests for crypto/session/store; snapshot tests for key screens. |
+| **iOS (`ios/`)** | `xcodebuild test -project ios/shroud.xcodeproj -scheme shroud -destination 'platform=iOS Simulator,name=iPhone 17,OS=27.0'` | Unit tests for crypto/session/store; snapshot tests for key screens. |
 | **Migrations** | Server test suite startup | New forward migrations only. |
 
 ## Verification matrix (by change type)
