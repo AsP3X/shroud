@@ -398,6 +398,35 @@ class MessageDecoderTest {
         assertEquals(ChatMessageKind.File, opened.message.kind)
     }
 
+    /**
+     * Our own message whose chat is not known (no chat peer, no listed conversation) cannot be
+     * checked against a recipient, but a media payload or annotation relabelled `text` is still
+     * misfiled: its raw JSON is neither shown under our own id nor cached.
+     */
+    @Test
+    fun aPayloadRelabelledAsTextIsMisfiledWhenTheChatIsUnknown() = runTest {
+        for (plaintext in listOf(fileFor(alice), transcriptFor(alice), fileFor(null), transcriptFor(null))) {
+            val dto = Dtos.message(sender = me, contentType = ContentType.TEXT, ciphertext = B64.encode(plaintext))
+            val decoded = decoder().decodeChecked(dto, context())
+            assertTrue(decoded.refused)
+            assertEquals("[Unable to decrypt]", decoded.message.text)
+            assertNull(store.plaintexts[dto.id])
+        }
+        // A cached payload re-listed as `text` is refused on read too, and the cache keeps it.
+        val cachedDto = Dtos.message(sender = me, contentType = ContentType.TEXT, ciphertext = Dtos.sealed("FAIL"))
+        val alicesFile = fileFor(alice)
+        store.plaintexts[cachedDto.id] = alicesFile
+        val cached = decoder().decodeChecked(cachedDto, context())
+        assertTrue(cached.refused)
+        assertEquals("[Unable to decrypt]", cached.message.text)
+        assertArrayEquals(alicesFile, store.plaintexts[cachedDto.id])
+        // Text that names someone stays readable: without the chat, `to` cannot be checked.
+        val text = Dtos.message(sender = me, ciphertext = Dtos.sealed(MessageTextPayload.wire("hello", null, null, alice)))
+        val opened = decoder().decodeChecked(text, context())
+        assertFalse(opened.refused)
+        assertEquals("hello", opened.message.text)
+    }
+
     /** A payload already cached (opened in Alice's chat) and re-listed here as `text` is refused on read. */
     @Test
     fun aCachedPayloadRelabelledAsTextIsRefused() = runTest {
