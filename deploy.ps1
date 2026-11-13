@@ -701,6 +701,24 @@ function Invoke-Compose {
     if ($ComposeArgs[0] -eq "up") { Publish-WebBuild }
 }
 
+# The host of a URL, lowercased, without scheme, credentials, port, path or IPv6 brackets.
+function Get-UrlHost {
+    param([string]$Url)
+    $hostPart = $Url -replace '^[^:/]*://', ''
+    $hostPart = ($hostPart -split '/', 2)[0]
+    $hostPart = $hostPart -replace '^.*@', ''
+    if ($hostPart.StartsWith("[")) { $hostPart = ($hostPart.Substring(1) -split '\]', 2)[0] }
+    else { $hostPart = ($hostPart -split ':', 2)[0] }
+    return $hostPart.ToLowerInvariant()
+}
+
+# Whether a host name or bind address answers on this machine only.
+function Test-Loopback {
+    param([string]$Address)
+    return ($Address -eq "localhost" -or $Address -like "*.localhost" -or $Address -like "127.*" -or
+        $Address -eq "::1" -or $Address -eq "0:0:0:0:0:0:0:1")
+}
+
 function Show-Info {
     $mode = Get-ProxyMode
     $web = Get-EnvValue "WEB_PUBLIC_URL"; if (-not $web) { $web = "http://localhost:8081" }
@@ -711,7 +729,27 @@ function Show-Info {
     if ($dataDir) { Write-Host "  Storage:     $dataDir (SHROUD_DATA_DIR)" }
     else { Write-Host "  Storage:     named Docker volumes" }
     Write-Host "  Web client:  $web"
-    Write-Host "  API (iOS):   $api/api/v1"
+    if ($mode -eq "local") {
+        # The API port binds API_BIND, 127.0.0.1 unless set (docker-compose.local.yml), so another
+        # device reaches the API through the web port, whose nginx proxies /api/v1 on every interface.
+        $bind = Get-EnvValue "API_BIND"; if (-not $bind) { $bind = "127.0.0.1" }
+        $webPort = Get-EnvValue "WEB_PORT"; if (-not $webPort) { $webPort = "8081" }
+        $apiPort = Get-EnvValue "API_PORT"; if (-not $apiPort) { $apiPort = "8080" }
+        Write-Host "  API (iOS):   $web/api/v1"
+        if (Test-Loopback (Get-UrlHost $web)) {
+            Write-Host "               localhost answers on this machine only; other devices use this"
+            Write-Host "               machine's LAN address on port $webPort"
+        }
+        if (Test-Loopback $bind) {
+            Write-Host "  API port:    $apiPort, this machine only (API_BIND=0.0.0.0 opens it on the LAN)"
+        } elseif (Test-Loopback (Get-UrlHost $api)) {
+            Write-Host "  API port:    $api/api/v1, this machine only by that name"
+        } else {
+            Write-Host "  API port:    $api/api/v1"
+        }
+    } else {
+        Write-Host "  API (iOS):   $api/api/v1"
+    }
     if (Test-ProfileEnabled "admin") {
         $adminUrl = Get-AdminPublicUrl
         if (-not $adminUrl) { $adminUrl = Get-EnvValue "ADMIN_PUBLIC_URL" }
