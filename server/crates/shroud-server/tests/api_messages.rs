@@ -11,7 +11,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 mod block_race;
-use block_race::{stage_block, until_waiting_on};
+use block_race::{stage_block, stage_removal, until_waiting_on};
 
 fn test_state(pool: sqlx::PgPool) -> shroud_server::state::AppState {
     shroud_server::state::AppState::for_integration_tests(pool)
@@ -702,5 +702,69 @@ async fn a_send_racing_a_block_is_refused_and_not_delivered() {
             .iter()
             .all(|event| event["type"] != "message.new"),
         "the blocker received the message"
+    );
+}
+
+/// Human: A message sent while its recipient removes the sender as a contact (SHRO-14). The
+/// send passes its first contact check, then waits on the pair lock the removal holds; once
+/// the removal commits it must answer 403, store nothing and publish no `message.new`.
+#[tokio::test]
+async fn a_send_racing_a_contact_removal_is_refused_and_not_delivered() {
+    let Some((app, state)) = test_app_and_state().await else {
+        eprintln!(
+            "skipping a_send_racing_a_contact_removal_is_refused_and_not_delivered: no DATABASE_URL"
+        );
+        return;
+    };
+    let (token_a, user_a) = register(&app).await;
+    let (token_b, user_b) = register(&app).await;
+    become_contacts(&app, &token_a, &user_a, &token_b, &user_b).await;
+    let (a, b) = (
+        user_a.parse::<Uuid>().unwrap(),
+        user_b.parse::<Uuid>().unwrap(),
+    );
+    let b_device: Uuid = sqlx::query_scalar("SELECT id FROM devices WHERE user_id = $1")
+        .bind(b)
+        .fetch_one(&state.pool)
+        .await
+        .expect("b's device");
+    let mut b_events = state
+        .realtime
+        .subscribe(b, b_device, Uuid::new_v4())
+        .await
+        .expect("subscribe")
+        .events;
+
+    let (holder, holder_pid) = stage_removal(&state.pool, b, a).await;
+    let client_message_id = Uuid::new_v4();
+    let sending = tokio::spawn({
+        let app = app.clone();
+        let token_a = token_a.clone();
+        let body = json!({
+            "peer_user_id": user_b,
+            "client_message_id": client_message_id,
+            "content_type": "text",
+            "ciphertext": BASE64.encode(b"racing")
+        });
+        async move { post_message(&app, &token_a, body).await.status() }
+    });
+    until_waiting_on(&state.pool, holder_pid, &sending).await;
+    holder.commit().await.expect("commit removal");
+
+    assert_eq!(sending.await.expect("send task"), StatusCode::FORBIDDEN);
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM messages WHERE sender_user_id = $1 AND client_message_id = $2",
+    )
+    .bind(a)
+    .bind(client_message_id)
+    .fetch_one(&state.pool)
+    .await
+    .expect("count messages");
+    assert_eq!(stored, 0, "a message slipped past the contact removal");
+    assert!(
+        drain(&mut b_events)
+            .iter()
+            .all(|event| event["type"] != "message.new"),
+        "the former contact received the message"
     );
 }

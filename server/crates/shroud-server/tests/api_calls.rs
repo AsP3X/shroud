@@ -15,7 +15,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 mod block_race;
-use block_race::{stage_block, until_waiting_on};
+use block_race::{stage_block, stage_removal, until_waiting_on};
 
 /// None without `DATABASE_URL` (the tests skip). Set but unusable fails loudly instead.
 async fn test_state() -> Option<(axum::Router, AppState)> {
@@ -1075,6 +1075,62 @@ async fn a_call_racing_a_block_is_refused_and_never_rings() {
             .iter()
             .all(|event| event["type"] != "call.ring"),
         "the blocker heard a ring"
+    );
+    assert!(state.realtime.pending_ring(b.uid()).await.is_none());
+}
+
+/// Human: A ring placed while the callee removes the caller as a contact (SHRO-14).
+/// `POST /calls` passes its first contact check, then waits on the pair lock the removal holds;
+/// once the removal commits it must answer 403 and leave no call, no `call.ring` and no ring to
+/// replay.
+#[tokio::test]
+async fn a_call_racing_a_contact_removal_is_refused_and_never_rings() {
+    let Some((app, state)) = test_state().await else {
+        eprintln!(
+            "skipping a_call_racing_a_contact_removal_is_refused_and_never_rings: no DATABASE_URL"
+        );
+        return;
+    };
+    let a = register(&app).await;
+    let b = register(&app).await;
+    become_contacts(&app, &a, &b).await;
+    let mut b_events = socket(&state, &b).await;
+
+    let (holder, holder_pid) = stage_removal(&state.pool, b.uid(), a.uid()).await;
+    let ringing = tokio::spawn({
+        let app = app.clone();
+        let token = a.token.clone();
+        let peer = b.user_id.clone();
+        async move {
+            call(
+                &app,
+                "POST",
+                "/api/v1/calls",
+                &token,
+                Some(json!({ "peer_user_id": peer, "modality": "voice", "protocol": 2 })),
+            )
+            .await
+        }
+    });
+    until_waiting_on(&state.pool, holder_pid, &ringing).await;
+    holder.commit().await.expect("commit removal");
+
+    let (status, body) = ringing.await.expect("call task");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let calls: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM calls WHERE caller_user_id = $1 AND callee_user_id = $2",
+    )
+    .bind(a.uid())
+    .bind(b.uid())
+    .fetch_one(&state.pool)
+    .await
+    .expect("count calls");
+    assert_eq!(calls, 0, "a call slipped past the contact removal");
+    assert!(
+        drain(&mut b_events)
+            .iter()
+            .all(|event| event["type"] != "call.ring"),
+        "the former contact heard a ring"
     );
     assert!(state.realtime.pending_ring(b.uid()).await.is_none());
 }

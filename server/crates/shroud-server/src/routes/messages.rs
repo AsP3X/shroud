@@ -18,7 +18,7 @@ use crate::error::AppError;
 use crate::push::PushEvent;
 use crate::rate_limit::budgets;
 use crate::routes::contacts::{
-    are_contacts, is_blocked_either_way, is_blocked_either_way_tx, lock_pair,
+    are_contacts, are_contacts_tx, is_blocked_either_way, is_blocked_either_way_tx, lock_pair,
 };
 use crate::routes::conversations::{
     advance_read_marker, announce_chat_read, clear_watermark, unread_in,
@@ -180,13 +180,19 @@ pub async fn send_message(
         .await
         .map_err(|err| AppError::Internal(format!("begin transaction failed: {err}")))?;
 
-    // Human: A block that committed since the check above is seen here; one that comes later
-    // waits for this send to commit (security audit S6). Without the lock a send could pass
-    // the check, lose the race to `POST /blocks`, and still reach the person who just blocked.
+    // Human: A block or a contact removal that committed since the checks above is seen here;
+    // one that comes later waits for this send to commit (security audit S6, SHRO-14). Without
+    // the lock a send could pass the checks, lose the race to `POST /blocks` or
+    // `DELETE /contacts/{id}`, and still reach the person who just blocked or removed them.
     // Agent: pg_advisory_xact_lock(pair) before any row lock, the order the L6 fix set; then
-    // SELECT blocks. 403 means nothing was written and nothing is published.
+    // SELECT contacts and blocks. 403 means nothing was written and nothing is published.
     if !is_notes {
         lock_pair(&mut tx, auth.user_id, body.peer_user_id).await?;
+        if !are_contacts_tx(&mut tx, auth.user_id, body.peer_user_id).await? {
+            return Err(AppError::forbidden(
+                "You can only message accepted contacts.",
+            ));
+        }
         if is_blocked_either_way_tx(&mut tx, auth.user_id, body.peer_user_id).await? {
             return Err(AppError::forbidden("Cannot message while blocked."));
         }
